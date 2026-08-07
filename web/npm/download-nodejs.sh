@@ -32,6 +32,7 @@ esac
 archive_name="node-${NODEJS_VERSION}-${node_platform}-${node_arch}.tar.xz"
 download_url="${NODEJS_DIST_BASE}/${NODEJS_VERSION}/${archive_name}"
 archive_path="${DOWNLOAD_ROOT}/${archive_name}"
+checksums_path="${DOWNLOAD_ROOT}/SHASUMS256-${NODEJS_VERSION}.txt"
 extract_dir="${VERSIONS_ROOT}/node-${NODEJS_VERSION}-${node_platform}-${node_arch}"
 
 mkdir -p "${DOWNLOAD_ROOT}" "${VERSIONS_ROOT}"
@@ -49,6 +50,34 @@ if [[ ! -f "${archive_path}" ]]; then
 else
   echo "[download-nodejs] Reusing ${archive_path}"
 fi
+
+if [[ ! -f "${checksums_path}" ]]; then
+  echo "[download-nodejs] Downloading checksum manifest"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --retry 3 --retry-delay 2 \
+      -o "${checksums_path}" \
+      "${NODEJS_DIST_BASE}/${NODEJS_VERSION}/SHASUMS256.txt"
+  else
+    wget -O "${checksums_path}" \
+      "${NODEJS_DIST_BASE}/${NODEJS_VERSION}/SHASUMS256.txt"
+  fi
+fi
+
+expected_sha="$(awk -v name="${archive_name}" '$2 == name { print $1; exit }' "${checksums_path}")"
+[[ "${expected_sha}" =~ ^[0-9a-fA-F]{64}$ ]] || {
+  echo "error: no checksum for ${archive_name} in ${checksums_path}" >&2
+  exit 1
+}
+if command -v sha256sum >/dev/null 2>&1; then
+  actual_sha="$(sha256sum "${archive_path}" | awk '{print $1}')"
+else
+  actual_sha="$(shasum -a 256 "${archive_path}" | awk '{print $1}')"
+fi
+if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+  echo "error: Node.js checksum mismatch for ${archive_name}" >&2
+  exit 1
+fi
+echo "[download-nodejs] Checksum verified: ${actual_sha}"
 
 if [[ ! -x "${extract_dir}/bin/node" ]]; then
   rm -rf "${extract_dir}"

@@ -2,7 +2,8 @@ import { defineConfig } from 'vite';
 import { execFileSync } from 'child_process';
 import path from 'path';
 
-const usdAssetsDir = process.env.USD_WG_ASSETS_DIR || '/mnt/nvme02/work/usd/assets';
+const usdAssetsDir = process.env.USD_WG_ASSETS_DIR || '';
+const mujocoDir = process.env.MUJOCO_WASM_DIR || '';
 const publicDir = process.env.TINYUSDZ_VITE_PUBLIC_DIR;
 
 // https://vitejs.dev/config/
@@ -27,11 +28,11 @@ export default defineConfig(({ command }) => {
   appType: 'mpa',
   server: {
     fs: {
-      allow: [
-        path.resolve(__dirname),
-        usdAssetsDir,
-        '/path/to/mujoco/wasm/dist',
-      ],
+        allow: [
+          path.resolve(__dirname),
+          ...(usdAssetsDir ? [path.resolve(usdAssetsDir)] : []),
+          ...(mujocoDir ? [path.resolve(mujocoDir)] : []),
+        ],
     },
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',

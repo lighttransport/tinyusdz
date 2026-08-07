@@ -7,12 +7,11 @@
 ## Regression testing
 
 The complete web regression procedure is documented in
-[`docs/regression.md`](docs/regression.md). After installing dependencies and
-preparing the pinned Menagerie checkout:
+[`docs/regression.md`](docs/regression.md). From the repository root:
 
 ```bash
-npm run test:setup
-npm test
+scripts/verify.sh prepare --profile web
+scripts/verify.sh test --profile web --software
 ```
 
 Focused profiles are available with `npm run test:node`, `npm run test:physics`,

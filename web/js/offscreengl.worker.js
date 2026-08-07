@@ -204,7 +204,10 @@ function initThreeJS(offscreenCanvas, width, height, pixelRatio) {
 // ─── TinyUSDZ WASM loader setup ────────────────────────────────────────────
 
 async function initLoader() {
-    loaderState.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
+    // The combined WASM module exposes both the legacy loader and next
+    // RenderStream APIs. Auto selects it here; the next-only module does not
+    // expose TinyUSDZLoaderNative, which this worker uses for file loading.
+    loaderState.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512, backend: 'auto' });
     await loaderState.loader.init({ useMemory64: USE_MEMORY64 });
 
     const wasmModule = loaderState.loader.native_;

@@ -16,6 +16,7 @@ build_*/
 large-scene-tasks.md
 tests/asset-parse-results/
 tests/asset-parse-results-flatten/
+.cache/tinyusdz-verification/
 ref/openusd/
 ref/openusd-build/
 ref/openusd-build*/

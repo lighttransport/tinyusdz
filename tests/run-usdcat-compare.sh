@@ -9,14 +9,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPARE_SCRIPT="$SCRIPT_DIR/compare-usda.js"
 TUSDCAT_PATH="${TUSDCAT_PATH:-./build/tusdcat}"
 # Prefer the repo-local OpenUSD helper install, then a sibling OpenUSD checkout,
-# then the older ~/local/USD build.
+# External paths are intentionally never guessed from a developer's home
+# directory. Prepare the repo-local oracle with scripts/build-openusd-usdcat.sh
+# or set USDCAT_PATH explicitly.
 if [ -z "$USDCAT_PATH" ]; then
   if [ -x "$SCRIPT_DIR/../ref/dist/bin/usdcat" ]; then
     USDCAT_PATH="$SCRIPT_DIR/../ref/dist/bin/usdcat"
   elif [ -x "$SCRIPT_DIR/../../OpenUSD/dist/bin/usdcat" ]; then
     USDCAT_PATH="$SCRIPT_DIR/../../OpenUSD/dist/bin/usdcat"
   else
-    USDCAT_PATH="$HOME/local/USD/dist/bin/usdcat"
+    USDCAT_PATH=""
   fi
 fi
 USDCHECKER_PATH="${USDCHECKER_PATH:-$(dirname "$USDCAT_PATH")/usdchecker}"
@@ -256,6 +258,11 @@ main() {
   if [ ! -f "$COMPARE_SCRIPT" ]; then
     echo -e "${RED}Error: compare-usda.js not found at: $COMPARE_SCRIPT${NC}"
     exit 1
+  fi
+
+  if [ -z "$USDCAT_PATH" ]; then
+    echo -e "${RED}Error: OpenUSD usdcat is not configured. Run scripts/build-openusd-usdcat.sh or set USDCAT_PATH.${NC}"
+    exit 2
   fi
 
   if ! check_executable "$TUSDCAT_PATH" "tusdcat"; then

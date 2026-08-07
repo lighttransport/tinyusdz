@@ -6,7 +6,8 @@ import {
   parseUSDSceneFromArrayBuffer
 } from 'tinyusdz/LoaderConfigUtils.js';
 
-const MUJOCO_DIST = '/@fs/home/syoyo/work/mujoco/wasm/dist';
+const configuredMujocoDir = import.meta.env.VITE_MUJOCO_WASM_DIR || '';
+const MUJOCO_DIST = configuredMujocoDir ? `/@fs${configuredMujocoDir}` : './assets/mujoco';
 const MUJOCO_JS = `${MUJOCO_DIST}/mujoco_physics.js`;
 const MUJOCO_WASM = `${MUJOCO_DIST}/mujoco_physics.wasm`;
 const USDA_ASSET_URL = './assets/physics-robot-arm.usda';

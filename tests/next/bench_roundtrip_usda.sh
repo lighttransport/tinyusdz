@@ -16,7 +16,7 @@
 set -u
 
 BIN="${BIN:-build_next_thr/next_usdcat}"
-TMP="${TMP:-/mnt/disk1/tmp}"
+TMP="${TMP:-${TMPDIR:-/tmp}/tinyusdz-next-bench}"
 THREADS=""          # empty = auto
 USE_O=0             # 1 = use `-o <file>` (FdSink) instead of stdout redirect
 ROUNDTRIP=0
@@ -28,8 +28,8 @@ SCENES=()
 # below (path + optional sha), so no private asset path lives in this file.
 declare -A SCENE_INPUT=(
   [house]="${HOUSE_USD:-}|${HOUSE_SHA:--}"
-  [island]="/mnt/nvme02/data/island/usd/island.usda|d31e6728ff2e9923cf6f93456a9ec531e8c66092f638ae6e8e7b175eef6b9077"
-  [caldera]="/mnt/nvme02/data/caldera/caldera.usda|446d1f6b230c8281c5611ff9bd7c2967c0caf25308c6bdc4790f5ae0fa847ea2"
+  [island]="${ISLAND_USD:-}|${ISLAND_SHA:--}"
+  [caldera]="${CALDERA_USD:-}|${CALDERA_SHA:--}"
 )
 
 while [ $# -gt 0 ]; do

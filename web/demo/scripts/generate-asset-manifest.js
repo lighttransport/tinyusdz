@@ -8,7 +8,7 @@
  * Usage:
  *   USD_ASSETS_DIR=/path/to/usd-wg/assets node scripts/generate-asset-manifest.js
  *
- * Default USD_ASSETS_DIR: /mnt/nvme02/work/usd/assets
+ * USD_ASSETS_DIR or USD_WG_ASSETS_DIR must point to the prepared checkout.
  */
 
 import fs from 'fs';
@@ -17,9 +17,12 @@ import { fileURLToPath } from 'url';
 import { readdirSync, statSync } from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ASSETS_DIR = path.resolve(
-  process.env.USD_ASSETS_DIR || '/mnt/nvme02/work/usd/assets'
-);
+const configuredAssetsDir = process.env.USD_ASSETS_DIR || process.env.USD_WG_ASSETS_DIR;
+if (!configuredAssetsDir) {
+  console.error('Set USD_ASSETS_DIR or USD_WG_ASSETS_DIR to a USD-WG assets checkout.');
+  process.exit(2);
+}
+const ASSETS_DIR = path.resolve(configuredAssetsDir);
 const OUT = path.resolve(__dirname, '..', 'src', 'usd-assets-manifest.js');
 
 // ── Category definitions ──

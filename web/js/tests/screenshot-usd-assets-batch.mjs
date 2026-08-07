@@ -4,10 +4,10 @@
 // Run from web/js:
 //   xvfb-run -a node tests/screenshot-usd-assets-batch.mjs --hw
 //   node tests/screenshot-usd-assets-batch.mjs --sw --limit 4
-//   node tests/screenshot-usd-assets-batch.mjs --remote-base https://raw.githubusercontent.com/usd-wg/assets/main/test_assets/
+//   node tests/screenshot-usd-assets-batch.mjs --remote-base https://raw.githubusercontent.com/usd-wg/assets/1b91f3c464891af259d51d9ee9ee9e6c357f7079/test_assets/
 //
 // Defaults:
-//   local assets root : /mnt/nvme02/work/usd/assets
+//   local assets root : USD_WG_ASSETS_DIR or --assets
 //   scan folder       : <assets>/test_assets (or --set full_assets)
 //   output            : tests/screenshots/usd-assets
 //   catalog           : catalog.png, 4 columns, 2500 px wide
@@ -21,13 +21,13 @@ import puppeteer from 'puppeteer';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WEB_JS_DIR = path.resolve(SCRIPT_DIR, '..');
-const DEFAULT_ASSETS = '/mnt/nvme02/work/usd/assets';
+const DEFAULT_ASSETS = process.env.USD_WG_ASSETS_DIR || '';
 const USD_EXTS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
 const SKIP_DIRS = new Set(['screenshots', 'screenshot', 'thumbnails', 'thumbnail', 'cards', 'card', '.git']);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const opts = {
-    assets: path.resolve(process.env.USD_WG_ASSETS_DIR || DEFAULT_ASSETS),
+    assets: DEFAULT_ASSETS ? path.resolve(DEFAULT_ASSETS) : '',
     testAssets: '',
     remoteBase: '',
     set: 'test_assets',
@@ -127,6 +127,9 @@ function testAssetsRoot(opts) {
 }
 
 function discoverLocalScenes(root, opts) {
+  if (!root || !fs.existsSync(root)) {
+    throw new Error('USD asset root is not configured; set USD_WG_ASSETS_DIR or pass --assets');
+  }
   const out = [];
   const walk = (dir) => {
     for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {

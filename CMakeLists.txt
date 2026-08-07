@@ -3518,9 +3518,9 @@ if(TINYUSDZ_BUILD_TESTS)
   # usd-wg asset corpus parse regression (native `tusdcat -l`).
   #
   # Runs the Node harness over the usd-wg/assets corpus (path from the
-  # USD_WG_ASSETS_DIR env var, else its built-in default). The harness SKIPS
-  # (exit 0) when the corpus or Node is absent, so this is safe in CI without
-  # the usd-wg/assets checkout. --max-fail 0 gates on the load baseline.
+  # USD_WG_ASSETS_DIR env var, else its built-in default). The repository
+  # verification harness supplies its prepared corpus explicitly. --max-fail
+  # 0 gates on the load baseline.
   #
   find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
   if(TINYUSDZ_NODE_EXECUTABLE AND TARGET tusdcat)

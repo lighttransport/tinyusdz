@@ -10,15 +10,15 @@ path cover every discovered primary Menagerie model.
 ## Setup
 
 ```bash
-cd web/js
-npm ci                         # or npm install for local development
-npm run test:setup             # explicit network step; clones the locked SHA
+# From the repository root: explicit network/setup step.
+scripts/verify.sh prepare --profile web
 ```
 
-The dataset is stored in ignored `web/js/.cache/mujoco_menagerie`. Set
-`MUJOCO_MENAGERIE` or `MENAGERIE_DIR` to use another checkout. The setup script
-detaches the checkout at `tests/fixtures/mujoco-menagerie.lock`; a moving branch
-is never used by the regression gate.
+The dataset is stored in the ignored root cache at
+`.cache/tinyusdz-verification/menagerie`. Set `MUJOCO_MENAGERIE` or
+`MENAGERIE_DIR` to use another checkout. The setup script detaches the checkout
+at `tests/fixtures/mujoco-menagerie.lock`; a moving branch is never used by the
+regression gate.
 
 Build both WASM modules before browser tests or after changing C++/WASM
 bindings:
@@ -31,14 +31,21 @@ This configures `web/build_ninja` for the combined legacy module and
 `web/build_next_ninja` for the next-only module, then writes the four generated
 artifacts under `web/js/src/tinyusdz/`.
 
-MuJoCo physics-only tests use `/path/to/mujoco/wasm/dist` by default for
-backward compatibility. Portable setups should set `MUJOCO_WASM_DIR`, or set
-`MUJOCO_PHYSICS_JS` and `MUJOCO_PHYSICS_WASM` directly.
+MuJoCo physics-only tests use the prepared cache when run through
+`scripts/verify.sh`. Direct runs should set `MUJOCO_WASM_DIR`, or set
+`MUJOCO_PHYSICS_JS` and `MUJOCO_PHYSICS_WASM` explicitly.
+
+For a focused update and smoke test:
+
+```bash
+scripts/verify.sh prepare --target mujoco-wasm
+scripts/verify.sh test --target mujoco-wasm
+```
 
 ## Commands
 
 ```bash
-npm test                       # complete gate, including all Menagerie models
+node tests/run-regression.mjs --profile full --software
 npm run test:node              # deterministic Node/WASM suites
 npm run test:physics           # fixture simulation + Menagerie CLI closure
 npm run test:browser           # conversion prerequisite + both browser paths
