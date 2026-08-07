@@ -311,8 +311,7 @@ class DemoApp {
         { label: 'Loading WASM module', run: () => this.loader.init({
           useZstdCompressedWasm: false,
           useMemory64: false,
-          backend: this.params.backend,
-          useNextOnlyWasm: this.params.backend === 'next'
+          backend: this.params.backend
         })},
       ]);
     } catch (e) {

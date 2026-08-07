@@ -1,6 +1,6 @@
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 import { parseUSDZEntries } from '../usdzconvert.js';
-import { markOwnedFloat32Array } from './TypedArrayOwnership.js';
+import { copyWasmArray, markOwnedFloat32Array } from './TypedArrayOwnership.js';
 
 // tinyusdz module are dynamically imported at TinyUSDZLoader
 
@@ -136,19 +136,6 @@ class FetchAssetResolver {
         this.assetCache.clear();
     }
 
-}
-
-function nextHeapView(native, desc) {
-    const buf = native.HEAPU8.buffer;
-    const ptr = Number(desc.ptr);
-    const n = desc.length;
-    switch (desc.dtype) {
-        case 'f32': return new Float32Array(buf, ptr, n);
-        case 'u32': return new Uint32Array(buf, ptr, n);
-        case 'i32': return new Int32Array(buf, ptr, n);
-        case 'u16': return new Uint16Array(buf, ptr, n);
-        default: return new Uint8Array(buf, ptr, desc.byteLength);
-    }
 }
 
 function nextAnimationFrame() {
@@ -817,8 +804,7 @@ export class NextRenderSceneAdapter {
     static _copyAnimationView(native, animation) {
         const copyFloat = (value, label) => {
             if (value && Number.isFinite(value.ptr) && Number.isFinite(value.length)) {
-                return markOwnedFloat32Array(
-                    new Float32Array(nextHeapView(native, value)), label);
+                return copyWasmArray(native, value, Float32Array, label);
             }
             return markOwnedFloat32Array(new Float32Array(value || []), label);
         };
@@ -873,7 +859,7 @@ export class NextRenderSceneAdapter {
     }
 
     static _copyMesh(native, mesh, index) {
-        const copy = (desc, Type) => desc && desc.length ? new Type(nextHeapView(native, desc)) : null;
+        const copy = (desc, Type) => copyWasmArray(native, desc, Type);
         const normalizeMaterial = (source) => {
             const material = source || {};
             const texturePaths = {
@@ -971,7 +957,7 @@ export class NextRenderSceneAdapter {
     }
 
     static _copyPoints(native, points, index) {
-        const copy = (desc, Type) => desc && desc.length ? new Type(nextHeapView(native, desc)) : null;
+        const copy = (desc, Type) => copyWasmArray(native, desc, Type);
         return {
             index,
             name: points.name || `points_${index}`,
@@ -988,7 +974,7 @@ export class NextRenderSceneAdapter {
     }
 
     static _copyCurves(native, curves, index) {
-        const copy = (desc, Type) => desc && desc.length ? new Type(nextHeapView(native, desc)) : null;
+        const copy = (desc, Type) => copyWasmArray(native, desc, Type);
         return {
             index,
             name: curves.name || `curves_${index}`,
@@ -1492,10 +1478,6 @@ export class NextRenderSceneAdapter {
     }
 }
 
-// TODO
-//
-// Polish API
-//
 class TinyUSDZLoader extends Loader {
 
     /**
@@ -1510,12 +1492,20 @@ class TinyUSDZLoader extends Loader {
      * @param {Function} options.onTinyUSDZDebug - Callback for native debug events ({phase, heapBytes, detail, ...}) => void
      * @param {boolean} options.debugMemory - Print native heap debug events to console
      * @param {boolean} options.suppressNativeInfoLogs - Drop native [INFO] stdout logs
+     * @param {'next'|'legacy'|'auto'} options.backend - WASM/render backend;
+     *   next is the default, legacy is the compatibility path, and auto
+     *   probes next APIs before falling back when a combined module is used.
      */
     constructor(manager, options = {}) {
         super(manager);
 
         this.native_ = null;
         this.nextOnlyNative_ = false;
+        // The published loader is next-first. Applications that need the
+        // mature legacy conversion path can select backend: 'legacy'.
+        this.backend_ = ['legacy', 'next', 'auto'].includes(options.backend)
+            ? options.backend
+            : 'next';
 
         this.assetResolver_ = null;
 
@@ -1703,12 +1693,20 @@ class TinyUSDZLoader extends Loader {
     // This is async but the load() method handles it internally with promises
     async init( options = {}) {
 
+        if (options.backend === 'legacy' || options.backend === 'next' || options.backend === 'auto') {
+          this.backend_ = options.backend;
+        }
+
         if (Object.prototype.hasOwnProperty.call(options, 'useZstdCompressedWasm')) {
           this.useZstdCompressedWasm_ = options.useZstdCompressedWasm;
         }
 
         if (Object.prototype.hasOwnProperty.call(options, 'useMemory64')) {
           this.useMemory64_ = options.useMemory64;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(options, 'useNextOnlyWasm')) {
+            console.warn('[TinyUSDZLoader] useNextOnlyWasm is deprecated; use backend: \'next\'.');
         }
 
         if (!this.native_) {
@@ -1736,15 +1734,24 @@ class TinyUSDZLoader extends Loader {
             // lets demos switch backends at runtime without a stale
             // `backend=next` URL forcing every newly-created loader to use the
             // next-only module.
-            const backendWantsNext = options.backend !== undefined
-                ? options.backend === 'next'
-                : getParam("backend") === "next";
+            const queryBackend = getParam("backend");
+            if (wasmParam || getParam("nextWasm") === "true") {
+                console.warn('[TinyUSDZLoader] wasm/nextWasm URL aliases are deprecated; use backend: \'next\' or \'legacy\'.');
+            }
+            const requestedBackend = options.backend || queryBackend ||
+                (wasmParam === 'legacy' ? 'legacy' : this.backend_);
+            if (!options.backend && !queryBackend && wasmParam === 'legacy') {
+                this.backend_ = 'legacy';
+            }
+            const backendWantsNext = requestedBackend === 'next';
             const use_next_only_wasm = wasmParam === "legacy"
                 ? false
-                : (options.useNextOnlyWasm === true ||
-                   wasmParam === "next" ||
-                   getParam("nextWasm") === "true" ||
-                   backendWantsNext);
+                : (options.backend === 'legacy' || queryBackend === 'legacy'
+                    ? false
+                    : (options.useNextOnlyWasm === true ||
+                       wasmParam === "next" ||
+                       getParam("nextWasm") === "true" ||
+                       backendWantsNext));
 
 
             let initTinyUSDZNative = null;
@@ -1791,7 +1798,10 @@ class TinyUSDZLoader extends Loader {
 
             if (this.useZstdCompressedWasm_) {
                 // Load and decompress zstd compressed WASM
-                wasmBinary = await this.decompressZstdWasm(use_memory64 ? this.compressedWasm64Path_ : this.compressedWasmPath_);
+                const compressedName = use_next_only_wasm
+                    ? (use_memory64 ? 'tinyusdz_next_64.wasm.zst' : 'tinyusdz_next.wasm.zst')
+                    : (use_memory64 ? this.compressedWasm64Path_ : this.compressedWasmPath_);
+                wasmBinary = await this.decompressZstdWasm(compressedName);
 
             }
 
@@ -2046,14 +2056,6 @@ class TinyUSDZLoader extends Loader {
         }
     }
 
-    // TODO: remove
-    // Set AssetResolver callback.
-    // This is used to resolve asset paths(e.g. textures, usd files) in the USD.
-    // For web app, usually we'll convert asset path to URI
-    //setAssetResolver(callback) {
-    //    this.assetResolver_ = callback;
-    //}
-
     /**
      * Create a progress event object (GLTFLoader compatible + extended)
      * @private
@@ -2214,7 +2216,7 @@ class TinyUSDZLoader extends Loader {
             _onError(new Error('TinyUSDZLoader: Native module is not initialized.'));
         }
 
-        const backend = options.backend || 'legacy';
+        const backend = options.backend || this.backend_ || 'next';
         if (this.nextOnlyNative_ && backend !== 'next' && backend !== 'auto') {
             _onError(new Error('TinyUSDZLoader: next-only WASM module supports backend=next only.'));
             return;
@@ -2477,12 +2479,13 @@ class TinyUSDZLoader extends Loader {
         // backend=next (or a next-only module, which has no legacy
         // TinyUSDZLoaderNative) routes through the promise-based parse path,
         // which already dispatches to NextRenderSceneAdapter.
-        const wantsNext = options.backend === 'next' || options.backend === 'auto';
+        const requestedBackend = options.backend || this.backend_ || 'next';
+        const wantsNext = requestedBackend === 'next' || requestedBackend === 'auto';
         if (wantsNext || this.nextOnlyNative_ ||
             typeof this.native_.TinyUSDZLoaderNative !== 'function') {
             const backendOptions = {
                 ...options,
-                backend: options.backend || (this.nextOnlyNative_ ? 'next' : 'legacy')
+                backend: options.backend || (this.nextOnlyNative_ ? 'next' : this.backend_)
             };
             return new Promise((resolve, reject) => {
                 this.parse(binary, filePath, resolve, reject, backendOptions);

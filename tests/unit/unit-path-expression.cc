@@ -14,6 +14,7 @@
 #include "tydra/attribute-eval.hh"
 #include "usdc-writer.hh"
 
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -699,6 +700,14 @@ void path_expression_predicate_library_test(void) {
 // ---------------------------------------------------------------------------
 namespace {
 std::string PEFixture(const std::string &rel) {
+  if (const char *root = std::getenv("TINYUSDZ_TEST_FIXTURE_DIR")) {
+    if (*root != '\0') {
+      const std::string candidate = std::string(root) + "/" + rel;
+      std::ifstream f(candidate, std::ios::binary);
+      if (f.good()) return candidate;
+    }
+  }
+
   // Tests may run from the repo root or from build/.
   const char *prefixes[] = {"", "../", "../../"};
   for (const char *p : prefixes) {

@@ -90,6 +90,8 @@ option(TINYUSDZ_ENABLE_THREAD "Enable optional std::thread parallel paths (defau
 option(TINYUSDZ_MSAN "Build with MSAN support(for developer only)" OFF)
 option(TINYUSDZ_WITH_C_API "Enable C API." ${TINYUSDZ_DEFAULT_WITH_C_API})
 option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
+set(TINYUSDZ_TEST_FIXTURE_DIR "${PROJECT_SOURCE_DIR}" CACHE PATH
+    "Root directory used to resolve relative C++ test fixtures")
 option(TINYUSDZ_BUILD_BENCHMARKS
        "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
 option(TINYUSDZ_BUILD_EXAMPLES

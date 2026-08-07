@@ -43,8 +43,8 @@ add_library(tydra_next STATIC
 # Link to tinyusdz_next
 target_link_libraries(tydra_next PUBLIC tinyusdz_next)
 
-# Set C++14 standard
-target_compile_features(tydra_next PUBLIC cxx_std_14)
+# Keep Tydra-next on the repository C++17 baseline.
+target_compile_features(tydra_next PUBLIC cxx_std_17)
 
 # Set include directories
 target_include_directories(tydra_next PUBLIC

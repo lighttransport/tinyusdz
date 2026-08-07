@@ -49,3 +49,24 @@ export function toOwnedUint32Array(data, label = 'data') {
   if (isOwnedUint32Array(data)) return data;
   return markOwnedUint32Array(new Uint32Array(data), label);
 }
+
+/**
+ * Copy a descriptor-backed array while the native module is still alive.
+ * The returned array owns its storage and remains valid after a native scene
+ * or RenderStream is ended. The descriptor view itself must never escape this
+ * function.
+ */
+export function copyWasmArray(module, desc, Type, label = 'WASM array') {
+  if (!desc || !Number.isFinite(desc.ptr) || !Number.isFinite(desc.length) ||
+      desc.length <= 0) {
+    return null;
+  }
+  if (!module?.HEAPU8?.buffer) {
+    throw new Error(`${label}: native module heap is unavailable`);
+  }
+  const view = new Type(module.HEAPU8.buffer, Number(desc.ptr), Number(desc.length));
+  const copy = new Type(view);
+  if (Type === Float32Array) return markOwnedFloat32Array(copy, label);
+  if (Type === Uint32Array) return markOwnedUint32Array(copy, label);
+  return copy;
+}

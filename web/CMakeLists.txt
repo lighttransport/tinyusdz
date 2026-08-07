@@ -12,22 +12,40 @@ option(TINYUSDZ_WASM_DEBUG "Enable WASM debug mode with source maps and assertio
 option(TINYUSDZ_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
 option(TINYUSDZ_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
 option(TINYUSDZ_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
-option(TINYUSDZ_WASM_NEXT_ONLY "Build next-core + tydra-next only WASM module as tinyusdz_next" OFF)
-option(TINYUSDZ_WASM_LEGACY_ONLY "Build the tinyusdz WASM module WITHOUT the next core (legacy loader only; drops nextFlatten*/RenderStream APIs)" OFF)
+set(TINYUSDZ_WASM_PRODUCT "legacy" CACHE STRING
+    "WASM product to build: legacy, next, or combined (combined is compatibility-only)")
+set_property(CACHE TINYUSDZ_WASM_PRODUCT PROPERTY STRINGS legacy next combined)
 
+# Keep the historical switches as compatibility aliases for existing build
+# scripts. New callers should select the product explicitly.
+option(TINYUSDZ_WASM_NEXT_ONLY "Deprecated alias for TINYUSDZ_WASM_PRODUCT=next" OFF)
+option(TINYUSDZ_WASM_LEGACY_ONLY "Deprecated alias for TINYUSDZ_WASM_PRODUCT=legacy" OFF)
 if (TINYUSDZ_WASM_NEXT_ONLY)
+  set(TINYUSDZ_WASM_PRODUCT "next")
+  message(DEPRECATION "TINYUSDZ_WASM_NEXT_ONLY is deprecated; use -DTINYUSDZ_WASM_PRODUCT=next")
+elseif (TINYUSDZ_WASM_LEGACY_ONLY)
+  set(TINYUSDZ_WASM_PRODUCT "legacy")
+  message(DEPRECATION "TINYUSDZ_WASM_LEGACY_ONLY is deprecated; use -DTINYUSDZ_WASM_PRODUCT=legacy")
+endif()
+
+if (NOT TINYUSDZ_WASM_PRODUCT STREQUAL "legacy" AND
+    NOT TINYUSDZ_WASM_PRODUCT STREQUAL "next" AND
+    NOT TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
+  message(FATAL_ERROR
+    "TINYUSDZ_WASM_PRODUCT must be legacy, next, or combined (got '${TINYUSDZ_WASM_PRODUCT}')")
+endif()
+
+if (TINYUSDZ_WASM_PRODUCT STREQUAL "next")
   if (TINYUSDZ_WASM64)
     set(BUILD_TARGET "tinyusdz_next_64")
   else()
     set(BUILD_TARGET "tinyusdz_next")
   endif()
-elseif (TINYUSDZ_WASM_LEGACY_ONLY)
-  # Distinct module name so the stripped variant never clobbers the default
-  # legacy+next tinyusdz.js/wasm output.
+elseif (TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
   if (TINYUSDZ_WASM64)
-    set(BUILD_TARGET "tinyusdz_legacy_64")
+    set(BUILD_TARGET "tinyusdz_combined_64")
   else()
-    set(BUILD_TARGET "tinyusdz_legacy")
+    set(BUILD_TARGET "tinyusdz_combined")
   endif()
 elseif (TINYUSDZ_WASM64)
   set(BUILD_TARGET "tinyusdz_64")
@@ -87,7 +105,7 @@ endif()
 # every fixture through both the legacy and next backends. It is a host-side
 # Node/Puppeteer test even though this project is configured through emcmake.
 if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
-    NOT TINYUSDZ_WASM_NEXT_ONLY AND NOT TINYUSDZ_WASM_LEGACY_ONLY)
+    TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
   find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
   find_program(TINYUSDZ_CHROME_EXECUTABLE
                NAMES google-chrome-stable google-chrome chromium chromium-browser)
@@ -283,7 +301,7 @@ endif()
 # browser-threading build option opts into it.
 set(TINYUSDZ_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
 
-if (TINYUSDZ_WASM_NEXT_ONLY)
+if (TINYUSDZ_WASM_PRODUCT STREQUAL "next")
   message(STATUS "TinyUSDZ WASM: building next-core + tydra-next only module")
   set(TINYUSDZ_CXX_RTTI OFF CACHE BOOL "Disable RTTI in next/tydra-next libs" FORCE)
   set(TINYUSDZ_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in next/tydra-next libs" FORCE)
@@ -438,11 +456,9 @@ list(
   SOURCES
   binding.cc
 )
-# Default module = legacy + next (nextFlatten* lazy pipeline + RenderStream).
-# TINYUSDZ_WASM_LEGACY_ONLY=ON strips the next core: NEXT_SOURCES are not
-# compiled and binding.cc's next-dependent APIs compile out (guarded by
-# TINYUSDZ_WASM_WITH_NEXT).
-if (NOT TINYUSDZ_WASM_LEGACY_ONLY)
+# The legacy product deliberately excludes the next core. The combined product
+# remains available for compatibility testing, but is not the shipped default.
+if (TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
   list(APPEND SOURCES ${NEXT_SOURCES})
 endif()
 
@@ -459,7 +475,7 @@ target_compile_definitions(${BUILD_TARGET}
                                    TINYUSDZ_CXX_EXCEPTIONS=0
                                    TINYUSDZ_CXX_RTTI=0
                                    EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
-if (NOT TINYUSDZ_WASM_LEGACY_ONLY)
+if (TINYUSDZ_WASM_PRODUCT STREQUAL "combined")
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_WITH_NEXT=1)
 endif()
 if (TINYUSDZ_WASM64)

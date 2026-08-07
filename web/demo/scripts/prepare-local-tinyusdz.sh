@@ -26,11 +26,11 @@ configure_build() {
 }
 
 configure_build "${LEGACY_BUILD_DIR}" tinyusdz \
-  -DTINYUSDZ_WASM_NEXT_ONLY=OFF \
+  -DTINYUSDZ_WASM_PRODUCT=legacy \
   -DTINYUSDZ_WASM_DEMODEV=OFF \
   -DTINYUSDZ_WASM64=OFF
 configure_build "${NEXT_BUILD_DIR}" tinyusdz_next_wasm \
-  -DTINYUSDZ_WASM_NEXT_ONLY=ON \
+  -DTINYUSDZ_WASM_PRODUCT=next \
   -DTINYUSDZ_WASM_DEMODEV=OFF \
   -DTINYUSDZ_WASM64=OFF
 

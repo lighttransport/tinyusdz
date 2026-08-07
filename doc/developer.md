@@ -103,10 +103,10 @@ Four WASM variants (Emscripten SDK 4.0.9), then packages all of them:
 
 | Variant | CMake dir | Flags |
 |---|---|---|
-| WASM32 full | `web/cmake-build` | — |
-| WASM64 full | `web/cmake-build64` | `-DTINYUSDZ_WASM64=1` |
-| WASM32 next-only | `web/cmake-build-next` | `-DTINYUSDZ_WASM_NEXT_ONLY=1` |
-| WASM64 next-only | `web/cmake-build-next64` | `-DTINYUSDZ_WASM_NEXT_ONLY=1 -DTINYUSDZ_WASM64=1` |
+| WASM32 legacy | `web/cmake-build` | `-DTINYUSDZ_WASM_PRODUCT=legacy` |
+| WASM64 legacy | `web/cmake-build64` | `-DTINYUSDZ_WASM_PRODUCT=legacy -DTINYUSDZ_WASM64=1` |
+| WASM32 next | `web/cmake-build-next` | `-DTINYUSDZ_WASM_PRODUCT=next` |
+| WASM64 next | `web/cmake-build-next64` | `-DTINYUSDZ_WASM_PRODUCT=next -DTINYUSDZ_WASM64=1` |
 
 Gates before publish:
 

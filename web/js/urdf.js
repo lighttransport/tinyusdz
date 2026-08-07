@@ -561,8 +561,7 @@ async function ensureTinyLoader() {
       initOptions: {
         useZstdCompressedWasm: false,
         useMemory64: false,
-        backend: state.settings.backend,
-        useNextOnlyWasm: state.settings.backend === 'next'
+        backend: state.settings.backend
       }
     });
     TinyUSDZLoaderUtils.setTinyUSDZ(state.tinyLoader.native_);

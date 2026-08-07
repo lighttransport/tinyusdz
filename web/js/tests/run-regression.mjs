@@ -25,6 +25,7 @@ const NODE_TESTS = [
   ['usdcat CLI helpers', 'tests/usdcat-cli.test.mjs'],
   ['URDF/MJCF CLI', 'tests/urdf-to-usd-cli.test.mjs'],
   ['loader fast materials', 'tests/loader-utils-fast-materials.mjs'],
+  ['typed array ownership', 'tests/typed-array-ownership.test.mjs'],
   ['texture compression loader', 'tests/loader-utils-texture-compression.mjs'],
   ['Basis/KTX2 loader', 'tests/loader-utils-basis-ktx2.mjs'],
   ['texture compression WASM ABI', 'tests/texture-compression-wasm.mjs'],

@@ -9,6 +9,10 @@ export function getBackendFromURL(params = new URLSearchParams(window.location.s
 
 export const LOADER_BACKEND_CHOICES = ['legacy', 'next', 'auto'];
 
+export function normalizeBackend(value, fallback = 'legacy') {
+  return LOADER_BACKEND_CHOICES.includes(value) ? value : fallback;
+}
+
 /**
  * Rewrite ?backend= in the page URL and reload.
  *
@@ -18,7 +22,7 @@ export const LOADER_BACKEND_CHOICES = ['legacy', 'next', 'auto'];
  * chosen for the previous backend.
  */
 export function setBackendAndReload(backend) {
-  const value = LOADER_BACKEND_CHOICES.includes(backend) ? backend : 'legacy';
+  const value = normalizeBackend(backend);
   const url = new URL(window.location.href);
   url.searchParams.set('backend', value);
   window.location.href = url.toString();
@@ -116,7 +120,10 @@ export function applySkinningLoaderOptions(loader, options = {}) {
 export async function createConfiguredTinyUSDZLoader(options = {}) {
   const initOptions = options.initOptions || {
     useZstdCompressedWasm: false,
-    useMemory64: false
+    useMemory64: false,
+    // Demo and CLI helpers retain their historical legacy default. The
+    // public TinyUSDZLoader constructor itself is next-first.
+    backend: options.backend || 'legacy'
   };
   const skinningOptions = options.skinningOptions || {};
 

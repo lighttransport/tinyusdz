@@ -115,7 +115,7 @@ assert.equal(require.resolve('tinyusdz/tinyusdz_next_64.wasm').endsWith('tinyusd
 assert.equal(require.resolve('tinyusdz/tinyusdz_next_64.wasm.zst').endsWith('tinyusdz_next_64.wasm.zst'), true);
 
 // Instantiate the lean next-only modules (wasm32 + wasm64) and check the
-// embind API surface used by TinyUSDZLoader({ next: true }).
+// embind API surface used by the next-first TinyUSDZLoader.
 for (const nextModule of ['tinyusdz/tinyusdz_next.js', 'tinyusdz/tinyusdz_next_64.js']) {
   const factory = (await import(nextModule)).default;
   assert.equal(typeof factory, 'function', nextModule + ' default export is a module factory');
@@ -123,6 +123,17 @@ for (const nextModule of ['tinyusdz/tinyusdz_next.js', 'tinyusdz/tinyusdz_next_6
   for (const api of ['NextUSDZConverterNative', 'NextFlattenSession', 'RenderStream']) {
     assert.equal(typeof instance[api], 'function', nextModule + ' exposes ' + api);
   }
+}
+
+// The default tinyusdz product is the explicit legacy-compatible module.
+for (const legacyModule of ['tinyusdz/tinyusdz.js', 'tinyusdz/tinyusdz_64.js']) {
+  const factory = (await import(legacyModule)).default;
+  assert.equal(typeof factory, 'function', legacyModule + ' default export is a module factory');
+  const instance = await factory();
+  assert.equal(typeof instance.TinyUSDZLoaderNative, 'function',
+    legacyModule + ' exposes the legacy loader');
+  assert.equal(typeof instance.NextUSDZConverterNative, 'undefined',
+    legacyModule + ' must not silently include the next-only converter');
 }
 `;
 

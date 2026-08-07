@@ -115,7 +115,7 @@ See [doc/tydra-tangent.md](../../doc/tydra-tangent.md) for details.
 * [doc/threejs.md](../../doc/threejs.md) - Three.js animation and material integration
 * [doc/memory-and-performance.md](../../doc/memory-and-performance.md) - Memory profiling and optimization
 
-## TODO
+## Remaining work
 
 - Data structure suited for realtime DCC.
 - Data structure suited for Ray tracing
@@ -126,4 +126,6 @@ See [doc/tydra-tangent.md](../../doc/tydra-tangent.md) for details.
 - Keep current Tydra and `tydra/next` render extraction behavior aligned for
   material, texture, skeleton, and animation data.
 
-EoL.
+The maintained next-core and Tydra-next API documentation is in
+[`doc/tinyusdz-next.md`](../../doc/tinyusdz-next.md). This README describes
+the established legacy RenderScene API; it is not a release checklist.
