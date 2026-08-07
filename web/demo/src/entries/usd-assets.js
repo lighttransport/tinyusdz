@@ -3,7 +3,7 @@ import { renderHttpUSD } from 'tinyusdz-js/http-asset-resolver.js';
 import { ASSETS, CATEGORIES } from '../usd-assets-manifest.js';
 import { Report } from '../app-report.js';
 
-const GITHUB_RAW = 'https://raw.githubusercontent.com/usd-wg/assets/main/';
+const GITHUB_RAW = 'https://raw.githubusercontent.com/usd-wg/assets/1b91f3c464891af259d51d9ee9ee9e6c357f7079/';
 
 function assetUrl(a) { return GITHUB_RAW + a.repoPath + '/' + a.filename; }
 function thumbnailUrl(a) { return GITHUB_RAW + a.repoPath + '/thumbnails/' + a.id + '.png'; }

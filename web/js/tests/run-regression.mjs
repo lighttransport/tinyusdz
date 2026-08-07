@@ -182,7 +182,7 @@ async function runPhysics(results, opts) {
   if (!fs.existsSync(opts.menagerie)) {
     results.push({
       label: 'Menagerie setup', ok: false, code: 2,
-      error: `missing ${opts.menagerie}; run ./setup-mujoco-menagerie.sh`,
+      error: `missing ${opts.menagerie}; run ./setup-mujoco-menagerie.sh --cache-dir "${opts.menagerie}"`,
     });
     return;
   }
@@ -215,7 +215,7 @@ async function runBrowserTests(results, opts) {
   if (!fs.existsSync(opts.menagerie)) {
     results.push({
       label: 'Browser dataset setup', ok: false, code: 2,
-      error: `missing ${opts.menagerie}; run ./setup-mujoco-menagerie.sh`,
+      error: `missing ${opts.menagerie}; run ./setup-mujoco-menagerie.sh --cache-dir "${opts.menagerie}"`,
     });
     return;
   }

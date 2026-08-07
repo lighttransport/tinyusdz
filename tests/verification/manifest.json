@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "cache_dir": ".cache/tinyusdz-verification",
+  "toolchain": {
+    "node": "v24.7.0",
+    "emscripten": "4.0.9"
+  },
+  "repositories": {
+    "mujoco": {
+      "url": "https://github.com/lighttransport/mujoco.git",
+      "ref": "bf2a1d642a45b372e43b6f9f6f220d649db22446"
+    },
+    "menagerie": {
+      "url": "https://github.com/google-deepmind/mujoco_menagerie.git",
+      "ref": "71f066ad0be9cd271f7ed58c030243ef157af9f4"
+    },
+    "usd_assets": {
+      "url": "https://github.com/usd-wg/assets.git",
+      "ref": "1b91f3c464891af259d51d9ee9ee9e6c357f7079"
+    },
+    "openusd": {
+      "url": "https://github.com/lighttransport/openusd.git",
+      "upstream": "https://github.com/PixarAnimationStudios/OpenUSD.git",
+      "ref": "v26.05"
+    }
+  }
+}

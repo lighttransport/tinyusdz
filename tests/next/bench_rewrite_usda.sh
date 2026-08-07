@@ -15,8 +15,8 @@
 #   tests/next/bench_rewrite_usda.sh [--bin <next_usdcat>] [--tmp <dir>]
 #                                    [--threads N] [--keep] [--no-idem] [scene ...]
 #
-# Scenes default to: house island caldera. The private scene path comes from the
-# HOUSE_USD env var (path is never hard-coded here).
+# Scenes default to: house island caldera. External scene paths come from
+# HOUSE_USD, ISLAND_USD, and CALDERA_USD; none are hard-coded here.
 set -u
 
 BIN="${BIN:-build_next_thr/next_usdcat}"
@@ -29,8 +29,8 @@ SCENES=()
 # scene -> "root_input_path" (flattened to $TMP/<scene>.usda as the workload).
 declare -A SCENE_INPUT=(
   [house]="${HOUSE_USD:-}"
-  [island]="/mnt/nvme02/data/island/usd/island.usda"
-  [caldera]="/mnt/nvme02/data/caldera/caldera.usda"
+  [island]="${ISLAND_USD:-}"
+  [caldera]="${CALDERA_USD:-}"
 )
 
 while [ $# -gt 0 ]; do

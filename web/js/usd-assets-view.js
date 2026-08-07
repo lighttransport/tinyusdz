@@ -8,7 +8,7 @@ import { StreamingUSDRenderer } from './streaming.js';
 import { renderHttpUSD } from './http-asset-resolver.js';
 import { getBackendFromURL } from './src/tinyusdz/LoaderConfigUtils.js';
 
-const DEFAULT_URL = '/@fs/mnt/nvme02/work/usd/assets/test_assets/AlphaBlendModeTest/AlphaBlendModeTest.usd';
+const DEFAULT_URL = './assets/suzanne.usdc';
 const DEFAULT_CAMERA = {
   az: Math.PI,
   el: 0.26,

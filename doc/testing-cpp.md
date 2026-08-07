@@ -13,6 +13,51 @@ The C++ test infrastructure is split into four layers:
 
 Core functionality is tested by the parser, reader, writer, composition, and crate-writer coverage. Tydra is covered in both the Acutest suite and the manual `tydra_to_renderscene` corpus runner.
 
+## Reproducible verification entrypoint
+
+The repository-wide harness is `scripts/verify.sh`. Preparation downloads only
+the pinned external inputs from `tests/verification/manifest.json` into the
+ignored `.cache/tinyusdz-verification/` directory. Test actions do not fetch
+or update dependencies; use `--offline` to enforce that contract.
+
+```bash
+scripts/verify.sh doctor --profile native
+scripts/verify.sh prepare --profile full
+scripts/verify.sh test --profile full --software
+scripts/verify.sh test --profile full --offline --software
+
+# Focused dependency/test slices:
+scripts/verify.sh prepare --target mujoco-wasm
+scripts/verify.sh test --target mujoco-wasm
+scripts/verify.sh prepare --target menagerie --offline
+scripts/verify.sh test --target web-physics --software
+```
+
+Profiles are `native`, `next`, `web`, `oracle`, `assets`, `gpu`, and `full`.
+The `gpu` profile is opt-in. Private large-scene inputs remain opt-in and are
+not part of the reproducible public `full` profile. Each action writes a JSON
+report under the ignored verification cache.
+
+Standalone corpus runners accept explicit executable paths and return non-zero
+when any input fails:
+
+```bash
+python3 tests/parse_usd/runner.py tests/usda --app build/tusdcat
+python3 tests/tydra_to_renderscene/runner.py models --app build/tydra_to_renderscene
+```
+
+Preparation scripts also support partial operation:
+
+```bash
+scripts/prepare-mujoco-wasm.sh --checkout-only
+scripts/prepare-mujoco-wasm.sh --build-only --offline
+scripts/prepare-usd-assets.sh --checkout-only
+```
+
+`--checkout-only` updates and pins a dependency without building it. MuJoCo's
+`--build-only` requires an existing checkout and rebuilds the pinned revision
+without fetching.
+
 ## Build
 
 Configure the native build with tests enabled:
@@ -106,11 +151,10 @@ refresh the local `ref/openusd` checkout on OpenUSD v26.05 without building
 `usdcat`; use `OPENUSD_FETCH=0` to skip network fetches when the ref is already
 present locally, and `scripts/build-openusd-usdcat.sh --full` when you need a full
 OpenUSD release build rather than the default minimal usdcat/tool install. The
-comparison script falls back to a sibling
-`../OpenUSD/dist/bin/usdcat` and then `~/local/USD/dist/bin/usdcat` when the
-repo-local install is not present, but full regression results should use v26.05
-unless a test intentionally targets another OpenUSD release. Set `USDCAT_PATH`
-explicitly when needed.
+comparison script also recognizes a sibling `../OpenUSD/dist/bin/usdcat` when
+the repo-local install is not present, but full regression results should use
+v26.05 unless a test intentionally targets another OpenUSD release. Set
+`USDCAT_PATH` explicitly when needed.
 
 The comparison runner writes detailed logs to `tests/comparison-results/` and
 prints a failure/warning summary. It continues across individual files so one

@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EMSDK_DIR="${SCRIPT_DIR}/.emsdk"
 EMSDK_VERSION="${EMSDK_VERSION:-4.0.9}"
 EMSDK_REPO_URL="${EMSDK_REPO_URL:-https://github.com/emscripten-core/emsdk.git}"
+EMSDK_REF="${EMSDK_REF:-${EMSDK_VERSION}}"
+OFFLINE="${TINYUSDZ_VERIFY_OFFLINE:-0}"
 LOCAL_NODE="${SCRIPT_DIR}/.nodejs/current/bin/node"
 
 source "${SCRIPT_DIR}/setup-nodejs.sh"
@@ -16,11 +18,21 @@ if [[ ! -x "${LOCAL_NODE}" ]]; then
 fi
 
 if [[ ! -d "${EMSDK_DIR}/.git" ]]; then
+  [[ "${OFFLINE}" == 1 ]] && { echo "offline: missing emsdk checkout ${EMSDK_DIR}" >&2; exit 2; }
   echo "[download-emsdk] Cloning ${EMSDK_REPO_URL} into ${EMSDK_DIR}"
   git clone "${EMSDK_REPO_URL}" "${EMSDK_DIR}"
 else
   echo "[download-emsdk] Reusing ${EMSDK_DIR}"
 fi
+
+if [[ "${OFFLINE}" != 1 ]]; then
+  git -C "${EMSDK_DIR}" fetch --tags --quiet origin "${EMSDK_REF}"
+fi
+if ! git -C "${EMSDK_DIR}" cat-file -e "${EMSDK_REF}^{commit}" 2>/dev/null; then
+  echo "error: emsdk revision is not cached: ${EMSDK_REF}" >&2
+  exit 2
+fi
+git -C "${EMSDK_DIR}" checkout --quiet --detach "${EMSDK_REF}"
 
 pushd "${EMSDK_DIR}" >/dev/null
 

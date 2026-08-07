@@ -20,16 +20,17 @@ static int pass_count = 0;
 #define FAIL(msg) do { printf("FAIL: %s\n", msg); } while(0)
 #define SKIP(msg) do { printf("SKIP: %s\n", msg); } while(0)
 
-static const char* kDefaultUsdcatPath = "/home/syoyo/local/USD/dist/bin/usdcat";
-
 static std::string GetUsdcatPath() {
   const char* env = std::getenv("USDCAT_PATH");
   if (env && env[0] != '\0') return std::string(env);
-  return std::string(kDefaultUsdcatPath);
+  return std::string("usdcat");
 }
 
 static bool HasUsdcat() {
   const std::string path = GetUsdcatPath();
+  if (path == "usdcat") {
+    return std::system("command -v usdcat >/dev/null 2>&1") == 0;
+  }
   FILE* f = fopen(path.c_str(), "rb");
   if (f) { fclose(f); return true; }
   return false;

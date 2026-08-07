@@ -16,7 +16,7 @@ import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DEFAULT_ASSETS = '/mnt/nvme02/work/usd/assets';
+const DEFAULT_ASSETS = process.env.USD_WG_ASSETS_DIR || '';
 const EXTS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
 
 function parseArgs(argv) {

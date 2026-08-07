@@ -25,8 +25,11 @@ configure_build() {
   cmake --build "${build_dir}" --target "${target}" --parallel "${JOBS}"
 }
 
-configure_build "${LEGACY_BUILD_DIR}" tinyusdz \
-  -DTINYUSDZ_WASM_PRODUCT=legacy \
+# The default browser module is the combined product: the web regression suite
+# exercises both legacy and next APIs through the same TinyUSDZLoader instance.
+# Keep the next-only module separate for backend-specific tests.
+configure_build "${LEGACY_BUILD_DIR}" tinyusdz_combined \
+  -DTINYUSDZ_WASM_PRODUCT=combined \
   -DTINYUSDZ_WASM_DEMODEV=OFF \
   -DTINYUSDZ_WASM64=OFF
 configure_build "${NEXT_BUILD_DIR}" tinyusdz_next_wasm \
@@ -34,9 +37,26 @@ configure_build "${NEXT_BUILD_DIR}" tinyusdz_next_wasm \
   -DTINYUSDZ_WASM_DEMODEV=OFF \
   -DTINYUSDZ_WASM64=OFF
 
-for artifact in tinyusdz.js tinyusdz.wasm tinyusdz_next.js tinyusdz_next.wasm; do
+for artifact in tinyusdz_combined.js tinyusdz_combined.wasm tinyusdz_next.js tinyusdz_next.wasm; do
   if [[ ! -f "${WEB_DIR}/js/src/tinyusdz/${artifact}" ]]; then
     echo "error: local TinyUSDZ build did not produce ${artifact}." >&2
+    exit 1
+  fi
+done
+
+# The combined CMake target has a descriptive output name, while the browser
+# loader's stable entrypoint is tinyusdz.js. Rewrite only the generated glue's
+# adjacent WASM filename; both generated files remain ignored build artifacts.
+cp -f "${WEB_DIR}/js/src/tinyusdz/tinyusdz_combined.wasm" \
+  "${WEB_DIR}/js/src/tinyusdz/tinyusdz.wasm"
+sed -i 's/tinyusdz_combined\.wasm/tinyusdz.wasm/g' \
+  "${WEB_DIR}/js/src/tinyusdz/tinyusdz_combined.js"
+cp -f "${WEB_DIR}/js/src/tinyusdz/tinyusdz_combined.js" \
+  "${WEB_DIR}/js/src/tinyusdz/tinyusdz.js"
+
+for artifact in tinyusdz.js tinyusdz.wasm; do
+  if [[ ! -f "${WEB_DIR}/js/src/tinyusdz/${artifact}" ]]; then
+    echo "error: combined WASM compatibility artifact missing ${artifact}." >&2
     exit 1
   fi
 done

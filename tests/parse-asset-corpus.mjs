@@ -38,7 +38,7 @@ import path from 'node:path';
 
 function parseArgs(argv) {
   const a = {
-    assets: process.env.USD_WG_ASSETS_DIR || '/mnt/nvme02/work/usd/assets',
+    assets: process.env.USD_WG_ASSETS_DIR || '',
     tusdcat: process.env.TUSDCAT_PATH || './build/tusdcat',
     mode: 'load',
     timeout: 30000,
@@ -53,7 +53,7 @@ function parseArgs(argv) {
     // Compare mode: cross-check each asset against the OpenUSD reference
     // (`usdcat`) and diff tinyusdz's re-serialization against it (`tusddiff`).
     compare: false,
-    usdcat: process.env.USDCAT_PATH || '/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist/bin/usdcat',
+    usdcat: process.env.USDCAT_PATH || '',
     tusddiff: process.env.TUSDDIFF_PATH || './build/tusddiff',
     // Extra args prepended when invoking --tusdcat for the compare-mode layer
     // serialization (legacy tusdcat prints the layer bare; next_usdcat needs
@@ -91,6 +91,17 @@ function parseArgs(argv) {
     console.error(`--mode must be load|flatten (got ${a.mode})`); process.exit(2);
   }
   return a;
+}
+
+function validateInputs(a) {
+  if (!a.assets) {
+    console.error('No asset corpus configured. Pass --assets DIR or set USD_WG_ASSETS_DIR.');
+    process.exit(2);
+  }
+  if (!a.tusdcat) {
+    console.error('No tusdcat configured. Pass --tusdcat PATH or set TUSDCAT_PATH.');
+    process.exit(2);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +316,7 @@ const ORDER = ['PASS', 'WARN', 'FAIL', 'TIMEOUT', 'CRASH', 'SKIP'];
 
 async function main() {
   const a = parseArgs(process.argv);
+  validateInputs(a);
   const flag = a.mode === 'flatten' ? '-f' : '-l';
 
   // Graceful skip when the asset corpus is not present (e.g. CI without the

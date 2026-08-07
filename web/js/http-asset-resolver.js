@@ -611,7 +611,7 @@ const LOCAL_HTTP_TEXTURE_USDA = './assets/http-cat-plane.usda';
 
 // A few usd-wg/assets test_assets (raw GitHub serves permissive CORS). These are
 // editable in the UI; pick the one that exists / renders best for your build.
-const TEST_ASSET_BASE = 'https://raw.githubusercontent.com/usd-wg/assets/main/test_assets/';
+const TEST_ASSET_BASE = 'https://raw.githubusercontent.com/usd-wg/assets/1b91f3c464891af259d51d9ee9ee9e6c357f7079/test_assets/';
 const DEMO2_PRESETS = [
   // UsdPreviewSurface; normal/bump textures referenced (./r_*.png) in the same
   // remote directory -> rewritten onto the host and pulled over HTTP.

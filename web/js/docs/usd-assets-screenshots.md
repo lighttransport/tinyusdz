@@ -7,8 +7,9 @@ catalog.
 ```bash
 cd web/js
 
-# Default local checkout: /mnt/nvme02/work/usd/assets/test_assets
-xvfb-run -a node tests/screenshot-usd-assets-batch.mjs --hw
+# Prepared local checkout:
+USD_WG_ASSETS_DIR=$PWD/../../.cache/tinyusdz-verification/usd-assets \
+  xvfb-run -a node tests/screenshot-usd-assets-batch.mjs --hw
 npm run screenshot:usd-assets
 
 # Full-asset roots (separate output recommended)
@@ -22,11 +23,11 @@ npm run screenshot:usd-assets:sw -- --limit 4
 # Explicit local files or HTTP URLs
 node tests/screenshot-usd-assets-batch.mjs /path/to/Scene.usda
 node tests/screenshot-usd-assets-batch.mjs \
-  https://raw.githubusercontent.com/usd-wg/assets/main/test_assets/AlphaBlendModeTest/AlphaBlendModeTest.usd
+  https://raw.githubusercontent.com/usd-wg/assets/1b91f3c464891af259d51d9ee9ee9e6c357f7079/test_assets/AlphaBlendModeTest/AlphaBlendModeTest.usd
 
 # Discover local filenames but fetch them from raw GitHub
 node tests/screenshot-usd-assets-batch.mjs \
-  --remote-base https://raw.githubusercontent.com/usd-wg/assets/main/test_assets/
+--remote-base https://raw.githubusercontent.com/usd-wg/assets/1b91f3c464891af259d51d9ee9ee9e6c357f7079/test_assets/
 ```
 
 Outputs go to `tests/screenshots/usd-assets/` by default:

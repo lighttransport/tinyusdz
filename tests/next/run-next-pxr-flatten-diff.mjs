@@ -23,7 +23,7 @@
 // Usage:
 //   node tests/next/run-next-pxr-flatten-diff.mjs \
 //     --next-usdcat build-next/next_usdcat \
-//     [--usdcat /mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist/bin/usdcat] \
+//     [--usdcat ref/dist/bin/usdcat] \
 //     [--suite-root ~/.cache/tinyusdz/.../releases/1.0.1] \
 //     [--xfail tests/next/next-pxr-flatten-xfail.txt] \
 //     [--report-only] [--jobs N] [--float-tolerance 1e-5] [--verbose]
@@ -44,7 +44,7 @@ const { parseUsda, compareUsda } = require(path.join(repoRoot, 'tests', 'compare
 function parseArgs(argv) {
   const a = {
     nextUsdcat: null,
-    usdcat: process.env.USDCAT_PATH || '/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist/bin/usdcat',
+    usdcat: process.env.USDCAT_PATH || path.join(repoRoot, 'ref', 'dist', 'bin', 'usdcat'),
     suiteRoot: process.env.AOUSD_CORE_SUPPLEMENTAL_ROOT || null,
     xfail: path.join(__dirname, 'next-pxr-flatten-xfail.txt'),
     reportOnly: false,

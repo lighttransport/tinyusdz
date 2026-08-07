@@ -25,7 +25,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-: "${USD_ASSETS_ROOT:=/mnt/disk1/work/usd-assets}"
+: "${USD_ASSETS_ROOT:=${USD_WG_ASSETS_DIR:-}}"
 : "${TUSDRENDER:=$REPO_ROOT/build/tools/tusdrender/tusdrender}"
 # The shared harness SKIPs when the tusdview binary is absent (even for
 # tusdrender-only modes), so point TUSDVIEW at the build path too; it is never

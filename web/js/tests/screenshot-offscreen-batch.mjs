@@ -122,7 +122,7 @@ async function waitForServer(url, timeoutMs) {
 
 function startVite(port) {
   const bin = path.join(WEB_JS_DIR, 'node_modules', '.bin', 'vite');
-  const server = spawn(bin, ['--port', String(port), '--strictPort'], {
+  const server = spawn(bin, ['--force', '--port', String(port), '--strictPort'], {
     cwd: WEB_JS_DIR,
     env: { ...process.env, TINYUSDZ_SKIP_WASM_PREPARE: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],

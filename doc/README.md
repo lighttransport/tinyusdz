@@ -78,6 +78,8 @@ documents live in [archive/](archive/).
   (wheels.yml / wasmPublish.yml, local verification, release checklist).
 - [testing-cpp.md](testing-cpp.md) — C++ test infrastructure and regression
   procedure.
+- [testing-reproducibility.md](testing-reproducibility.md) — clean-cache,
+  pinned-input verification and focused test targets.
 - [python_binding.md](python_binding.md) — Python binding build and maintenance.
 - [wine_cl.md](wine_cl.md) — WINE + clang-cl cross-build (pure Win32/Win64).
 - [ci.md](ci.md) — Release / publish procedure (version bump, tags, PyPI/npm).

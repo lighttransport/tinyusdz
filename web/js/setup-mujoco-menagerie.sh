@@ -5,15 +5,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCK_FILE="$SCRIPT_DIR/tests/fixtures/mujoco-menagerie.lock"
 DEFAULT_DIR="$SCRIPT_DIR/.cache/mujoco_menagerie"
 DATASET_DIR="${MUJOCO_MENAGERIE:-$DEFAULT_DIR}"
+OFFLINE="${TINYUSDZ_VERIFY_OFFLINE:-0}"
 
 usage() {
   sed -n '2,24p' "$0"
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cache-dir) DATASET_DIR="$2"; shift 2 ;;
+    --offline) OFFLINE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
 
 if [[ ! -f "$LOCK_FILE" ]]; then
   echo "missing Menagerie lock file: $LOCK_FILE" >&2
@@ -34,12 +39,22 @@ if [[ -e "$DATASET_DIR" && ! -d "$DATASET_DIR/.git" ]]; then
 fi
 
 if [[ ! -d "$DATASET_DIR/.git" ]]; then
+  if [[ "$OFFLINE" == 1 ]]; then
+    echo "offline: missing Menagerie checkout: $DATASET_DIR" >&2
+    exit 2
+  fi
   mkdir -p "$(dirname "$DATASET_DIR")"
   echo "Cloning MuJoCo Menagerie into $DATASET_DIR"
   git clone --no-tags "$REPOSITORY" "$DATASET_DIR"
 fi
 
-git -C "$DATASET_DIR" fetch --no-tags --quiet origin "$COMMIT"
+if [[ "$OFFLINE" != 1 ]]; then
+  git -C "$DATASET_DIR" fetch --no-tags --quiet origin "$COMMIT"
+fi
+if ! git -C "$DATASET_DIR" cat-file -e "$COMMIT^{commit}" 2>/dev/null; then
+  echo "Menagerie revision is not cached: $COMMIT" >&2
+  exit 2
+fi
 git -C "$DATASET_DIR" checkout --quiet --detach "$COMMIT"
 
 ACTUAL="$(git -C "$DATASET_DIR" rev-parse HEAD)"
