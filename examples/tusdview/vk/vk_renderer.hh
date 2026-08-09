@@ -302,10 +302,15 @@ class VulkanRenderer final : public Renderer {
   bool createPerImageSync(std::string* err);
   bool createOffscreenRenderPass(std::string* err);
   bool createOverlayLoadPass(std::string* err);  // LOAD pass for overlays over RT
+  struct NonMeshChunkUpload {
+    VkBuffer buf{VK_NULL_HANDLE};
+    VkDeviceMemory mem{VK_NULL_HANDLE};
+  };
   // Upload + draw one HelperVertex line set with the given pipeline.
   void drawLineSet(VkCommandBuffer cb, const std::vector<HelperVertex>& copy,
                    VkBuffer* buf, VkDeviceMemory* mem, VkDeviceSize* cap,
-                   VkPipeline pipeline, const float vp[16]);
+                   VkPipeline pipeline, const float vp[16],
+                   std::vector<NonMeshChunkUpload>* chunkUploads = nullptr);
   bool createPipeline(std::string* err);
   void createTessPipeline();  // best-effort GPU-tessellation pipeline (non-fatal)
   bool createInstPipeline(std::string* err);
@@ -520,6 +525,7 @@ class VulkanRenderer final : public Renderer {
   VkBuffer nonMeshBuf_[kFramesInFlight]{};
   VkDeviceMemory nonMeshMem_[kFramesInFlight]{};
   VkDeviceSize nonMeshCap_[kFramesInFlight]{};
+  std::vector<NonMeshChunkUpload> nonMeshChunkUploads_[kFramesInFlight];
   std::vector<HelperVertex> nonMeshCopy_;
   std::vector<DrawPointsCPU> nativePoints_;
   std::vector<DrawCurvesCPU> nativeCurves_;

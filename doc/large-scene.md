@@ -1903,6 +1903,10 @@ The Vulkan flat upload path independently bounds device residency with
 `TUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144). It uploads/traces one BLAS/AS
 at a time and reduces nearest hits before shading, so a large non-instanced
 scene does not require one monolithic 8-GiB GPU allocation.
+For raster camera-facing helper geometry, Vulkan uses fence-retired upload
+buffers of at most 262,144 vertices per draw range; ranges are kept in separate
+buffers until the frame completes, avoiding unsafe reuse of a buffer recorded
+by multiple draw calls.
 All GPU backends reject aggregate triangle counts above the 32-bit hit-ID
 limit before allocation, with an explicit diagnostic instead of truncating
 chunk offsets.
