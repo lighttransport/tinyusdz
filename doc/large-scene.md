@@ -1868,6 +1868,14 @@ carrier. Curve conversion similarly skips retaining authored control points in
 the viewer-only `RenderCurves` result after tessellation, removing another full
 control-point allocation while preserving the default library API behavior.
 
+Progressive `tusdview --next` loads now apply the same bounded producer queue to
+non-mesh carriers: each Points/Gaussian chunk and each Curves carrier is handed
+to the renderer as soon as conversion produces it. The completed `DrawScene`
+retains only carrier metadata and bounds for selection/purpose controls, rather
+than a second full CPU copy. The queue's existing byte limit therefore bounds
+mesh, point, curve, and texture events together; cancellation also releases a
+carrier that cannot be queued.
+
 Non-instanced round and flat curve strands use bounded native BVHs as well.
 Curve points are read through the lazy array-view path, and complete strands are
 packed into chunks instead of duplicating the full source array for each BVH.
