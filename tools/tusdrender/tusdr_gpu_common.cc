@@ -458,4 +458,72 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
   return true;
 }
 
+bool ShadeAndWriteGaussianImage(
+    const Options &opt, const std::vector<EllipseSceneChunk> &chunks,
+    const std::vector<lrt_ray> &rays, const std::vector<lrt_hit> &hits, int w,
+    int h, int spp) {
+  const float ambient = opt.ambient;
+  const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
+  tinyusdz::Image img;
+  img.width = w;
+  img.height = h;
+  img.channels = 4;
+  img.bpp = 8;
+  img.data.resize(size_t(w) * size_t(h) * 4, 0);
+
+  auto find_info = [&](uint32_t prim_id) -> const TriInfo * {
+    size_t lo = 0, hi = chunks.size();
+    while (lo < hi) {
+      const size_t mid = lo + (hi - lo) / 2;
+      if (chunks[mid].first <= prim_id)
+        lo = mid + 1;
+      else
+        hi = mid;
+    }
+    if (lo == 0) return nullptr;
+    const EllipseSceneChunk &chunk = chunks[lo - 1];
+    const size_t local = size_t(prim_id) - chunk.first;
+    return local < chunk.info.size() ? &chunk.info[local] : nullptr;
+  };
+
+  ParallelRows(h, WorkerThreadCount(opt.threads), [&](int yBegin, int yEnd) {
+    for (int y = yBegin; y < yEnd; ++y) {
+      for (int x = 0; x < w; ++x) {
+        const size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
+        Vec3 color{0, 0, 0};
+        for (int sp = 0; sp < spp; ++sp) {
+          const lrt_hit &hit = hits[base + size_t(sp)];
+          if (hit.prim_id == 0xFFFFFFFFu) continue;
+          const TriInfo *ti = find_info(hit.prim_id);
+          if (!ti) continue;
+          Vec3 normal = Normalize(ti->p1);
+          if (Length(normal) < 1.0e-8f) normal = Vec3{0.0f, 1.0f, 0.0f};
+          Vec3 view{-rays[base + size_t(sp)].dir[0],
+                    -rays[base + size_t(sp)].dir[1],
+                    -rays[base + size_t(sp)].dir[2]};
+          if (Dot(normal, view) < 0.0f) normal = Mul(normal, -1.0f);
+          const float key = std::max(0.0f, Dot(normal, light));
+          const float head = std::max(0.0f, Dot(normal, view));
+          color = Add(color, Mul(ti->base_color,
+                                 ambient + 0.8f * key + 0.35f * head));
+        }
+        color = Mul(color, 1.0f / float(spp));
+        const size_t pi = (size_t(y) * size_t(w) + size_t(x)) * 4;
+        img.data[pi + 0] = uint8_t(std::min(255.0f, color.x * 255.0f));
+        img.data[pi + 1] = uint8_t(std::min(255.0f, color.y * 255.0f));
+        img.data[pi + 2] = uint8_t(std::min(255.0f, color.z * 255.0f));
+        img.data[pi + 3] = 255;
+      }
+    }
+  });
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
+  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
+  if (!ret) {
+    std::cerr << "Failed to write image: " << ret.error() << "\n";
+    return false;
+  }
+  return true;
+}
+
 }  // namespace tusdr
