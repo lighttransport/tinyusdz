@@ -5534,6 +5534,25 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
   return true;
 }
 
+bool PayloadPathWithin(const std::string &path, const std::string &ancestor) {
+  if (path == ancestor) return true;
+  if (ancestor.empty() || ancestor == "/") return !path.empty() && path[0] == '/';
+  return path.size() > ancestor.size() &&
+         path.compare(0, ancestor.size(), ancestor) == 0 &&
+         path[ancestor.size()] == '/';
+}
+
+bool PayloadIntersectsMask(const std::string &payload_path,
+                           const std::vector<std::string> &mask) {
+  for (const std::string &mask_path : mask) {
+    if (PayloadPathWithin(payload_path, mask_path) ||
+        PayloadPathWithin(mask_path, payload_path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
                            std::string *warn, std::string *err,
                            tinyusdz::next::ValueClipStageLoader *clip_loader) {
@@ -5544,6 +5563,19 @@ bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
   tinyusdz::next::StageSessionOptions session_options;
   session_options.compose = true;
   session_options.composition.variant_overrides = opt.variant_overrides;
+  // A render mask is also a composition boundary. Loading every payload and
+  // filtering its geometry afterwards defeats the memory purpose of -mask on
+  // payload-heavy scenes. Keep payloads whose authored prim path intersects a
+  // requested subtree; selected payloads may still contain nested payloads.
+  if (!opt.mask.empty()) {
+    const std::vector<std::string> payload_mask = opt.mask;
+    session_options.composition.load_payloads = false;
+    session_options.composition.payload_policy =
+        [payload_mask](const tinyusdz::next::Path &prim_path,
+                       const std::string &) {
+          return PayloadIntersectsMask(prim_path.str(), payload_mask);
+        };
+  }
   session_options.max_total_memory = MemBudget::Get().Cap() * 55 / 100;
   session_options.cache_retention = tinyusdz::next::CacheRetention::LayersOnly;
   tinyusdz::next::StageSession session;
@@ -5551,6 +5583,14 @@ bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
     if (warn) *warn = session.GetWarning();
     if (err) *err = session.GetError();
     return false;
+  }
+  if (!opt.mask.empty()) {
+    const std::vector<tinyusdz::next::Path> deferred =
+        session.GetDeferredPayloadPaths();
+    if (!deferred.empty()) {
+      std::cerr << "next: " << deferred.size()
+                << " payload(s) deferred outside -mask\n";
+    }
   }
   if (clip_loader) {
     const std::vector<std::string> dependencies = session.GetLayerDependencies();

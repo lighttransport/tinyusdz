@@ -20,7 +20,13 @@ Common flags:
 | `-w N -height N` | image size (`-height` omitted → from camera aspect) |
 | `-autoframe` | usdrecord-style auto camera framing |
 | `-camera <path>` | render through a named `UsdGeomCamera` |
-| `-mask <prim,...>` | restrict to these prim subtrees |
+| `-mask <prim,...>` | restrict to these prim subtrees; with the `next` loader, defer payloads that cannot intersect the selected subtrees |
+
+When `-mask` is used with the default `next` loader, payloads whose authored
+prim path is outside (and does not contain) the requested subtree are left
+deferred during composition. This keeps a per-element render from first
+materializing the whole payload set; a selected payload may still contain its
+own nested payloads. The loader reports the number of deferred payloads.
 | `-complexity low\|med\|high\|veryhigh` | subdivision preset |
 | `-smooth` | interpolate authored normals (smooth shading) |
 | `-threads N` | cap build and CPU shade-after-hit worker threads (`0` = auto) |
