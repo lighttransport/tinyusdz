@@ -1082,7 +1082,6 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   auto setPhase = [&](int p, size_t total) {
     if (progress) { progress->phase = p; progress->done = 0; progress->total = total; }
   };
-  auto tick = [&]() { if (progress) progress->done.fetch_add(1, std::memory_order_relaxed); };
 
   using Clock = std::chrono::steady_clock;
   auto t0 = Clock::now();
@@ -1185,29 +1184,45 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
          out->pointCount, out->pointChunks.size(), chunkLimit);
   }
 
-  // Phase A: build every mesh's geometry in parallel (the dominant cost on
-  // heavily-prototyped scenes). Each writes its own results slot.
+  // Phase A/B1: build and assemble bounded mesh batches. Keeping only a
+  // worker-sized batch alive avoids retaining every intermediate MeshBuild
+  // while the rest of a large scene is still being built.
   std::vector<DrawMeshCPU> nonMeshProxies = BuildNonMeshRtProxyMeshes(scene);
   std::vector<const DrawMeshCPU*> sourceMeshes;
   sourceMeshes.reserve(scene.meshes.size() + nonMeshProxies.size());
   for (const DrawMeshCPU& mesh : scene.meshes) sourceMeshes.push_back(&mesh);
   for (const DrawMeshCPU& mesh : nonMeshProxies) sourceMeshes.push_back(&mesh);
-  std::vector<MeshBuild> mbs(sourceMeshes.size());
+  std::atomic<size_t> buildDone{0};
+  size_t assembleDone = 0;
+  auto tickBuild = [&]() {
+    if (!progress) return;
+    progress->phase = 0;
+    progress->done = ++buildDone;
+    progress->total = sourceMeshes.size();
+  };
+  auto tickAssemble = [&]() {
+    if (!progress) return;
+    progress->phase = 1;
+    progress->done = ++assembleDone;
+    progress->total = sourceMeshes.size();
+  };
   setPhase(0, sourceMeshes.size());  // geometry
-  LOGI("RT geometry build: %zu mesh(es), %u worker(s)", sourceMeshes.size(),
-       RtBuildWorkerLimit());
-  ParallelFor(sourceMeshes.size(), [&](size_t i) {
-    mbs[i] = BuildOneMesh(scene, *sourceMeshes[i], displacementScale);
-    tick();
-  });
-  auto tA = Clock::now();
+  size_t buildBatchMeshes = std::max<size_t>(1, size_t(RtBuildWorkerLimit()) * 2);
+  if (const char *env = std::getenv("TUSDVIEW_RT_BUILD_BATCH_MESHES")) {
+    char *end = nullptr;
+    const unsigned long long parsed = std::strtoull(env, &end, 10);
+    if (end != env && parsed > 0)
+      buildBatchMeshes = static_cast<size_t>(parsed);
+  }
+  LOGI("RT geometry build: %zu mesh(es), %u worker(s), batch %zu",
+       sourceMeshes.size(), RtBuildWorkerLimit(), buildBatchMeshes);
 
   // Phase B1: assemble geometry in mesh order (offsets/caps identical to the
   // serial build) and collect a flat list of instance sources. The per-instance
   // matrix math (inverse + world AABB) is deferred to a parallel pass (B2) since
   // it dominates on massively-instanced scenes (e.g. Moana Island).
   struct InstSrc {
-    const float* o2w;   // points into mbs (kept alive until after B2)
+    float o2w[12];
     float tint[4];
     int blasRoot;
     int proto;          // index into protoBox
@@ -1215,10 +1230,19 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   };
   std::vector<InstSrc> isrc;
   std::vector<std::array<float, 6>> protoBox;  // {lo.xyz, hi.xyz} per accepted mesh
-  setPhase(1, mbs.size());  // assemble
-  for (size_t mbi = 0; mbi < mbs.size(); ++mbi) {
-    MeshBuild& mb = mbs[mbi];
-    tick();
+  setPhase(1, sourceMeshes.size());  // assemble
+  for (size_t first = 0; first < sourceMeshes.size() && !out->truncated;
+       first += buildBatchMeshes) {
+    const size_t count = std::min(buildBatchMeshes, sourceMeshes.size() - first);
+    std::vector<MeshBuild> mbs(count);
+    ParallelFor(count, [&](size_t i) {
+      mbs[i] = BuildOneMesh(scene, *sourceMeshes[first + i], displacementScale);
+      tickBuild();
+    });
+    for (size_t local = 0; local < count && !out->truncated; ++local) {
+      const size_t mbi = first + local;
+      MeshBuild& mb = mbs[local];
+    tickAssemble();
     if (!mb.valid) continue;
     if (out->tris.size() / 9 >= cap) { out->truncated = true; break; }
     if (isrc.size() >= instCap) { out->truncated = true; break; }
@@ -1261,8 +1285,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     protoBox.push_back({mb.lo[0], mb.lo[1], mb.lo[2], mb.hi[0], mb.hi[1], mb.hi[2]});
     const size_t np = mb.instTint.size() / 4;
     for (size_t k = 0; k < np && isrc.size() < instCap; ++k) {
-      InstSrc s;
-      s.o2w = &mb.instO2W[k * 12];
+      InstSrc s{};
+      std::memcpy(s.o2w, &mb.instO2W[k * 12], sizeof(s.o2w));
       s.tint[0] = mb.instTint[k * 4 + 0];
       s.tint[1] = mb.instTint[k * 4 + 1];
       s.tint[2] = mb.instTint[k * 4 + 2];
@@ -1273,7 +1297,9 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       isrc.push_back(s);
     }
     if (np > 0 && isrc.size() >= instCap) out->truncated = true;
+    }
   }
+  auto tA = Clock::now();
 
   // Phase B2: per-instance matrix math in parallel (instId == output index, so the
   // result is identical to the serial sequential assignment).
@@ -1299,8 +1325,6 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   });
   isrc.clear();
   isrc.shrink_to_fit();
-  mbs.clear();
-  mbs.shrink_to_fit();
 
   out->triCount = out->tris.size() / 9;
   out->instCount = out->instances.size();

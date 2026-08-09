@@ -1867,8 +1867,11 @@ scene does not require one monolithic 8-GiB GPU allocation.
 For tusdview CUDA/HIP scene builds, `TUSDVIEW_RT_BUILD_THREADS=N` bounds
 geometry extraction concurrency (default `min(host_threads, 8)`). Assembly now
 moves each completed mesh's SoA into the final scene and releases the consumed
-per-mesh storage immediately, avoiding a second full geometry copy while later
-meshes are still waiting for assembly.
+per-mesh storage immediately. Geometry extraction and assembly run in bounded
+worker-sized batches; `TUSDVIEW_RT_BUILD_BATCH_MESHES=N` overrides the default
+of twice the worker count when a tighter CPU-memory ceiling is needed. This
+avoids retaining intermediate geometry for the entire scene while later meshes
+are still waiting for assembly.
 
 The native RT texture table is usage-driven. It marks material texture slots
 and environment-light maps before decoding/packing, then leaves unreferenced
