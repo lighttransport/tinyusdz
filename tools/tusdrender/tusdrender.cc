@@ -177,7 +177,8 @@ void AppendGpuPointSphere(const Vec3 &center, float radius,
 void AppendGpuEllipseToGeometry(const Vec3 &center, const Vec3 &normal,
                                 float radius_x, float radius_y,
                                 const Vec3 *major_axis, int segments,
-                                RTPreviewStats::MeshGeometry *geo) {
+                                RTPreviewStats::MeshGeometry *geo,
+                                bool emit_attributes = true) {
   constexpr float kPi = 3.14159265358979323846f;
   Vec3 n = Normalize(normal);
   if (Length(n) < 1.0e-6f) n = Vec3{0.0f, 1.0f, 0.0f};
@@ -209,15 +210,19 @@ void AppendGpuEllipseToGeometry(const Vec3 &center, const Vec3 &normal,
     const uint32_t base = uint32_t(geo->positions.size() / 3);
     for (const Vec3 &p : {p0, p1, p2}) {
       geo->positions.insert(geo->positions.end(), {p.x, p.y, p.z});
-      geo->normals.insert(geo->normals.end(), {n.x, n.y, n.z});
-      geo->uvs.insert(geo->uvs.end(), {0.0f, 0.0f});
+      if (emit_attributes) {
+        geo->normals.insert(geo->normals.end(), {n.x, n.y, n.z});
+        geo->uvs.insert(geo->uvs.end(), {0.0f, 0.0f});
+      }
     }
     geo->indices.insert(geo->indices.end(), {base, base + 1, base + 2});
     const uint32_t back = uint32_t(geo->positions.size() / 3);
     for (const Vec3 &p : {p0, p2, p1}) {
       geo->positions.insert(geo->positions.end(), {p.x, p.y, p.z});
-      geo->normals.insert(geo->normals.end(), {-n.x, -n.y, -n.z});
-      geo->uvs.insert(geo->uvs.end(), {0.0f, 0.0f});
+      if (emit_attributes) {
+        geo->normals.insert(geo->normals.end(), {-n.x, -n.y, -n.z});
+        geo->uvs.insert(geo->uvs.end(), {0.0f, 0.0f});
+      }
     }
     geo->indices.insert(geo->indices.end(), {back, back + 1, back + 2});
   }
@@ -337,7 +342,8 @@ void CollectGpuPointsRec(
         batch_triangles[size_t(bucket)] = 0;
       }
       AppendGpuEllipseToGeometry(p, normal, rx, ry, &major_axis, 4,
-                                 &batches[size_t(bucket)]);
+                                 &batches[size_t(bucket)],
+                                 /*emit_attributes=*/false);
       batch_triangles[size_t(bucket)] += kSplatTriangles;
       gaussian_triangles += kSplatTriangles;
     }

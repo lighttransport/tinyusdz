@@ -1971,7 +1971,9 @@ five full temporary vectors before tessellation.
 It also applies opacity to the fallback color buckets and rejects non-finite or
 near-zero opacity samples, matching native ellipse filtering. Each color bucket
 is flushed at `TUSDR_GPU_TRIANGLE_CHUNK`, preventing HIP/ROCm and D3D11 from
-retaining a single multi-million-triangle proxy for a large field.
+retaining a single multi-million-triangle proxy for a large field. Gaussian
+fallback chunks omit redundant per-vertex normals and dummy UVs; the GPU
+flattener recomputes geometric normals from the retained positions.
 
 Chunk vertex remapping is sparse and chunk-local rather than an array indexed by
 the source mesh's full vertex count. A small GPU chunk therefore no longer
