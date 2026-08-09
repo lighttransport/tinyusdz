@@ -817,11 +817,22 @@ void AddProxyVertex(const float p[3], const float n[3], const float color[3],
   mesh->vertexAlpha.push_back(opacity);
 }
 
+size_t RtProxyTriangleLimit() {
+  size_t limit = 262144;
+  if (const char *env = std::getenv("TUSDVIEW_RT_PROXY_CHUNK_TRIS")) {
+    char *end = nullptr;
+    const unsigned long long parsed = std::strtoull(env, &end, 10);
+    if (end != env && parsed > 0) limit = static_cast<size_t>(parsed);
+  }
+  return limit;
+}
+
 }  // namespace
 
 std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
   std::vector<DrawMeshCPU> proxies;
   proxies.reserve(scene.points.size() + scene.curves.size());
+  const size_t proxyTriangleLimit = RtProxyTriangleLimit();
   for (const DrawPointsCPU& src : scene.points) {
     if (src.gaussian && src.ellipseRadii.size() >= (src.points.size() / 3) * 2 &&
         src.ellipseNormals.size() >= (src.points.size() / 3) * 3 &&
@@ -830,6 +841,13 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
     }
     DrawMeshCPU mesh;
     InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
+    auto flush = [&]() {
+      if (mesh.indices.empty()) return;
+      mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
+      proxies.push_back(std::move(mesh));
+      mesh = DrawMeshCPU{};
+      InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
+    };
     const size_t count = src.points.size() / 3;
     const float scale = CarrierWorldScale(src.world);
     if (src.gaussian && src.ellipseRadii.size() >= count * 2 &&
@@ -842,6 +860,9 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
       };
       constexpr int kSegments = 8;
       for (size_t i = 0; i < count; ++i) {
+        if (!mesh.indices.empty() &&
+            mesh.indices.size() / 3 + 16 > proxyTriangleLimit)
+          flush();
         float center[3];
         CarrierWorldPoint(src.world, &src.points[i * 3], center);
         float major[3], normal[3];
@@ -894,8 +915,7 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
           mesh.indices.insert(mesh.indices.end(), {bb, bb + 1, bb + 2});
         }
       }
-      mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
-      if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
+      flush();
       continue;
     }
     // A subdivided octahedron (subdivide each of 8 faces into 4) producing
@@ -906,6 +926,9 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
     static const uint32_t edges[12][2] = {{0,2},{2,1},{1,3},{3,0},{0,4},{2,4},
                                            {1,4},{3,4},{0,5},{2,5},{1,5},{3,5}};
     for (size_t i = 0; i < count; ++i) {
+      if (!mesh.indices.empty() &&
+          mesh.indices.size() / 3 + 32 > proxyTriangleLimit)
+        flush();
       float center[3];
       CarrierWorldPoint(src.world, &src.points[i * 3], center);
       const float width = (src.widths.empty() ? 1.0f
@@ -976,19 +999,28 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
         mesh.indices.push_back(base + 6 + fe[1]);
       }
     }
-    mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
-    if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
+    flush();
   }
 
   for (const DrawCurvesCPU& src : scene.curves) {
     DrawMeshCPU mesh;
     InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
+    auto flush = [&]() {
+      if (mesh.indices.empty()) return;
+      mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
+      proxies.push_back(std::move(mesh));
+      mesh = DrawMeshCPU{};
+      InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
+    };
     const size_t pointCount = src.points.size() / 3;
     const float scale = CarrierWorldScale(src.world);
     size_t begin = 0;
     for (uint32_t authoredCount : src.vertexCounts) {
       const size_t end = std::min(pointCount, begin + authoredCount);
       for (size_t i = begin; i + 1 < end; ++i) {
+        if (!mesh.indices.empty() &&
+            mesh.indices.size() / 3 + 16 > proxyTriangleLimit)
+          flush();
         float p0[3], p1[3];
         CarrierWorldPoint(src.world, &src.points[i * 3], p0);
         CarrierWorldPoint(src.world, &src.points[(i + 1) * 3], p1);
@@ -1053,8 +1085,7 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
       }
       begin = end;
     }
-    mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
-    if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
+    flush();
   }
   return proxies;
 }
