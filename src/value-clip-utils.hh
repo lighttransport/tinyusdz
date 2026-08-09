@@ -150,42 +150,47 @@ inline bool ExpandTemplateClipMetadata(
   result->active.clear();
 
   constexpr size_t kMaxTemplateClipCount = 1000000;
-  const long double span = static_cast<long double>(templateEndTime) -
-                           static_cast<long double>(templateStartTime);
-  const long double stepCount =
-      span / static_cast<long double>(templateStride);
-  const long double roundedSteps = std::round(stepCount);
-  const long double tolerance =
-      8.0L * static_cast<long double>(std::numeric_limits<double>::epsilon()) *
-      (std::max)(1.0L, std::abs(stepCount));
-  const long double normalizedSteps =
+  // NOTE: this used to compute span/stepCount/tolerance/boundary*/active* in
+  // `long double` for extra headroom before the overflow/tolerance checks
+  // below. That headroom is real on GCC/Clang/x86 (80-bit extended
+  // precision) but MSVC's `long double` is bit-identical to `double` -- the
+  // intended safety margin silently vanished there, so the same USD file
+  // could round/reject differently per compiler. Do the checks in plain
+  // `double` instead, made correct by construction: IEEE-754 already turns
+  // an overflowing add/sub/div into +-inf (caught by std::isfinite) rather
+  // than silently wrapping, and the boundary/active overflow guard uses an
+  // explicit pre-check (the standard `a > MAX - b` idiom) instead of
+  // computing-then-comparing-to-max, so no compiler-specific extra
+  // precision is required for correctness on any platform. (Same fix as
+  // src/next/eval/value-clip.cc's ExpandTemplate, which implements the same
+  // spec section for the "next" USD core.)
+  const double span = templateEndTime - templateStartTime;
+  const double stepCount = span / templateStride;
+  const double roundedSteps = std::round(stepCount);
+  const double tolerance = 8.0 * std::numeric_limits<double>::epsilon() *
+                            (std::max)(1.0, std::abs(stepCount));
+  const double normalizedSteps =
       std::abs(stepCount - roundedSteps) <= tolerance
           ? roundedSteps
           : std::floor(stepCount);
-  if (!std::isfinite(stepCount) || normalizedSteps < 0.0L ||
-      normalizedSteps >= static_cast<long double>(kMaxTemplateClipCount)) {
+  if (!std::isfinite(stepCount) || normalizedSteps < 0.0 ||
+      normalizedSteps >= static_cast<double>(kMaxTemplateClipCount)) {
     if (err) *err = "Value-clip template exceeds expansion limit.";
     return false;
   }
-  const long double maxDouble =
-      static_cast<long double>(std::numeric_limits<double>::max());
-  const long double absoluteOffset =
-      std::abs(static_cast<long double>(templateActiveOffset));
-  const long double boundaryStart =
-      static_cast<long double>(templateStartTime) - absoluteOffset;
-  const long double boundaryEnd =
-      static_cast<long double>(templateEndTime) + absoluteOffset;
-  const long double activeStart =
-      static_cast<long double>(templateStartTime) +
-      static_cast<long double>(templateActiveOffset);
-  const long double activeEnd =
-      static_cast<long double>(templateEndTime) +
-      static_cast<long double>(templateActiveOffset);
-  if (!std::isfinite(boundaryStart) || !std::isfinite(boundaryEnd) ||
-      !std::isfinite(activeStart) || !std::isfinite(activeEnd) ||
-      std::abs(boundaryStart) > maxDouble ||
-      std::abs(boundaryEnd) > maxDouble ||
-      std::abs(activeStart) > maxDouble || std::abs(activeEnd) > maxDouble) {
+  const double kMaxD = std::numeric_limits<double>::max();
+  const double absoluteOffset = std::abs(templateActiveOffset);
+  auto safeAdd = [kMaxD](double a, double b, double* out) -> bool {
+    if (b > 0.0 && a > kMaxD - b) return false;
+    if (b < 0.0 && a < -kMaxD - b) return false;
+    *out = a + b;
+    return std::isfinite(*out);
+  };
+  double boundaryStart, boundaryEnd, activeStart, activeEnd;
+  if (!safeAdd(templateStartTime, -absoluteOffset, &boundaryStart) ||
+      !safeAdd(templateEndTime, absoluteOffset, &boundaryEnd) ||
+      !safeAdd(templateStartTime, templateActiveOffset, &activeStart) ||
+      !safeAdd(templateEndTime, templateActiveOffset, &activeEnd)) {
     if (err) *err = "Value-clip template time overflow.";
     return false;
   }
@@ -195,16 +200,11 @@ inline bool ExpandTemplateClipMetadata(
   result->active.reserve(clipCount);
 
   for (size_t assetIndex = 0; assetIndex < clipCount; ++assetIndex) {
-    const long double generated =
-        static_cast<long double>(templateStartTime) +
-        static_cast<long double>(assetIndex) *
-            static_cast<long double>(templateStride);
-    double clipTime = static_cast<double>(generated);
-    const long double timeTolerance =
-        tolerance * std::abs(static_cast<long double>(templateStride));
+    double clipTime =
+        templateStartTime + static_cast<double>(assetIndex) * templateStride;
+    const double timeTolerance = tolerance * std::abs(templateStride);
     if (clipTime > templateEndTime &&
-        generated - static_cast<long double>(templateEndTime) <=
-            timeTolerance) {
+        (clipTime - templateEndTime) <= timeTolerance) {
       clipTime = templateEndTime;
     }
 

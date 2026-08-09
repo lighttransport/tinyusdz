@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 
 #include "texture-cache.hh"
+#include "next/resolver/asset-resolver.hh"
 #include "next/safe-file-size.hh"
 #include "usdz-entry-match.hh"
 
@@ -87,7 +88,8 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
     }
   }
   std::string path = asset;
-  if (path[0] != '/' && !opt.base_dir.empty()) {
+  if (!::tinyusdz::next::AssetResolver::IsAbsolutePath(path) &&
+      !opt.base_dir.empty()) {
     path = opt.base_dir + "/" + path;
   }
   if (opt.max_source_bytes != 0) {
@@ -125,7 +127,8 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
     }
   }
   std::string path = asset;
-  if (path[0] != '/' && !opt.base_dir.empty()) {
+  if (!::tinyusdz::next::AssetResolver::IsAbsolutePath(path) &&
+      !opt.base_dir.empty()) {
     path = opt.base_dir + "/" + path;
   }
   std::ifstream f(path, std::ios::binary | std::ios::ate);

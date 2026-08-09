@@ -2200,6 +2200,37 @@ bool CrateWriter::ConvertValue(
 ) {
   std::string type_name = val.type_name();
 
+  // NOTE: every branch below is a standalone `if (type_name == "...")`, not a
+  // link in one long `else if` chain -- MSVC hits C1061 ("blocks nested too
+  // deeply") once an else-if chain accumulates enough branches (this
+  // function has ~150 supported type names), because each `else if` nests
+  // one level deeper than the last. Standalone ifs are flat regardless of
+  // count. Safe because type_name is computed once above and never mutated,
+  // so at most one of these conditions can ever be true -- see the identical
+  // fix already applied for the same reason in crate-writer-values.cc's
+  // TRY_PACK_DICT/TRY_PACK_META macros.
+#define TRY_CONVERT_SET(TypeStr, CppType) \
+  if (type_name == TypeStr) { \
+    if (auto v = val.get_value<CppType>()) { \
+      out.Set(*v); \
+      return true; \
+    } \
+  }
+#define TRY_CONVERT_SET_NOROLE(TypeStr, CppType) \
+  if (type_name == TypeStr) { \
+    if (auto v = val.get_value<CppType>(false)) { \
+      out.Set(*v); \
+      return true; \
+    } \
+  }
+#define TRY_CONVERT_UNREG(TypeStr, CppType, FormatFn) \
+  if (type_name == TypeStr) { \
+    if (auto v = val.get_value<CppType>()) { \
+      out.SetUnregisteredValueString(FormatFn(*v)); \
+      return true; \
+    } \
+  }
+
   // AnimationBlock (SdfAnimationBlock): an inline type tag carried as a normal
   // default value. Emitted as Crate type 60 by the inline value packer.
   if (type_name == "AnimationBlock") {
@@ -2217,372 +2248,100 @@ bool CrateWriter::ConvertValue(
   }
 
   // Scalar types
-  if (type_name == "bool") {
-    if (auto v = val.get_value<bool>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int" || type_name == "int32") {
-    if (auto v = val.get_value<int32_t>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "uint" || type_name == "uint32") {
-    if (auto v = val.get_value<uint32_t>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "uint2") {
-    if (auto v = val.get_value<value::uint2>()) {
-      out.SetUnregisteredValueString(FormatUintTuple(*v));
-      return true;
-    }
-  } else if (type_name == "uint3") {
-    if (auto v = val.get_value<value::uint3>()) {
-      out.SetUnregisteredValueString(FormatUintTuple(*v));
-      return true;
-    }
-  } else if (type_name == "uint4") {
-    if (auto v = val.get_value<value::uint4>()) {
-      out.SetUnregisteredValueString(FormatUintTuple(*v));
-      return true;
-    }
-  } else if (type_name == "char") {
-    if (auto v = val.get_value<char>()) {
-      out.SetUnregisteredValueString(FormatSmallIntegerValue(*v));
-      return true;
-    }
-  } else if (type_name == "char2") {
-    if (auto v = val.get_value<value::char2>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "char3") {
-    if (auto v = val.get_value<value::char3>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "char4") {
-    if (auto v = val.get_value<value::char4>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "uchar2") {
-    if (auto v = val.get_value<value::uchar2>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "uchar3") {
-    if (auto v = val.get_value<value::uchar3>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "uchar4") {
-    if (auto v = val.get_value<value::uchar4>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "short") {
-    if (auto v = val.get_value<int16_t>()) {
-      out.SetUnregisteredValueString(FormatSmallIntegerValue(*v));
-      return true;
-    }
-  } else if (type_name == "short2") {
-    if (auto v = val.get_value<value::short2>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "short3") {
-    if (auto v = val.get_value<value::short3>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "short4") {
-    if (auto v = val.get_value<value::short4>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "ushort") {
-    if (auto v = val.get_value<uint16_t>()) {
-      out.SetUnregisteredValueString(FormatSmallIntegerValue(*v));
-      return true;
-    }
-  } else if (type_name == "ushort2") {
-    if (auto v = val.get_value<value::ushort2>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "ushort3") {
-    if (auto v = val.get_value<value::ushort3>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "ushort4") {
-    if (auto v = val.get_value<value::ushort4>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "int64") {
-    if (auto v = val.get_value<int64_t>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "uint64") {
-    if (auto v = val.get_value<uint64_t>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "float") {
-    if (auto v = val.get_value<float>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "double") {
-    if (auto v = val.get_value<double>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "timecode") {
-    if (auto v = val.get_value<value::timecode>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half") {
-    if (auto v = val.get_value<value::half>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  TRY_CONVERT_SET("bool", bool)
+  TRY_CONVERT_SET("int", int32_t)
+  TRY_CONVERT_SET("int32", int32_t)
+  TRY_CONVERT_SET("uint", uint32_t)
+  TRY_CONVERT_SET("uint32", uint32_t)
+  TRY_CONVERT_UNREG("uint2", value::uint2, FormatUintTuple)
+  TRY_CONVERT_UNREG("uint3", value::uint3, FormatUintTuple)
+  TRY_CONVERT_UNREG("uint4", value::uint4, FormatUintTuple)
+  TRY_CONVERT_UNREG("char", char, FormatSmallIntegerValue)
+  TRY_CONVERT_UNREG("char2", value::char2, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("char3", value::char3, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("char4", value::char4, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("uchar2", value::uchar2, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("uchar3", value::uchar3, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("uchar4", value::uchar4, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("short", int16_t, FormatSmallIntegerValue)
+  TRY_CONVERT_UNREG("short2", value::short2, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("short3", value::short3, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("short4", value::short4, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("ushort", uint16_t, FormatSmallIntegerValue)
+  TRY_CONVERT_UNREG("ushort2", value::ushort2, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("ushort3", value::ushort3, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("ushort4", value::ushort4, FormatUnregisteredValue)
+  TRY_CONVERT_SET("int64", int64_t)
+  TRY_CONVERT_SET("uint64", uint64_t)
+  TRY_CONVERT_SET("float", float)
+  TRY_CONVERT_SET("double", double)
+  TRY_CONVERT_SET("timecode", value::timecode)
+  TRY_CONVERT_SET("half", value::half)
 
   // Token and String types
-  // NOTE: split from the preceding chain into its own `if` (not `else if`) --
-  // MSVC hits C1061 ("blocks nested too deeply") once a single else-if chain
-  // this large accumulates that much nesting. Safe because type_name strings
-  // are mutually exclusive across the whole function: at most one branch in
-  // any of these chains can ever match.
-  if (type_name == "token") {
-    if (auto v = val.get_value<value::token>()) {
-      // Store the typed token value; the crate packer pools it through
-      // the tokens section at serialization time. Storing the raw pool
-      // index (uint) here produced files that tinyusdz's reader surfaced
-      // as `var_type='uint' (unresolved)` and that pxrusd rejected with
-      // "Corrupt path element token index in crate file".
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "string") {
-    if (auto v = val.get_value<std::string>()) {
-      // Same rationale as the token branch above: store the string value,
-      // not the strings-section index.
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "asset") {
-    if (auto v = val.get_value<value::AssetPath>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "asset[]") {
-    if (auto v = val.get_value<std::vector<value::AssetPath>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "pathExpression") {
-    if (auto v = val.get_value<value::PathExpression>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "pathExpression[]") {
-    if (auto v = val.get_value<std::vector<value::PathExpression>>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  // Store the typed token value; the crate packer pools it through the
+  // tokens section at serialization time. Storing the raw pool index (uint)
+  // here produced files that tinyusdz's reader surfaced as
+  // `var_type='uint' (unresolved)` and that pxrusd rejected with "Corrupt
+  // path element token index in crate file".
+  TRY_CONVERT_SET("token", value::token)
+  // Same rationale as the token branch above: store the string value, not
+  // the strings-section index.
+  TRY_CONVERT_SET("string", std::string)
+  TRY_CONVERT_SET("asset", value::AssetPath)
+  TRY_CONVERT_SET("asset[]", std::vector<value::AssetPath>)
+  TRY_CONVERT_SET("pathExpression", value::PathExpression)
+  TRY_CONVERT_SET("pathExpression[]", std::vector<value::PathExpression>)
 
   // Vector types - float2/3/4
-  else if (type_name == "float2") {
-    if (auto v = val.get_value<value::float2>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "float3") {
-    if (auto v = val.get_value<value::float3>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "float4") {
-    if (auto v = val.get_value<value::float4>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  TRY_CONVERT_SET("float2", value::float2)
+  TRY_CONVERT_SET("float3", value::float3)
+  TRY_CONVERT_SET("float4", value::float4)
 
   // Vector types - half2/3/4
-  else if (type_name == "half2") {
-    if (auto v = val.get_value<value::half2>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half3") {
-    if (auto v = val.get_value<value::half3>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half4") {
-    if (auto v = val.get_value<value::half4>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  TRY_CONVERT_SET("half2", value::half2)
+  TRY_CONVERT_SET("half3", value::half3)
+  TRY_CONVERT_SET("half4", value::half4)
 
   // Vector types - double2/3/4
-  else if (type_name == "double2") {
-    if (auto v = val.get_value<value::double2>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "double3") {
-    if (auto v = val.get_value<value::double3>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "double4") {
-    if (auto v = val.get_value<value::double4>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  TRY_CONVERT_SET("double2", value::double2)
+  TRY_CONVERT_SET("double3", value::double3)
+  TRY_CONVERT_SET("double4", value::double4)
 
   // Vector types - int2/3/4
-  else if (type_name == "int2") {
-    if (auto v = val.get_value<value::int2>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int3") {
-    if (auto v = val.get_value<value::int3>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int4") {
-    if (auto v = val.get_value<value::int4>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  TRY_CONVERT_SET("int2", value::int2)
+  TRY_CONVERT_SET("int3", value::int3)
+  TRY_CONVERT_SET("int4", value::int4)
 
   // Role types (point, vector, normal, color)
   // Role types are stored with their underlying type (float3, double3, etc.)
   // Use get_value with non-strict cast to get underlying type
-  else if (type_name == "point3f") {
-    if (auto v = val.get_value<value::float3>(false)) {  // non-strict cast to underlying type
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "point3h") {
-    if (auto v = val.get_value<value::half3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "point3d") {
-    if (auto v = val.get_value<value::double3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "vector3h") {
-    if (auto v = val.get_value<value::half3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "vector3f") {
-    if (auto v = val.get_value<value::float3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "vector3d") {
-    if (auto v = val.get_value<value::double3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "normal3f") {
-    if (auto v = val.get_value<value::float3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "normal3h") {
-    if (auto v = val.get_value<value::half3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "normal3d") {
-    if (auto v = val.get_value<value::double3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color3h") {
-    if (auto v = val.get_value<value::half3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color3f") {
-    if (auto v = val.get_value<value::float3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color3d") {
-    if (auto v = val.get_value<value::double3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color4h") {
-    if (auto v = val.get_value<value::half4>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color4f") {
-    if (auto v = val.get_value<value::float4>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color4d") {
-    if (auto v = val.get_value<value::double4>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  TRY_CONVERT_SET_NOROLE("point3f", value::float3)
+  TRY_CONVERT_SET_NOROLE("point3h", value::half3)
+  TRY_CONVERT_SET_NOROLE("point3d", value::double3)
+  TRY_CONVERT_SET_NOROLE("vector3h", value::half3)
+  TRY_CONVERT_SET_NOROLE("vector3f", value::float3)
+  TRY_CONVERT_SET_NOROLE("vector3d", value::double3)
+  TRY_CONVERT_SET_NOROLE("normal3f", value::float3)
+  TRY_CONVERT_SET_NOROLE("normal3h", value::half3)
+  TRY_CONVERT_SET_NOROLE("normal3d", value::double3)
+  TRY_CONVERT_SET_NOROLE("color3h", value::half3)
+  TRY_CONVERT_SET_NOROLE("color3f", value::float3)
+  TRY_CONVERT_SET_NOROLE("color3d", value::double3)
+  TRY_CONVERT_SET_NOROLE("color4h", value::half4)
+  TRY_CONVERT_SET_NOROLE("color4f", value::float4)
+  TRY_CONVERT_SET_NOROLE("color4d", value::double4)
 
   // Matrix types
-  else if (type_name == "matrix2f") {
-    if (auto v = val.get_value<value::matrix2f>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "matrix3f") {
-    if (auto v = val.get_value<value::matrix3f>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "matrix4f") {
-    if (auto v = val.get_value<value::matrix4f>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredValue(*v));
-      return true;
-    }
-  } else if (type_name == "matrix2d") {
-    if (auto v = val.get_value<value::matrix2d>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "matrix3d") {
-    if (auto v = val.get_value<value::matrix3d>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "matrix4d") {
-    if (auto v = val.get_value<value::matrix4d>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "frame4d") {
+  TRY_CONVERT_UNREG("matrix2f", value::matrix2f, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("matrix3f", value::matrix3f, FormatUnregisteredValue)
+  TRY_CONVERT_UNREG("matrix4f", value::matrix4f, FormatUnregisteredValue)
+  TRY_CONVERT_SET("matrix2d", value::matrix2d)
+  TRY_CONVERT_SET("matrix3d", value::matrix3d)
+  TRY_CONVERT_SET("matrix4d", value::matrix4d)
+  // frame4d has no direct Crate representation; store as the equivalent
+  // matrix4d. Bespoke (loop body), not a TRY_CONVERT_* one-liner.
+  if (type_name == "frame4d") {
     if (auto v = val.get_value<value::frame4d>(false)) {
       value::matrix4d mat;
       for (size_t row = 0; row < 4; ++row) {
@@ -2596,423 +2355,100 @@ bool CrateWriter::ConvertValue(
   }
 
   // Quaternion types
-  else if (type_name == "quath") {
-    if (auto v = val.get_value<value::quath>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "quatf") {
-    if (auto v = val.get_value<value::quatf>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "quatd") {
-    if (auto v = val.get_value<value::quatd>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "uchar") {
-    if (auto v = val.get_value<uint8_t>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  TRY_CONVERT_SET("quath", value::quath)
+  TRY_CONVERT_SET("quatf", value::quatf)
+  TRY_CONVERT_SET("quatd", value::quatd)
+  TRY_CONVERT_SET("uchar", uint8_t)
 
-  // Array types (split from the preceding chain; see NOTE above)
-  if (type_name == "uchar[]") {
-    if (auto v = val.get_value<std::vector<uint8_t>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int[]") {
-    if (auto v = val.get_value<std::vector<int32_t>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "uint[]" || type_name == "uint32[]") {
-    if (auto v = val.get_value<std::vector<uint32_t>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "uint2[]") {
-    if (auto v = val.get_value<std::vector<value::uint2>>()) {
-      out.SetUnregisteredValueString(FormatUintTupleArray(*v));
-      return true;
-    }
-  } else if (type_name == "uint3[]") {
-    if (auto v = val.get_value<std::vector<value::uint3>>()) {
-      out.SetUnregisteredValueString(FormatUintTupleArray(*v));
-      return true;
-    }
-  } else if (type_name == "uint4[]") {
-    if (auto v = val.get_value<std::vector<value::uint4>>()) {
-      out.SetUnregisteredValueString(FormatUintTupleArray(*v));
-      return true;
-    }
-  } else if (type_name == "char[]") {
-    if (auto v = val.get_value<std::vector<char>>()) {
-      out.SetUnregisteredValueString(FormatSmallIntegerArray(*v));
-      return true;
-    }
-  } else if (type_name == "char2[]") {
-    if (auto v = val.get_value<std::vector<value::char2>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "char3[]") {
-    if (auto v = val.get_value<std::vector<value::char3>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "char4[]") {
-    if (auto v = val.get_value<std::vector<value::char4>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "uchar2[]") {
-    if (auto v = val.get_value<std::vector<value::uchar2>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "uchar3[]") {
-    if (auto v = val.get_value<std::vector<value::uchar3>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "uchar4[]") {
-    if (auto v = val.get_value<std::vector<value::uchar4>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "short[]") {
-    if (auto v = val.get_value<std::vector<int16_t>>()) {
-      out.SetUnregisteredValueString(FormatSmallIntegerArray(*v));
-      return true;
-    }
-  } else if (type_name == "short2[]") {
-    if (auto v = val.get_value<std::vector<value::short2>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "short3[]") {
-    if (auto v = val.get_value<std::vector<value::short3>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "short4[]") {
-    if (auto v = val.get_value<std::vector<value::short4>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "ushort[]") {
-    if (auto v = val.get_value<std::vector<uint16_t>>()) {
-      out.SetUnregisteredValueString(FormatSmallIntegerArray(*v));
-      return true;
-    }
-  } else if (type_name == "ushort2[]") {
-    if (auto v = val.get_value<std::vector<value::ushort2>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "ushort3[]") {
-    if (auto v = val.get_value<std::vector<value::ushort3>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "ushort4[]") {
-    if (auto v = val.get_value<std::vector<value::ushort4>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "float[]") {
-    if (auto v = val.get_value<std::vector<float>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "double[]") {
-    if (auto v = val.get_value<std::vector<double>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "timecode[]") {
-    if (auto v = val.get_value<std::vector<value::timecode>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "double2[]") {
-    if (auto v = val.get_value<std::vector<value::double2>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "string[]") {
-    if (auto v = val.get_value<std::vector<std::string>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "float3[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "double3[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  // Array types
+  TRY_CONVERT_SET("uchar[]", std::vector<uint8_t>)
+  TRY_CONVERT_SET("int[]", std::vector<int32_t>)
+  TRY_CONVERT_SET("uint[]", std::vector<uint32_t>)
+  TRY_CONVERT_SET("uint32[]", std::vector<uint32_t>)
+  TRY_CONVERT_UNREG("uint2[]", std::vector<value::uint2>, FormatUintTupleArray)
+  TRY_CONVERT_UNREG("uint3[]", std::vector<value::uint3>, FormatUintTupleArray)
+  TRY_CONVERT_UNREG("uint4[]", std::vector<value::uint4>, FormatUintTupleArray)
+  TRY_CONVERT_UNREG("char[]", std::vector<char>, FormatSmallIntegerArray)
+  TRY_CONVERT_UNREG("char2[]", std::vector<value::char2>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("char3[]", std::vector<value::char3>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("char4[]", std::vector<value::char4>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("uchar2[]", std::vector<value::uchar2>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("uchar3[]", std::vector<value::uchar3>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("uchar4[]", std::vector<value::uchar4>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("short[]", std::vector<int16_t>, FormatSmallIntegerArray)
+  TRY_CONVERT_UNREG("short2[]", std::vector<value::short2>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("short3[]", std::vector<value::short3>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("short4[]", std::vector<value::short4>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("ushort[]", std::vector<uint16_t>, FormatSmallIntegerArray)
+  TRY_CONVERT_UNREG("ushort2[]", std::vector<value::ushort2>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("ushort3[]", std::vector<value::ushort3>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("ushort4[]", std::vector<value::ushort4>, FormatUnregisteredArray)
+  TRY_CONVERT_SET("float[]", std::vector<float>)
+  TRY_CONVERT_SET("double[]", std::vector<double>)
+  TRY_CONVERT_SET("timecode[]", std::vector<value::timecode>)
+  TRY_CONVERT_SET("double2[]", std::vector<value::double2>)
+  TRY_CONVERT_SET("string[]", std::vector<std::string>)
+  TRY_CONVERT_SET("float3[]", std::vector<value::float3>)
+  TRY_CONVERT_SET("double3[]", std::vector<value::double3>)
+
   // Role type arrays - convert to underlying type
-  else if (type_name == "point3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "point3h[]") {
-    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "point3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "normal3h[]") {
-    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "normal3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "normal3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "vector3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "vector3h[]") {
-    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "vector3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color3h[]") {
-    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color4h[]") {
-    if (auto v = val.get_value<std::vector<value::half4>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color4f[]") {
-    if (auto v = val.get_value<std::vector<value::float4>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "color4d[]") {
-    if (auto v = val.get_value<std::vector<value::double4>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  TRY_CONVERT_SET_NOROLE("point3f[]", std::vector<value::float3>)
+  TRY_CONVERT_SET_NOROLE("point3h[]", std::vector<value::half3>)
+  TRY_CONVERT_SET_NOROLE("point3d[]", std::vector<value::double3>)
+  TRY_CONVERT_SET_NOROLE("normal3h[]", std::vector<value::half3>)
+  TRY_CONVERT_SET_NOROLE("normal3f[]", std::vector<value::float3>)
+  TRY_CONVERT_SET_NOROLE("normal3d[]", std::vector<value::double3>)
+  TRY_CONVERT_SET_NOROLE("vector3f[]", std::vector<value::float3>)
+  TRY_CONVERT_SET_NOROLE("vector3h[]", std::vector<value::half3>)
+  TRY_CONVERT_SET_NOROLE("vector3d[]", std::vector<value::double3>)
+  TRY_CONVERT_SET_NOROLE("color3h[]", std::vector<value::half3>)
+  TRY_CONVERT_SET_NOROLE("color3f[]", std::vector<value::float3>)
+  TRY_CONVERT_SET_NOROLE("color3d[]", std::vector<value::double3>)
+  TRY_CONVERT_SET_NOROLE("color4h[]", std::vector<value::half4>)
+  TRY_CONVERT_SET_NOROLE("color4f[]", std::vector<value::float4>)
+  TRY_CONVERT_SET_NOROLE("color4d[]", std::vector<value::double4>)
+
   // TexCoord role type arrays
-  else if (type_name == "texCoord2h[]") {
-    if (auto v = val.get_value<std::vector<value::half2>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord2f[]") {
-    if (auto v = val.get_value<std::vector<value::float2>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord2d[]") {
-    if (auto v = val.get_value<std::vector<value::double2>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord3h[]") {
-    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  }
-  // Base float2/double2 arrays (split from the preceding chain; see NOTE above)
-  if (type_name == "float2[]") {
-    if (auto v = val.get_value<std::vector<value::float2>>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  TRY_CONVERT_SET_NOROLE("texCoord2h[]", std::vector<value::half2>)
+  TRY_CONVERT_SET_NOROLE("texCoord2f[]", std::vector<value::float2>)
+  TRY_CONVERT_SET_NOROLE("texCoord2d[]", std::vector<value::double2>)
+  TRY_CONVERT_SET_NOROLE("texCoord3h[]", std::vector<value::half3>)
+  TRY_CONVERT_SET_NOROLE("texCoord3f[]", std::vector<value::float3>)
+  TRY_CONVERT_SET_NOROLE("texCoord3d[]", std::vector<value::double3>)
+
+  TRY_CONVERT_SET("float2[]", std::vector<value::float2>)
+
   // TexCoord scalars
-  else if (type_name == "texCoord2h") {
-    if (auto v = val.get_value<value::half2>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord2f") {
-    if (auto v = val.get_value<value::float2>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord2d") {
-    if (auto v = val.get_value<value::double2>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord3h") {
-    if (auto v = val.get_value<value::half3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord3f") {
-    if (auto v = val.get_value<value::float3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "texCoord3d") {
-    if (auto v = val.get_value<value::double3>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "token[]") {
-    if (auto v = val.get_value<std::vector<value::token>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int64[]") {
-    if (auto v = val.get_value<std::vector<int64_t>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "uint64[]") {
-    if (auto v = val.get_value<std::vector<uint64_t>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "quath[]") {
-    if (auto v = val.get_value<std::vector<value::quath>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "quatf[]") {
-    if (auto v = val.get_value<std::vector<value::quatf>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "quatd[]") {
-    if (auto v = val.get_value<std::vector<value::quatd>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half[]") {
-    if (auto v = val.get_value<std::vector<value::half>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half2[]") {
-    if (auto v = val.get_value<std::vector<value::half2>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half3[]") {
-    if (auto v = val.get_value<std::vector<value::half3>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half4[]") {
-    if (auto v = val.get_value<std::vector<value::half4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "float4[]") {
-    if (auto v = val.get_value<std::vector<value::float4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "double4[]") {
-    if (auto v = val.get_value<std::vector<value::double4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int2[]") {
-    if (auto v = val.get_value<std::vector<value::int2>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int3[]") {
-    if (auto v = val.get_value<std::vector<value::int3>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int4[]") {
-    if (auto v = val.get_value<std::vector<value::int4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "matrix2f[]") {
-    if (auto v = val.get_value<std::vector<value::matrix2f>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "matrix3f[]") {
-    if (auto v = val.get_value<std::vector<value::matrix3f>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "matrix4f[]") {
-    if (auto v = val.get_value<std::vector<value::matrix4f>>()) {
-      out.SetUnregisteredValueString(FormatUnregisteredArray(*v));
-      return true;
-    }
-  } else if (type_name == "matrix4d[]") {
-    if (auto v = val.get_value<std::vector<value::matrix4d>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "matrix2d[]") {
-    if (auto v = val.get_value<std::vector<value::matrix2d>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "matrix3d[]") {
-    if (auto v = val.get_value<std::vector<value::matrix3d>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "frame4d[]") {
+  TRY_CONVERT_SET_NOROLE("texCoord2h", value::half2)
+  TRY_CONVERT_SET_NOROLE("texCoord2f", value::float2)
+  TRY_CONVERT_SET_NOROLE("texCoord2d", value::double2)
+  TRY_CONVERT_SET_NOROLE("texCoord3h", value::half3)
+  TRY_CONVERT_SET_NOROLE("texCoord3f", value::float3)
+  TRY_CONVERT_SET_NOROLE("texCoord3d", value::double3)
+  TRY_CONVERT_SET("token[]", std::vector<value::token>)
+  TRY_CONVERT_SET("int64[]", std::vector<int64_t>)
+  TRY_CONVERT_SET("uint64[]", std::vector<uint64_t>)
+  TRY_CONVERT_SET("quath[]", std::vector<value::quath>)
+  TRY_CONVERT_SET("quatf[]", std::vector<value::quatf>)
+  TRY_CONVERT_SET("quatd[]", std::vector<value::quatd>)
+  TRY_CONVERT_SET("half[]", std::vector<value::half>)
+  TRY_CONVERT_SET("half2[]", std::vector<value::half2>)
+  TRY_CONVERT_SET("half3[]", std::vector<value::half3>)
+  TRY_CONVERT_SET("half4[]", std::vector<value::half4>)
+  TRY_CONVERT_SET("float4[]", std::vector<value::float4>)
+  TRY_CONVERT_SET("double4[]", std::vector<value::double4>)
+  TRY_CONVERT_SET("int2[]", std::vector<value::int2>)
+  TRY_CONVERT_SET("int3[]", std::vector<value::int3>)
+  TRY_CONVERT_SET("int4[]", std::vector<value::int4>)
+  TRY_CONVERT_UNREG("matrix2f[]", std::vector<value::matrix2f>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("matrix3f[]", std::vector<value::matrix3f>, FormatUnregisteredArray)
+  TRY_CONVERT_UNREG("matrix4f[]", std::vector<value::matrix4f>, FormatUnregisteredArray)
+  TRY_CONVERT_SET("matrix4d[]", std::vector<value::matrix4d>)
+  TRY_CONVERT_SET("matrix2d[]", std::vector<value::matrix2d>)
+  TRY_CONVERT_SET("matrix3d[]", std::vector<value::matrix3d>)
+  // frame4d[] has no direct Crate representation; store as the equivalent
+  // matrix4d[]. Bespoke (loop body), not a TRY_CONVERT_* one-liner.
+  if (type_name == "frame4d[]") {
     if (auto v = val.get_value<std::vector<value::frame4d>>(false)) {
       std::vector<value::matrix4d> mats;
       mats.reserve(v->size());
@@ -3029,45 +2465,32 @@ bool CrateWriter::ConvertValue(
       return true;
     }
   }
+
   // Half-vector arrays
-  else if (type_name == "half2[]") {
-    if (auto v = val.get_value<std::vector<value::half2>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half3[]") {
-    if (auto v = val.get_value<std::vector<value::half3>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half4[]") {
-    if (auto v = val.get_value<std::vector<value::half4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
-  // Int-vector arrays
-  else if (type_name == "int2[]") {
-    if (auto v = val.get_value<std::vector<value::int2>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int3[]") {
-    if (auto v = val.get_value<std::vector<value::int3>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int4[]") {
-    if (auto v = val.get_value<std::vector<value::int4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "bool[]") {
-    if (auto v = val.get_value<std::vector<bool>>()) {
-      out.Set(*v);
-      return true;
-    }
-  }
+  //
+  // NOTE: half2[]/half3[]/half4[] (and int2[]/int3[]/int4[] and bool[]
+  // below) are also matched above/elsewhere in this function. In the
+  // original else-if chain this made the repeat below unreachable dead
+  // code (once a type_name matched a branch in the chain, later branches
+  // were never evaluated, so a get_value() failure just fell through to
+  // "Type not yet supported"); as standalone ifs these are now technically
+  // reachable, but since they perform the exact same check + conversion
+  // as their earlier occurrence, this changes no observable behavior --
+  // preserved as-is rather than silently deduplicating during an otherwise
+  // purely mechanical transform.
+  TRY_CONVERT_SET("half2[]", std::vector<value::half2>)
+  TRY_CONVERT_SET("half3[]", std::vector<value::half3>)
+  TRY_CONVERT_SET("half4[]", std::vector<value::half4>)
+
+  // Int-vector arrays (see dead-code NOTE above)
+  TRY_CONVERT_SET("int2[]", std::vector<value::int2>)
+  TRY_CONVERT_SET("int3[]", std::vector<value::int3>)
+  TRY_CONVERT_SET("int4[]", std::vector<value::int4>)
+  TRY_CONVERT_SET("bool[]", std::vector<bool>)
+
+#undef TRY_CONVERT_SET
+#undef TRY_CONVERT_SET_NOROLE
+#undef TRY_CONVERT_UNREG
 
   // Type not yet supported
   if (err) {
