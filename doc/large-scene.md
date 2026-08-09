@@ -1838,6 +1838,10 @@ retaining one compact attribute stream. `TUSDVIEW_GAUSSIAN_CHUNK=N` controls the
 per-BVH point limit (default 262,144); CUDA, HIP, and Vulkan traverse every
 chunk and choose the nearest valid ellipse. This limits BVH construction
 working memory and avoids a monolithic point-BVH allocation on large fields.
+The Vulkan carrier record is packed to 60 bytes per splat (center, major axis,
+normal, radii, and RGBA) instead of five padded `vec4` fields. Vulkan reports
+the record and BVH/order staging sizes alongside the point/chunk counts,
+making GPU residency visible when tuning for an 8-GiB device.
 
 Large Gaussian fields no longer pass through the general `RenderPoints` copy
 path in tusdview. Their lazy numeric arrays are read as views and emitted as
@@ -1870,7 +1874,9 @@ scene-wide transformed point/radius stream before chunking. Authored points are
 consumed directly from lazy float views; only value-clip curves require a
 bounded per-prim materialized fallback. In `-stats` mode, inconsistent
 `curveVertexCounts`/`points` data is reported as `rt skipped curves` with an
-invalid-data count rather than being silently partially rendered.
+invalid-data count rather than being silently partially rendered. Curve hit
+metadata is owned by each bounded chunk, so chunking also bounds the retained
+segment shading stream rather than only the LightRT geometry build.
 
 The flat next-loader mesh path uses the same bounded native-BVH policy. Mesh
 triangles are split at `TUSDR_TRIANGLE_CHUNK=N` (default 262,144), with global
