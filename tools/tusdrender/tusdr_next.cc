@@ -19,6 +19,7 @@
 #include "next/resolver/asset-resolver.hh"
 #include "next/schema/usd-shade.hh"  // GetInheritedBoundMaterialPath
 #include "next/schema/usd-skel.hh"
+#include "next/types/value-view.hh"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/next/openpbr-params-converter.hh"
@@ -36,6 +37,17 @@ bool ReadFloatArrayViewLazy(const tinyusdz::next::UsdPrim &prim,
                             const char *name, double time,
                             tinyusdz::tydra::next::ValueArrayRead<float> *out) {
   return tinyusdz::tydra::next::ReadFloatArray(prim, name, time, out);
+}
+
+bool AllowGaussianSHDecode(const tinyusdz::next::UsdPrim &prim) {
+  const tinyusdz::next::Value *value = prim.GetPropertyValue(
+      "radiance:sphericalHarmonicsCoefficients");
+  if (!value || !value->is_array()) return true;
+  constexpr size_t kMaxDecodedShBytes = size_t(128) * 1024 * 1024;
+  const bool oversized = value->array_size() >
+                         kMaxDecodedShBytes / sizeof(float);
+  return !oversized || !value->is_lazy() ||
+         tinyusdz::next::CanBorrowLazyFlat(*value);
 }
 
 bool ReadIntArrayViewLazy(const tinyusdz::next::UsdPrim &prim,
@@ -3154,8 +3166,12 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
       const bool have_s = ReadFloatArrayViewLazy(prim, "scales", time, &s);
       const bool have_q = ReadFloatArrayViewLazy(prim, "orientations", time, &qv);
       const bool have_op = ReadFloatArrayViewLazy(prim, "opacities", time, &op);
-      const bool have_sh = ReadFloatArrayViewLazy(
+      const bool allow_sh = AllowGaussianSHDecode(prim);
+      const bool have_sh = allow_sh && ReadFloatArrayViewLazy(
           prim, "radiance:sphericalHarmonicsCoefficients", time, &sh);
+      if (!allow_sh)
+        std::cerr << "Gaussian splat: skipping oversized compressed SH payload at "
+                  << prim.GetPath().str() << "; using fallback color.\n";
       if (!have_p || !have_s || p.size() < 3 || s.size() < 3) {
         for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
           self(self, child, world);

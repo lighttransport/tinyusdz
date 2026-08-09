@@ -373,6 +373,10 @@ bool ReadFloatArrayViewLazy(
     const tinyusdz::next::UsdPrim &prim, const char *name, double time,
     tinyusdz::tydra::next::ValueArrayRead<float> *out);
 
+// Large compressed SH payloads are optional for preview: only the DC RGB
+// coefficient is consumed, so avoid materializing an oversized array.
+bool AllowGaussianSHDecode(const tinyusdz::next::UsdPrim &prim);
+
 std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
                                       const char *name, double time);
 
