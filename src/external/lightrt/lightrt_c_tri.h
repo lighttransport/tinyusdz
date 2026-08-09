@@ -328,6 +328,7 @@ lrt_tri_scene *lrt_bezcurve_scene_build(const float *cps, size_t nseg,
  *   LRT_POINT_SPHERE         analytic sphere      (RTC_GEOMETRY_TYPE_SPHERE_POINT)
  *   LRT_POINT_DISC           ray-facing disc      (RTC_GEOMETRY_TYPE_DISC_POINT)
  *   LRT_POINT_ORIENTED_DISC  fixed-normal disc    (ORIENTED_DISC_POINT)
+ *   LRT_POINT_ELLIPSE        fixed-normal oval    (LightRT extension)
  *
  * centers = 3*nprims xyz, radii = nprims. normals = 3*nprims (required only for
  * LRT_POINT_ORIENTED_DISC, else may be NULL). Queried via the lrt_tri_*
@@ -335,7 +336,8 @@ lrt_tri_scene *lrt_bezcurve_scene_build(const float *cps, size_t nseg,
 typedef enum lrt_tri_point_type {
     LRT_POINT_SPHERE = 0,
     LRT_POINT_DISC = 1,
-    LRT_POINT_ORIENTED_DISC = 2
+    LRT_POINT_ORIENTED_DISC = 2,
+    LRT_POINT_ELLIPSE = 3
 } lrt_tri_point_type;
 
 lrt_tri_scene *lrt_points_scene_build(const float *centers, const float *radii,
@@ -343,6 +345,23 @@ lrt_tri_scene *lrt_points_scene_build(const float *centers, const float *radii,
                                       size_t nprims,
                                       const lrt_tri_build_options *opts,
                                       lrt_result *err);
+
+/* Build fixed-normal elliptical discs (ovals). radii_xy has 2*nprims values
+ * (major/minor radii); normals has 3*nprims values. The in-plane major axis is
+ * chosen deterministically from the normal. */
+lrt_tri_scene *lrt_ellipse_scene_build(const float *centers,
+                                       const float *radii_xy,
+                                       const float *normals, size_t nprims,
+                                       const lrt_tri_build_options *opts,
+                                       lrt_result *err);
+
+/* Oriented variant. major_axes contains one in-plane major-axis vector per
+ * primitive (3*nprims floats); it is projected onto the ellipse plane and the
+ * minor axis is derived from the supplied normal. */
+lrt_tri_scene *lrt_ellipse_scene_build_oriented(
+    const float *centers, const float *radii_xy, const float *normals,
+    const float *major_axes, size_t nprims, const lrt_tri_build_options *opts,
+    lrt_result *err);
 
 /* --- Custom (user) geometry -----------------------------------------------
  *

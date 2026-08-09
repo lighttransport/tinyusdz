@@ -112,6 +112,13 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene);
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
+  // Native Gaussian ellipse carriers: centers, major axes, normals, radii and
+  // RGBA display color are parallel by point. These bypass triangle proxies.
+  std::vector<float> pointCenters, pointMajorAxes, pointNormals;
+  std::vector<float> pointRadii, pointColors;
+  std::vector<int> pointOrder;
+  std::vector<Node> pointBvh;
+  size_t pointCount{0};
   // cols is RGBA per triangle vertex: displayColor.rgb + displayOpacity.
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
   std::vector<uint8_t> geo;

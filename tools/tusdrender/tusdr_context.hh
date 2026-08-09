@@ -6,12 +6,17 @@
 
 #include <functional>
 
+#include "next/eval/value-clip.hh"
 #include "tusdr_types.hh"
 
 namespace tusdr {
 
 struct RenderContext {
   tinyusdz::next::Stage stage;  // keeps the lazy point/index arrays alive
+  // Loader used by procedural/value-clip curves. It is populated while the
+  // composed session is still alive so relative clip assets can use its layer
+  // dependency anchors.
+  tinyusdz::next::ValueClipStageLoader clip_stage_loader;
   // Flat (no-instance) path buffers: default allocator so the shared
   // Shade/RenderImage signatures stay std::vector. The big, OOM-prone instanced
   // geometry lives in the budget-tracked Blas buffers below.
@@ -302,6 +307,8 @@ bool LoadProgress(float progress, void *);
 // ---- next-loader / driver (defined in tusdrender.cc for now) ----
 bool BuildRenderContext(const Options &opt, RenderContext &ctx);
 bool ExtractAndBuildBVH(RenderContext &ctx, double time);
+bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
+                               RenderContext &ctx, double time);
 void PrintRTStats(const RenderContext &ctx);
 double RenderFrameTo(RenderContext &ctx, const std::string &path);
 void ResolveCameraNext(RenderContext &ctx);
@@ -321,6 +328,10 @@ int RunStreamServer(const Options &opt);
 bool RunVulkanLightRT(const Options &opt,
                               const std::vector<Vec3> &base_colors,
                               const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                              const CameraFrame &camera, int height);
+bool RunVulkanGaussianLightRT(const Options &opt, lrt_tri_scene *scene,
+                              const std::vector<Vec3> &base_colors,
+                              const std::vector<Vec3> &normals,
                               const CameraFrame &camera, int height);
 #endif
 
@@ -488,7 +499,8 @@ CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
 bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim);
 
 std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
-    const tinyusdz::next::UsdPrim &prim, double time);
+    const tinyusdz::next::UsdPrim &prim, double time,
+    const tinyusdz::next::ValueClipStageLoader &clip_loader);
 
 bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
                      double time);
@@ -592,7 +604,8 @@ int RunRTPreviewNext(const Options &opt);
 // Compose through the persistent next-core session with aggregate accounting,
 // then release transient PCP caches before returning the retained Stage.
 bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
-                           std::string *warn, std::string *err);
+                           std::string *warn, std::string *err,
+                           tinyusdz::next::ValueClipStageLoader *clip_loader = nullptr);
 
 // ---- tusdr_lod.cc (view-dependent district LOD pre-pass) ----
 // Largest DEVICE_LOCAL Vulkan heap (VRAM) in bytes; 0 if no Vulkan/device.

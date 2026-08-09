@@ -745,6 +745,12 @@ struct DrawPointsCPU {
   std::vector<float> widths;   // empty, constant, or per-point
   std::vector<float> colors;   // empty, constant rgb, or per-point rgb
   std::vector<float> opacities;  // empty, constant, or per-point
+  // Gaussian splat covariance carrier. Radii are diameters in local space;
+  // normals/major_axes are optional and parallel to points.
+  bool gaussian{false};
+  std::vector<float> ellipseRadii;
+  std::vector<float> ellipseNormals;
+  std::vector<float> ellipseMajorAxes;
   int colorsInterpolation{0};
   int opacitiesInterpolation{0};
   int materialId{-1};

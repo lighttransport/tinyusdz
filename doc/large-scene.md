@@ -182,6 +182,52 @@ large-scene-load <scene.usd[a]> [--mode=none|all|budget] [--budget-mb=N]
                                 [--no-dedup] [--load-some=N] [--unload]
 ```
 
+### 2.5.1 ALab per-element geometry, textures, and procedurals
+
+Before loading the complete ALab set, representative elements were measured
+individually from `/mnt/disk1/data/alab/_merged_ALab` with `tusdview --next`,
+`--load-payloads`, the `alab` large-scene profile, one headless Vulkan frame at
+time 1004, and `--timing`. Geometry-only cases use the modelling fragment;
+full cases use the entity layer, which adds surfacing/lighting and filesystem
+textures. `lab_workbench01` is the closest bounded set element to a kitchen
+work area; the extracted entity tree has no element literally named Kitchen.
+
+| Case | Compose s | Convert s | Load total s | Meshes | ntris | Materials/textures | Peak RSS MiB | Upload / present | Result |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| Portable TV geometry-only | 0.010 | 0.022 | 0.033 | 5 | 64,693 | 4/0 | 250 | 0.01 s / 0.9 ms | pass |
+| Portable TV full textured entity | 0.006 | 0.107 | 0.114 | 2 | 51,997 | 3/2 | 259 | 0.00 s / 0.5 ms | pass |
+| Stoat body geometry-only | 0.013 | 0.057 | 0.072 | 3 | 80,856 | 3/0 | 243 | 0.01 s / 1.0 ms | pass |
+| Stoat full character entity | 0.080 | 0.387 | 0.520 | 12 | 566,344 | 13/5 | 454 | 0.05 s / 0.6 ms | pass |
+| `lab_workbench01` full textured set element | 0.902 | 6.694 | 16.250 | 538 | 3,586,150 | 336/276 | 2,114 | 0.34 s / 63.6 ms | pass |
+| Baked procedurals `main.usda` (no variant override) | 0.230 | — | — | 0 | 0 | 1/0 | 376 | — / 1.1 ms | no renderable geometry |
+| Baked procedurals, `alfro=render` selected | 0.038 | 0.000 | 0.630 | 0 | 0 | 3/0 | 554 | — / 541.0 ms | Curves conversion failed |
+
+The procedural package is present at `/mnt/disk1/data/alab/usd/baked_procedurals`;
+the merged `baked_procedurals/main.usda` is only a placeholder layer. Loading
+the package's `main.usda` without selecting the `alfro=render` variant produces
+no geometry. With the variant selected, composition succeeds and retains the
+procedural stage, but `next` reports conversion failures for the Stoat body
+and Remi hair Curves, yielding zero mesh draws. The next investigation should
+therefore target ALab procedural Curves conversion separately from ordinary
+mesh/textured elements.
+
+Example variant wrapper:
+
+```usda
+#usda 1.0
+(
+    subLayers = [ @/mnt/disk1/data/alab/usd/baked_procedurals/main.usda@ ]
+    upAxis = "Y"
+)
+over "root" {
+    over "stoat" {
+        over "body_M_hrc" (
+            variants = { string alfro = "render" }
+        ) {}
+    }
+}
+```
+
 ### 2.6 Measured result (Caldera)
 
 `large-scene-load caldera.usda --mode=none` composes the full proxy-mode
@@ -216,6 +262,48 @@ character hair/cloth; `main.usda`) composes its full structure — multi-payload
 prims and the value-clip `GEO` behind the `alfro=render` variant — in a few MiB,
 with the multi-GB binaries and the value-clip layer deferred. This needed the
 variant-content fix (§3.5).
+
+The `next` curve converter now accepts semantic USD vector arrays such as
+`point3f[]` (the package's authored type) in addition to flattened `float[]`.
+It also resolves curve points from clip metadata found on a geometry ancestor
+when the composed stage retains that metadata. Direct loading of
+`baked_procedurals/clip.usd` was verified with NVIDIA Vulkan at time 1004:
+**1 curve, 63,957,007 tessellated samples, no curve-conversion warning**.
+The `main.usda` wrapper now resolves the variant-content payload relative to
+the layer that authored it; eager payload loading retains the clip-backed body
+curve (**5 curves, 68,293,393 tessellated samples**). Curves that are only
+procedural placeholders (authored counts but no authored points or clip owner)
+are omitted without a false conversion warning.
+
+The same composed wrapper was also exercised through `tusdrender`'s next
+loader with CPU `-rtPreview`: it resolved the clip-backed data and built **10
+curve strands**, with no missing-asset or curve-conversion diagnostics. The
+Vulkan LightRT bridge does not expose the CUDA analytic curve primitive types,
+so `tusdrender -vk/-vkr` now builds the same round-linear LightRT curve scene
+and tessellates it at the Vulkan upload boundary. The Vulkan curve-only smoke
+run rendered the same **10 curve strands** through the RTX GPU triangle path.
+This preserves GPU rendering for mixed triangle/round-curve scenes too;
+flat/ribbon curves remain on the CPU direct path until a view-dependent Vulkan
+ribbon primitive is available. The very large ALab procedural wrapper still
+exceeds the current Vulkan upload/engine budget after tessellation.
+
+The same GPU upload bridge now covers `UsdGeomPoints`: point widths become
+low-cost round point spheres, while authored point normals become double-sided
+disc geometry. This is used by the Vulkan, HIP, and D3D triangle backends. The
+minimal public regression fixture `tests/usda/tusdrender-points.usda` renders
+on the NVIDIA Vulkan path as **160 GPU triangles**. Analytic point/curve scene
+ABIs remain available to CPU LightRT; Vulkan currently receives their
+triangleized upload representation.
+
+ALab's `extras/alab_sdr_splat.usdc` is a
+`ParticleField3DGaussianSplat` with **2,274,589** particles. The GPU collector
+now reads positions, scales, orientations, opacity, and DC spherical-harmonic
+radiance, mapping each covariance ellipsoid to a batched oriented ellipse
+upload. A full triangleized upload reaches **15,314,240 triangles** and exceeds
+the current LightRT Vulkan engine/upload budget. An explicit
+`TUSDR_GAUSSIAN_MAX=N` budget is available for diagnosis; even a 10,000-splat
+ALab load still failed Vulkan engine creation in this run. The default does not
+silently truncate the asset.
 
 ### 2.6.1 Rendering Caldera (tusdrender + tusdview, NVIDIA RTX 5060 Ti)
 
@@ -281,6 +369,59 @@ camera; the TLAS now skips purposes hidden in the UI and the mine district
 ray-traces correctly (see §2.8 for the measured recipe). The VK-raster flat
 shading still wants the smooth-normal + headlight treatment the tusdrender
 preview already uses. For full LOD, see §2.6.2.
+
+### 2.6.1-a Island element composition and tusdview timings
+
+The following table records each partial element under
+`/mnt/disk1/data/island/usd/elements/*/element.usda`. Each run used the `next`
+loader, eager payload resolution (`--load-payloads`), the Island large-scene
+profile, one headless Vulkan frame at time 1, and `--timing`.
+
+`USD tree MiB` is the sum of non-AppleDouble `*.usd`, `*.usda`, `*.usdc`, and
+`*.usdz` files below that element directory. It is a conservative whole-file
+footprint, including referenced/payloaded files and files available to
+variants. `Parse/source ms` is the next-core source-discovery and layer-load
+phase; `Compose s` is the composed-stage rebuild. `Extract s` combines point-
+instancer, traversal, points/curves, native-instance, render-prim, and
+post-extraction phases. `Convert s` is mesh flatten/batch conversion, and
+`Load total s` is tusdview's finalize total. `GPU upload s` and `Present ms`
+come from `TUSDVIEW_TIME_UPLOAD=1 TUSDVIEW_TIME_FRAME=1`.
+
+The initial smoke pass selected the NVIDIA RTX 5060 Ti for every element. The
+detailed timing pass below ran on Vulkan llvmpipe after the NVIDIA kernel driver
+became unavailable; upload/present values must therefore be treated as
+software-renderer measurements, not NVIDIA performance numbers. This does not
+change the composition or conversion statistics.
+
+| Element | USD tree MiB | Meshes | ntris | Materials/textures | Parse/source ms | Compose s | Extract s | Convert s | Load total s | GPU upload s | Present ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| isBayCedarA1 | 100.4 | 15004 | 4067550 | 6/0 | 207.6 | 4.965 | 3.999 | 1.437 | 10.862 | 1.29 | 203.3 |
+| isBeach | 712.4 | 201 | 158676 | 203/0 | 532.0 | 0.666 | 5.009 | 0.079 | 5.756 | 4.23 | 3783.8 |
+| isCoastline | 89.1 | 1 | 115400 | 2/0 | 2.9 | 0.006 | 0.003 | 0.069 | 0.079 | 0.01 | 2.0 |
+| isCoral | 415.0 | 13812 | 17423268 | 13668/0 | 321.1 | 8.597 | 2.925 | 14.473 | 26.149 | 2.53 | 584.1 |
+| isDunesA | 24.8 | 835 | 244182 | 836/2 | 105.3 | 0.626 | 0.245 | 1.031 | 1.911 | 0.09 | 3.7 |
+| isDunesB | 157.6 | 20001 | 4063416 | 8/0 | 2143.6 | 9.453 | 14.467 | 0.318 | 24.334 | 5.12 | 3512.0 |
+| isGardeniaA | 2.3 | 1 | 12344 | 2/0 | 233.9 | 0.257 | 0.092 | 0.001 | 0.386 | 0.00 | 2.9 |
+| isHibiscus | 5.5 | 3324 | 255756 | 3/1 | 19.0 | 0.560 | 0.647 | 0.017 | 1.266 | 0.18 | 30.3 |
+| isHibiscusYoung | 0.4 | 43 | 14012 | 3/0 | 4.2 | 0.013 | 0.026 | 0.000 | 0.043 | 0.00 | 2.5 |
+| isIronwoodA1 | 102.4 | 1 | 486526 | 4/0 | 2.7 | 0.007 | 0.795 | 0.000 | 0.802 | 0.04 | 547.3 |
+| isIronwoodB | 100.9 | 2 | 486594 | 5/0 | 86.9 | 0.091 | 0.500 | 0.275 | 0.867 | 0.03 | 478.0 |
+| isKava | 2.1 | 539 | 122416 | 105/0 | 38.0 | 0.094 | 0.234 | 0.002 | 0.336 | 0.05 | 12.5 |
+| isLavaRocks | 1.8 | 20 | 115264 | 21/0 | 0.8 | 0.012 | 0.004 | 0.045 | 0.062 | 0.01 | 0.9 |
+| isMountainA | 64.2 | 1 | 67006 | 2/0 | 93.9 | 0.253 | 0.049 | 0.046 | 0.350 | 0.01 | 0.8 |
+| isMountainB | 866.9 | 10 | 1747604 | 9/6 | 88.9 | 0.243 | 5.210 | 0.847 | 6.303 | 0.40 | 2816.7 |
+| isNaupakaA | 0.3 | 24 | 5904 | 25/0 | 0.7 | 0.019 | 0.033 | 0.000 | 0.053 | 0.00 | 6.4 |
+| isPalmDead | 3.6 | 2 | 309038 | 3/0 | 0.7 | 0.002 | 0.000 | 0.262 | 0.267 | 0.07 | 0.9 |
+| isPalmRig | 283.7 | 1980 | 4366560 | 2047/0 | 9.7 | 1.224 | 1.055 | 2.636 | 4.941 | 0.43 | 912.9 |
+| isPandanusA | 16.2 | 59 | 15964 | 62/0 | 10.0 | 0.030 | 0.161 | 0.000 | 0.196 | 0.01 | 70.2 |
+| osOcean | 104.1 | 1 | 15592264 | 2/0 | 0.3 | 0.002 | 0.000 | 12.639 | 14.267 | 1.16 | 0.5 |
+
+The largest composed element trees are `isMountainB` (866.9 MiB), `isBeach`
+(712.4 MiB), and `isCoral` (415.0 MiB). Composition is dominated by source
+discovery for `isDunesB` (2.14 s) and by extraction/conversion for the dense
+`isCoral` and `osOcean` payloads. The `ntris` column is the post-composition
+loaded mesh total, while the last two columns measure the separate raster
+upload/present path and can vary substantially with the software renderer.
 
 ### 2.6.1-b Next-core benchmark recipes (`next_usdcat` + `tydra_to_renderscene`)
 
@@ -472,6 +613,85 @@ changes:
 to 512 px JPEG for the repo. The colored speckles in some frames are neighboring
 districts still at `proxy`, drawn with their `displayColor`. The default-tri
 count is per *district*, so it is identical across that district's cameras.)
+
+#### Per-district `tusdview --next` composition measurements
+
+These measurements promote one district to `districtLod = "full"` in a stronger
+wrapper layer and leave the other 44 districts at their authored `proxy` LOD.
+The input tree is `/mnt/disk1/data/caldera` (10,496,782,370 bytes, about 10.50
+GB, including all USD and texture assets). Each run used `--load-payloads`,
+`--large-scene-profile caldera`, one headless Vulkan frame at time 1, and
+`--timing`. `Extract` is the sum of next-core extraction/collection phases;
+`Load total` is the finalize total; `Upload` and `Present` are from
+`TUSDVIEW_TIME_UPLOAD=1 TUSDVIEW_TIME_FRAME=1`.
+
+The NVIDIA RTX 5060 Ti smoke backend was unavailable during this run
+(`nvidia-smi` could not communicate with the driver), so the detailed timing
+pass used Vulkan llvmpipe. Composition and conversion timings remain useful;
+upload/present timings are software-renderer measurements. `capital` reached
+finalization but exceeded the 180 s per-run limit before GPU upload, so its
+upload/present fields are intentionally blank.
+
+| District promoted to full | Meshes | Unique/effective tris | Instances | Parse/source ms | Compose s | Extract s | Convert s | Load total s | Peak RSS MiB | Upload s | Present ms | Result |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| map_agricultural_center | 1648 | 42,880,177 / 43,900,288 | 38,783 | 186.9 | 29.539 | 13.755 | 19.754 | 63.794 | 11,134 | 5.22 | 397.6 | pass |
+| map_airfield | 3259 | 45,325,419 / 139,405,185 | 135,885 | 587.8 | 80.025 | 35.560 | 29.673 | 147.466 | 21,945 | 5.80 | 717.7 | pass |
+| map_arsenal | 2347 | 43,621,773 / 68,327,795 | 66,493 | 361.7 | 51.887 | 22.594 | 22.034 | 97.766 | 15,931 | 5.06 | 489.6 | pass |
+| map_beachhead | 2453 | 44,248,206 / 149,017,863 | 120,853 | 376.0 | 53.967 | 23.745 | 20.860 | 100.218 | 16,422 | 5.20 | 519.3 | pass |
+| map_capital | 3623 | 45,498,738 / 164,146,391 | 162,769 | — | 102.006 | 43.450 | 30.525 | 178.830 | 26,134 | — | — | timeout during upload |
+| map_phosphate_mine | 7719 | 45,775,280 / 108,414,347 | 90,478 | 365.9 | 50.590 | 24.133 | 17.562 | 93.693 | 15,411 | 4.74 | 634.4 | pass |
+| map_tile_p | 5848 | 42,998,848 / 57,564,635 | 41,333 | 345.6 | 49.055 | 20.894 | 24.837 | 95.860 | 14,952 | 3.70 | 407.3 | pass |
+
+The full-promotion cost is not proportional to the selected district alone:
+every row still composes the complete proxy island and its shared layers. The
+capital and airfield rows are the heaviest host-memory cases; the phosphate
+mine has the most converted mesh nodes because its full payload is highly
+fragmented. This is why per-shot full LOD remains preferable to promoting all
+45 districts at once.
+
+#### Splitting `map_capital` into smaller load units
+
+The `map_capital` full payload is itself a 42,470-byte crate, but its composed
+content contains 114 top-level children below `/world/map_capital`. Loading
+that crate directly is much cheaper than composing the complete island wrapper,
+but it still produces a large single conversion batch. A stronger decomposition
+is to author one small wrapper per top-level child and reference the child path
+inside the capital crate:
+
+```usda
+#usda 1.0
+(
+    upAxis = "Z"
+    defaultPrim = "world"
+)
+def Xform "world" {
+    def Xform "map_capital" {
+        def Xform "cityhall_01" (
+            prepend references = @.../season_4/map_capital.usd@
+                </world/map_capital/cityhall_01>
+        ) {}
+    }
+}
+```
+
+This preserves the authored world transform while allowing the viewer or a
+streaming scheduler to load/convert each child independently. The following
+comparison used `--next --load-payloads --large-scene-profile caldera`, one
+headless Vulkan frame, and the same timing flags as the table above. The
+software Vulkan backend was used because the NVIDIA driver was unavailable.
+
+| Input decomposition | Compose s | Convert s | Load total s | Meshes | ntris | Peak RSS MiB | GPU upload s | Present ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Full-island wrapper, `map_capital = full` | 102.006 | 30.525 | 178.830 | 3623 | 45,498,738 | 26,134 | — | — |
+| Direct `map_capital.usd` crate | 49.396 | 41.780 | 125.879 | 3614 | 39,402,788 | 17,712 | 7.33 | 556.1 |
+| One child wrapper: `cityhall_01` | 2.163 | 1.298 | 4.724 | 337 | 2,670,852 | 1,108 | 0.39 | 60.2 |
+
+The direct crate finishes under the previous 180-second limit, but the
+top-level-child split is the robust approach: each unit is small enough for
+bounded conversion and can be scheduled independently. The remaining work for
+production streaming is generating these child wrappers from the 114 authored
+children and retaining the parent capital transform when assembling the
+results.
 
 ### 2.6.3 `-lodStream`: automatic view-dependent district LOD (tusdrender)
 
@@ -1575,6 +1795,30 @@ moderately: for Island, a `/dev/null`-symlink USDC write was ~47.6 s with
 but they do not remove the global-dedup floor. Writing the same USDC to
 `/dev/shm` remains ~40 s, confirming the bottleneck is CPU/structure building,
 not disk I/O.
+
+### 6.4 Gaussian splat coverage
+
+The next/tusdview loader recognizes the public
+`ParticleField3DGaussianSplat` schema as a point-like render carrier. It
+retains the ALab payload's 2,274,589 positions, uses the largest scale as the
+raster billboard diameter, and converts the DC spherical-harmonic coefficient
+plus opacity for display. NVIDIA Vulkan headless capture was verified on the
+full ALab payload and on `tests/usda/tusdview-gaussian-splat.usda`.
+
+The native LightRT CPU ellipse primitive is now connected to tusdrender's next
+RT-preview collector. Gaussian-only stages build an analytic ellipse BVH and
+render without triangle conversion; quaternion roll is retained in the leaf
+representation. `TUSDR_GAUSSIAN_MAX` bounds diagnostic loads. CUDA's serialized
+point path consumes the same ellipse/roll fields, and the Vulkan compute BVH now
+traverses the serialized point leaves natively. NVIDIA Vulkan was verified on
+the full ALab payload (1,914,280 non-transparent splats) without tessellated
+triangles.
+
+The tusdview carrier path retains Gaussian radii, normals, and major-axis
+orientation. Its CUDA and Vulkan ray-tracing scene builders upload native
+ellipse records and traverse a dedicated analytic point BVH; no triangle proxy
+is emitted. The minimal fixture and the full ALab payload were captured on
+NVIDIA CUDA and Vulkan with zero RT triangles.
 
 ## 7. Verification
 

@@ -84,6 +84,19 @@ bool FinishBorrowedView(const std::vector<T>* storage, ArrayView<T>* out) {
   return true;
 }
 
+bool FinishFloatBackedView(const Value& value, ArrayView<float>* out) {
+  if (!value.is_array() || GetComponentType(value.type_id()) != TypeId::Float)
+    return false;
+  const size_t components = GetComponentCount(value.type_id());
+  if (components == 0) return false;
+  const float* data = static_cast<const float*>(value.raw_data());
+  const size_t elements = value.array_size();
+  if (elements > (std::numeric_limits<size_t>::max)() / components)
+    return false;
+  *out = ArrayView<float>{data, elements * components, true};
+  return data != nullptr || elements == 0;
+}
+
 }  // namespace
 
 bool CanBorrowLazyFlat(const Value& value) {
@@ -127,12 +140,20 @@ bool GetFloatArrayView(const Value& value, ArrayScratch<float>* scratch,
   }
   if (!value.is_lazy()) {
     const std::vector<float>* arr = value.as_float_array();
-    if (!arr) return false;
-    *out = ArrayView<float>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
-    return true;
+    if (arr) {
+      *out = ArrayView<float>{arr->empty() ? nullptr : arr->data(),
+                              arr->size(), true};
+      return true;
+    }
+    // USD vector arrays (notably point3f[]) use the same flat float storage
+    // as float[], but retain their element type for schema fidelity.
+    return FinishFloatBackedView(value, out);
   }
   scratch->materialized = value.materialized_copy();
-  return FinishBorrowedView(scratch->materialized.as_float_array(), out);
+  if (scratch->materialized.as_float_array()) {
+    return FinishBorrowedView(scratch->materialized.as_float_array(), out);
+  }
+  return FinishFloatBackedView(scratch->materialized, out);
 }
 
 bool GetDoubleArrayView(const Value& value, ArrayScratch<double>* scratch,

@@ -828,6 +828,8 @@ typedef struct trace_push {
     uint32_t node_count;
     uint32_t block_count;
     uint32_t ray_count;
+    uint32_t prim_kind;
+    uint32_t point_type;
 } trace_push;
 
 /* Bucket the traversal stack depth so pipelines are reused across scenes. */
@@ -1001,10 +1003,9 @@ int lrt_vk_trace_scene(lrt_vk_engine *e, const lrt_tri_scene *s,
         return -1;
     }
     const vk_lrts_header *h = (const vk_lrts_header *)blob;
-    /* The trace shader is plain-triangle-only (hardcoded 10*W block stride).
-     * save_to_memory now also serializes non-triangle geometric kinds, so gate
-     * explicitly on prim_kind here. */
-    if (h->prim_kind != 0u /* TRI_PRIM_TRI */) {
+    /* The trace shader supports triangles and serialized point leaves. */
+    if (h->prim_kind != 0u /* TRI_PRIM_TRI */ &&
+        h->prim_kind != 6u /* TRI_PRIM_POINT */) {
         free(blob);
         vk_set_err(e, "only triangle scenes are GPU-traceable");
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
@@ -1070,6 +1071,8 @@ int lrt_vk_trace_scene(lrt_vk_engine *e, const lrt_tri_scene *s,
             pc.node_count = h->node_count;
             pc.block_count = h->block_count;
             pc.ray_count = cnt;
+            pc.prim_kind = h->prim_kind;
+            pc.point_type = h->reserved0;
             uint32_t groups = (cnt + 63u) / 64u;
             run_ok = vk_dispatch(e, pipe, set, &pc, (uint32_t)sizeof(pc), groups) &&
                      vk_buffer_read(e, &b_hits, out + off,

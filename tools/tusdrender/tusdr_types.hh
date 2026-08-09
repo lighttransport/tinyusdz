@@ -661,6 +661,11 @@ struct DirectScene {
                                                                        lrt_tri_scene_free};
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> points{nullptr,
                                                                    lrt_tri_scene_free};
+  // Native covariance-ellipse scene for Gaussian splats.  This is kept
+  // separate from Points because its intersection kernel is planar and
+  // anisotropic rather than spherical.
+  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> ellipses{nullptr,
+                                                                     lrt_tri_scene_free};
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> bez_curves{nullptr,
                                                                        lrt_tri_scene_free};
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> tets{nullptr,
@@ -670,6 +675,7 @@ struct DirectScene {
   std::vector<TriInfo> flat_curve_info;
   std::vector<TriInfo> bez_curve_info;
   std::vector<TriInfo> point_info;
+  std::vector<TriInfo> ellipse_info;
   std::vector<TetPrim> tet_prims;
   std::vector<DirectShape> shapes;
   std::unordered_set<std::string> direct_paths;

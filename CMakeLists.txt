@@ -2870,7 +2870,7 @@ if(TINYUSDZ_BUILD_TESTS)
       #                     orientation quaternion being read imaginary-first when the
       #                     next stage stores it real-first: a 30-degree Z rotation
       #                     decoded as a 150-degree X rotation, i.e. upside-down.
-      foreach(deform_case skin-xform morph-subsets morph-skin instanced-proto
+      foreach(deform_case skin-xform skin-animation morph-subsets morph-skin instanced-proto
                           pointinstancer)
         add_test(
           NAME tusdview-deform-${deform_case}

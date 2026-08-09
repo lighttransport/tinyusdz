@@ -1,0 +1,20 @@
+#usda 1.0
+
+def "GaussianFixture" (
+    kind = "component"
+)
+{
+    def ParticleField3DGaussianSplat "SplatField"
+    {
+        float3[] extent = [(-1, -1, -0.1), (1, 1, 0.1)]
+        point3f[] positions = [(-0.35, 0, 0), (0.35, 0, 0)]
+        float3[] scales = [(0.18, 0.08, 0.02), (0.08, 0.18, 0.02)]
+        quatf[] orientations = [(1, 0, 0, 0), (1, 0, 0, 0)]
+        float[] opacities = [0.9, 0.75]
+        int radiance:sphericalHarmonicsDegree = 0
+        float3[] radiance:sphericalHarmonicsCoefficients = [
+            (1.0, 0.2, 0.05),
+            (0.05, 0.3, 1.0)
+        ]
+    }
+}

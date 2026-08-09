@@ -25,6 +25,8 @@
         s.resize(p);
       }
       if (!ok) break;
+      const size_t host_sep = s.find('\x1f');
+      if (host_sep != std::string::npos) s.resize(host_sep);
       id.swap(s);
     }
     return id;
@@ -222,11 +224,15 @@
           // Subtree content: model as a reference-style Variant source into the
           // content layer's "/__self__" root, so child prims compose normally.
           if (vd->content) {
-            // Stable variant-content identity: (host layer-stack, host site,
-            // variantSet, variantName). The previous pointer-derived id aliased
+            // Stable variant-content identity: (authoring layer, host stack,
+            // host site, variantSet, variantName). The previous pointer-derived id aliased
             // after a VariantData was freed and reallocated (stale instance
             // keys), and never matched across two parses of the same asset.
+            const std::string variant_anchor = RealAnchorOf(
+                layer_id.empty() ? layer_stacks[src.stack_idx].identifier
+                                  : layer_id);
             const std::string vid = "variant:" +
+                                    variant_anchor + "\x1f" +
                                     layer_stacks[src.stack_idx].identifier +
                                     ":" + src.site + ":" + set_name + ":" +
                                     vd->name;
@@ -1058,7 +1064,6 @@
 
     const std::vector<SpecRef> &specs = Specs(src.stack_idx, src.site);
     if (specs.empty()) return;
-
     // Record this source's variant selections (strong-first wins) so a selection
     // authored on a stronger source applies to a variantSet defined on a weaker
     // one (cross-source selection).

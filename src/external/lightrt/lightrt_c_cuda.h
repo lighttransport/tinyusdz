@@ -87,7 +87,8 @@ const char *lrt_cuda_engine_last_error(const lrt_cuda_engine *e);
  *
  * Upload a CPU-built scene (via its LRTS serialization) to device memory. The
  * node/block buffers stay resident until lrt_cuda_scene_free(). Only plain
- * triangle scenes with BVH4/BVH8 layout are supported (quantized/curve/user
+ * triangle, point, and supported curve scenes with BVH4/BVH8 layout are
+ * supported (quantized/user
  * scenes are rejected, as by lrt_tri_scene_save_to_memory). The engine must
  * outlive the scene. Returns NULL on error (err set). */
 lrt_cuda_scene *lrt_cuda_scene_upload(lrt_cuda_engine *e, const lrt_tri_scene *s,

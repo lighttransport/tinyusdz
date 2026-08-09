@@ -604,6 +604,21 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
   test_scene(direct->round_curves.get(), direct->round_curve_info, false);
   test_scene(direct->flat_curves.get(), direct->flat_curve_info, false);
   test_scene(direct->points.get(), direct->point_info, true);
+  auto test_ellipses = [&](lrt_tri_scene *scene,
+                           const std::vector<TriInfo> &info) {
+    if (!scene) return;
+    lrt_hit h;
+    if (!lrt_tri_intersect1(scene, &ray, &h) || h.prim_id == LRT_TRI_NO_HIT ||
+        size_t(h.prim_id) >= info.size() || h.t >= best->t) return;
+    const TriInfo &ti = info[size_t(h.prim_id)];
+    best->t = h.t;
+    best->n = Normalize(ti.p1);
+    if (Length(best->n) < 1.0e-6f) best->n = Normalize(Sub(ray_org, Add(ray_org, Mul(ray_dir, h.t))));
+    best->base_color = ti.base_color;
+    best->emission = ti.emission;
+    best->hit = true;
+  };
+  test_ellipses(direct->ellipses.get(), direct->ellipse_info);
   test_scene(direct->bez_curves.get(), direct->bez_curve_info, false);
   if (direct->tets) {
     lrt_hit h;

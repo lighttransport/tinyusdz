@@ -631,10 +631,81 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
   std::vector<DrawMeshCPU> proxies;
   proxies.reserve(scene.points.size() + scene.curves.size());
   for (const DrawPointsCPU& src : scene.points) {
+    if (src.gaussian && src.ellipseRadii.size() >= (src.points.size() / 3) * 2 &&
+        src.ellipseNormals.size() >= (src.points.size() / 3) * 3 &&
+        src.ellipseMajorAxes.size() >= (src.points.size() / 3) * 3) {
+      continue;  // native ellipse carrier is uploaded by CUDA/Vulkan RT paths
+    }
     DrawMeshCPU mesh;
     InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
     const size_t count = src.points.size() / 3;
     const float scale = CarrierWorldScale(src.world);
+    if (src.gaussian && src.ellipseRadii.size() >= count * 2 &&
+        src.ellipseNormals.size() >= count * 3 &&
+        src.ellipseMajorAxes.size() >= count * 3) {
+      auto xv = [&](const float a[3], float o[3]) {
+        o[0] = src.world[0] * a[0] + src.world[4] * a[1] + src.world[8] * a[2];
+        o[1] = src.world[1] * a[0] + src.world[5] * a[1] + src.world[9] * a[2];
+        o[2] = src.world[2] * a[0] + src.world[6] * a[1] + src.world[10] * a[2];
+      };
+      constexpr int kSegments = 8;
+      for (size_t i = 0; i < count; ++i) {
+        float center[3];
+        CarrierWorldPoint(src.world, &src.points[i * 3], center);
+        float major[3], normal[3];
+        xv(&src.ellipseMajorAxes[i * 3], major);
+        xv(&src.ellipseNormals[i * 3], normal);
+        float nl = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] +
+                              normal[2] * normal[2]);
+        if (nl <= 1.0e-8f) continue;
+        for (float& v : normal) v /= nl;
+        float ml = std::sqrt(major[0] * major[0] + major[1] * major[1] +
+                             major[2] * major[2]);
+        if (ml <= 1.0e-8f) continue;
+        const float majorLen = ml;
+        for (float& v : major) v /= ml;
+        float minor[3] = {normal[1] * major[2] - normal[2] * major[1],
+                          normal[2] * major[0] - normal[0] * major[2],
+                          normal[0] * major[1] - normal[1] * major[0]};
+        const float rx = 0.5f * src.ellipseRadii[i * 2] * majorLen;
+        const float ry = 0.5f * src.ellipseRadii[i * 2 + 1] *
+                         std::sqrt(minor[0] * minor[0] + minor[1] * minor[1] +
+                                   minor[2] * minor[2]);
+        float color[3] = {1.0f, 1.0f, 1.0f};
+        if (src.colors.size() >= 3) {
+          const size_t ci = src.colors.size() >= (i + 1) * 3 ? i * 3 : 0;
+          color[0] = src.colors[ci]; color[1] = src.colors[ci + 1];
+          color[2] = src.colors[ci + 2];
+        }
+        const float opacity = src.opacities.empty()
+                                  ? 1.0f
+                                  : src.opacities[src.opacities.size() > i ? i : 0];
+        for (int k = 0; k < kSegments; ++k) {
+          const float a0 = 6.28318530718f * float(k) / float(kSegments);
+          const float a1 = 6.28318530718f * float(k + 1) / float(kSegments);
+          auto pointAt = [&](float a, float p[3]) {
+            p[0] = center[0] + major[0] * std::cos(a) * rx + minor[0] * std::sin(a) * ry;
+            p[1] = center[1] + major[1] * std::cos(a) * rx + minor[1] * std::sin(a) * ry;
+            p[2] = center[2] + major[2] * std::cos(a) * rx + minor[2] * std::sin(a) * ry;
+          };
+          float p1[3], p2[3]; pointAt(a0, p1); pointAt(a1, p2);
+          const uint32_t b = static_cast<uint32_t>(mesh.vertices.size());
+          AddProxyVertex(center, normal, color, opacity, &mesh);
+          AddProxyVertex(p1, normal, color, opacity, &mesh);
+          AddProxyVertex(p2, normal, color, opacity, &mesh);
+          mesh.indices.insert(mesh.indices.end(), {b, b + 1, b + 2});
+          const uint32_t bb = static_cast<uint32_t>(mesh.vertices.size());
+          float backN[3] = {-normal[0], -normal[1], -normal[2]};
+          AddProxyVertex(center, backN, color, opacity, &mesh);
+          AddProxyVertex(p2, backN, color, opacity, &mesh);
+          AddProxyVertex(p1, backN, color, opacity, &mesh);
+          mesh.indices.insert(mesh.indices.end(), {bb, bb + 1, bb + 2});
+        }
+      }
+      mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
+      if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
+      continue;
+    }
     // A subdivided octahedron (subdivide each of 8 faces into 4) producing
     // 32 triangles per point -- better than the previous 8-triangle octahedron,
     // giving a noticeably rounder appearance without the full icosahedron.
@@ -826,6 +897,60 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
   };
 
+  // Keep Gaussian splats as analytic ellipses. The carrier stores local-space
+  // radii and axes; bake only the affine placement here so all RT backends see
+  // the same world-space primitive.
+  for (const DrawPointsCPU& src : scene.points) {
+    const size_t n = src.points.size() / 3;
+    if (!src.gaussian || src.ellipseRadii.size() < n * 2 ||
+        src.ellipseNormals.size() < n * 3 || src.ellipseMajorAxes.size() < n * 3)
+      continue;
+    for (size_t i = 0; i < n; ++i) {
+      float c[3]; CarrierWorldPoint(src.world, &src.points[i * 3], c);
+      float major[3], normal[3];
+      for (int k = 0; k < 3; ++k) {
+        major[k] = src.world[0 * 4 + k] * src.ellipseMajorAxes[i * 3 + 0] +
+                  src.world[1 * 4 + k] * src.ellipseMajorAxes[i * 3 + 1] +
+                  src.world[2 * 4 + k] * src.ellipseMajorAxes[i * 3 + 2];
+        normal[k] = src.world[0 * 4 + k] * src.ellipseNormals[i * 3 + 0] +
+                   src.world[1 * 4 + k] * src.ellipseNormals[i * 3 + 1] +
+                   src.world[2 * 4 + k] * src.ellipseNormals[i * 3 + 2];
+      }
+      const float ml = std::sqrt(major[0]*major[0]+major[1]*major[1]+major[2]*major[2]);
+      const float nl = std::sqrt(normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]);
+      if (ml <= 1.0e-8f || nl <= 1.0e-8f) continue;
+      out->pointCenters.insert(out->pointCenters.end(), c, c + 3);
+      for (float& v : major) v /= ml;
+      for (float& v : normal) v /= nl;
+      out->pointMajorAxes.insert(out->pointMajorAxes.end(), major, major + 3);
+      out->pointNormals.insert(out->pointNormals.end(), normal, normal + 3);
+      out->pointRadii.push_back(src.ellipseRadii[i * 2] * ml);
+      out->pointRadii.push_back(src.ellipseRadii[i * 2 + 1] * ml);
+      const size_t ci = src.colors.size() >= (i + 1) * 3 ? i * 3 : 0;
+      out->pointColors.push_back(src.colors.size() >= 3 ? src.colors[ci] : 1.0f);
+      out->pointColors.push_back(src.colors.size() >= 3 ? src.colors[ci + 1] : 1.0f);
+      out->pointColors.push_back(src.colors.size() >= 3 ? src.colors[ci + 2] : 1.0f);
+      const size_t oi = src.opacities.size() > i ? i : 0;
+      out->pointColors.push_back(src.opacities.empty() ? 1.0f : src.opacities[oi]);
+    }
+  }
+  out->pointCount = out->pointCenters.size() / 3;
+  if (out->pointCount > 0) {
+    std::vector<float> pc(out->pointCount * 3), pa(out->pointCount * 6);
+    std::vector<int> pi(out->pointCount);
+    for (size_t i = 0; i < out->pointCount; ++i) {
+      pi[i] = static_cast<int>(i);
+      for (int k = 0; k < 3; ++k) pc[i * 3 + k] = out->pointCenters[i * 3 + k];
+      const float r = std::max(out->pointRadii[i * 2], out->pointRadii[i * 2 + 1]);
+      for (int k = 0; k < 3; ++k) {
+        pa[i * 6 + k] = pc[i * 3 + k] - r;
+        pa[i * 6 + 3 + k] = pc[i * 3 + k] + r;
+      }
+    }
+    out->pointBvh = BuildTlas(pi, static_cast<int>(out->pointCount), pc, pa);
+    out->pointOrder = std::move(pi);
+  }
+
   // Phase A: build every mesh's geometry in parallel (the dominant cost on
   // heavily-prototyped scenes). Each writes its own results slot.
   std::vector<DrawMeshCPU> nonMeshProxies = BuildNonMeshRtProxyMeshes(scene);
@@ -941,7 +1066,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
 
   out->triCount = out->tris.size() / 9;
   out->instCount = out->instances.size();
-  if (out->triCount == 0 || out->instCount == 0) {
+  if ((out->triCount == 0 || out->instCount == 0) && out->pointCount == 0) {
     if (err) *err = "no geometry";
     return false;
   }

@@ -1653,20 +1653,36 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
           q.imag[0] = float(dq.imag[0]); q.imag[1] = float(dq.imag[1]);
           q.imag[2] = float(dq.imag[2]); q.real = float(dq.real);
         }
-        if (anim.hasTranslations && (a + 1) * 3 <= anim.translations.size()) {
+        // Some exporters write world-space samples for every joint in the
+        // translations array. They are not valid local offsets and make a
+        // conventional skeleton tear apart. Dense point-joint rigs are the
+        // exception: their translations are the deformation samples.
+        if (anim.hasTranslations && translationOnly &&
+            (a + 1) * 3 <= anim.translations.size()) {
           t3[0] = anim.translations[a * 3 + 0];
           t3[1] = anim.translations[a * 3 + 1];
           t3[2] = anim.translations[a * 3 + 2];
         }
         if (!translationOnly && anim.hasRotations &&
             (a + 1) * 4 <= anim.rotations.size()) {
-          // next's canonical quat layout is REAL-FIRST (w, x, y, z) -- the crate
-          // reader swizzles disk's imaginary-first order into it (see
-          // CrateReader::Impl::UnpackQuatf), and ASCII parses in authored order.
+          // SkelAnimationData exposes quaternions in the next API's canonical
+          // real-first order: (w, x, y, z).
           q.real = anim.rotations[a * 4 + 0];
           q.imag[0] = anim.rotations[a * 4 + 1];
           q.imag[1] = anim.rotations[a * 4 + 2];
           q.imag[2] = anim.rotations[a * 4 + 3];
+          const float qlen = std::sqrt(
+              q.real * q.real + q.imag[0] * q.imag[0] +
+              q.imag[1] * q.imag[1] + q.imag[2] * q.imag[2]);
+          if (qlen < 1.0e-12f) {
+            q.imag[0] = q.imag[1] = q.imag[2] = 0.0f;
+            q.real = 1.0f;
+          } else {
+            q.imag[0] /= qlen;
+            q.imag[1] /= qlen;
+            q.imag[2] /= qlen;
+            q.real /= qlen;
+          }
         }
         if (!translationOnly && anim.hasScales &&
             (a + 1) * 3 <= anim.scales.size()) {
@@ -1807,6 +1823,11 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
                               numPoints, &bind)) {
     return false;
   }
+  // The extended GPU influence path is intended for dense point-joint rigs.
+  // Conventional skeletons use authored local joint offsets that the next
+  // raster skinning path cannot reproduce reliably yet; returning false here
+  // selects the CPU bake, which is also the reference deformation path.
+  if (bind.numJoints < 512) return false;
   const int nj = static_cast<int>(bind.numJoints);
   if (nj <= 0) return false;
   // Guard the bone-texture row space (int rows, absolute indices).
@@ -4791,6 +4812,44 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   cfg.material.load_textures = false;
   cfg.material.allow_missing_textures = true;
   cfg.time_code = time;
+  const std::vector<std::string> layerDependencies =
+      session->GetLayerDependencies();
+  cfg.animation.clip_stage_loader =
+      [resolverConfig = session_options.resolver, path, layerDependencies](
+          const std::string& assetPath, tnext::Stage* clipStage,
+          std::string* clipWarn, std::string* clipErr) {
+        if (!clipStage) return false;
+        tnext::AssetResolver resolver(resolverConfig);
+        std::vector<std::string> candidates;
+        candidates.push_back(resolver.ResolvePath(
+            assetPath, tinyusdz::io::GetBaseDir(path)));
+        for (const std::string& dependency : layerDependencies) {
+          candidates.push_back(resolver.ResolvePath(
+              assetPath, tinyusdz::io::GetBaseDir(dependency)));
+        }
+        std::string resolved;
+        for (const std::string& candidate : candidates) {
+          if (!candidate.empty() && resolver.Exists(candidate)) {
+            resolved = candidate;
+            break;
+          }
+        }
+        if (resolved.empty()) {
+          if (clipErr) *clipErr = "asset not found: " + assetPath;
+          return false;
+        }
+        tnext::StageSession clipSession;
+        tnext::StageSessionOptions clipOptions;
+        clipOptions.resolver = resolverConfig;
+        clipOptions.composition.load_payloads = true;
+        if (!clipSession.OpenFile(resolved, clipOptions)) {
+          if (clipErr) *clipErr = clipSession.GetError();
+          return false;
+        }
+        *clipStage = clipSession.TakeStage();
+        (void)clipWarn;
+        return true;
+      };
   tydn::RenderSceneConverter conv(cfg);
   draw->upAxis = (stage.GetUpAxis() == "Z" || stage.GetUpAxis() == "z") ? "Z" : "Y";
 
@@ -5202,7 +5261,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // backends receive the converter's evaluated widths/colors at `time` plus the
   // inherited world transform and material binding.
   for (const tydn::RenderPrimRecord& rec : extracted.records) {
-    if (rec.type_name != "Points") continue;
+    const bool gaussian = rec.type_name == "ParticleField3DGaussianSplat";
+    if (rec.type_name != "Points" && !gaussian) continue;
     tydn::RenderPoints rp;
     if (!conv.ConvertPoints(rec.prim, &rp) || rp.point_count() == 0) {
       draw->skipped.push_back("Points '" + rec.path + "': conversion failed/empty");
@@ -5220,6 +5280,59 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     copyChunked(rp.widths, &dp.widths);
     copyChunked(rp.colors, &dp.colors);
     copyChunked(rp.opacities, &dp.opacities);
+    if (gaussian) {
+      // Gaussian splat files commonly carry RGB in the DC spherical-harmonic
+      // coefficient (rather than displayColor) and opacity in a schema-local
+      // array. Keep the carrier compact: only the DC coefficient is needed by
+      // the raster billboard; RT/GPU paths retain the full orientation/scales
+      // from the source stage when they build their analytic representation.
+      tydn::ValueArrayRead<float> sh;
+      if (tydn::ReadFloatArray(rec.prim,
+                               "radiance:sphericalHarmonicsCoefficients",
+                               time, &sh) && sh.size() >= rp.point_count() * 3) {
+        dp.colors.reserve(rp.point_count() * 3);
+        for (size_t i = 0; i < rp.point_count(); ++i) {
+          const float* c = sh.begin() + i * 3;
+          dp.colors.push_back(std::max(0.0f, std::min(1.0f,
+              0.5f + 0.2820948f * c[0])));
+          dp.colors.push_back(std::max(0.0f, std::min(1.0f,
+              0.5f + 0.2820948f * c[1])));
+          dp.colors.push_back(std::max(0.0f, std::min(1.0f,
+              0.5f + 0.2820948f * c[2])));
+        }
+      }
+      tydn::ValueArrayRead<float> opacity;
+      if (tydn::ReadFloatArray(rec.prim, "opacities", time, &opacity) &&
+          (opacity.size() == 1 || opacity.size() == rp.point_count())) {
+        dp.opacities.assign(opacity.begin(), opacity.end());
+      }
+      tydn::ValueArrayRead<float> scales;
+      tydn::ValueArrayRead<float> orientations;
+      if (tydn::ReadFloatArray(rec.prim, "scales", time, &scales) &&
+          scales.size() >= rp.point_count() * 3) {
+        dp.gaussian = true;
+        dp.ellipseRadii.reserve(rp.point_count() * 2);
+        dp.ellipseNormals.reserve(rp.point_count() * 3);
+        dp.ellipseMajorAxes.reserve(rp.point_count() * 3);
+        const bool have_q = tydn::ReadFloatArray(rec.prim, "orientations", time,
+                                                   &orientations) &&
+                            orientations.size() >= rp.point_count() * 4;
+        for (size_t i = 0; i < rp.point_count(); ++i) {
+          dp.ellipseRadii.push_back(2.0f * std::fabs(scales[i * 3]));
+          dp.ellipseRadii.push_back(2.0f * std::fabs(scales[i * 3 + 1]));
+          tinyusdz::value::quatf q;
+          q.real = have_q ? orientations[i * 4] : 1.0f;
+          q.imag[0] = have_q ? orientations[i * 4 + 1] : 0.0f;
+          q.imag[1] = have_q ? orientations[i * 4 + 2] : 0.0f;
+          q.imag[2] = have_q ? orientations[i * 4 + 3] : 0.0f;
+          const auto r = tinyusdz::to_matrix3x3(q);
+          dp.ellipseMajorAxes.insert(dp.ellipseMajorAxes.end(),
+                                     {float(r.m[0][0]), float(r.m[0][1]), float(r.m[0][2])});
+          dp.ellipseNormals.insert(dp.ellipseNormals.end(),
+                                   {float(r.m[2][0]), float(r.m[2][1]), float(r.m[2][2])});
+        }
+      }
+    }
     RowMatrixToColumnMajor(rec.world, dp.world);
     addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin, dp.aabbMax);
     draw->points.push_back(std::move(dp));
@@ -5244,8 +5357,25 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       continue;
     }
     tydn::RenderCurves rc;
+    // Some procedural exports leave a render-prim placeholder with authored
+    // curveVertexCounts but no authored points. The points property reported
+    // by the schema is only a fallback declaration; without points or a clip
+    // owner there is no drawable geometry and no conversion error to report.
+    bool hasClipOwner = false;
+    for (tnext::UsdPrim owner = rec.prim; owner.IsValid();
+         owner = owner.GetParent()) {
+      if (owner.GetPrimSpec() &&
+          owner.GetPrimSpec()->meta().clips().is_dictionary()) {
+        hasClipOwner = true;
+        break;
+      }
+    }
+    if (!rec.prim.HasAuthoredProperty("points") && !hasClipOwner) continue;
     if (!conv.ConvertCurves(rec.prim, &rc)) {
-      draw->skipped.push_back("Curves '" + rec.path + "': conversion failed");
+      std::string reason = conv.GetLastError();
+      draw->skipped.push_back("Curves '" + rec.path + "': conversion failed" +
+                              (reason.empty() ? std::string()
+                                              : ": " + reason));
       continue;
     }
     DrawCurvesCPU dc;

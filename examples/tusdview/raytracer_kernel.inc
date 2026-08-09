@@ -550,6 +550,41 @@ __device__ float traverseCutout(
   *ht=-1; *hitInst=-1;
   return tmax;
 }
+
+// Analytic Gaussian ellipse traversal. Point leaves use the same compact Node
+// layout as the mesh BVH, but the primitive test stays native (no tessellation).
+__device__ float pointHitBvh(const Node* bvh, const int* order,
+                             const float* centers, const float* major,
+                             const float* normals, const float* radii,
+                             F3 o, F3 d, int count, int* hit) {
+  if (!bvh || !order || count <= 0) { *hit = -1; return 1e30f; }
+  float inv[3] = {1.f/d.x, 1.f/d.y, 1.f/d.z};
+  int stack[64], sp = 0; stack[sp++] = 0; float best = 1e30f; *hit = -1;
+  while (sp > 0) {
+    const Node* nd = &bvh[stack[--sp]];
+    if (!hitAabb(nd, o, mk(inv[0], inv[1], inv[2]), best)) continue;
+    if (nd->count > 0) {
+      for (int j = 0; j < nd->count; ++j) {
+        const int p = order[nd->left + j];
+        F3 c = mk(centers[p*3], centers[p*3+1], centers[p*3+2]);
+        F3 n = norm3(mk(normals[p*3], normals[p*3+1], normals[p*3+2]));
+        F3 a = norm3(mk(major[p*3], major[p*3+1], major[p*3+2]));
+        F3 b = norm3(cross3(n, a));
+        float den = dot3(d, n);
+        if (fabsf(den) < 1e-8f) continue;
+        float t = dot3(sub(c, o), n) / den;
+        if (t <= 0.f || t >= best) continue;
+        F3 q = sub(add(o, scale(d, t)), c);
+        float u = dot3(q, a) / radii[p*2];
+        float v = dot3(q, b) / radii[p*2+1];
+        if (u*u + v*v < 1.f) { best = t; *hit = p; }
+      }
+    } else {
+      if (sp + 2 <= 64) { stack[sp++] = nd->left; stack[sp++] = nd->right; }
+    }
+  }
+  return best;
+}
 )CUDA"
 R"CUDA(
 
@@ -569,6 +604,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  unsigned char* out, int W, int H, Cam cam,
                                  const float* volDens, const VolParam* volParams,
                                  int numVols, const unsigned char* emask,
+                                 const float* pointCenters, const float* pointMajor,
+                                 const float* pointNormals, const float* pointRadii,
+                                 const float* pointColors, const int* pointOrder,
+                                 const Node* pointBvh, int pointCount,
                                  float* accum, int sampleIdx, int numSamples){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
@@ -601,9 +640,16 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
 
   F3 outc = mk(cam.clear[0],cam.clear[1],cam.clear[2]);
   int ht, hitInst; float bu,bv;
-  float t=traverseCutout(tlas,insts,blas,tris,o,d,1e30f,&ht,&bu,&bv,
-                         &hitInst,cols,mats,backMats,matPbr,matLightRt,numMats,matTex,
-                         matTexParam,texels,textures,numTextures,uvs,uvs1,-1,false);
+  float t=1e30f;
+  if (tris && tlas && insts) {
+    t=traverseCutout(tlas,insts,blas,tris,o,d,1e30f,&ht,&bu,&bv,
+                     &hitInst,cols,mats,backMats,matPbr,matLightRt,numMats,matTex,
+                     matTexParam,texels,textures,numTextures,uvs,uvs1,-1,false);
+  } else { ht=-1; hitInst=-1; }
+  int pointHit = -1;
+  float pointT = pointHitBvh(pointBvh, pointOrder, pointCenters, pointMajor,
+                             pointNormals, pointRadii, o, d, pointCount, &pointHit);
+  if (pointHit >= 0 && pointT < t) { t = pointT; ht = -1; }
   int rmodePre=(int)(cam.clear[3]+0.5f);
   // Dome env background on miss (shaded mode only): sample the dome's latlong
   // envmap scaled by its effectiveColor. Packed light record: [0]=type,
@@ -626,7 +672,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       break;
     }
   }
-  if (rmodePre==27){  // BVH traversal-cost heatmap (per primary ray, all pixels)
+  if (rmodePre==27 && pointHit < 0){  // BVH traversal-cost heatmap (per primary ray, all pixels)
     int steps=traverseSteps(tlas,insts,blas,tris,o,d,1e30f);
     float c=fminf(steps/256.0f,1.0f);  // 2-level visits more nodes than single BVH
     outc=mk(c, 1.f-fabsf(c-0.5f)*2.f, 1.f-c);
@@ -1228,6 +1274,20 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       }
       float v=vis/float(NS); outc=mk(v,v,v);
     }
+  }
+  if (pointHit >= 0) {
+    F3 N = norm3(mk(pointNormals[pointHit*3], pointNormals[pointHit*3+1],
+                    pointNormals[pointHit*3+2]));
+    if (dot3(N, d) > 0.f) N = scale(N, -1.f);
+    F3 C = mk(pointColors[pointHit*4], pointColors[pointHit*4+1],
+              pointColors[pointHit*4+2]);
+    float alpha = fminf(fmaxf(pointColors[pointHit*4+3], 0.f), 1.f);
+    if (rmodePre == 2 || rmodePre == 4) outc = scale(add(N, mk(1.f,1.f,1.f)), 0.5f);
+    else if (rmodePre == 6) outc = mk(fminf(t / fmaxf(cam.lightDir[3], 1e-6f), 1.f), 0.f, 0.f);
+    else if (rmodePre == 0) {
+      float lam = fmaxf(dot3(N, norm3(mk(cam.lightDir[0],cam.lightDir[1],cam.lightDir[2]))), 0.f);
+      outc = add(scale(C, 0.18f + 0.82f * lam), scale(mk(cam.clear[0],cam.clear[1],cam.clear[2]), 1.f-alpha));
+    } else outc = C;
   }
   // UsdVol volumes: composite over the shaded color (default mode only).
   if (rmodePre==0){

@@ -6,7 +6,8 @@
 // (lightrt_c_tri.c) byte-for-byte over the SAME node/leaf memory image the C
 // builder produces (serialized LRTS node + block regions, uploaded verbatim):
 //   - stack of {ref, tnear} with deferred culling (pop, skip if tnear>=best_t),
-//   - leaf: blocks x lanes Moller-Trumbore (det window +/-1e-12),
+//   - leaf: blocks x lanes Moller-Trumbore for triangles or analytic ellipse
+//           plane tests for serialized point leaves,
 //   - interior: slab test all children, insertion-sort ascending tnear, push
 //     far-to-near so the nearest child is popped first.
 //
@@ -14,7 +15,7 @@
 // GPU sees exactly the bytes of lrt_bvh{4,8}_node / lrt_tri{4,8}, independent of
 // std430 struct-padding rules. A single SPIR-V serves BVH4 and BVH8 via the
 // spec constant W (per-array SoA stride): node stride = 8*W words, block stride
-// = 10*W words, prim_id array at word 9*W.
+// = 10*W words, prim_id array at word 9*W for triangles (7*W for points).
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -33,6 +34,8 @@ layout(push_constant) uniform PC {
     uint node_count;  // (unused by traversal; kept for diagnostics)
     uint block_count; // (unused)
     uint ray_count;   // dispatch tail bound
+    uint prim_kind;   // 0 = triangle, 6 = serialized point leaf
+    uint point_type;  // 3 = ellipse
 } pc;
 
 const uint LEAF_BIT = 0x80000000u;
@@ -92,6 +95,45 @@ void main() {
                 uint bb = (blk0 + b) * block_stride;
                 for (uint lane = 0u; lane < W; lane++) {
                     uint prim = blocks[bb + prim_off + lane];
+                    if (pc.prim_kind == 6u) {
+                        prim = blocks[bb + 7u * W + lane];
+                        if (prim == NO_HIT) continue;
+                        float cx = fu(blocks[bb + 0u * W + lane]);
+                        float cy = fu(blocks[bb + 1u * W + lane]);
+                        float cz = fu(blocks[bb + 2u * W + lane]);
+                        float rx = fu(blocks[bb + 3u * W + lane]);
+                        float nx = fu(blocks[bb + 4u * W + lane]);
+                        float ny = fu(blocks[bb + 5u * W + lane]);
+                        float nz = fu(blocks[bb + 6u * W + lane]);
+                        float ry = fu(blocks[bb + 8u * W + lane]);
+                        float angle = fu(blocks[bb + 9u * W + lane]);
+                        if (pc.point_type != 3u || rx <= 0.0 || ry <= 0.0) continue;
+                        vec3 n = vec3(nx, ny, nz);
+                        float nl = length(n);
+                        if (nl <= 1e-20) continue;
+                        n /= nl;
+                        vec3 ref = abs(n.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+                        vec3 uaxis = normalize(cross(ref, n));
+                        vec3 vaxis = cross(n, uaxis);
+                        if (angle != 0.0) {
+                            float ca = cos(angle), sa = sin(angle);
+                            vec3 old = uaxis;
+                            uaxis = old * ca + vaxis * sa;
+                            vaxis = -old * sa + vaxis * ca;
+                        }
+                        float div = dot(dir, n);
+                        if (abs(div) <= 1e-20) continue;
+                        vec3 center = vec3(cx, cy, cz);
+                        float tt = dot(center - org, n) / div;
+                        if (tt < tmin || tt >= best_t) continue;
+                        vec3 hp = org + tt * dir - center;
+                        float pu = dot(hp, uaxis) / rx;
+                        float pv = dot(hp, vaxis) / ry;
+                        if (pu * pu + pv * pv >= 1.0) continue;
+                        best_t = tt; best_u = 0.5 + 0.5 * pu;
+                        best_v = 0.5 + 0.5 * pv; best_prim = prim;
+                        continue;
+                    }
                     if (prim == NO_HIT) continue;
                     float v0x = fu(blocks[bb + 0u * W + lane]);
                     float v0y = fu(blocks[bb + 1u * W + lane]);

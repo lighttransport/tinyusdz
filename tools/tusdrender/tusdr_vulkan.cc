@@ -157,6 +157,61 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   return ok;
 }
 
+bool RunVulkanGaussianLightRT(const Options &opt, lrt_tri_scene *scene,
+                              const std::vector<Vec3> &base_colors,
+                              const std::vector<Vec3> &normals,
+                              const CameraFrame &camera, int height) {
+  if (!scene || base_colors.empty() || base_colors.size() != normals.size())
+    return false;
+  lrt_vk_engine_options vopts;
+  std::memset(&vopts, 0, sizeof(vopts));
+  vopts.device_index = -1;
+  vopts.prefer_discrete = 1;
+  lrt_result err = LRT_RESULT_OK;
+  lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &err);
+  if (!vk) {
+    std::cerr << "Failed to create LightRT Vulkan Gaussian engine (err="
+              << int(err) << ").\n";
+    return false;
+  }
+  const int w = opt.width > 0 ? opt.width : 960;
+  const int h = height > 0 ? height : 540;
+  const int spp = std::max(1, opt.samples);
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "Vulkan Gaussian", &nrays)) {
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  std::vector<lrt_ray> rays;
+  GenerateCameraRays(camera, w, h, spp, &rays);
+  std::vector<lrt_hit> hits(nrays);
+  int traced = lrt_vk_trace_scene(vk, scene, rays.data(), uint32_t(nrays),
+                                  hits.data(), &err);
+  if (traced < 0) {
+    std::cerr << "Vulkan Gaussian trace failed (err=" << int(err) << "): "
+              << lrt_vk_engine_last_error(vk) << "\n";
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  // Reuse the established preview shader with analytic hit metadata. The
+  // shim has one logical primitive per splat; no triangle vertices are
+  // allocated or uploaded.
+  GpuTriScene shim;
+  shim.ntris = uint32_t(base_colors.size());
+  shim.base_colors = base_colors;
+  shim.normals = normals;
+  shim.vn0 = normals;
+  shim.vn1 = normals;
+  shim.vn2 = normals;
+  const bool ok = ShadeAndWriteImage(opt, shim, rays, hits, w, h, spp);
+  if (ok) {
+    std::cerr << "native Gaussian ellipses: " << base_colors.size()
+              << "\nbackend: LightRT VK (native point/ellipse BVH)\n";
+  }
+  lrt_vk_engine_destroy(vk);
+  return ok;
+}
+
 bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
                                const CameraFrame &camera, int height) {
   if (scene.protos.empty() || scene.insts.empty()) return false;
