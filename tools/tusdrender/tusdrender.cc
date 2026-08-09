@@ -1281,6 +1281,7 @@ int main(int argc, char **argv) {
     // DirectScene, so building it up front would duplicate the authored splat
     // arrays before CollectGpuPointsRec creates the bounded fallback geometry.
     bool native_gaussian = false;
+    bool has_other_native_carrier = false;
 
     {
       // Collect meshes WITH their world transforms, purpose, and -mask, exactly
@@ -1523,6 +1524,18 @@ int main(int argc, char **argv) {
     // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
     // fallback as HIP/ROCm and D3D11 so all geometry reaches one flat trace.
     if (gpu_backend && opt.vulkan && geos.empty()) {
+      stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
+        const std::string &type = prim.GetTypeName();
+        if (type == "Points" || type == "BasisCurves" ||
+            type == "NurbsCurves") {
+          has_other_native_carrier = true;
+          return false;
+        }
+        return true;
+      });
+    }
+    if (gpu_backend && opt.vulkan && geos.empty() &&
+        !has_other_native_carrier) {
       native_gaussian =
           BuildNextGaussianEllipses(stage, gaussian_ctx, opt.timecode) &&
           gaussian_ctx.direct.has_ellipses();

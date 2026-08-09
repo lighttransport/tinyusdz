@@ -45,7 +45,8 @@ remain authoritative, including an explicit zero.
 
 Large `ParticleField3DGaussianSplat` fields are built as bounded native ellipse
 BVH chunks instead of one GPU allocation. Pure Gaussian scenes use the native
-Vulkan ellipse path; mixed mesh+splat Vulkan scenes use the bounded tessellated
+Vulkan ellipse path; stages that also contain meshes, ordinary Points, or
+curves use the bounded tessellated
 fallback so the splats are not lost when all geometry shares one flat trace. The
 native Vulkan BVH is deferred until the scene is known to be pure Gaussian, so
 mixed scenes do not build and then discard a second full splat representation.
