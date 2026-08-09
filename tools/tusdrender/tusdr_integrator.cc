@@ -665,12 +665,13 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
   test_curve_chunks(direct->flat_curve_chunks, direct->flat_curve_info);
   test_scene(direct->points.get(), direct->point_info, 0,
              direct->point_info.size(), true);
-  auto test_ellipses = [&](lrt_tri_scene *scene, size_t first, size_t count) {
+  auto test_ellipses = [&](const EllipseSceneChunk &chunk) {
+    lrt_tri_scene *scene = chunk.scene.get();
     if (!scene) return;
     lrt_hit h;
     if (!lrt_tri_intersect1(scene, &ray, &h) || h.prim_id == LRT_TRI_NO_HIT ||
-        size_t(h.prim_id) >= count || h.t >= best->t) return;
-    const TriInfo &ti = direct->ellipse_info[first + size_t(h.prim_id)];
+        size_t(h.prim_id) >= chunk.info.size() || h.t >= best->t) return;
+    const TriInfo &ti = chunk.info[size_t(h.prim_id)];
     best->t = h.t;
     best->n = Normalize(ti.p1);
     if (Length(best->n) < 1.0e-6f) best->n = Normalize(Sub(ray_org, Add(ray_org, Mul(ray_dir, h.t))));
@@ -680,9 +681,7 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
   };
   if (!direct->ellipse_chunks.empty()) {
     for (const EllipseSceneChunk &chunk : direct->ellipse_chunks)
-      test_ellipses(chunk.scene.get(), chunk.first, chunk.count);
-  } else {
-    test_ellipses(direct->ellipses.get(), 0, direct->ellipse_info.size());
+      test_ellipses(chunk);
   }
   test_scene(direct->bez_curves.get(), direct->bez_curve_info, 0,
              direct->bez_curve_info.size(), false);

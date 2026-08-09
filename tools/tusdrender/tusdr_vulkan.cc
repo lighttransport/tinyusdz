@@ -332,7 +332,7 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
 
 bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
                               const CameraFrame &camera, int height) {
-  if (!direct || direct->ellipse_info.empty() || direct->ellipse_chunks.empty())
+  if (!direct || direct->ellipse_chunks.empty())
     return false;
   lrt_vk_engine_options vopts;
   std::memset(&vopts, 0, sizeof(vopts));
@@ -384,19 +384,24 @@ bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
   // shim has one logical primitive per splat; no triangle vertices are
   // allocated or uploaded.
   GpuTriScene shim;
-  shim.ntris = uint32_t(direct->ellipse_info.size());
+  size_t total_ellipses = 0;
+  for (const EllipseSceneChunk &chunk : direct->ellipse_chunks)
+    total_ellipses += chunk.info.size();
+  shim.ntris = uint32_t(total_ellipses);
   shim.base_colors.reserve(shim.ntris);
   shim.normals.reserve(shim.ntris);
-  for (const TriInfo &ti : direct->ellipse_info) {
-    shim.base_colors.push_back(ti.base_color);
-    shim.normals.push_back(ti.p1);
+  for (const EllipseSceneChunk &chunk : direct->ellipse_chunks) {
+    for (const TriInfo &ti : chunk.info) {
+      shim.base_colors.push_back(ti.base_color);
+      shim.normals.push_back(ti.p1);
+    }
   }
   shim.vn0 = shim.normals;
   shim.vn1 = shim.normals;
   shim.vn2 = shim.normals;
   const bool ok = ShadeAndWriteImage(opt, shim, rays, hits, w, h, spp);
   if (ok) {
-    std::cerr << "native Gaussian ellipses: " << direct->ellipse_info.size()
+    std::cerr << "native Gaussian ellipses: " << total_ellipses
               << " in " << direct->ellipse_chunks.size() << " Vulkan chunk(s)\n"
               << "\nbackend: LightRT VK (native point/ellipse BVH)\n";
   }
