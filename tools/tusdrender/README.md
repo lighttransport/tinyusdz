@@ -146,7 +146,7 @@ analytic curve API is available.
   / `displayOpacity` are honored — constant (per-mesh) and per-vertex/faceVarying/
   uniform (barycentrically interpolated per hit), with opacity blended see-through.
   Geom-only assets (e.g. Animal Logic ALab) render in color with transparent
-  glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair. `-smooth`
+  glass. UsdGeomBasisCurves, HermiteCurves, and NurbsCurves render as LightRT hair. `-smooth`
   interpolates authored `normals` for smooth shading (default is per-face
   geometric normals, which keeps the lean 4 B/triangle instanced footprint).
   The default `-materialResolver tydra-next` path uses the shared material
@@ -217,7 +217,7 @@ faster with 2–9× lower RSS on light/medium elements. UsdGeomPointInstancer
 geometry (the XGen ground cover / foliage) is expanded through the two-level
 BLAS/TLAS path, so isBeach renders its 4.09 B effective triangles (22 M instances,
 63 K unique) in 32 s / 11.7 GB — **2.2× faster and lower RAM than usdrecord**
-(73 s / 15.2 GB). UsdGeomBasisCurves / NurbsCurves are ray-traced as LightRT hair
+(73 s / 15.2 GB). UsdGeomBasisCurves, HermiteCurves, and NurbsCurves are ray-traced as LightRT hair
 strands; curve-prototype PointInstancers store the curve geometry once (a curve
 BLAS) and instance it through the same TLAS as meshes, so isIronwoodA1's bonsai
 foliage renders. The instanced (TLAS) path is memory-lean: the per-triangle

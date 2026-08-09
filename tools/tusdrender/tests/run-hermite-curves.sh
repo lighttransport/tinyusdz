@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Verify HermiteCurves are collected by the next loader and reach the bounded
+# Vulkan curve tessellation path together with Basis/Nurbs curves and Points.
+set -uo pipefail
+
+SKIP=77
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+TUSDRENDER="${1:-${TUSDRENDER:-$REPO_ROOT/build/tools/tusdrender/tusdrender}}"
+ASSET="$REPO_ROOT/tests/usda/tusdview-nonmesh-points-curves.usda"
+
+if [ ! -x "$TUSDRENDER" ]; then
+  echo "SKIP: tusdrender binary not found at $TUSDRENDER"
+  exit "$SKIP"
+fi
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+"$TUSDRENDER" "$ASSET" "$TMP/curves.png" -vkr -w 32 -height 32 \
+  -autoframe -stats >"$TMP/curves.log" 2>&1
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  if grep -qiE "failed to create .*vulkan|no vulkan|vulkan.*unavailable|requested gpu backend not built" \
+      "$TMP/curves.log"; then
+    echo "SKIP: no usable Vulkan LightRT backend"
+    exit "$SKIP"
+  fi
+  cat "$TMP/curves.log"
+  echo "FAIL: Vulkan curve render failed (rc=$rc)"
+  exit 1
+fi
+if ! grep -q "native curves: round 3 chunk(s)" "$TMP/curves.log" ||
+   ! grep -q "triangles: 192" "$TMP/curves.log"; then
+  cat "$TMP/curves.log"
+  echo "FAIL: HermiteCurves were not retained in the Vulkan curve path"
+  exit 1
+fi
+echo "PASS: HermiteCurves reach the bounded Vulkan curve path"

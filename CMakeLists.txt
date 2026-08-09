@@ -2370,6 +2370,7 @@ if(TINYUSDZ_BUILD_TESTS)
         double-sided-cull
         frames-framespec
         geomsubset-materials
+        hermite-curves
         ibl-specular-bound
         instancer-invisible-ids
         instancer-orientation

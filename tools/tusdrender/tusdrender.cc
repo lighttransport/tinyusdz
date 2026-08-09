@@ -1486,7 +1486,8 @@ int main(int argc, char **argv) {
     bool has_flat_curves = false;
     stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
       const std::string &type = prim.GetTypeName();
-      if (type == "BasisCurves" || type == "NurbsCurves") {
+      if (type == "BasisCurves" || type == "HermiteCurves" ||
+          type == "NurbsCurves") {
         has_direct_curves = true;
         return false;
       }
@@ -1527,7 +1528,7 @@ int main(int argc, char **argv) {
       stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
         const std::string &type = prim.GetTypeName();
         if (type == "Points" || type == "BasisCurves" ||
-            type == "NurbsCurves") {
+            type == "HermiteCurves" || type == "NurbsCurves") {
           has_other_native_carrier = true;
           return false;
         }

@@ -2235,7 +2235,8 @@ bool GeometryPrimHasAnimatedData(const tinyusdz::next::UsdPrim &prim) {
            prim.HasTimeSamples("primvars:normals") ||
            (blend_targets && !blend_targets->empty());
   }
-  if (type == "BasisCurves" || type == "NurbsCurves" || type == "Points") {
+  if (type == "BasisCurves" || type == "HermiteCurves" ||
+      type == "NurbsCurves" || type == "Points") {
     return prim.HasTimeSamples("points") || prim.HasTimeSamples("widths") ||
            prim.HasTimeSamples("normals") ||
            prim.HasTimeSamples("curveVertexCounts") ||
@@ -2262,7 +2263,7 @@ bool GeometryPrimHasAnimatedData(const tinyusdz::next::UsdPrim &prim) {
 bool IsRenderableGeometryPrim(const tinyusdz::next::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
   return type == "Mesh" || type == "BasisCurves" ||
-         type == "NurbsCurves" || type == "Points" ||
+         type == "HermiteCurves" || type == "NurbsCurves" || type == "Points" ||
          type == "ParticleField3DGaussianSplat" ||
          type == "PointInstancer" || type == "UsdGeomPointInstancer";
 }
@@ -2993,14 +2994,14 @@ void ResolveCameraNext(RenderContext &ctx) {
 // context it was instanced under (part of the dedup key, so instances under a
 // guide ancestor get a separate, purpose-culled BLAS).
 
-// A curve prim (UsdGeomBasisCurves / NurbsCurves) to ray-trace as hair strands
+// A curve prim (BasisCurves / HermiteCurves / NurbsCurves) to ray-trace as hair strands
 // in the next path. `world` is the world transform; the linear-strand geometry is
 // built into the RenderContext's DirectScene (shared by the flat and TLAS render
 // paths) — see BuildNextCurves.
 
 bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim) {
   const std::string &t = prim.GetTypeName();
-  return t == "BasisCurves" || t == "NurbsCurves";
+  return t == "BasisCurves" || t == "HermiteCurves" || t == "NurbsCurves";
 }
 
 struct CurvePointViewNext {
@@ -4504,7 +4505,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                       &ctx.stats, &proto_holders);
   }
   if (!BuildNextGaussianEllipses(ctx.stage, ctx, time)) return false;
-  // Curves (BasisCurves/NurbsCurves, plus any baked from curve-prototype
+  // Curves (BasisCurves/HermiteCurves/NurbsCurves, plus any baked from curve-prototype
   // instancers) build into ctx.direct as LightRT hair scenes; RenderImage traces
   // them via the DirectScene path in both the flat and TLAS render modes.
   if (!BuildNextCurves(ctx, curve_jobs, time)) return false;
