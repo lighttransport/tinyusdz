@@ -345,9 +345,9 @@ bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
 
 #ifdef HAVE_D3D11
 bool RunD3D11LightRT(const Options &opt,
-                     const std::vector<Vec3> &base_colors,
-                     const std::vector<RTPreviewStats::MeshGeometry> &geos,
-                     const CameraFrame &camera, int height);
+                      const std::vector<Vec3> &base_colors,
+                      std::vector<RTPreviewStats::MeshGeometry> &geos,
+                      const CameraFrame &camera, int height);
 #endif
 
 #ifdef HAVE_HIP
