@@ -117,6 +117,15 @@ def render(binary, model, out_png, timecode, backend):
     if not os.path.exists(config):
         with open(config, "w", encoding="utf-8") as f:
             f.write("{}\n")
+    # Config loading deliberately uses a sibling imgui.ini.  The test work
+    # directory is reused by CTest, so remove a prior interactive dock layout
+    # before each capture; otherwise a collapsed Viewport can survive even
+    # though the JSON config is isolated.
+    imgui_ini = os.path.join(work, "imgui.ini")
+    try:
+        os.remove(imgui_ini)
+    except FileNotFoundError:
+        pass
     args = [binary, "--backend", backend, "--frames", "4", "--time", str(timecode),
             "--skinning", "gpu", "--config", config,
             "--screenshot", out_png, model]
