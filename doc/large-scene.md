@@ -1966,6 +1966,10 @@ The native RT texture table now receives that same byte budget for Vulkan,
 CUDA, and HIP. Entries that cannot fit are mapped to the backend fallback
 texture with an explicit budget-rejected diagnostic, rather than allowing the
 RT staging buffer to grow beyond the scene budget.
+Vulkan tusdview also keeps this table across TLAS-only rebuilds (camera/LOD
+changes); only texture uploads, budget changes, scene replacement, or RT
+re-enable rebuild it. This avoids repeatedly decoding and repacking the same
+large texture set during interactive traversal.
 
 Tusdrender's Vulkan mesh-chunk path similarly releases each source mesh's
 positions, normals, UVs, and indices immediately after that mesh has been

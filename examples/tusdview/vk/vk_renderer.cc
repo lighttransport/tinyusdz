@@ -4845,6 +4845,7 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                                 int textureCount) {
   if (device_) vkDeviceWaitIdle(device_);
   destroyScene();  // resets texPool_, clears texDescs_, sets whiteDesc_ = NULL
+  rtTextureTableDirty_ = true;
   rtMaterialsCpu_ = materials;
   rtTexturesCpu_.resize(textureCount > 0 ? static_cast<size_t>(textureCount) : 0);
 
@@ -4998,6 +4999,10 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
         lights, static_cast<int>(i), true);
   }
   tlasDirty_ = true;
+  // Light environment maps participate in the compact RT texture table; a
+  // runtime light edit must refresh that table even when no texture slot was
+  // uploaded.
+  rtTextureTableDirty_ = true;
 
   // DomeLight split-sum IBL: upload the baked cubes + LUT (sets 21-23).
   if (!device_) return;
@@ -6920,6 +6925,9 @@ void VulkanRenderer::destroyTlasChunks() {
 void VulkanRenderer::rebuildTlas() {
   if (!rtSupported_ || (meshes_.empty() && nativePoints_.empty()) || !rtSet_) return;
   gaussianRtDisabled_ = false;
+  const bool rebuildRtTextures =
+      rtTextureTableDirty_ || !rtTexelBuf_ || !rtTexDescBuf_ ||
+      !rtMatTexBuf_ || !rtMatTexParamBuf_;
   // No vkDeviceWaitIdle: the caller (presentImpl) has already waited the in-flight
   // fence, so the previous frame -- the only consumer of the resources dropped
   // below and of rtSet_ (one frame in flight) -- has completed. The per-mesh /
@@ -6939,14 +6947,16 @@ void VulkanRenderer::rebuildTlas() {
   if (rtMatLightRtMem_) { vkFreeMemory(device_, rtMatLightRtMem_, nullptr); rtMatLightRtMem_ = VK_NULL_HANDLE; }
   if (rtLightBuf_) { vkDestroyBuffer(device_, rtLightBuf_, nullptr); rtLightBuf_ = VK_NULL_HANDLE; }
   if (rtLightMem_) { vkFreeMemory(device_, rtLightMem_, nullptr); rtLightMem_ = VK_NULL_HANDLE; }
-  if (rtTexelBuf_) { vkDestroyBuffer(device_, rtTexelBuf_, nullptr); rtTexelBuf_ = VK_NULL_HANDLE; }
-  if (rtTexelMem_) { vkFreeMemory(device_, rtTexelMem_, nullptr); rtTexelMem_ = VK_NULL_HANDLE; }
-  if (rtTexDescBuf_) { vkDestroyBuffer(device_, rtTexDescBuf_, nullptr); rtTexDescBuf_ = VK_NULL_HANDLE; }
-  if (rtTexDescMem_) { vkFreeMemory(device_, rtTexDescMem_, nullptr); rtTexDescMem_ = VK_NULL_HANDLE; }
-  if (rtMatTexBuf_) { vkDestroyBuffer(device_, rtMatTexBuf_, nullptr); rtMatTexBuf_ = VK_NULL_HANDLE; }
-  if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
-  if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
-  if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
+  if (rebuildRtTextures) {
+    if (rtTexelBuf_) { vkDestroyBuffer(device_, rtTexelBuf_, nullptr); rtTexelBuf_ = VK_NULL_HANDLE; }
+    if (rtTexelMem_) { vkFreeMemory(device_, rtTexelMem_, nullptr); rtTexelMem_ = VK_NULL_HANDLE; }
+    if (rtTexDescBuf_) { vkDestroyBuffer(device_, rtTexDescBuf_, nullptr); rtTexDescBuf_ = VK_NULL_HANDLE; }
+    if (rtTexDescMem_) { vkFreeMemory(device_, rtTexDescMem_, nullptr); rtTexDescMem_ = VK_NULL_HANDLE; }
+    if (rtMatTexBuf_) { vkDestroyBuffer(device_, rtMatTexBuf_, nullptr); rtMatTexBuf_ = VK_NULL_HANDLE; }
+    if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
+    if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
+    if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
+  }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
   if (rtPointBuf_) { vkDestroyBuffer(device_, rtPointBuf_, nullptr); rtPointBuf_ = VK_NULL_HANDLE; }
@@ -7499,54 +7509,56 @@ void VulkanRenderer::rebuildTlas() {
   if (lrtMats.empty()) lrtMats.assign(kVkLightRtOpenPBRFloats, 0.0f);
   std::vector<float> lights = lightParams_;  // packed DrawLightCPU light records
   if (lights.empty()) lights.assign(kVkRtLightFloats, 0.0f);
-  HostTextureTable rtTextures;
-  BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures,
-                        &rtLightsCpu_, rtTextureBudgetBytes_);
-  auto mapEnvmap = [&](int sourceId) -> int {
-    return (sourceId >= 0 && static_cast<size_t>(sourceId) <
-                                    rtTextures.sourceToTable.size())
-               ? rtTextures.sourceToTable[static_cast<size_t>(sourceId)]
-               : -1;
-  };
-  lightParams_.assign(rtLightsCpu_.size() * kVkRtLightFloats, 0.0f);
-  for (size_t i = 0; i < rtLightsCpu_.size(); ++i) {
-    PackRtLightParams(rtLightsCpu_[i], mapEnvmap(rtLightsCpu_[i].envmapTexture),
-                      &lightParams_[i * kVkRtLightFloats]);
-  }
-  const uint32_t dummyTexel = 0xffffffffu;
-  HostTextureDesc dummyTexDesc;
-  for (int& layer : dummyTexDesc.udimLayer) layer = -1;
-  if (rtTextures.matTex.empty()) rtTextures.matTex.assign(kRtMaterialTexSlots, -1);
-  if (rtTextures.matTexParam.empty())
-    rtTextures.matTexParam.assign(kRtMaterialTextureParamFloats, 0.0f);
   createHostBuffer(mats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    mats.data(), &rtMatBuf_, &rtMatMem_);
   createHostBuffer(lrtMats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    lrtMats.data(), &rtMatLightRtBuf_, &rtMatLightRtMem_);
   createHostBuffer(lights.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    lights.data(), &rtLightBuf_, &rtLightMem_);
-  createHostBuffer(rtTextures.texels.empty() ? sizeof(dummyTexel)
-                                              : rtTextures.texels.size(),
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                   rtTextures.texels.empty()
-                       ? static_cast<const void*>(&dummyTexel)
-                       : static_cast<const void*>(rtTextures.texels.data()),
-                   &rtTexelBuf_, &rtTexelMem_);
-  createHostBuffer(rtTextures.textures.empty()
-                       ? sizeof(dummyTexDesc)
-                       : rtTextures.textures.size() * sizeof(HostTextureDesc),
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                   rtTextures.textures.empty()
-                       ? static_cast<const void*>(&dummyTexDesc)
-                       : static_cast<const void*>(rtTextures.textures.data()),
-                   &rtTexDescBuf_, &rtTexDescMem_);
-  createHostBuffer(rtTextures.matTex.size() * sizeof(int),
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rtTextures.matTex.data(),
-                   &rtMatTexBuf_, &rtMatTexMem_);
-  createHostBuffer(rtTextures.matTexParam.size() * sizeof(float),
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                   rtTextures.matTexParam.data(), &rtMatTexParamBuf_,
-                   &rtMatTexParamMem_);
+  if (rebuildRtTextures) {
+    HostTextureTable rtTextures;
+    BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures,
+                          &rtLightsCpu_, rtTextureBudgetBytes_);
+    auto mapEnvmap = [&](int sourceId) -> int {
+      return (sourceId >= 0 && static_cast<size_t>(sourceId) <
+                                      rtTextures.sourceToTable.size())
+                 ? rtTextures.sourceToTable[static_cast<size_t>(sourceId)]
+                 : -1;
+    };
+    lightParams_.assign(rtLightsCpu_.size() * kVkRtLightFloats, 0.0f);
+    for (size_t i = 0; i < rtLightsCpu_.size(); ++i) {
+      PackRtLightParams(rtLightsCpu_[i], mapEnvmap(rtLightsCpu_[i].envmapTexture),
+                        &lightParams_[i * kVkRtLightFloats]);
+    }
+    const uint32_t dummyTexel = 0xffffffffu;
+    HostTextureDesc dummyTexDesc;
+    for (int& layer : dummyTexDesc.udimLayer) layer = -1;
+    if (rtTextures.matTex.empty()) rtTextures.matTex.assign(kRtMaterialTexSlots, -1);
+    if (rtTextures.matTexParam.empty())
+      rtTextures.matTexParam.assign(kRtMaterialTextureParamFloats, 0.0f);
+    createHostBuffer(rtTextures.texels.empty() ? sizeof(dummyTexel)
+                                                : rtTextures.texels.size(),
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                     rtTextures.texels.empty()
+                         ? static_cast<const void*>(&dummyTexel)
+                         : static_cast<const void*>(rtTextures.texels.data()),
+                     &rtTexelBuf_, &rtTexelMem_);
+    createHostBuffer(rtTextures.textures.empty()
+                         ? sizeof(dummyTexDesc)
+                         : rtTextures.textures.size() * sizeof(HostTextureDesc),
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                     rtTextures.textures.empty()
+                         ? static_cast<const void*>(&dummyTexDesc)
+                         : static_cast<const void*>(rtTextures.textures.data()),
+                     &rtTexDescBuf_, &rtTexDescMem_);
+    createHostBuffer(rtTextures.matTex.size() * sizeof(int),
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rtTextures.matTex.data(),
+                     &rtMatTexBuf_, &rtMatTexMem_);
+    createHostBuffer(rtTextures.matTexParam.size() * sizeof(float),
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                     rtTextures.matTexParam.data(), &rtMatTexParamBuf_,
+                     &rtMatTexParamMem_);
+  }
   createHostBuffer(instInfos.size() * sizeof(InstanceInfoGPU),
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, instInfos.data(),
                    &instInfoBuf_, &instInfoMem_);
@@ -8189,7 +8201,12 @@ void VulkanRenderer::setRayTracing(bool enable) {
   rtActive_ = want;
   techniqueLabel_ = rtActive_ ? "Vulkan (ray query)" : "Vulkan (raster)";
   caps_.backend_name = techniqueLabel_.c_str();
-  if (rtActive_) tlasDirty_ = true;  // build AS lazily before the next trace
+  if (rtActive_) {
+    // Raster texture uploads may have happened while RT was disabled; force the
+    // RT SSBO table to be rebuilt before the first trace in that case.
+    rtTextureTableDirty_ = true;
+    tlasDirty_ = true;  // build AS lazily before the next trace
+  }
 }
 
 void VulkanRenderer::setLodCamera(const RtLodCamera& cam, bool reselect) {
