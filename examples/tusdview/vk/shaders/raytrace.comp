@@ -101,7 +101,10 @@ layout(set = 0, binding = 13, scalar) readonly buffer RtMatTexIds {
 layout(set = 0, binding = 14, scalar) readonly buffer RtMatTexParams {
   float matTexParams[];
 };
-struct RtPoint { vec4 center; vec4 major; vec4 normal; vec4 radii; vec4 color; };
+// scalar layout keeps only the fields used by the analytic ellipse kernel:
+// center/major/normal (vec3), radii (vec2), and RGBA color. This is 60 bytes
+// instead of five padded vec4 fields (80 bytes) per Gaussian.
+struct RtPoint { vec3 center; vec3 major; vec3 normal; vec2 radii; vec4 color; };
 struct RtPointNode { vec3 bmin; vec3 bmax; int left; int right; int count; };
 struct RtPointChunk { int first; int count; int orderFirst; int bvhFirst; int bvhCount; };
 layout(set = 0, binding = 15, scalar) readonly buffer RtPoints { RtPoint points[]; };
@@ -480,14 +483,14 @@ float tracePointEllipses(vec3 o, vec3 d, out int hit, out float gaussianWeight) 
         for (int j = 0; j < n.count; ++j) {
           int id = pointOrder[ch.orderFirst + n.left + j];
           RtPoint p = points[id];
-          vec3 N = normalize(p.normal.xyz);
-          vec3 A = normalize(p.major.xyz);
+          vec3 N = normalize(p.normal);
+          vec3 A = normalize(p.major);
           vec3 B = normalize(cross(N, A));
           float den = dot(d, N);
           if (abs(den) < 1e-7) continue;
-          float t = dot(p.center.xyz - o, N) / den;
+          float t = dot(p.center - o, N) / den;
           if (t <= 0.0 || t >= best) continue;
-          vec3 q = o + d * t - p.center.xyz;
+          vec3 q = o + d * t - p.center;
           float u = dot(q, A) / max(p.radii.x, 1e-8);
           float v = dot(q, B) / max(p.radii.y, 1e-8);
           float r2 = u*u + v*v;
@@ -634,7 +637,7 @@ void main() {
 
   if (primaryPoint) {
     RtPoint p = points[pointId];
-    vec3 N = normalize(p.normal.xyz);
+    vec3 N = normalize(p.normal);
     if (dot(N, dir) > 0.0) N = -N;
     vec3 C = p.color.rgb;
     float alpha = clamp(p.color.a * pointWeight, 0.0, 1.0);

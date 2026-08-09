@@ -394,13 +394,13 @@ struct InstanceInfoGPU {
 static_assert(sizeof(InstanceInfoGPU) == 32, "InstanceInfoGPU scalar layout");
 
 struct RtPointGPU {
-  float center[4];
-  float major[4];
-  float normal[4];
-  float radii[4];
+  float center[3];
+  float major[3];
+  float normal[3];
+  float radii[2];
   float color[4];
 };
-static_assert(sizeof(RtPointGPU) == 80, "RtPointGPU scalar layout");
+static_assert(sizeof(RtPointGPU) == 60, "RtPointGPU scalar layout");
 
 struct RtPointChunkGPU {
   int first;
