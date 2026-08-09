@@ -1538,7 +1538,7 @@ int main(int argc, char **argv) {
           BuildNextGaussianEllipses(stage, gaussian_ctx, opt.timecode) &&
           gaussian_ctx.direct.has_ellipses();
     }
-    if (gpu_backend && (!native_gaussian || !opt.vulkan)) {
+    if (gpu_backend && !native_gaussian) {
       for (const auto &root : stage.GetRootPrims()) {
         CollectGpuPointsRec(root, matrix4d::identity(), opt.timecode,
                             &base_colors, &geos);
