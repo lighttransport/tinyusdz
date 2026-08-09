@@ -3732,7 +3732,7 @@ void CollectProtoJobs(const tinyusdz::next::Stage &stage,
 // is applied later by the TLAS. Instanced curves are treated as round (the common
 // XGen case; per-instance flat/ribbon curves are not separated). Returns false
 // only on a LightRT build failure.
-bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
+bool BuildCurveBlasUnbounded(const tinyusdz::next::Stage &stage,
                     const std::string &proto_path, tinyusdz::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
                     const tinyusdz::next::ValueClipStageLoader &clip_loader,
@@ -3890,6 +3890,126 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
   if (!ok.load()) {
     std::cerr << "Failed to build curve BLAS.\n";
     return false;
+  }
+  return true;
+}
+
+// Memory-bounded variant used by the render path.  BuildCurveBlasUnbounded is
+// retained temporarily as a reference for the split/hit-index layout; this
+// implementation avoids retaining the complete transformed prototype while
+// LightRT builds its sub-BLASes.
+bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
+                    const std::string &proto_path, tinyusdz::Purpose purpose,
+                    double time, const lrt_tri_build_options &build_opts,
+                    const tinyusdz::next::ValueClipStageLoader &clip_loader,
+                    Blas *out, Bounds *local,
+                    std::vector<Blas> *extra_blas = nullptr,
+                    std::vector<Bounds> *extra_bounds = nullptr) {
+  std::vector<CurveJobNext> curves;
+  CollectProtoCurves(stage, proto_path, purpose, time, &curves);
+  if (curves.empty()) return true;
+
+  const TriMat curve_mat = ExtractTriMat([] {
+    TriInfo t;
+    t.base_color = kCurveColor;
+    return t;
+  }());
+  const size_t split_segments = extra_blas ? (size_t(1) << 20) : SIZE_MAX;
+  std::vector<float> batch_points, batch_radii;
+  std::vector<uint32_t> batch_first, batch_count;
+  size_t batch_segments = 0;
+  Bounds prototype_bounds;
+  bool have_blas = false;
+
+  auto flush = [&]() -> bool {
+    if (batch_first.empty()) return true;
+    Blas *dst = out;
+    if (have_blas) {
+      if (!extra_blas || !extra_bounds) return false;
+      extra_blas->emplace_back();
+      extra_bounds->emplace_back();
+      dst = &extra_blas->back();
+    }
+    dst->mat_table.push_back(curve_mat);
+    dst->curve_seg.reserve(batch_segments * 6);
+    dst->curve_seg_mat.assign(batch_segments, 0u);
+    for (size_t s = 0; s < batch_first.size(); ++s) {
+      const size_t first = batch_first[s];
+      for (uint32_t i = 0; i + 1u < batch_count[s]; ++i) {
+        const float *p0 = &batch_points[(first + i) * 3];
+        const float *p1 = &batch_points[(first + i + 1u) * 3];
+        dst->curve_seg.insert(dst->curve_seg.end(),
+                              {p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]});
+      }
+    }
+    lrt_hair_strands hair;
+    std::memset(&hair, 0, sizeof(hair));
+    hair.points = batch_points.data();
+    hair.radius = batch_radii.data();
+    hair.strand_first = batch_first.data();
+    hair.strand_count = batch_count.data();
+    hair.nstrands = batch_first.size();
+    hair.npoints = batch_points.size() / 3;
+    lrt_result result = LRT_RESULT_OK;
+    dst->scene = lrt_roundcurve_scene_build(&hair, &build_opts, &result);
+    dst->is_curve = true;
+    if (!dst->scene) return false;
+    have_blas = true;
+    batch_points.clear();
+    batch_radii.clear();
+    batch_first.clear();
+    batch_count.clear();
+    batch_segments = 0;
+    return true;
+  };
+
+  for (const CurveJobNext &job : curves) {
+    CurvePointViewNext point_source;
+    if (!ReadCurvePointViewNext(job.prim, time, clip_loader, &point_source))
+      continue;
+    const std::vector<int32_t> c32 =
+        ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
+    if (c32.empty()) continue;
+    const std::vector<int> counts(c32.begin(), c32.end());
+    const std::vector<float> widths =
+        ReadFloatArrayLazy(job.prim, "widths", time);
+    // Materialize at most this source prim plus one bounded batch.  This is
+    // important for clip-backed arrays: the view can be borrowed, while the
+    // temporary vectors below are released before the next prim is decoded.
+    std::vector<float> prim_points, prim_radii;
+    std::vector<uint32_t> prim_first, prim_count;
+    AppendLinearCurveStrands(
+        point_source.view.begin(), point_source.view.size() / 3, counts,
+        widths, job.world, &prim_points, &prim_radii, &prim_first,
+        &prim_count, /*info=*/nullptr, &prototype_bounds);
+    for (size_t s = 0; s < prim_first.size(); ++s) {
+      const size_t segments = size_t(prim_count[s]) - 1u;
+      if (!batch_first.empty() && batch_segments + segments > split_segments &&
+          !flush()) {
+        std::cerr << "Failed to build curve BLAS.\n";
+        return false;
+      }
+      const uint32_t base = uint32_t(batch_points.size() / 3);
+      const size_t pbegin = size_t(prim_first[s]) * 3;
+      const size_t pcount = size_t(prim_count[s]) * 3;
+      batch_points.insert(batch_points.end(), prim_points.begin() + pbegin,
+                         prim_points.begin() + pbegin + pcount);
+      const size_t rbegin = prim_first[s];
+      batch_radii.insert(batch_radii.end(), prim_radii.begin() + rbegin,
+                         prim_radii.begin() + rbegin + prim_count[s]);
+      batch_first.push_back(base);
+      batch_count.push_back(prim_count[s]);
+      batch_segments += segments;
+    }
+  }
+  if (!flush()) {
+    std::cerr << "Failed to build curve BLAS.\n";
+    return false;
+  }
+  if (!have_blas) return true;
+  *local = prototype_bounds;
+  if (extra_bounds) {
+    for (Bounds &bound : *extra_bounds) bound = prototype_bounds;
   }
   return true;
 }
