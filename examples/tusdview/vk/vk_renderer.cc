@@ -6919,6 +6919,7 @@ void VulkanRenderer::destroyTlasChunks() {
 
 void VulkanRenderer::rebuildTlas() {
   if (!rtSupported_ || (meshes_.empty() && nativePoints_.empty()) || !rtSet_) return;
+  gaussianRtDisabled_ = false;
   // No vkDeviceWaitIdle: the caller (presentImpl) has already waited the in-flight
   // fence, so the previous frame -- the only consumer of the resources dropped
   // below and of rtSet_ (one frame in flight) -- has completed. The per-mesh /
@@ -7552,26 +7553,90 @@ void VulkanRenderer::rebuildTlas() {
   RtPointGPU dummyPoint{};
   Node dummyNode{};
   int dummyOrder = 0;
-  createHostBuffer(pointDescs.empty() ? sizeof(dummyPoint) : pointDescs.size() * sizeof(RtPointGPU),
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                   pointDescs.empty() ? static_cast<const void*>(&dummyPoint) : static_cast<const void*>(pointDescs.data()),
-                   &rtPointBuf_, &rtPointMem_);
-  createHostBuffer(pointNodes.empty() ? sizeof(dummyNode) : pointNodes.size() * sizeof(Node),
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                   pointNodes.empty() ? static_cast<const void*>(&dummyNode) : static_cast<const void*>(pointNodes.data()),
-                   &rtPointNodeBuf_, &rtPointNodeMem_);
-  createHostBuffer(pointOrder.empty() ? sizeof(dummyOrder) : pointOrder.size() * sizeof(int),
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                   pointOrder.empty() ? static_cast<const void*>(&dummyOrder) : static_cast<const void*>(pointOrder.data()),
-                   &rtPointOrderBuf_, &rtPointOrderMem_);
   RtPointChunkGPU dummyPointChunk{};
-  createHostBuffer(pointChunks.empty() ? sizeof(dummyPointChunk)
-                                       : pointChunks.size() * sizeof(RtPointChunkGPU),
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                   pointChunks.empty()
-                       ? static_cast<const void*>(&dummyPointChunk)
-                       : static_cast<const void*>(pointChunks.data()),
-                   &rtPointChunkBuf_, &rtPointChunkMem_);
+  const auto destroyPointBuffers = [&]() {
+    if (rtPointBuf_) vkDestroyBuffer(device_, rtPointBuf_, nullptr);
+    if (rtPointMem_) vkFreeMemory(device_, rtPointMem_, nullptr);
+    if (rtPointNodeBuf_) vkDestroyBuffer(device_, rtPointNodeBuf_, nullptr);
+    if (rtPointNodeMem_) vkFreeMemory(device_, rtPointNodeMem_, nullptr);
+    if (rtPointOrderBuf_) vkDestroyBuffer(device_, rtPointOrderBuf_, nullptr);
+    if (rtPointOrderMem_) vkFreeMemory(device_, rtPointOrderMem_, nullptr);
+    if (rtPointChunkBuf_) vkDestroyBuffer(device_, rtPointChunkBuf_, nullptr);
+    if (rtPointChunkMem_) vkFreeMemory(device_, rtPointChunkMem_, nullptr);
+    rtPointBuf_ = VK_NULL_HANDLE; rtPointMem_ = VK_NULL_HANDLE;
+    rtPointNodeBuf_ = VK_NULL_HANDLE; rtPointNodeMem_ = VK_NULL_HANDLE;
+    rtPointOrderBuf_ = VK_NULL_HANDLE; rtPointOrderMem_ = VK_NULL_HANDLE;
+    rtPointChunkBuf_ = VK_NULL_HANDLE; rtPointChunkMem_ = VK_NULL_HANDLE;
+  };
+  const auto createPointBuffers = [&]() {
+    const bool points = createHostBuffer(
+        pointDescs.empty() ? sizeof(dummyPoint) : pointDescs.size() * sizeof(RtPointGPU),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        pointDescs.empty() ? static_cast<const void*>(&dummyPoint)
+                           : static_cast<const void*>(pointDescs.data()),
+        &rtPointBuf_, &rtPointMem_);
+    const bool nodes = createHostBuffer(
+        pointNodes.empty() ? sizeof(dummyNode) : pointNodes.size() * sizeof(Node),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        pointNodes.empty() ? static_cast<const void*>(&dummyNode)
+                           : static_cast<const void*>(pointNodes.data()),
+        &rtPointNodeBuf_, &rtPointNodeMem_);
+    const bool order = createHostBuffer(
+        pointOrder.empty() ? sizeof(dummyOrder) : pointOrder.size() * sizeof(int),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        pointOrder.empty() ? static_cast<const void*>(&dummyOrder)
+                           : static_cast<const void*>(pointOrder.data()),
+        &rtPointOrderBuf_, &rtPointOrderMem_);
+    const bool chunks = createHostBuffer(
+        pointChunks.empty() ? sizeof(dummyPointChunk)
+                            : pointChunks.size() * sizeof(RtPointChunkGPU),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        pointChunks.empty() ? static_cast<const void*>(&dummyPointChunk)
+                            : static_cast<const void*>(pointChunks.data()),
+        &rtPointChunkBuf_, &rtPointChunkMem_);
+    return points && nodes && order && chunks;
+  };
+  uint64_t forcedPointBudget = 0;
+  if (const char *value = std::getenv("TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB")) {
+    char *end = nullptr;
+    const unsigned long long mb = std::strtoull(value, &end, 10);
+    if (value[0] != '\0' && end != value && *end == '\0' && mb > 0 &&
+        mb <= (std::numeric_limits<uint64_t>::max)() / (1024ull * 1024ull))
+      forcedPointBudget = mb * 1024ull * 1024ull;
+  }
+  if (forcedPointBudget == 0) {
+    uint64_t used = 0, budget = 0;
+    constexpr uint64_t kPointHeadroom = 256ull * 1024ull * 1024ull;
+    if (memoryBudget(&used, &budget) && budget > used &&
+        budget - used > kPointHeadroom)
+      forcedPointBudget = budget - used - kPointHeadroom;
+  }
+  const uint64_t pointBytes =
+      uint64_t(pointDescs.size()) * sizeof(RtPointGPU) +
+      uint64_t(pointNodes.size()) * sizeof(Node) +
+      uint64_t(pointOrder.size()) * sizeof(int) +
+      uint64_t(pointChunks.size()) * sizeof(RtPointChunkGPU);
+  if (forcedPointBudget != 0 && pointBytes > forcedPointBudget) {
+    LOGW("[vk_rt] Gaussian point buffers %.1f MiB exceed point-buffer ceiling %.1f MiB; "
+         "using raster splat fallback",
+         double(pointBytes) / (1024.0 * 1024.0),
+         double(forcedPointBudget) / (1024.0 * 1024.0));
+    pointDescs.clear(); pointNodes.clear(); pointOrder.clear(); pointChunks.clear();
+    rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
+    gaussianRtDisabled_ = true;
+  }
+  if (!createPointBuffers()) {
+    LOGW("[vk_rt] Gaussian point buffer allocation failed; using raster splat fallback");
+    destroyPointBuffers();
+    pointDescs.clear(); pointNodes.clear(); pointOrder.clear(); pointChunks.clear();
+    rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
+    gaussianRtDisabled_ = true;
+    if (!createPointBuffers()) {
+      LOGE("[vk_rt] Gaussian fallback descriptor buffers could not be allocated");
+      rtBuildIncomplete_ = true;
+      destroyPointBuffers();
+    }
+  }
 
   // Update descriptors: TLAS(0), meshDesc(2), material(3), instInfo(4),
   // LightRT material block(6), packed lights(7). Image(1) and accumulation image(5)
@@ -8591,7 +8656,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
       // Native Gaussian points are already shaded by the analytic RT BVH. Do
       // not expand millions of splats into camera-facing overlay triangles on
       // every RT frame; retain the proxy only for raster/non-RT frames.
-      if (rtActive_ && rtSupported_ && s.gaussian) {
+      if (rtActive_ && rtSupported_ && s.gaussian && !gaussianRtDisabled_) {
         ++carrierIndex;
         continue;
       }
@@ -9074,7 +9139,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   // thread needs no glfwGetFramebufferSize. 0 on the single-threaded path.
   if (fbW > 0 && fbH > 0) { winFbW_ = fbW; winFbH_ = fbH; }
 
-  const bool rtFrame = rtActive_ && rtSupported_ && hasParams_ && offscreenFb_ &&
+  bool rtFrame = rtActive_ && rtSupported_ && hasParams_ && offscreenFb_ &&
                        rtImage_ && (!meshes_.empty() || !nativePoints_.empty());
 
   // Split-timer (TUSDVIEW_TIME_PRESENT): the previous frame's GPU cost surfaces as
@@ -9102,6 +9167,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     rebuildTlas();
   else if (rtFrame && rtTextureTableDirty_)
     rebuildRtTextureTable();
+  if (rtBuildIncomplete_)
+    rtFrame = false;
 
   // Headless: no swapchain to acquire from — composite into our own image ring.
   uint32_t imageIndex = frame_;

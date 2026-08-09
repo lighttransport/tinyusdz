@@ -939,6 +939,9 @@ class VulkanRenderer final : public Renderer {
   uint32_t rtPointCount_{0};
   uint32_t rtPointNodeCount_{0};
   uint32_t rtPointChunkCount_{0};
+  // True when analytic Gaussian point buffers do not fit the current Vulkan
+  // residency budget; raster camera-facing splat quads remain available.
+  bool gaussianRtDisabled_{false};
 
   VkImage rtImage_{VK_NULL_HANDLE};
   VkDeviceMemory rtImageMem_{VK_NULL_HANDLE};
