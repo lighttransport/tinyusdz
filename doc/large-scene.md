@@ -1887,6 +1887,11 @@ Dense UsdVol grids follow the same rule: each VDB field is queued and uploaded
 individually, while the progressive scene retains only dimensions, transforms,
 and bounds. The queue byte limit includes the float density payload, and a
 cancelled volume event aborts conversion without leaving later grids resident.
+One-shot Vulkan/GL loads use a derived total density budget as well (override it
+with `LoadOptions::volumeMemoryBudgetBytes`); oversized grids are reduced with
+bounded nearest sampling and later grids are skipped once the budget is
+exhausted. The selected VDB array is moved into the render carrier, avoiding a
+second full dense copy during field extraction.
 
 DomeLight HDR conversion is also capped by the texture max-edge policy (or a
 4K preview fallback when no edge is configured). Source pixels are sampled into

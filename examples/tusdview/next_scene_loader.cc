@@ -4671,10 +4671,75 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
 // resolve each `field:*` relationship to its field-asset prim, load the .vdb
 // (relative to the USD file dir), and emit a DrawVolumeCPU. Extends `bounds`
 // with the volume world-AABB so the camera frames it.
+bool FitNextVolumeDensity(DrawVolumeCPU* volume, size_t maxBytes) {
+  if (!volume || maxBytes < sizeof(float) || volume->density.empty() ||
+      volume->dim[0] <= 0 || volume->dim[1] <= 0 || volume->dim[2] <= 0)
+    return false;
+  const size_t sourceVoxels = volume->density.size();
+  const size_t maxVoxels = maxBytes / sizeof(float);
+  if (sourceVoxels <= maxVoxels) return false;
+
+  int dims[3] = {volume->dim[0], volume->dim[1], volume->dim[2]};
+  const double scale = std::cbrt(static_cast<double>(maxVoxels) /
+                                 static_cast<double>(sourceVoxels));
+  for (int a = 0; a < 3; ++a)
+    dims[a] = std::max(1, static_cast<int>(std::floor(dims[a] * scale)));
+  auto voxelCount = [&]() -> size_t {
+    const size_t x = static_cast<size_t>(dims[0]);
+    const size_t y = static_cast<size_t>(dims[1]);
+    const size_t z = static_cast<size_t>(dims[2]);
+    if (x > (std::numeric_limits<size_t>::max)() / y) return 0;
+    const size_t xy = x * y;
+    if (xy > (std::numeric_limits<size_t>::max)() / z) return 0;
+    return xy * z;
+  };
+  while (voxelCount() > maxVoxels) {
+    int largest = 0;
+    if (dims[1] > dims[largest]) largest = 1;
+    if (dims[2] > dims[largest]) largest = 2;
+    if (dims[largest] <= 1) break;
+    --dims[largest];
+  }
+  const size_t targetVoxels = voxelCount();
+  if (targetVoxels == 0 || targetVoxels >= sourceVoxels) return false;
+
+  std::vector<float> reduced(targetVoxels);
+  const size_t sx = static_cast<size_t>(volume->dim[0]);
+  const size_t sy = static_cast<size_t>(volume->dim[1]);
+  const size_t sz = static_cast<size_t>(volume->dim[2]);
+  for (int z = 0; z < dims[2]; ++z) {
+    const size_t oz = std::min(
+        sz - 1, (static_cast<size_t>(z) * sz) /
+                   static_cast<size_t>(dims[2]));
+    for (int y = 0; y < dims[1]; ++y) {
+      const size_t oy = std::min(
+          sy - 1, (static_cast<size_t>(y) * sy) /
+                   static_cast<size_t>(dims[1]));
+      for (int x = 0; x < dims[0]; ++x) {
+        const size_t ox = std::min(
+            sx - 1, (static_cast<size_t>(x) * sx) /
+                   static_cast<size_t>(dims[0]));
+        const size_t dst = (static_cast<size_t>(z) *
+                            static_cast<size_t>(dims[1]) +
+                            static_cast<size_t>(y)) *
+                               static_cast<size_t>(dims[0]) +
+                           static_cast<size_t>(x);
+        reduced[dst] = volume->density[(oz * sy + oy) * sx + ox];
+      }
+    }
+  }
+  volume->density.swap(reduced);
+  volume->dim[0] = dims[0];
+  volume->dim[1] = dims[1];
+  volume->dim[2] = dims[2];
+  return true;
+}
+
 bool BuildNextVolumes(
     const tnext::Stage& stage, const std::string& usdPath, double time,
     DrawScene* draw, Bounds* bounds,
-    const std::function<bool(DrawVolumeCPU&&)>* publish = nullptr) {
+    const std::function<bool(DrawVolumeCPU&&)>* publish = nullptr,
+    size_t densityBudgetBytes = 0, size_t* densityBytesUsed = nullptr) {
   const std::string baseDir = tinyusdz::io::GetBaseDir(usdPath);
 
   std::function<bool(const tnext::UsdPrim&)> rec =
@@ -4708,8 +4773,8 @@ bool BuildNextVolumes(
         if (!tinyusdz::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) || grids.empty()) {
           continue;
         }
-        const tinyusdz::usdVol::VDBGrid* g = nullptr;
-        for (const auto& gg : grids)
+        tinyusdz::usdVol::VDBGrid* g = nullptr;
+        for (auto& gg : grids)
           if (gg.name == fieldName) { g = &gg; break; }
         if (!g) g = &grids[0];
         if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0)
@@ -4718,7 +4783,9 @@ bool BuildNextVolumes(
         DrawVolumeCPU dv;
         dv.name = p.GetName();
         for (int k = 0; k < 16; ++k) dv.world[k] = static_cast<float>(w16[k]);
-        dv.density = g->data;
+        // Transfer ownership out of the temporary VDB grid instead of copying
+        // a dense field while the decoded archive remains alive.
+        dv.density = std::move(g->data);
         for (int a = 0; a < 3; ++a) {
           dv.dim[a] = g->dim[a];
           dv.aabbMin[a] = float(g->origin[a]) * float(g->voxel_size[a]) +
@@ -4727,6 +4794,39 @@ bool BuildNextVolumes(
                           float(g->world_translation[a]);
         }
         dv.background = g->background;
+
+        if (densityBudgetBytes > 0 && densityBytesUsed) {
+          const size_t used = *densityBytesUsed;
+          const size_t remaining = used < densityBudgetBytes
+                                       ? densityBudgetBytes - used
+                                       : 0;
+          const size_t sourceBytes = dv.density.size() * sizeof(float);
+          if (remaining < sizeof(float)) {
+            if (draw) {
+              draw->skipped.push_back(
+                  "Volume '" + p.GetPath().str() +
+                  "': density budget exhausted; grid skipped");
+            }
+            continue;
+          }
+          const int sourceDim[3] = {dv.dim[0], dv.dim[1], dv.dim[2]};
+          const bool reduced = FitNextVolumeDensity(&dv, remaining);
+          if (reduced) {
+            LOGW("Volume '%s': density reduced from %dx%dx%d (%.1f MiB) "
+                 "to %dx%dx%d (%.1f MiB) by the volume budget",
+                 p.GetPath().str().c_str(), sourceDim[0], sourceDim[1],
+                 sourceDim[2], double(sourceBytes) / (1024.0 * 1024.0),
+                 dv.dim[0], dv.dim[1], dv.dim[2],
+                 double(dv.density.size() * sizeof(float)) /
+                     (1024.0 * 1024.0));
+            if (draw) {
+              draw->skipped.push_back(
+                  "Volume '" + p.GetPath().str() +
+                  "': density downsampled to fit the memory budget");
+            }
+          }
+          *densityBytesUsed += dv.density.size() * sizeof(float);
+        }
 
         // Extend scene bounds with the volume world-AABB (8 corners). World
         // matrix is stored row-major-USD in w16 (p' = p * M), matching meshes.
@@ -7493,11 +7593,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
 
   // UsdVol volumes (OpenVDB): emit DrawVolumeCPU + extend bounds.
+  const size_t derivedVolumeBudget =
+      opts.volumeMemoryBudgetBytes > 0
+          ? opts.volumeMemoryBudgetBytes
+          : (opts.gpuGeometryBudgetBytes > 0
+                 ? std::max<size_t>(size_t(64) << 20,
+                                    std::min<size_t>(size_t(512) << 20,
+                                                     opts.gpuGeometryBudgetBytes / 8))
+                 : size_t(512) << 20);
+  size_t volumeDensityBytes = 0;
   if (!BuildNextVolumes(stage, path, time, draw, &bounds,
-                        stream ? &publishVolume : nullptr)) {
+                        stream ? &publishVolume : nullptr,
+                        derivedVolumeBudget, &volumeDensityBytes)) {
     if (err) *err = "next: progressive volume load cancelled";
     if (stream) streamOk = false;
     return false;
+  }
+  if (volumeDensityBytes > 0 && timing) {
+    LOGI("next: UsdVol density resident %.1f MiB (budget %.1f MiB)",
+         double(volumeDensityBytes) / (1024.0 * 1024.0),
+         double(derivedVolumeBudget) / (1024.0 * 1024.0));
   }
   BuildNextLights(stage, conv, path, time, opts.textureOptions, draw);
 
