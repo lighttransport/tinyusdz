@@ -59,6 +59,11 @@ fi
 if [ "$?" -ne 0 ]; then
   if grep -qiE "HIP ray tracing unavailable|no ROCm|no HIP device|requested GPU backend not built|hiprtc.*not available" \
       "$TMP/pure-hip.log"; then
+    if grep -q "\[gpu\] gaussian splats" "$TMP/pure-hip.log"; then
+      cat "$TMP/pure-hip.log"
+      echo "FAIL: pure HIP Gaussian scene built the tessellated fallback before backend availability was known"
+      exit 1
+    fi
     echo "SKIP: no usable HIP/ROCm device (Vulkan coverage passed)"
   else
     cat "$TMP/pure-hip.log"
