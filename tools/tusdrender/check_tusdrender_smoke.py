@@ -596,6 +596,10 @@ def Xform "World"
     if "[gpu] gaussian splats:" not in hip_log:
         raise RuntimeError(
             "HIP Gaussian tessellation fallback was not selected:\n" + hip_log)
+    if "GPU chunks: 2" not in hip_log:
+        raise RuntimeError(
+            "HIP Gaussian fallback did not honor the bounded chunk limit:\n" +
+            hip_log)
     if hip_gaussian.returncode != 0 and "HIP ray tracing unavailable" not in hip_log:
         raise RuntimeError("unexpected HIP Gaussian failure:\n" + hip_log)
     if hip_gaussian_out.exists():
