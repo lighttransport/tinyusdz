@@ -509,6 +509,12 @@ def Xform "World"
         point3f[] points = [(-6, 0, 0), (-6, 3, 0), (-6, 6, 0)]
         float[] widths = [0.3, 0.2, 0.1]
     }
+    def BasisCurves "MalformedHair"
+    {
+        uniform token type = "linear"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(6, 0, 0), (6, 3, 0), (6, 6, 0)]
+    }
     def PointInstancer "Grass"
     {
         point3f[] positions = [(0, 0, 0), (4, 0, 0)]
@@ -540,7 +546,8 @@ def Xform "World"
         # The direct Hair prim is one strand, so it remains whole even though
         # its two segments exceed the one-segment limit.
         "native curves: round 1 chunk(s)",
-        "rt curve strands: 1",
+        "rt curve strands: 2",
+        "rt skipped curves: 1 (invalid data: 1)",
         "rt curve instances: 2",
         "rt point instances: 2",
         "rt instancing: tlas",
