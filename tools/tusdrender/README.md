@@ -51,6 +51,11 @@ triangles, each SH/color bucket is likewise flushed at
 `TUSDR_GPU_TRIANGLE_CHUNK` rather than becoming one multi-million-triangle
 allocation.
 
+For GPU mesh previews, next-loader traversal records are also collected and
+converted one stage root at a time. This keeps large instancer/job lists from
+being retained alongside the world-space geometry waiting for the GPU chunk
+upload; the final nearest-hit reduction and material order are unchanged.
+
 The flat next-loader mesh path also splits its native LightRT triangle BVH when
 needed. `TUSDR_TRIANGLE_CHUNK=N` sets the triangle limit (default 262,144);
 the integrator preserves global material/UV indices while checking every chunk,

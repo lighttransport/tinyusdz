@@ -1270,25 +1270,27 @@ int main(int argc, char **argv) {
       // expanded to world-space placements here (expand_instancers=true) so
       // instanced geometry renders on the GPU path -- see doc/tusdrender.md
       // (Instancing on the GPU backends). No per-prototype BLAS sharing yet.
-      std::vector<MeshJobNext> mesh_jobs;
-      for (const auto &root : stage.GetRootPrims()) {
-        CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
-                                   tinyusdz::Purpose::Default, opt.timecode,
-                                   opt.mask, &mesh_jobs,
-                                   /*expand_instancers=*/true);
-      }
-
-      // Displacement textures for the -vk/-vkr preview (loaded from disk relative
-      // to the input; usdz-embedded displacement maps are not resolved here).
+      // Displacement textures are shared across roots; traversal records are
+      // intentionally root-local below.
       std::vector<tusdr::Texture> disp_textures;
       TextureCache tc;
       tc.textures = &disp_textures;
       tc.base_dir = DirName(opt.input);
       tc.usdz = nullptr;
       tc.options = &opt;
+      for (const auto &root : stage.GetRootPrims()) {
+        // Keep only one root's traversal records alive.  A production stage can
+        // contain thousands of roots (or large instancer expansions); collecting
+        // every MeshJobNext before converting any geometry creates a needless
+        // scene-wide transient peak on top of the final GPU chunk stream.
+        std::vector<MeshJobNext> mesh_jobs;
+        CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
+                                   tinyusdz::Purpose::Default, opt.timecode,
+                                   opt.mask, &mesh_jobs,
+                                   /*expand_instancers=*/true);
 
-      // Stream geometry in WORLD space.
-      for (MeshJobNext &job : mesh_jobs) {
+        // Stream geometry in WORLD space.
+        for (MeshJobNext &job : mesh_jobs) {
         // Purpose visibility: hide guide (and others per -purpose) like the CPU
         // path; the GPU path used to render every purpose unconditionally, so the
         // 26M-triangle guide breadcrumb/endpoint Points engulfed the camera.
@@ -1452,6 +1454,7 @@ int main(int argc, char **argv) {
         base_colors.push_back(bc);
         geos.push_back(std::move(geo));
       }
+    }
     }
 
     bool has_direct_curves = false;
