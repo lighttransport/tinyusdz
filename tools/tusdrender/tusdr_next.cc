@@ -2891,28 +2891,6 @@ std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
 bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
                      double time) {
   if (jobs.empty()) return true;
-  std::vector<float> round_points, round_radii, flat_points, flat_radii;
-  std::vector<uint32_t> round_first, round_count, flat_first, flat_count;
-  for (const CurveJobNext &job : jobs) {
-    std::vector<tinyusdz::value::point3f> points =
-        ReadCurvePointsNext(job.prim, time, ctx.clip_stage_loader);
-    std::vector<int32_t> counts32 =
-        ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
-    if (points.empty() || counts32.empty()) continue;
-    std::vector<int> counts(counts32.begin(), counts32.end());
-    std::vector<float> widths = ReadFloatArrayLazy(job.prim, "widths", time);
-    const bool flat = job.prim.GetPropertyValue("normals") != nullptr;
-    if (flat) {
-      AppendLinearCurveStrands(points, counts, widths, job.world, &flat_points,
-                               &flat_radii, &flat_first, &flat_count,
-                               &ctx.direct.flat_curve_info, &ctx.bounds);
-    } else {
-      AppendLinearCurveStrands(points, counts, widths, job.world, &round_points,
-                               &round_radii, &round_first, &round_count,
-                               &ctx.direct.round_curve_info, &ctx.bounds);
-    }
-  }
-
   lrt_tri_build_options build_opts;
   std::memset(&build_opts, 0, sizeof(build_opts));
   build_opts.quality = ctx.opt.quality;
@@ -2943,7 +2921,6 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
                                 const std::vector<float> &radii,
                                 const std::vector<uint32_t> &strand_first,
                                 const std::vector<uint32_t> &strand_count,
-                                const std::vector<TriInfo> &info,
                                 std::vector<CurveSceneChunk> *chunks,
                                 bool flat, const char *label) -> bool {
     for (size_t s = 0; s < strand_first.size();) {
@@ -2976,8 +2953,8 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
       lrt_hair_strands hs =
           make_strands(sub_points, sub_radii, sub_first, sub_count);
       CurveSceneChunk chunk;
-      chunk.first = info.empty() ? 0 : (chunks->empty() ? 0 :
-          chunks->back().first + chunks->back().count);
+      chunk.first = chunks->empty() ? 0 :
+          chunks->back().first + chunks->back().count;
       chunk.count = segs;
       chunk.scene.reset(flat ? lrt_flatcurve_scene_build(&hs, &build_opts, &lrt_err)
                              : lrt_roundcurve_scene_build(&hs, &build_opts, &lrt_err));
@@ -2994,16 +2971,35 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
   };
   ctx.direct.round_curve_chunks.clear();
   ctx.direct.flat_curve_chunks.clear();
-  if (!round_first.empty() &&
-      !build_curve_chunks(round_points, round_radii, round_first, round_count,
-                          ctx.direct.round_curve_info,
-                          &ctx.direct.round_curve_chunks, false, "round"))
-    return false;
-  if (!flat_first.empty() &&
-      !build_curve_chunks(flat_points, flat_radii, flat_first, flat_count,
-                          ctx.direct.flat_curve_info,
-                          &ctx.direct.flat_curve_chunks, true, "flat"))
-    return false;
+  // Process one authored curve prim at a time. The previous implementation
+  // accumulated every transformed point/radius in scene-wide vectors before
+  // splitting them, which defeated the chunk limit for scenes with many large
+  // curve prims. Each local carrier is released after its LightRT chunks are
+  // built, so peak memory is bounded by one source prim plus one chunk.
+  for (const CurveJobNext &job : jobs) {
+    std::vector<tinyusdz::value::point3f> points =
+        ReadCurvePointsNext(job.prim, time, ctx.clip_stage_loader);
+    std::vector<int32_t> counts32 =
+        ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
+    if (points.empty() || counts32.empty()) continue;
+    std::vector<int> counts(counts32.begin(), counts32.end());
+    std::vector<float> widths = ReadFloatArrayLazy(job.prim, "widths", time);
+    const bool flat = job.prim.GetPropertyValue("normals") != nullptr;
+    std::vector<float> curve_points, curve_radii;
+    std::vector<uint32_t> curve_first, curve_count;
+    std::vector<TriInfo> *info = flat ? &ctx.direct.flat_curve_info
+                                      : &ctx.direct.round_curve_info;
+    AppendLinearCurveStrands(points, counts, widths, job.world, &curve_points,
+                             &curve_radii, &curve_first, &curve_count, info,
+                             &ctx.bounds);
+    if (curve_first.empty()) continue;
+    if (!build_curve_chunks(
+            curve_points, curve_radii, curve_first, curve_count,
+            flat ? &ctx.direct.flat_curve_chunks
+                 : &ctx.direct.round_curve_chunks,
+            flat, flat ? "flat" : "round"))
+      return false;
+  }
   if (ctx.opt.stats) {
     std::cerr << "native curves: round " << ctx.direct.round_curve_chunks.size()
               << " chunk(s), flat " << ctx.direct.flat_curve_chunks.size()

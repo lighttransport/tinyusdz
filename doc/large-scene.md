@@ -1864,7 +1864,9 @@ Curve points are read through the lazy array-view path, and complete strands are
 packed into chunks instead of duplicating the full source array for each BVH.
 `TUSDR_CURVE_CHUNK=N` controls the segment limit (default 262,144); the CPU
 integrator checks every chunk and Vulkan tessellates each round-curve chunk at
-the upload boundary.
+the upload boundary. Tusdrender builds those chunks one curve prim at a time,
+so a scene with many large curve prims does not accumulate a second
+scene-wide transformed point/radius stream before chunking.
 
 The flat next-loader mesh path uses the same bounded native-BVH policy. Mesh
 triangles are split at `TUSDR_TRIANGLE_CHUNK=N` (default 262,144), with global
