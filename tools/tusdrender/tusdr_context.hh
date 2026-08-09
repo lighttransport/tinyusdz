@@ -539,6 +539,10 @@ bool BuildNextFlatCurveMeshes(
     const CameraFrame &camera, std::vector<RTPreviewStats::MeshGeometry> *geos,
     std::vector<Vec3> *base_colors);
 
+bool BuildNextFlatCurveBounds(
+    const std::vector<CurveJobNext> &jobs, double time,
+    const tinyusdz::next::ValueClipStageLoader &clip_loader, Bounds *bounds);
+
 matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
                      const float *scale3);
 
