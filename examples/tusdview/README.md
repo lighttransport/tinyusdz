@@ -146,7 +146,8 @@ displays it with an ImGui docking UI.
   time, with nearest-depth/color reduction on CUDA/HIP. Vulkan ray query keeps
   analytic records resident; if its point-buffer ceiling is exceeded, it skips
   the temporary analytic descriptor/BVH build and uses the raster splat
-  fallback. `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB` can rehearse a smaller device;
+  fallback, which rejects off-screen samples before expanding camera-facing
+  quads. `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB` can rehearse a smaller device;
   otherwise the backend derives a ceiling from free VRAM with headroom.
 - **Surface displacement** (`UsdPreviewSurface inputs:displacement` — constant or
   a height texture, honoring the `UsdUVTexture` `scale`/`bias`). The **raster**

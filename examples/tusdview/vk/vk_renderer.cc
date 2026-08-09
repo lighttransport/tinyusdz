@@ -8654,6 +8654,28 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
       out[1] = s.world[1] * x + s.world[5] * y + s.world[9] * z + s.world[13];
       out[2] = s.world[2] * x + s.world[6] * y + s.world[10] * z + s.world[14];
     };
+    // Avoid materializing camera-facing fallback geometry for carriers that are
+    // wholly outside the current view.  This matters for large Gaussian fields:
+    // the analytic RT path can reject them in its BVH, but a Vulkan raster
+    // fallback otherwise expands every sample into six HelperVertex records
+    // before the upload chunker gets a chance to bound the device allocation.
+    // The test is deliberately conservative in X/Y and does not reject by Z;
+    // geometry crossing the near/far planes must remain available to clipping.
+    auto rasterVisible = [&](const float p[3], float radius) {
+      const float vx = view_[0] * p[0] + view_[4] * p[1] + view_[8] * p[2] + view_[12];
+      const float vy = view_[1] * p[0] + view_[5] * p[1] + view_[9] * p[2] + view_[13];
+      const float vz = view_[2] * p[0] + view_[6] * p[1] + view_[10] * p[2] + view_[14];
+      const float cx = proj_[0] * vx + proj_[4] * vy + proj_[8] * vz + proj_[12];
+      const float cy = proj_[1] * vx + proj_[5] * vy + proj_[9] * vz + proj_[13];
+      const float cw = proj_[3] * vx + proj_[7] * vy + proj_[11] * vz + proj_[15];
+      if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(cw) || cw <= 0.0f)
+        return false;
+      const float r = std::max(radius, 0.0f);
+      const float mx = std::abs(proj_[0]) * r + 0.02f * cw;
+      const float my = std::abs(proj_[5]) * r + 0.02f * cw;
+      return cx >= -cw - mx && cx <= cw + mx &&
+             cy >= -cw - my && cy <= cw + my;
+    };
     auto colorAt = [](const auto& s, size_t i, float c[3]) {
       c[0] = c[1] = c[2] = 0.8f;
       if (s.colors.size() >= (i + 1) * 3) {
@@ -8718,6 +8740,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
         float p[3], c[3]; worldPoint(s, i, p); colorAt(s, i, c);
         const float width = (s.widths.empty() ? 1.0f :
           (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)])) * scale;
+        if (!rasterVisible(p, width)) continue;
         addPoint(p, width, c);
       }
       ++carrierIndex;
@@ -8744,7 +8767,13 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
           colorAt(s, i, c0);
           const float w0 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)]);
           const float w1 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i + 1, s.widths.size() - 1)]);
-          addQuad(p0, p1, side, 0.5f * (w0 + w1) * scale, c0);
+          const float width = 0.5f * (w0 + w1) * scale;
+          float pm[3] = {0.5f * (p0[0] + p1[0]), 0.5f * (p0[1] + p1[1]),
+                         0.5f * (p0[2] + p1[2])};
+          if (!rasterVisible(p0, width) && !rasterVisible(p1, width) &&
+              !rasterVisible(pm, width))
+            continue;
+          addQuad(p0, p1, side, width, c0);
         }
         base = end;
       }
