@@ -360,6 +360,8 @@ bool RunHipLightRT(const Options &opt,
                    const std::vector<Vec3> &base_colors,
                    std::vector<RTPreviewStats::MeshGeometry> &geos,
                    const CameraFrame &camera, int height);
+bool RunHipGaussianLightRT(const Options &opt, DirectScene *direct,
+                           const CameraFrame &camera, int height);
 #endif
 
 // ---- tusdr_next.cc (next loader + driver) ----

@@ -32,7 +32,8 @@ typedef struct lrt_hip_engine lrt_hip_engine;
 
 /* Capability flags reported by lrt_hip_engine_caps(). */
 typedef enum lrt_hip_caps {
-    LRT_HIP_CAP_COMPUTE = 1u << 0 /* always set when an engine exists */
+    LRT_HIP_CAP_COMPUTE = 1u << 0, /* always set when an engine exists */
+    LRT_HIP_CAP_POINTS = 1u << 1   /* serialized sphere/disc/ellipse leaves */
 } lrt_hip_caps;
 
 typedef struct lrt_hip_engine_options {
@@ -61,9 +62,9 @@ const char *lrt_hip_engine_last_error(const lrt_hip_engine *e);
  *
  * Uploads s (via its LRTS serialization) and traverses n rays with a HIP kernel.
  * Writes n hits to out. Returns the number of rays that hit geometry, or -1 on
- * error (err set). Only plain triangle scenes with BVH4/BVH8 layout are
- * supported (quantized/curve/user scenes are rejected). Results match
- * lrt_tri_intersect1 within fp tolerance. */
+ * error (err set). Plain triangle and serialized point/ellipse scenes with
+ * BVH4/BVH8 layout are supported (quantized/curve/user scenes are rejected).
+ * Results match lrt_tri_intersect1 within fp tolerance. */
 int lrt_hip_trace_scene(lrt_hip_engine *e, const lrt_tri_scene *s,
                         const lrt_ray *rays, uint32_t n, lrt_hit *out,
                         lrt_result *err);

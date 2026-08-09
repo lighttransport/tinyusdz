@@ -1270,16 +1270,13 @@ int main(int argc, char **argv) {
     RenderContext gaussian_ctx;
     gaussian_ctx.opt = opt;
     gaussian_ctx.clip_stage_loader = clip_stage_loader;
-    // Vulkan consumes the native analytic ellipse scene for a pure Gaussian
-    // stage. A flat GPU trace cannot combine that DirectScene with mesh BLASes,
-    // however: mixed mesh+splat stages must use the bounded tessellation fallback
-    // below or the splats would silently disappear. HIP/ROCm and D3D11 always use
-    // that fallback; building the native arrays for those backends would only
-    // duplicate every Gaussian's residency before rereading the authored arrays.
-    // Do not build the native Gaussian BVHs until mesh/curve collection tells
-    // us this is a pure splat stage.  A mixed flat GPU trace cannot consume the
-    // DirectScene, so building it up front would duplicate the authored splat
-    // arrays before CollectGpuPointsRec creates the bounded fallback geometry.
+    // Vulkan and HIP consume the native analytic ellipse scene for a pure
+    // Gaussian stage. A flat GPU trace cannot combine that DirectScene with mesh
+    // BLASes, however: mixed mesh+splat stages must use the bounded tessellation
+    // fallback below or the splats would silently disappear. D3D11 still uses
+    // that fallback; do not build native arrays for it. Build the native Gaussian
+    // BVHs only after mesh/curve collection proves this is a pure splat stage so
+    // mixed flat traces do not duplicate the authored splat arrays.
     bool native_gaussian = false;
     bool has_other_native_carrier = false;
 
@@ -1524,7 +1521,7 @@ int main(int argc, char **argv) {
     // Vulkan uses the native analytic ellipse path for a pure splat scene.
     // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
     // fallback as HIP/ROCm and D3D11 so all geometry reaches one flat trace.
-    if (gpu_backend && opt.vulkan && geos.empty()) {
+    if (gpu_backend && (opt.vulkan || opt.hip) && geos.empty()) {
       stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
         const std::string &type = prim.GetTypeName();
         if (type == "Points" || type == "BasisCurves" ||
@@ -1535,7 +1532,7 @@ int main(int argc, char **argv) {
         return true;
       });
     }
-    if (gpu_backend && opt.vulkan && geos.empty() &&
+    if (gpu_backend && (opt.vulkan || opt.hip) && geos.empty() &&
         !has_other_native_carrier) {
       native_gaussian =
           BuildNextGaussianEllipses(stage, gaussian_ctx, opt.timecode) &&
@@ -1633,6 +1630,14 @@ int main(int argc, char **argv) {
     if (opt.vulkan && native_gaussian && geos.empty()) {
       return RunVulkanGaussianLightRT(opt, &gaussian_ctx.direct, camera,
                                       out_height)
+                 ? EXIT_SUCCESS
+                 : EXIT_FAILURE;
+    }
+#endif
+#if defined(HAVE_HIP)
+    if (opt.hip && native_gaussian && geos.empty()) {
+      return RunHipGaussianLightRT(opt, &gaussian_ctx.direct, camera,
+                                   out_height)
                  ? EXIT_SUCCESS
                  : EXIT_FAILURE;
     }

@@ -52,17 +52,17 @@ native Vulkan BVH is deferred until the scene is known to be pure Gaussian, so
 mixed scenes do not build and then discard a second full splat representation.
 The default chunk size is 262,144
 splats; `TUSDR_GAUSSIAN_CHUNK=N` tunes it for a smaller VRAM budget. CPU RT
-tests all chunks directly, while the Vulkan path uploads/traces them
+tests all chunks directly, while the Vulkan and HIP paths upload/trace them
 sequentially, keeps the closest hit per ray, and releases each LightRT BVH as
 soon as that reduction completes; only compact per-splat shading metadata stays
 resident until image output. Statistics report the retained sample count and
 chunk count; a failed chunk reports its range and the tuning knob to reduce it.
 The transformed ellipse streams are flushed into LightRT as each chunk fills,
 so the loader does not accumulate a second full-size geometry copy before BVH
-construction. On HIP/ROCm and D3D11, where the fallback is tessellated into
-triangles, each SH/color bucket is likewise flushed at
-`TUSDR_GPU_TRIANGLE_CHUNK` rather than becoming one multi-million-triangle
-allocation.
+construction. Pure Gaussian scenes use the native ellipse path on HIP/ROCm as
+well; mixed mesh+splat scenes (and D3D11) use the bounded tessellated fallback,
+with each SH/color bucket flushed at `TUSDR_GPU_TRIANGLE_CHUNK` rather than
+becoming one multi-million-triangle allocation.
 
 For GPU mesh previews, next-loader traversal records are also collected and
 converted one stage root at a time. This keeps large instancer/job lists from
