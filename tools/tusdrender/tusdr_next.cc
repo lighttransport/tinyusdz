@@ -3004,6 +3004,17 @@ bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim) {
   return t == "BasisCurves" || t == "HermiteCurves" || t == "NurbsCurves";
 }
 
+unsigned HermiteTessellationSegmentsNext() {
+  unsigned segments = 8;
+  if (const char *s = std::getenv("TUSDR_HERMITE_SEGMENTS")) {
+    char *end = nullptr;
+    const unsigned long n = std::strtoul(s, &end, 10);
+    if (end != s && *end == '\0' && n > 0 && n <= 1024)
+      segments = static_cast<unsigned>(n);
+  }
+  return segments;
+}
+
 struct CurvePointViewNext {
   tinyusdz::tydra::next::ValueArrayRead<float> view;
   // Value clips are materialized here because their temporary Value/ArrayScratch
@@ -3208,11 +3219,26 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     std::vector<uint32_t> curve_first, curve_count;
     std::vector<TriInfo> curve_info;
     size_t curve_info_offset = 0;
-    AppendLinearCurveStrands(point_source.view.begin(),
-                             point_source.view.size() / 3, counts, widths,
-                             job.world, &curve_points, &curve_radii,
-                             &curve_first, &curve_count, &curve_info,
-                             &ctx.bounds);
+    const bool hermite = job.prim.GetTypeName() == "HermiteCurves";
+    tinyusdz::tydra::next::ValueArrayRead<float> tangents;
+    const bool have_tangents =
+        hermite && ReadFloatArrayViewLazy(job.prim, "tangents", time, &tangents);
+    if (have_tangents && tangents.size() == point_source.view.size()) {
+      AppendHermiteCurveStrands(
+          point_source.view.begin(), tangents.begin(),
+          point_source.view.size() / 3, counts, widths,
+          HermiteTessellationSegmentsNext(), job.world, &curve_points,
+          &curve_radii, &curve_first, &curve_count, &curve_info, &ctx.bounds);
+    } else {
+      if (hermite && have_tangents && !tangents.empty())
+        std::cerr << "WARN: HermiteCurves '" << job.prim.GetPath().str()
+                  << "' tangents do not match points; using control polygon.\n";
+      AppendLinearCurveStrands(point_source.view.begin(),
+                               point_source.view.size() / 3, counts, widths,
+                               job.world, &curve_points, &curve_radii,
+                               &curve_first, &curve_count, &curve_info,
+                               &ctx.bounds);
+    }
     if (curve_first.empty()) {
       ++ctx.stats.skipped_curves;
       continue;
@@ -3957,10 +3983,28 @@ bool BuildCurveBlasUnbounded(const tinyusdz::next::Stage &stage,
     if (c32.empty()) continue;
     std::vector<int> c(c32.begin(), c32.end());
     std::vector<float> w = ReadFloatArrayLazy(job.prim, "widths", time);
-    AppendLinearCurveStrands(point_source.view.begin(),
-                             point_source.view.size() / 3, c, w, job.world,
-                             &pts, &radii, &first, &count, /*info=*/nullptr,
-                             &proto_bounds);
+    if (job.prim.GetTypeName() == "HermiteCurves") {
+      tinyusdz::tydra::next::ValueArrayRead<float> tangents;
+      const bool have_tangents = ReadFloatArrayViewLazy(
+          job.prim, "tangents", time, &tangents);
+      if (have_tangents && tangents.size() == point_source.view.size()) {
+        AppendHermiteCurveStrands(
+            point_source.view.begin(), tangents.begin(),
+            point_source.view.size() / 3, c, w,
+            HermiteTessellationSegmentsNext(), job.world, &pts, &radii,
+            &first, &count, /*info=*/nullptr, &proto_bounds);
+      } else {
+        AppendLinearCurveStrands(point_source.view.begin(),
+                                 point_source.view.size() / 3, c, w, job.world,
+                                 &pts, &radii, &first, &count, /*info=*/nullptr,
+                                 &proto_bounds);
+      }
+    } else {
+      AppendLinearCurveStrands(point_source.view.begin(),
+                               point_source.view.size() / 3, c, w, job.world,
+                               &pts, &radii, &first, &count, /*info=*/nullptr,
+                               &proto_bounds);
+    }
   }
   if (first.empty()) return true;
   const TriMat kCurveMat = ExtractTriMat([] {
@@ -4175,10 +4219,29 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
     // temporary vectors below are released before the next prim is decoded.
     std::vector<float> prim_points, prim_radii;
     std::vector<uint32_t> prim_first, prim_count;
-    AppendLinearCurveStrands(
-        point_source.view.begin(), point_source.view.size() / 3, counts,
-        widths, job.world, &prim_points, &prim_radii, &prim_first,
-        &prim_count, /*info=*/nullptr, &prototype_bounds);
+    if (job.prim.GetTypeName() == "HermiteCurves") {
+      tinyusdz::tydra::next::ValueArrayRead<float> tangents;
+      const bool have_tangents = ReadFloatArrayViewLazy(
+          job.prim, "tangents", time, &tangents);
+      if (have_tangents && tangents.size() == point_source.view.size()) {
+        AppendHermiteCurveStrands(
+            point_source.view.begin(), tangents.begin(),
+            point_source.view.size() / 3, counts, widths,
+            HermiteTessellationSegmentsNext(), job.world, &prim_points,
+            &prim_radii, &prim_first, &prim_count, /*info=*/nullptr,
+            &prototype_bounds);
+      } else {
+        AppendLinearCurveStrands(
+            point_source.view.begin(), point_source.view.size() / 3, counts,
+            widths, job.world, &prim_points, &prim_radii, &prim_first,
+            &prim_count, /*info=*/nullptr, &prototype_bounds);
+      }
+    } else {
+      AppendLinearCurveStrands(
+          point_source.view.begin(), point_source.view.size() / 3, counts,
+          widths, job.world, &prim_points, &prim_radii, &prim_first,
+          &prim_count, /*info=*/nullptr, &prototype_bounds);
+    }
     for (size_t s = 0; s < prim_first.size(); ++s) {
       const size_t segments = size_t(prim_count[s]) - 1u;
       if (!batch_first.empty() && batch_segments + segments > split_segments &&
