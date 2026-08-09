@@ -1891,6 +1891,9 @@ During Vulkan/HIP/D3D fallback conversion, each consumed native round-curve
 BVH is released immediately after bounded tessellation, so native curve
 acceleration data does not remain resident alongside the complete fallback
 triangle stream.
+Already-bounded identity-indexed curve and point chunks are transferred into
+the GPU upload batch instead of copied a second time; indexed meshes and
+partial chunks retain sparse remapping and validation.
 
 The flat next-loader mesh path uses the same bounded native-BVH policy. Mesh
 triangles are split at `TUSDR_TRIANGLE_CHUNK=N` (default 262,144), with global

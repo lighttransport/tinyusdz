@@ -213,6 +213,33 @@ bool BuildGpuTriChunk(
       *tri_index = 0;
       continue;
     }
+    const size_t remaining = limit - *chunk_triangles;
+    if (*tri_index == 0 && ntri <= remaining &&
+        src.positions.size() % 9u == 0u &&
+        src.positions.size() / 9u == ntri &&
+        src.indices.size() % 3u == 0u &&
+        src.indices.size() / 3u == ntri) {
+      // Curve/point fallback tessellation emits a complete bounded mesh with
+      // identity indices. Transfer that already-sized carrier directly into
+      // the upload batch; copying it again would briefly retain two full
+      // position/index streams.
+      bool identity = true;
+      for (size_t i = 0; i < src.indices.size(); ++i) {
+        if (src.indices[i] != i) {
+          identity = false;
+          break;
+        }
+      }
+      if (identity) {
+        chunk_geos->push_back(std::move(geos[source_mesh]));
+        chunk_colors->push_back(
+            source_mesh < base_colors.size() ? base_colors[source_mesh]
+                                             : Vec3{0.5f, 0.5f, 0.5f});
+        ++*mesh_index;
+        *chunk_triangles += ntri;
+        continue;
+      }
+    }
     const size_t take = std::min(limit - *chunk_triangles, ntri - *tri_index);
     RTPreviewStats::MeshGeometry dst;
     const bool per_vertex_normals = src.normals.size() == nv * 3u;
