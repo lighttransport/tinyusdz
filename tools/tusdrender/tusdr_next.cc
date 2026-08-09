@@ -2604,11 +2604,74 @@ static void ExpandNativeInstanceJobsNext(const tinyusdz::next::Stage &stage,
 // `next`-path UsdVol volumes: serial walk resolving world matrices; for each
 // Volume prim, follow `field:*` -> field-asset prim -> filePath, load the .vdb
 // (relative to `baseDir`), and build a VolumeData for raymarching.
+static bool FitNextVolumeDensity(VolumeData *volume, size_t max_bytes) {
+  if (!volume || max_bytes < sizeof(float) || volume->density.empty() ||
+      volume->dim[0] <= 0 || volume->dim[1] <= 0 || volume->dim[2] <= 0)
+    return false;
+  const size_t source_voxels = volume->density.size();
+  const size_t max_voxels = max_bytes / sizeof(float);
+  if (source_voxels <= max_voxels) return false;
+  int dims[3] = {volume->dim[0], volume->dim[1], volume->dim[2]};
+  const double scale = std::cbrt(static_cast<double>(max_voxels) /
+                                 static_cast<double>(source_voxels));
+  for (int a = 0; a < 3; ++a)
+    dims[a] = std::max(1, static_cast<int>(std::floor(dims[a] * scale)));
+  auto voxel_count = [&]() -> size_t {
+    const size_t x = static_cast<size_t>(dims[0]);
+    const size_t y = static_cast<size_t>(dims[1]);
+    const size_t z = static_cast<size_t>(dims[2]);
+    if (x > (std::numeric_limits<size_t>::max)() / y) return 0;
+    const size_t xy = x * y;
+    if (xy > (std::numeric_limits<size_t>::max)() / z) return 0;
+    return xy * z;
+  };
+  while (voxel_count() > max_voxels) {
+    int largest = 0;
+    if (dims[1] > dims[largest]) largest = 1;
+    if (dims[2] > dims[largest]) largest = 2;
+    if (dims[largest] <= 1) break;
+    --dims[largest];
+  }
+  const size_t target_voxels = voxel_count();
+  if (target_voxels == 0 || target_voxels >= source_voxels) return false;
+  std::vector<float> reduced(target_voxels);
+  const size_t sx = static_cast<size_t>(volume->dim[0]);
+  const size_t sy = static_cast<size_t>(volume->dim[1]);
+  const size_t sz = static_cast<size_t>(volume->dim[2]);
+  for (int z = 0; z < dims[2]; ++z) {
+    const size_t oz = std::min(
+        sz - 1, (static_cast<size_t>(z) * sz) /
+                   static_cast<size_t>(dims[2]));
+    for (int y = 0; y < dims[1]; ++y) {
+      const size_t oy = std::min(
+          sy - 1, (static_cast<size_t>(y) * sy) /
+                   static_cast<size_t>(dims[1]));
+      for (int x = 0; x < dims[0]; ++x) {
+        const size_t ox = std::min(
+            sx - 1, (static_cast<size_t>(x) * sx) /
+                   static_cast<size_t>(dims[0]));
+        const size_t dst = (static_cast<size_t>(z) *
+                            static_cast<size_t>(dims[1]) +
+                            static_cast<size_t>(y)) *
+                               static_cast<size_t>(dims[0]) +
+                           static_cast<size_t>(x);
+        reduced[dst] = volume->density[(oz * sy + oy) * sx + ox];
+      }
+    }
+  }
+  volume->density.swap(reduced);
+  volume->dim[0] = dims[0];
+  volume->dim[1] = dims[1];
+  volume->dim[2] = dims[2];
+  return true;
+}
+
 void CollectVolumesNext(const tinyusdz::next::Stage &stage,
                         const tinyusdz::next::UsdPrim &prim,
                         const matrix4d &parent_world, double time,
                         const std::string &baseDir,
-                        std::vector<VolumeData> *out) {
+                        std::vector<VolumeData> *out,
+                        size_t max_density_bytes, size_t *density_bytes_used) {
   if (!prim.IsActive()) return;
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
@@ -2642,8 +2705,8 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
           grids.empty()) {
         continue;
       }
-      const tinyusdz::usdVol::VDBGrid *g = nullptr;
-      for (const auto &gg : grids)
+      tinyusdz::usdVol::VDBGrid *g = nullptr;
+      for (auto &gg : grids)
         if (gg.name == fieldName) { g = &gg; break; }
       if (!g) g = &grids[0];
       if (g->data.empty() || g->dim[0] <= 0 || g->dim[1] <= 0 || g->dim[2] <= 0)
@@ -2653,7 +2716,7 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
       vd.dim[0] = g->dim[0];
       vd.dim[1] = g->dim[1];
       vd.dim[2] = g->dim[2];
-      vd.density = g->data;
+      vd.density = std::move(g->data);
       float lo[3], hi[3];
       for (int a = 0; a < 3; a++) {
         lo[a] = float(g->origin[a]) * float(g->voxel_size[a]) +
@@ -2667,11 +2730,34 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
       if (!tinyusdz::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
       vd.inv_world = invw;
       vd.background = g->background;
+      if (max_density_bytes > 0 && density_bytes_used) {
+        const size_t used = *density_bytes_used;
+        const size_t remaining = used < max_density_bytes
+                                     ? max_density_bytes - used
+                                     : 0;
+        if (remaining < sizeof(float)) {
+          std::cerr << "WARN: skipping volume '" << prim.GetPath().str()
+                    << "': density budget exhausted\n";
+          continue;
+        }
+        const int source_dim[3] = {vd.dim[0], vd.dim[1], vd.dim[2]};
+        const size_t source_bytes = vd.density.size() * sizeof(float);
+        if (FitNextVolumeDensity(&vd, remaining)) {
+          std::cerr << "WARN: volume '" << prim.GetPath().str()
+                    << "' downsampled from " << source_dim[0] << "x"
+                    << source_dim[1] << "x" << source_dim[2] << " ("
+                    << source_bytes / (1024 * 1024) << " MiB) to "
+                    << vd.dim[0] << "x" << vd.dim[1] << "x" << vd.dim[2]
+                    << " for the density budget\n";
+        }
+        *density_bytes_used += vd.density.size() * sizeof(float);
+      }
       out->push_back(std::move(vd));
     }
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
-    CollectVolumesNext(stage, child, world, time, baseDir, out);
+    CollectVolumesNext(stage, child, world, time, baseDir, out,
+                       max_density_bytes, density_bytes_used);
   }
 }
 
@@ -5773,12 +5859,21 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   // framed and rendered instead of leaving the auto-camera looking at an empty
   // origin.
   ctx.volumes.clear();
+  const size_t volume_budget_bytes = std::max<size_t>(
+      size_t(64) << 20,
+      std::min<size_t>(size_t(512) << 20,
+                       MemBudget::Get().Cap() / 16));
+  size_t volume_density_bytes = 0;
   for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
     CollectVolumesNext(ctx.stage, root, matrix4d::identity(), init_time,
-                       DirName(opt.input), &ctx.volumes);
+                       DirName(opt.input), &ctx.volumes, volume_budget_bytes,
+                       &volume_density_bytes);
   ExpandBoundsByVolume(ctx.volumes, &ctx.bounds);
-  if (opt.stats && !ctx.volumes.empty())
-    std::cerr << "rt volumes: " << ctx.volumes.size() << "\n";
+  if (!ctx.volumes.empty()) {
+    std::cerr << "rt volumes: " << ctx.volumes.size() << " (density "
+              << volume_density_bytes / (1024 * 1024) << "/"
+              << volume_budget_bytes / (1024 * 1024) << " MiB)\n";
+  }
 
   ResolveCameraNext(ctx);
 

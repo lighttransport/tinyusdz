@@ -79,6 +79,13 @@ full temporary array copies or one mesh/descriptors per point.
 HIP/ROCm `-stats` reports the corresponding chunk count, flatten/BVH time, and
 trace time to make AMD memory/performance tuning comparable to Vulkan.
 
+UsdVol density grids are capped to a conservative share of the `-maxMem` budget
+(64 MiB minimum, 512 MiB maximum). Oversized fields are nearest-sampled to the
+bounded voxel count and later fields are skipped once the total is exhausted;
+the loader reports the resident/budget MiB. VDB grid data is moved into the
+raymarch carrier instead of copied, preventing a second full dense allocation
+during extraction.
+
 Curve point arrays use the same lazy view reader before conversion to the
 native LightRT strand representation, so ordinary uncompressed USDC curves do
 not hold both a source float array and a second temporary float copy.
