@@ -4806,6 +4806,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   cfg.mesh.build_vertex_indices = true;
   cfg.curves.tessellation_segments =
       std::max<uint32_t>(1u, opts.curveTessellationSegments);
+  // The viewer consumes tessellated polylines and immediately copies them
+  // into bounded DrawCurvesCPU carriers; retaining the authored control-point
+  // stream here would add another full curve-array allocation.
+  cfg.curves.retain_control_points = false;
   // Keep the converter from decoding texture pixels: it records RenderTexture
   // metadata (asset path, wrap, scale/bias, channel) regardless, and we decode
   // the pixels ourselves in LoadNextTexture (base dir / .usdz aware).
