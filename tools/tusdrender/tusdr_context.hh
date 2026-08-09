@@ -528,7 +528,16 @@ std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
     const tinyusdz::next::ValueClipStageLoader &clip_loader);
 
 bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
-                     double time);
+                     double time, bool include_flat = true);
+
+// Convert authored flat/ribbon curves to bounded camera-facing triangle
+// carriers for GPU backends. The CPU path continues to use LightRT's native
+// flat-curve intersector.
+bool BuildNextFlatCurveMeshes(
+    const std::vector<CurveJobNext> &jobs, double time,
+    const tinyusdz::next::ValueClipStageLoader &clip_loader,
+    const CameraFrame &camera, std::vector<RTPreviewStats::MeshGeometry> *geos,
+    std::vector<Vec3> *base_colors);
 
 matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
                      const float *scale3);

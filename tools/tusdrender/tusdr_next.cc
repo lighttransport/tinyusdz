@@ -3080,7 +3080,7 @@ std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
 // existing DirectScene path regardless of use_tlas. Returns false only on a
 // LightRT build failure.
 bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
-                     double time) {
+                     double time, bool include_flat) {
   if (jobs.empty()) return true;
   lrt_tri_build_options build_opts;
   std::memset(&build_opts, 0, sizeof(build_opts));
@@ -3215,6 +3215,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     std::vector<int> counts(counts32.begin(), counts32.end());
     std::vector<float> widths = ReadFloatArrayLazy(job.prim, "widths", time);
     const bool flat = job.prim.GetPropertyValue("normals") != nullptr;
+    if (flat && !include_flat) continue;
     std::vector<float> curve_points, curve_radii;
     std::vector<uint32_t> curve_first, curve_count;
     std::vector<TriInfo> curve_info;
@@ -3259,6 +3260,127 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
       std::cerr << "native curves skipped: " << ctx.stats.skipped_curves
                 << " (invalid data: " << ctx.stats.invalid_curve_data << ")\n";
   }
+  return true;
+}
+
+bool BuildNextFlatCurveMeshes(
+    const std::vector<CurveJobNext> &jobs, double time,
+    const tinyusdz::next::ValueClipStageLoader &clip_loader,
+    const CameraFrame &camera, std::vector<RTPreviewStats::MeshGeometry> *geos,
+    std::vector<Vec3> *base_colors) {
+  if (!geos || !base_colors) return false;
+  size_t kChunkTriangles = size_t(262144);
+  if (const char *s = std::getenv("TUSDR_GPU_TRIANGLE_CHUNK")) {
+    char *end = nullptr;
+    const unsigned long long n = std::strtoull(s, &end, 10);
+    if (end != s && *end == '\0' && n > 0)
+      kChunkTriangles = static_cast<size_t>(n);
+  }
+  std::vector<float> positions;
+  std::vector<uint32_t> indices;
+  positions.reserve(kChunkTriangles * 9);
+  indices.reserve(kChunkTriangles * 3);
+  size_t triangles = 0;
+  auto flush = [&]() {
+    if (triangles == 0) return;
+    RTPreviewStats::MeshGeometry geo;
+    geo.positions = std::move(positions);
+    geo.indices = std::move(indices);
+    geos->push_back(std::move(geo));
+    base_colors->push_back(kCurveColor);
+    positions.clear();
+    indices.clear();
+    positions.reserve(kChunkTriangles * 9);
+    indices.reserve(kChunkTriangles * 3);
+    triangles = 0;
+  };
+  auto append_vertex = [&](const Vec3 &p, uint32_t *index) {
+    *index = static_cast<uint32_t>(positions.size() / 3);
+    positions.insert(positions.end(), {p.x, p.y, p.z});
+  };
+  for (const CurveJobNext &job : jobs) {
+    if (job.prim.GetPropertyValue("normals") == nullptr) continue;
+    CurvePointViewNext point_source;
+    if (!ReadCurvePointViewNext(job.prim, time, clip_loader, &point_source))
+      continue;
+    const std::vector<int32_t> counts32 =
+        ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
+    if (counts32.empty()) continue;
+    size_t total_points = 0;
+    bool valid = true;
+    for (int32_t count : counts32) {
+      if (count < 2 || total_points >
+          std::numeric_limits<size_t>::max() - static_cast<size_t>(count)) {
+        valid = false;
+        break;
+      }
+      total_points += static_cast<size_t>(count);
+    }
+    if (!valid || total_points != point_source.view.size() / 3) continue;
+    const std::vector<int> counts(counts32.begin(), counts32.end());
+    const std::vector<float> widths =
+        ReadFloatArrayLazy(job.prim, "widths", time);
+    std::vector<float> curve_points, curve_radii;
+    std::vector<uint32_t> strand_first, strand_count;
+    if (job.prim.GetTypeName() == "HermiteCurves") {
+      tinyusdz::tydra::next::ValueArrayRead<float> tangents;
+      const bool have_tangents = ReadFloatArrayViewLazy(
+          job.prim, "tangents", time, &tangents);
+      if (have_tangents && tangents.size() == point_source.view.size()) {
+        AppendHermiteCurveStrands(
+            point_source.view.begin(), tangents.begin(),
+            point_source.view.size() / 3, counts, widths,
+            HermiteTessellationSegmentsNext(), job.world, &curve_points,
+            &curve_radii, &strand_first, &strand_count, nullptr, nullptr);
+      } else {
+        AppendLinearCurveStrands(
+            point_source.view.begin(), point_source.view.size() / 3, counts,
+            widths, job.world, &curve_points, &curve_radii, &strand_first,
+            &strand_count, nullptr, nullptr);
+      }
+    } else {
+      AppendLinearCurveStrands(
+          point_source.view.begin(), point_source.view.size() / 3, counts,
+          widths, job.world, &curve_points, &curve_radii, &strand_first,
+          &strand_count, nullptr, nullptr);
+    }
+    for (size_t strand = 0; strand < strand_first.size(); ++strand) {
+      const size_t first = strand_first[strand];
+      const size_t count = strand_count[strand];
+      for (size_t i = 0; i + 1 < count; ++i) {
+        const Vec3 p0{curve_points[(first + i) * 3 + 0],
+                      curve_points[(first + i) * 3 + 1],
+                      curve_points[(first + i) * 3 + 2]};
+        const Vec3 p1{curve_points[(first + i + 1) * 3 + 0],
+                      curve_points[(first + i + 1) * 3 + 1],
+                      curve_points[(first + i + 1) * 3 + 2]};
+        const Vec3 axis = Sub(p1, p0);
+        const float axis_len = Length(axis);
+        if (!std::isfinite(axis_len) || axis_len <= 1.0e-8f) continue;
+        const Vec3 tangent = Mul(axis, 1.0f / axis_len);
+        Vec3 side = Cross(tangent, camera.forward);
+        if (Length(side) <= 1.0e-6f) side = Cross(tangent, camera.up);
+        const float side_len = Length(side);
+        if (!std::isfinite(side_len) || side_len <= 1.0e-6f) continue;
+        side = Mul(side, 1.0f / side_len);
+        const float r0 = curve_radii[first + i];
+        const float r1 = curve_radii[first + i + 1];
+        if (!std::isfinite(r0) || !std::isfinite(r1) || r0 <= 0.0f ||
+            r1 <= 0.0f) continue;
+        if (triangles + 2 > kChunkTriangles) flush();
+        const Vec3 a = Sub(p0, Mul(side, r0));
+        const Vec3 b = Add(p0, Mul(side, r0));
+        const Vec3 c = Add(p1, Mul(side, r1));
+        const Vec3 d = Sub(p1, Mul(side, r1));
+        uint32_t ia, ib, ic, id;
+        append_vertex(a, &ia); append_vertex(b, &ib);
+        append_vertex(c, &ic); append_vertex(d, &id);
+        indices.insert(indices.end(), {ia, ib, ic, ia, ic, id});
+        triangles += 2;
+      }
+    }
+  }
+  flush();
   return true;
 }
 
