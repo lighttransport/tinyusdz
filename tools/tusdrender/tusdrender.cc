@@ -429,12 +429,10 @@ bool AppendGpuRoundCurves(
     for (size_t first = 0; first < total; first += curveChunk) {
       RTPreviewStats::MeshGeometry geo;
       geo.positions.resize(curveChunk * 9);
-      geo.normals.resize(curveChunk * 9);
-      geo.uvs.resize(curveChunk * 6, 0.0f);
       geo.indices.resize(curveChunk * 3);
       size_t written = 0;
       const lrt_result result = lrt_tri_curve_tessellate_range(
-          curve, kCurveSides, first, geo.positions.data(), geo.normals.data(),
+          curve, kCurveSides, first, geo.positions.data(), nullptr,
           curveChunk, &written);
       if (result != LRT_RESULT_OK) {
         std::cerr << "WARN: curve tessellation failed at triangle " << first
@@ -443,8 +441,6 @@ bool AppendGpuRoundCurves(
       }
       if (written == 0) continue;
       geo.positions.resize(written * 9);
-      geo.normals.resize(written * 9);
-      geo.uvs.resize(written * 6);
       geo.indices.resize(written * 3);
       for (size_t i = 0; i < written * 3; ++i) geo.indices[i] = uint32_t(i);
       geos->push_back(std::move(geo));
