@@ -207,39 +207,65 @@ bool BuildGpuTriChunk(
     }
     const size_t take = std::min(limit - *chunk_triangles, ntri - *tri_index);
     RTPreviewStats::MeshGeometry dst;
-    dst.normals.reserve(std::min(nv, take * 3u) * 3u);
-    // Only vertices touched by this bounded chunk need a remap. A dense
-    // vertex-count array made a tiny chunk retain an additional allocation
-    // proportional to a potentially enormous source mesh.
-    std::unordered_map<uint32_t, uint32_t> remap;
-    remap.reserve(std::min(nv, take * size_t(3)));
     const bool per_vertex_normals = src.normals.size() == nv * 3u;
-    for (size_t t = 0; t < take; ++t) {
-      const size_t src_tri = *tri_index + t;
-      for (size_t k = 0; k < 3; ++k) {
-        const uint32_t old_id = src.indices[src_tri * 3u + k];
-        if (old_id >= nv) {
-          std::cerr << "Invalid GPU mesh index " << old_id << " at mesh "
-                    << *mesh_index << ".\n";
-          return false;
-        }
-        auto remap_it = remap.find(old_id);
-        uint32_t new_id = 0;
-        if (remap_it == remap.end()) {
-          new_id = static_cast<uint32_t>(dst.positions.size() / 3u);
-          remap.emplace(old_id, new_id);
-          dst.positions.insert(dst.positions.end(),
-                               src.positions.begin() + old_id * 3u,
-                               src.positions.begin() + old_id * 3u + 3u);
-          if (per_vertex_normals) {
-            dst.normals.insert(dst.normals.end(),
-                               src.normals.begin() + old_id * 3u,
-                               src.normals.begin() + old_id * 3u + 3u);
+    const size_t first_index = *tri_index * 3u;
+    const size_t index_count = take * 3u;
+    bool sequential = first_index + index_count <= src.indices.size() &&
+                      first_index + index_count <= nv;
+    for (size_t i = 0; sequential && i < index_count; ++i) {
+      if (src.indices[first_index + i] != first_index + i) sequential = false;
+    }
+    if (sequential) {
+      // Curve and point fallback tessellation emits independent triangles
+      // with identity indices. Copy that contiguous range directly instead
+      // of paying for a hash-map remap on every triangle.
+      const size_t vertex_begin = first_index;
+      const size_t vertex_count = index_count;
+      dst.positions.insert(dst.positions.end(),
+                           src.positions.begin() + vertex_begin * 3u,
+                           src.positions.begin() + (vertex_begin + vertex_count) * 3u);
+      if (per_vertex_normals) {
+        dst.normals.insert(dst.normals.end(),
+                           src.normals.begin() + vertex_begin * 3u,
+                           src.normals.begin() + (vertex_begin + vertex_count) * 3u);
+      }
+      dst.indices.resize(index_count);
+      for (size_t i = 0; i < index_count; ++i)
+        dst.indices[i] = static_cast<uint32_t>(i);
+    } else {
+      dst.normals.reserve(std::min(nv, take * 3u) * 3u);
+      // Only vertices touched by this bounded chunk need a remap. A dense
+      // vertex-count array made a tiny chunk retain an additional allocation
+      // proportional to a potentially enormous source mesh.
+      std::unordered_map<uint32_t, uint32_t> remap;
+      remap.reserve(std::min(nv, take * size_t(3)));
+      for (size_t t = 0; t < take; ++t) {
+        const size_t src_tri = *tri_index + t;
+        for (size_t k = 0; k < 3; ++k) {
+          const uint32_t old_id = src.indices[src_tri * 3u + k];
+          if (old_id >= nv) {
+            std::cerr << "Invalid GPU mesh index " << old_id << " at mesh "
+                      << *mesh_index << ".\n";
+            return false;
           }
-        } else {
-          new_id = remap_it->second;
+          auto remap_it = remap.find(old_id);
+          uint32_t new_id = 0;
+          if (remap_it == remap.end()) {
+            new_id = static_cast<uint32_t>(dst.positions.size() / 3u);
+            remap.emplace(old_id, new_id);
+            dst.positions.insert(dst.positions.end(),
+                                 src.positions.begin() + old_id * 3u,
+                                 src.positions.begin() + old_id * 3u + 3u);
+            if (per_vertex_normals) {
+              dst.normals.insert(dst.normals.end(),
+                                 src.normals.begin() + old_id * 3u,
+                                 src.normals.begin() + old_id * 3u + 3u);
+            }
+          } else {
+            new_id = remap_it->second;
+          }
+          dst.indices.push_back(new_id);
         }
-        dst.indices.push_back(new_id);
       }
     }
     chunk_geos->push_back(std::move(dst));
