@@ -1911,6 +1911,8 @@ and exits cleanly rather than silently producing an incomplete image.
 The Direct3D 11 backend now follows the same bounded upload and nearest-hit
 reduction policy, so its single-dispatch implementation no longer requires a
 monolithic scene/BVH allocation.
+Round curves use the same LightRT tessellation fallback on Vulkan, HIP/ROCm,
+and D3D11; the helper is no longer hidden behind a Vulkan-only compile guard.
 
 Gaussian splats follow the same backend policy: Vulkan ray query keeps the
 native analytic ellipse BVH, while HIP/ROCm and D3D11 use the bounded oriented

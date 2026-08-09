@@ -60,6 +60,9 @@ Non-instanced round/flat curve strands are also split into bounded native BVHs;
 `TUSDR_CURVE_CHUNK=N` sets the segment limit (default 262,144). The CPU
 integrator checks every chunk, and Vulkan tessellates each chunk independently
 when it needs its triangle upload fallback.
+The round-curve triangle fallback is shared by Vulkan, HIP/ROCm, and D3D11;
+HIP-only and D3D11-only builds therefore retain curve coverage even when no
+analytic curve API is available.
 
 ## Composition, instancing, memory
 

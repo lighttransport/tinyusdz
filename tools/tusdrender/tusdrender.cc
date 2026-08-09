@@ -118,7 +118,10 @@ tinyusdz::Image MakeBlankImage(const Options &opt, int height) {
   return img;
 }
 
-#if defined(HAVE_VULKAN)
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
+// GPU triangle backends share the CPU LightRT curve tessellator. This must not
+// be Vulkan-only: HIP/ROCm and D3D11 use the same bounded triangle fallback for
+// round curves when no analytic curve primitive is exposed by their API.
 void AppendGpuPointSphere(const Vec3 &center, float radius,
                           std::vector<Vec3> *base_colors,
                           std::vector<RTPreviewStats::MeshGeometry> *geos) {
