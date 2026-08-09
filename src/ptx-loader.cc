@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -98,9 +99,14 @@ bool Reader::OpenFile(const std::string& path, Reader* out, std::string* err) {
   // Bound it: no real Ptex file approaches 16 GiB.
   constexpr uint64_t kMaxPtexBytes = 16ull << 30;
   const uint64_t n64 = static_cast<uint64_t>(n);
-  if (n64 > kMaxPtexBytes ||
-      n64 > static_cast<uint64_t>((std::numeric_limits<std::streamsize>::max)()) ||
-      n64 > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+  bool too_large = n64 > kMaxPtexBytes ||
+                   n64 > static_cast<uint64_t>(
+                             (std::numeric_limits<std::streamsize>::max)());
+#if SIZE_MAX < UINT64_MAX
+  too_large = too_large ||
+              n64 > static_cast<uint64_t>((std::numeric_limits<size_t>::max)());
+#endif
+  if (too_large) {
     return Fail(err, "Ptex file too large or not a regular file");
   }
   out->owned_.resize(static_cast<size_t>(n64));
