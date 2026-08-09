@@ -26,6 +26,7 @@ struct GpuTriScene {
   std::vector<Vec3> base_colors;    // per-triangle base color
   std::vector<Vec3> normals;        // per-triangle flat face normal (fallback)
   std::vector<Vec3> vn0, vn1, vn2;  // per-triangle vertex normals (smooth shading)
+  bool has_vertex_normals{false};   // false => the vn streams are omitted
   lrt_tri_scene *scene = nullptr;
 };
 
@@ -53,6 +54,10 @@ bool BuildGpuTriChunk(const std::vector<Vec3> &base_colors,
 // compute backends and as a fallback when Vulkan ray query is unavailable/fails.
 bool BuildGpuCpuScene(int threads, GpuTriScene *out,
                       lrt_tri_quality quality = LRT_TRI_BUILD_DEFAULT);
+
+// Append per-triangle smooth-normal metadata from a chunk, promoting the
+// destination to zero-filled streams only when some chunk actually needs it.
+void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst);
 
 // Validate a GPU trace dispatch dimensions before allocating rays or passing the
 // count to LightRT's GPU APIs, which all take a uint32_t ray count.

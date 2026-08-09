@@ -101,9 +101,7 @@ bool RunVulkanLightRTChunked(
                              scene.base_colors.end());
     shade.normals.insert(shade.normals.end(), scene.normals.begin(),
                          scene.normals.end());
-    shade.vn0.insert(shade.vn0.end(), scene.vn0.begin(), scene.vn0.end());
-    shade.vn1.insert(shade.vn1.end(), scene.vn1.begin(), scene.vn1.end());
-    shade.vn2.insert(shade.vn2.end(), scene.vn2.begin(), scene.vn2.end());
+    AppendGpuSmoothNormals(scene, &shade);
     std::fill(chunk_hits.begin(), chunk_hits.end(), lrt_hit{});
     for (lrt_hit &hit : chunk_hits) {
       hit.t = std::numeric_limits<float>::max();

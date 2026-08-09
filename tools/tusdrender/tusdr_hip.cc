@@ -105,9 +105,7 @@ bool RunHipLightRTChunked(
                              scene.base_colors.end());
     shade.normals.insert(shade.normals.end(), scene.normals.begin(),
                          scene.normals.end());
-    shade.vn0.insert(shade.vn0.end(), scene.vn0.begin(), scene.vn0.end());
-    shade.vn1.insert(shade.vn1.end(), scene.vn1.begin(), scene.vn1.end());
-    shade.vn2.insert(shade.vn2.end(), scene.vn2.begin(), scene.vn2.end());
+    AppendGpuSmoothNormals(scene, &shade);
     InitMissHits(&chunk_hits);
     lrt_result trace_err = LRT_RESULT_OK;
     const auto trace_t0 = std::chrono::steady_clock::now();
