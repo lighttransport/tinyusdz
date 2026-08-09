@@ -20,7 +20,10 @@ trap 'rm -rf "$TMP"' EXIT
 run() {
   # Force one splat per chunk so the regression covers deferred GPU BVH
   # materialization and release, rather than only the single-chunk fast path.
-  TUSDR_GAUSSIAN_CHUNK=1 "$TUSDRENDER" "$1" "$2" -vkr -w 32 -height 32 -autoframe -stats \
+  # The eight-triangle GPU cap also makes the mixed fallback flush its distinct
+  # Gaussian color buckets through one global pending budget.
+  TUSDR_GAUSSIAN_CHUNK=1 TUSDR_GPU_TRIANGLE_CHUNK=8 "$TUSDRENDER" "$1" "$2" \
+    -vkr -w 32 -height 32 -autoframe -stats \
     >"$3" 2>&1
 }
 
@@ -55,7 +58,8 @@ if ! grep -q "triangles: 144" "$TMP/mixed.log"; then
   exit 1
 fi
 
-TUSDR_GAUSSIAN_CHUNK=1 "$TUSDRENDER" "$REPO_ROOT/tests/usda/tusdview-gaussian-splat.usda" \
+TUSDR_GAUSSIAN_CHUNK=1 TUSDR_GPU_TRIANGLE_CHUNK=8 \
+  "$TUSDRENDER" "$REPO_ROOT/tests/usda/tusdview-gaussian-splat.usda" \
   "$TMP/pure-hip.png" -hip -w 32 -height 32 -autoframe -stats \
   >"$TMP/pure-hip.log" 2>&1
 if [ "$?" -ne 0 ]; then
