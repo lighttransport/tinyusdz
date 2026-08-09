@@ -1879,7 +1879,9 @@ mode, inconsistent
 `curveVertexCounts`/`points` data is reported as `rt skipped curves` with an
 invalid-data count rather than being silently partially rendered. Curve hit
 metadata is owned by each bounded chunk, so chunking also bounds the retained
-segment shading stream rather than only the LightRT geometry build.
+segment shading stream rather than only the LightRT geometry build. GPU curve
+fallback chunks retain only tessellated positions and indices; normals are
+recomputed during flattening and unused UV staging is omitted.
 
 The flat next-loader mesh path uses the same bounded native-BVH policy. Mesh
 triangles are split at `TUSDR_TRIANGLE_CHUNK=N` (default 262,144), with global
