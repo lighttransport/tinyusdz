@@ -668,6 +668,9 @@ struct EllipseSceneChunk {
 struct CurveSceneChunk {
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> scene{nullptr,
                                                                   lrt_tri_scene_free};
+  // LightRT segment ids are local to this chunk; keep their shading metadata
+  // beside the bounded scene instead of retaining one global curve stream.
+  std::vector<TriInfo> info;
   size_t first{0};
   size_t count{0};
 };
