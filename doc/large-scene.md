@@ -293,7 +293,9 @@ disc geometry. This is used by the Vulkan, HIP, and D3D triangle backends. The
 minimal public regression fixture `tests/usda/tusdrender-points.usda` renders
 on the NVIDIA Vulkan path as **160 GPU triangles**. Analytic point/curve scene
 ABIs remain available to CPU LightRT; Vulkan currently receives their
-triangleized upload representation.
+triangleized upload representation. The GPU collector reads point arrays
+lazily, avoiding a second full positions/widths/normals copy before bounded
+upload chunks are formed.
 
 ALab's `extras/alab_sdr_splat.usdc` is a
 `ParticleField3DGaussianSplat` with **2,274,589** particles. The GPU collector

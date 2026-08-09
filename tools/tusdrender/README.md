@@ -55,9 +55,10 @@ whole flat scene to fit in an 8-GiB device allocation.
 The Direct3D 11 path uses the same chunk limit and nearest-hit reduction, rather
 than flattening all source meshes into one long-lived BVH. Consumed source
 geometry is released after each chunk is built.
-Ordinary `UsdGeomPoints` are accumulated into the same bounded GPU geometry
-chunks (disc primitives when normals are authored, sphere primitives otherwise),
-so large point clouds do not create one mesh/descriptors per point.
+Ordinary `UsdGeomPoints` are read through lazy array views and accumulated into
+the same bounded GPU geometry chunks (disc primitives when normals are
+authored, sphere primitives otherwise), so large point clouds do not create
+full temporary array copies or one mesh/descriptors per point.
 HIP/ROCm `-stats` reports the corresponding chunk count, flatten/BVH time, and
 trace time to make AMD memory/performance tuning comparable to Vulkan.
 
