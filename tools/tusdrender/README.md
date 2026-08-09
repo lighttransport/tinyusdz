@@ -58,6 +58,8 @@ geometry is released after each chunk is built.
 Ordinary `UsdGeomPoints` are accumulated into the same bounded GPU geometry
 chunks (disc primitives when normals are authored, sphere primitives otherwise),
 so large point clouds do not create one mesh/descriptors per point.
+HIP/ROCm `-stats` reports the corresponding chunk count, flatten/BVH time, and
+trace time to make AMD memory/performance tuning comparable to Vulkan.
 
 Curve point arrays use the same lazy view reader before conversion to the
 native LightRT strand representation, so ordinary uncompressed USDC curves do

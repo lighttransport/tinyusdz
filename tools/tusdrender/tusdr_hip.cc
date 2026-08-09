@@ -6,6 +6,7 @@
 // shade on the CPU.
 #ifdef HAVE_HIP
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <vector>
@@ -17,6 +18,11 @@
 namespace tusdr {
 
 namespace {
+
+double HipSecsSince(std::chrono::steady_clock::time_point t0) {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+      .count();
+}
 
 size_t HipGpuChunkLimit() {
   size_t limit = size_t(262144);
@@ -74,6 +80,7 @@ bool RunHipLightRTChunked(
   GpuTriScene shade;
   shade.ntris = static_cast<uint32_t>(GpuTriangleCount(geos));
   size_t mesh = 0, tri = 0, global_first = 0, chunk_count = 0;
+  double flatten_s = 0.0, trace_s = 0.0;
   while (mesh < geos.size()) {
     std::vector<Vec3> chunk_colors;
     std::vector<RTPreviewStats::MeshGeometry> chunk_geos;
@@ -84,11 +91,13 @@ bool RunHipLightRTChunked(
       return false;
     }
     GpuTriScene scene;
+    const auto flatten_t0 = std::chrono::steady_clock::now();
     if (!BuildGpuTriScene(chunk_colors, chunk_geos, opt.threads, true, &scene,
                           opt.quality)) {
       lrt_hip_engine_destroy(hip);
       return false;
     }
+    flatten_s += HipSecsSince(flatten_t0);
     shade.base_colors.insert(shade.base_colors.end(), scene.base_colors.begin(),
                              scene.base_colors.end());
     shade.normals.insert(shade.normals.end(), scene.normals.begin(),
@@ -98,6 +107,7 @@ bool RunHipLightRTChunked(
     shade.vn2.insert(shade.vn2.end(), scene.vn2.begin(), scene.vn2.end());
     InitMissHits(&chunk_hits);
     lrt_result trace_err = LRT_RESULT_OK;
+    const auto trace_t0 = std::chrono::steady_clock::now();
     const int traced = lrt_hip_trace_scene(
         hip, scene.scene, rays.data(), static_cast<uint32_t>(nrays),
         chunk_hits.data(), &trace_err);
@@ -109,6 +119,7 @@ bool RunHipLightRTChunked(
       lrt_hip_engine_destroy(hip);
       return false;
     }
+    trace_s += HipSecsSince(trace_t0);
     for (size_t i = 0; i < nrays; ++i) {
       if (chunk_hits[i].prim_id != LRT_TRI_NO_HIT &&
           chunk_hits[i].t < hits[i].t) {
@@ -121,8 +132,11 @@ bool RunHipLightRTChunked(
     ++chunk_count;
   }
   const bool ok = ShadeAndWriteImage(opt, shade, rays, hits, w, h, spp);
-  if (opt.stats)
-    std::cerr << "[gpu-stats] HIP mesh chunks " << chunk_count << "\n";
+  if (opt.stats) {
+    std::cerr << "[gpu-stats] HIP mesh chunks " << chunk_count
+              << ", flatten+bvh " << flatten_s << " s, trace " << trace_s
+              << " s\n";
+  }
   if (ok) {
     std::cerr << "triangles: " << shade.ntris << " (" << geos.size()
               << " meshes, " << chunk_count << " GPU chunks)\n";
@@ -142,10 +156,12 @@ bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                                 HipGpuChunkLimit());
   }
   GpuTriScene s;
+  const auto flatten_t0 = std::chrono::steady_clock::now();
   if (!BuildGpuTriScene(base_colors, geos, opt.threads, true, &s,
                         opt.quality)) {
     return false;
   }
+  const double flatten_s = HipSecsSince(flatten_t0);
   for (RTPreviewStats::MeshGeometry &geo : geos) {
     std::vector<float>().swap(geo.positions);
     std::vector<float>().swap(geo.normals);
@@ -182,6 +198,7 @@ bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
 
   std::vector<lrt_hit> hits(nrays);
   lrt_result trerr = LRT_RESULT_OK;
+  const auto trace_t0 = std::chrono::steady_clock::now();
   int traced = lrt_hip_trace_scene(hip, s.scene, rays.data(),
                                    ray_count, hits.data(), &trerr);
   if (traced < 0) {
@@ -191,8 +208,13 @@ bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     lrt_hip_engine_destroy(hip);
     return false;
   }
+  const double trace_s = HipSecsSince(trace_t0);
 
   bool ok = ShadeAndWriteImage(opt, s, rays, hits, w, h, spp);
+  if (opt.stats) {
+    std::cerr << "[gpu-stats] HIP mesh chunks 1, flatten+bvh " << flatten_s
+              << " s, trace " << trace_s << " s\n";
+  }
   if (ok) {
     std::cerr << "triangles: " << s.ntris << " (" << geos.size() << " meshes)\n";
     std::cerr << "backend: LightRT HIP (compute trace)\n";
