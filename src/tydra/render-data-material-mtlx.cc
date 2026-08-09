@@ -1277,7 +1277,25 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
       DCOUT("Using ShaderNode props (size=" << shader_props->size() << ")");
     }
 
+    // NOTE: this ~24-branch else-if chain on node_type was converted to
+    // standalone ifs -- same MSVC C1061 ("blocks nested too deeply") risk
+    // class already hit once and fixed in crate-writer-values.cc/
+    // stage-converter.cc, where an else-if chain nests one level deeper per
+    // link while a flat sequence of standalone ifs does not. A `matched`
+    // guard is required (unlike some sibling fixes where it was optional):
+    // the ND_rotate3d_vector3 branch below can fall through without a
+    // break/continue when its `inputs:in` has no connection, and several
+    // node_type conditions here structurally overlap (e.g. the literal
+    // "ND_normalize_vector3" also satisfies the later "ND_normalize_"
+    // prefix check) -- in the original chain, order + the fact that every
+    // *other* branch always exits via break/continue made this safe; the
+    // `matched` guard reproduces that same "first match wins, and nothing
+    // after it runs" semantics explicitly and correctly regardless of
+    // control flow within any one branch.
+    bool matched = false;
+
     if (node_type == "ND_normalmap_float" || node_type == "ND_normalmap") {
+      matched = true;
       info.has_normal_map = true;
       DCOUT("Found ND_normalmap shader, props=" << shader_props->size());
 
@@ -1302,7 +1320,9 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
       }
       DCOUT("No inputs:in connection, breaking");
       break;  // No more connections to follow
-    } else if (node_type == "ND_rotate3d_vector3") {
+    }
+    if (node_type == "ND_rotate3d_vector3") {
+      matched = true;
       info.has_tangent_rotation = true;
 
       // Extract amount input (rotation angle in degrees)
@@ -1323,8 +1343,10 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
           continue;
         }
       }
-    } else if (node_type == "ND_image_vector3" || node_type == "ND_image_vector4" ||
-               node_type == "ND_image_color3" || node_type == "ND_image_color4") {
+    }
+    if (node_type == "ND_image_vector3" || node_type == "ND_image_vector4" ||
+        node_type == "ND_image_color3" || node_type == "ND_image_color4") {
+      matched = true;
       // Found the texture node - extract file path
       DCOUT("Found ND_image node, props=" << shader_props->size());
       auto file_it = shader_props->find("inputs:file");
@@ -1342,9 +1364,11 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
                                               texcoord_path, &info);
       }
       break;  // End of chain
-    } else if (node_type == "ND_normalize_vector3" ||
-               node_type == "ND_convert_vector4_vector3" ||
-               node_type == "ND_convert_color4_vector3") {
+    }
+    if (node_type == "ND_normalize_vector3" ||
+        node_type == "ND_convert_vector4_vector3" ||
+        node_type == "ND_convert_color4_vector3") {
+      matched = true;
       // Conversion/normalization nodes - follow inputs:in
       auto in_it = shader_props->find("inputs:in");
       if (in_it != shader_props->end() && in_it->second.is_attribute()) {
@@ -1355,7 +1379,9 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
-    } else if (node_type.find("ND_geompropvalue_") == 0) {
+    }
+    if (node_type.find("ND_geompropvalue_") == 0) {
+      matched = true;
       // GeomPropValue node - reads an arbitrary primvar from mesh geometry.
       // Extract the primvar name from inputs:geomprop.
       auto geom_it = shader_props->find("inputs:geomprop");
@@ -1370,13 +1396,17 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;  // Terminal node
-    } else if (node_type == "ND_tangent_vector3" || node_type == "ND_normal_vector3" ||
-               node_type == "ND_position_vector3" || node_type == "ND_geomcolor_color3" ||
-               node_type == "ND_geomcolor_color4" || node_type == "ND_bitangent_vector3" ||
-               node_type == "ND_viewdirection_vector3") {
+    }
+    if (node_type == "ND_tangent_vector3" || node_type == "ND_normal_vector3" ||
+        node_type == "ND_position_vector3" || node_type == "ND_geomcolor_color3" ||
+        node_type == "ND_geomcolor_color4" || node_type == "ND_bitangent_vector3" ||
+        node_type == "ND_viewdirection_vector3") {
+      matched = true;
       // Geometry nodes - end of chain (no input connections)
       break;
-    } else if (node_type == "ND_texcoord_vector2" || node_type == "ND_texcoord_vector3") {
+    }
+    if (node_type == "ND_texcoord_vector2" || node_type == "ND_texcoord_vector3") {
+      matched = true;
       // Texcoord node - extract inputs:index for UV set selection
       auto idx_it = shader_props->find("inputs:index");
       if (idx_it != shader_props->end() && idx_it->second.is_attribute()) {
@@ -1389,11 +1419,12 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Unary operations (single input: inputs:in)
     // These nodes process a single input value
     //
-    } else if (node_type.find("ND_sqrt_") == 0 ||
+    if (node_type.find("ND_sqrt_") == 0 ||
                node_type.find("ND_absval_") == 0 ||
                node_type.find("ND_sign_") == 0 ||
                node_type.find("ND_floor_") == 0 ||
@@ -1414,6 +1445,7 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
                node_type.find("ND_invert_") == 0 ||
                node_type.find("ND_saturate_") == 0 ||
                node_type.find("ND_hueshift_") == 0) {
+      matched = true;
       // Unary operations - follow inputs:in
       auto in_it = shader_props->find("inputs:in");
       if (in_it != shader_props->end() && in_it->second.is_attribute()) {
@@ -1424,11 +1456,12 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Binary operations (two inputs: inputs:in1, inputs:in2)
     // Typically follow in1 for texture chains
     //
-    } else if (node_type.find("ND_add_") == 0 ||
+    if (node_type.find("ND_add_") == 0 ||
                node_type.find("ND_subtract_") == 0 ||
                node_type.find("ND_multiply_") == 0 ||
                node_type.find("ND_divide_") == 0 ||
@@ -1439,6 +1472,7 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
                node_type.find("ND_atan2_") == 0 ||
                node_type.find("ND_dotproduct_") == 0 ||
                node_type.find("ND_crossproduct_") == 0) {
+      matched = true;
       // Binary operations - prefer following the input with a connection (likely leads to texture).
       // Try in1 first, fall back to in2. If neither has connections, break normally.
       auto in1_it = shader_props->find("inputs:in1");
@@ -1459,11 +1493,13 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Mix/blend operations (fg, bg, mix inputs)
     // Follow fg (foreground) as it typically has the texture
     //
-    } else if (node_type.find("ND_mix_") == 0) {
+    if (node_type.find("ND_mix_") == 0) {
+      matched = true;
       // Mix nodes - follow inputs:fg (foreground typically has the texture)
       auto fg_it = shader_props->find("inputs:fg");
       if (fg_it != shader_props->end() && fg_it->second.is_attribute()) {
@@ -1483,10 +1519,12 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Clamp operation (in, low, high inputs)
     //
-    } else if (node_type.find("ND_clamp_") == 0) {
+    if (node_type.find("ND_clamp_") == 0) {
+      matched = true;
       // Clamp nodes - follow inputs:in
       auto in_it = shader_props->find("inputs:in");
       if (in_it != shader_props->end() && in_it->second.is_attribute()) {
@@ -1497,11 +1535,13 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Remap/range operations (in, inlow, inhigh, outlow, outhigh inputs)
     //
-    } else if (node_type.find("ND_remap_") == 0 ||
-               node_type.find("ND_range_") == 0) {
+    if (node_type.find("ND_remap_") == 0 ||
+        node_type.find("ND_range_") == 0) {
+      matched = true;
       // Remap/range nodes - follow inputs:in
       auto in_it = shader_props->find("inputs:in");
       if (in_it != shader_props->end() && in_it->second.is_attribute()) {
@@ -1512,10 +1552,12 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Extract operations (extracts component from color3/vector3)
     //
-    } else if (node_type.find("ND_extract_") == 0) {
+    if (node_type.find("ND_extract_") == 0) {
+      matched = true;
       // Extract nodes - follow inputs:in
       auto in_it = shader_props->find("inputs:in");
       if (in_it != shader_props->end() && in_it->second.is_attribute()) {
@@ -1526,12 +1568,14 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // HSV/color adjustment operations
     //
-    } else if (node_type.find("ND_hsvadjust_") == 0 ||
-               node_type.find("ND_rgbtohsv_") == 0 ||
-               node_type.find("ND_hsvtorgb_") == 0) {
+    if (node_type.find("ND_hsvadjust_") == 0 ||
+        node_type.find("ND_rgbtohsv_") == 0 ||
+        node_type.find("ND_hsvtorgb_") == 0) {
+      matched = true;
       // HSV adjust - follow inputs:in
       auto in_it = shader_props->find("inputs:in");
       if (in_it != shader_props->end() && in_it->second.is_attribute()) {
@@ -1542,10 +1586,12 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Type conversion operations (convert color3 to vector3 etc.)
     //
-    } else if (node_type.find("ND_convert_") == 0) {
+    if (node_type.find("ND_convert_") == 0) {
+      matched = true;
       // Conversion nodes - follow inputs:in
       auto in_it = shader_props->find("inputs:in");
       if (in_it != shader_props->end() && in_it->second.is_attribute()) {
@@ -1556,13 +1602,15 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Combine operations (combines in1, in2, in3 to color3/vector3)
     // Terminal nodes - they produce values from scalars
     //
-    } else if (node_type.find("ND_separate3_") == 0 ||
-               node_type.find("ND_separate2_") == 0 ||
-               node_type.find("ND_separate4_") == 0) {
+    if (node_type.find("ND_separate3_") == 0 ||
+        node_type.find("ND_separate2_") == 0 ||
+        node_type.find("ND_separate4_") == 0) {
+      matched = true;
       // Separate (multi-output) nodes - split vector into components.
       // Outputs: outr, outg, outb (for separate3), outx, outy (for separate2), etc.
       // Follow inputs:in to continue traversal.
@@ -1575,16 +1623,20 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
-    } else if (node_type.find("ND_combine3_") == 0 ||
-               node_type.find("ND_combine2_") == 0 ||
-               node_type.find("ND_combine4_") == 0) {
+    }
+    if (node_type.find("ND_combine3_") == 0 ||
+        node_type.find("ND_combine2_") == 0 ||
+        node_type.find("ND_combine4_") == 0) {
+      matched = true;
       // Combine nodes - terminal (produce vector from components)
       // Could follow inputs if needed, but typically these are terminals
       break;
+    }
     //
     // Constant nodes - terminal (provide constant values)
     //
-    } else if (node_type.find("ND_constant_") == 0) {
+    if (node_type.find("ND_constant_") == 0) {
+      matched = true;
       // Constant nodes - terminal, extract the constant value
       auto val_it = shader_props->find("inputs:value");
       if (val_it != shader_props->end() && val_it->second.is_attribute()) {
@@ -1620,10 +1672,12 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Tiledimage/image nodes (texture sampling)
     //
-    } else if (node_type.find("ND_tiledimage_") == 0) {
+    if (node_type.find("ND_tiledimage_") == 0) {
+      matched = true;
       // Tiled image node - extract file path, uvtiling, uvoffset
       auto file_it = shader_props->find("inputs:file");
       if (file_it != shader_props->end() && file_it->second.is_attribute()) {
@@ -1659,10 +1713,12 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
                                               texcoord_path, &info);
       }
       break;  // End of chain
+    }
     //
     // Swizzle operations
     //
-    } else if (node_type.find("ND_swizzle_") == 0) {
+    if (node_type.find("ND_swizzle_") == 0) {
+      matched = true;
       // Swizzle - follow inputs:in
       auto in_it = shader_props->find("inputs:in");
       if (in_it != shader_props->end() && in_it->second.is_attribute()) {
@@ -1673,14 +1729,16 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Ifgreater/ifless/ifequal conditional operations
     //
-    } else if (node_type.find("ND_ifgreater_") == 0 ||
-               node_type.find("ND_ifgreatereq_") == 0 ||
-               node_type.find("ND_ifless_") == 0 ||
-               node_type.find("ND_iflesseq_") == 0 ||
-               node_type.find("ND_ifequal_") == 0) {
+    if (node_type.find("ND_ifgreater_") == 0 ||
+        node_type.find("ND_ifgreatereq_") == 0 ||
+        node_type.find("ND_ifless_") == 0 ||
+        node_type.find("ND_iflesseq_") == 0 ||
+        node_type.find("ND_ifequal_") == 0) {
+      matched = true;
       // Conditional - follow inputs:in1 (value1)
       auto in1_it = shader_props->find("inputs:in1");
       if (in1_it != shader_props->end() && in1_it->second.is_attribute()) {
@@ -1691,22 +1749,26 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
+    }
     //
     // Noise operations
     //
-    } else if (node_type.find("ND_noise2d_") == 0 ||
-               node_type.find("ND_noise3d_") == 0 ||
-               node_type.find("ND_cellnoise2d_") == 0 ||
-               node_type.find("ND_cellnoise3d_") == 0 ||
-               node_type.find("ND_worleynoise2d_") == 0 ||
-               node_type.find("ND_worleynoise3d_") == 0 ||
-               node_type.find("ND_fractal3d_") == 0) {
+    if (node_type.find("ND_noise2d_") == 0 ||
+        node_type.find("ND_noise3d_") == 0 ||
+        node_type.find("ND_cellnoise2d_") == 0 ||
+        node_type.find("ND_cellnoise3d_") == 0 ||
+        node_type.find("ND_worleynoise2d_") == 0 ||
+        node_type.find("ND_worleynoise3d_") == 0 ||
+        node_type.find("ND_fractal3d_") == 0) {
+      matched = true;
       // Noise nodes - terminal (procedural generation)
       break;
+    }
     //
     // Place2d texture coordinate transformation
     //
-    } else if (node_type.find("ND_place2d_") == 0) {
+    if (node_type.find("ND_place2d_") == 0) {
+      matched = true;
       // Place2d - follow inputs:texcoord if connected
       auto texcoord_it = shader_props->find("inputs:texcoord");
       if (texcoord_it != shader_props->end() && texcoord_it->second.is_attribute()) {
@@ -1717,7 +1779,8 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
         }
       }
       break;
-    } else {
+    }
+    if (!matched) {
       // Unknown node type, try to follow inputs:in if it exists
       auto in_it = shader_props->find("inputs:in");
       if (in_it != shader_props->end() && in_it->second.is_attribute()) {

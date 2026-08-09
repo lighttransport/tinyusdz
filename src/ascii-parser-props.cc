@@ -2171,402 +2171,494 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
     if (!value_blocked) {
       // TODO: Refactor. ParseAttrMeta is currently called inside
       // ParseBasicPrimAttr()
-      if (type_name == value::kBool) {
+      bool type_matched = false;
+      // NOTE: this ~81-branch else-if chain on the USDA property
+      // `type_name` string was converted to standalone ifs -- same MSVC
+      // C1061 ("blocks nested too deeply") risk class already fixed for
+      // the same reason elsewhere in this codebase (crate-writer-values.cc,
+      // stage-converter.cc, tusdr_args.cc, tusdcat/main.cc). OPT_MATCH
+      // folds the "did anything match yet" guard into the condition itself
+      // so the final unsupported-type fallback below only fires when no
+      // type matched -- exactly the original else-if chain's semantics --
+      // without needing to touch every branch body.
+#define OPT_MATCH(cond) if (!type_matched && (cond) && (type_matched = true))
+      OPT_MATCH(type_name == value::kBool) {
         if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kChar) {
+      }
+      OPT_MATCH(type_name == value::kChar) {
         if (!ParseBasicPrimAttr<char>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kChar2) {
+      }
+      OPT_MATCH(type_name == value::kChar2) {
         if (!ParseBasicPrimAttr<value::char2>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kChar3) {
+      }
+      OPT_MATCH(type_name == value::kChar3) {
         if (!ParseBasicPrimAttr<value::char3>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kChar4) {
+      }
+      OPT_MATCH(type_name == value::kChar4) {
         if (!ParseBasicPrimAttr<value::char4>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kUChar) {
+      }
+      OPT_MATCH(type_name == value::kUChar) {
         if (!ParseBasicPrimAttr<uint8_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kUChar2) {
+      }
+      OPT_MATCH(type_name == value::kUChar2) {
         if (!ParseBasicPrimAttr<value::uchar2>(array_qual, primattr_name,
                                                pattr)) {
           return false;
         }
-      } else if (type_name == value::kUChar3) {
+      }
+      OPT_MATCH(type_name == value::kUChar3) {
         if (!ParseBasicPrimAttr<value::uchar3>(array_qual, primattr_name,
                                                pattr)) {
           return false;
         }
-      } else if (type_name == value::kUChar4) {
+      }
+      OPT_MATCH(type_name == value::kUChar4) {
         if (!ParseBasicPrimAttr<value::uchar4>(array_qual, primattr_name,
                                                pattr)) {
           return false;
         }
-      } else if (type_name == value::kShort) {
+      }
+      OPT_MATCH(type_name == value::kShort) {
         if (!ParseBasicPrimAttr<int16_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kShort2) {
+      }
+      OPT_MATCH(type_name == value::kShort2) {
         if (!ParseBasicPrimAttr<value::short2>(array_qual, primattr_name,
                                                pattr)) {
           return false;
         }
-      } else if (type_name == value::kShort3) {
+      }
+      OPT_MATCH(type_name == value::kShort3) {
         if (!ParseBasicPrimAttr<value::short3>(array_qual, primattr_name,
                                                pattr)) {
           return false;
         }
-      } else if (type_name == value::kShort4) {
+      }
+      OPT_MATCH(type_name == value::kShort4) {
         if (!ParseBasicPrimAttr<value::short4>(array_qual, primattr_name,
                                                pattr)) {
           return false;
         }
-      } else if (type_name == value::kUShort) {
+      }
+      OPT_MATCH(type_name == value::kUShort) {
         if (!ParseBasicPrimAttr<uint16_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kUShort2) {
+      }
+      OPT_MATCH(type_name == value::kUShort2) {
         if (!ParseBasicPrimAttr<value::ushort2>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kUShort3) {
+      }
+      OPT_MATCH(type_name == value::kUShort3) {
         if (!ParseBasicPrimAttr<value::ushort3>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kUShort4) {
+      }
+      OPT_MATCH(type_name == value::kUShort4) {
         if (!ParseBasicPrimAttr<value::ushort4>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kInt) {
+      }
+      OPT_MATCH(type_name == value::kInt) {
         if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kInt2) {
+      }
+      OPT_MATCH(type_name == value::kInt2) {
         if (!ParseBasicPrimAttr<value::int2>(array_qual, primattr_name,
                                              pattr)) {
           return false;
         }
-      } else if (type_name == value::kInt3) {
+      }
+      OPT_MATCH(type_name == value::kInt3) {
         if (!ParseBasicPrimAttr<value::int3>(array_qual, primattr_name,
                                              pattr)) {
           return false;
         }
-      } else if (type_name == value::kInt4) {
+      }
+      OPT_MATCH(type_name == value::kInt4) {
         if (!ParseBasicPrimAttr<value::int4>(array_qual, primattr_name,
                                              pattr)) {
           return false;
         }
-      } else if (type_name == value::kUInt) {
+      }
+      OPT_MATCH(type_name == value::kUInt) {
         if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kUInt2) {
+      }
+      OPT_MATCH(type_name == value::kUInt2) {
         if (!ParseBasicPrimAttr<value::uint2>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kUInt3) {
+      }
+      OPT_MATCH(type_name == value::kUInt3) {
         if (!ParseBasicPrimAttr<value::uint3>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kUInt4) {
+      }
+      OPT_MATCH(type_name == value::kUInt4) {
         if (!ParseBasicPrimAttr<value::uint4>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kInt64) {
+      }
+      OPT_MATCH(type_name == value::kInt64) {
         if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kUInt64) {
+      }
+      OPT_MATCH(type_name == value::kUInt64) {
         if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kDouble) {
+      }
+      OPT_MATCH(type_name == value::kDouble) {
         if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kString) {
+      }
+      OPT_MATCH(type_name == value::kString) {
         if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
                                                    pattr)) {
           return false;
         }
-      } else if (type_name == value::kToken) {
+      }
+      OPT_MATCH(type_name == value::kToken) {
         if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kHalf) {
+      }
+      OPT_MATCH(type_name == value::kHalf) {
         if (!ParseBasicPrimAttr<value::half>(array_qual, primattr_name,
                                              pattr)) {
           return false;
         }
-      } else if (type_name == value::kHalf2) {
+      }
+      OPT_MATCH(type_name == value::kHalf2) {
         if (!ParseBasicPrimAttr<value::half2>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kHalf3) {
+      }
+      OPT_MATCH(type_name == value::kHalf3) {
         if (!ParseBasicPrimAttr<value::half3>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kHalf4) {
+      }
+      OPT_MATCH(type_name == value::kHalf4) {
         if (!ParseBasicPrimAttr<value::half4>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kFloat) {
+      }
+      OPT_MATCH(type_name == value::kFloat) {
         if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, pattr)) {
           return false;
         }
-      } else if (type_name == value::kFloat2) {
+      }
+      OPT_MATCH(type_name == value::kFloat2) {
         if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
                                                pattr)) {
           return false;
         }
-      } else if (type_name == value::kFloat3) {
+      }
+      OPT_MATCH(type_name == value::kFloat3) {
         if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
                                                pattr)) {
           return false;
         }
-      } else if (type_name == value::kFloat4) {
+      }
+      OPT_MATCH(type_name == value::kFloat4) {
         if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
                                                pattr)) {
           return false;
         }
-      } else if (type_name == value::kDouble2) {
+      }
+      OPT_MATCH(type_name == value::kDouble2) {
         if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kDouble3) {
+      }
+      OPT_MATCH(type_name == value::kDouble3) {
         if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kDouble4) {
+      }
+      OPT_MATCH(type_name == value::kDouble4) {
         if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kQuath) {
+      }
+      OPT_MATCH(type_name == value::kQuath) {
         if (!ParseBasicPrimAttr<value::quath>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kQuatf) {
+      }
+      OPT_MATCH(type_name == value::kQuatf) {
         if (!ParseBasicPrimAttr<value::quatf>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kQuatd) {
+      }
+      OPT_MATCH(type_name == value::kQuatd) {
         if (!ParseBasicPrimAttr<value::quatd>(array_qual, primattr_name,
                                               pattr)) {
           return false;
         }
-      } else if (type_name == value::kPoint3f) {
+      }
+      OPT_MATCH(type_name == value::kPoint3f) {
         if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kColor3f) {
+      }
+      OPT_MATCH(type_name == value::kColor3f) {
         if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kColor4f) {
+      }
+      OPT_MATCH(type_name == value::kColor4f) {
         if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kPoint3d) {
+      }
+      OPT_MATCH(type_name == value::kPoint3d) {
         if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kNormal3f) {
+      }
+      OPT_MATCH(type_name == value::kNormal3f) {
         if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kNormal3d) {
+      }
+      OPT_MATCH(type_name == value::kNormal3d) {
         if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kVector3f) {
+      }
+      OPT_MATCH(type_name == value::kVector3f) {
         if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kVector3d) {
+      }
+      OPT_MATCH(type_name == value::kVector3d) {
         if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kColor3d) {
+      }
+      OPT_MATCH(type_name == value::kColor3d) {
         if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kColor4d) {
+      }
+      OPT_MATCH(type_name == value::kColor4d) {
         if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kMatrix2f) {
+      }
+      OPT_MATCH(type_name == value::kMatrix2f) {
         if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kMatrix3f) {
+      }
+      OPT_MATCH(type_name == value::kMatrix3f) {
         if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kMatrix4f) {
+      }
+      OPT_MATCH(type_name == value::kMatrix4f) {
         if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kMatrix2d) {
+      }
+      OPT_MATCH(type_name == value::kMatrix2d) {
         if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kMatrix3d) {
+      }
+      OPT_MATCH(type_name == value::kMatrix3d) {
         if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kMatrix4d) {
+      }
+      OPT_MATCH(type_name == value::kMatrix4d) {
         if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
       // AOUSD Core Spec 6.2: timecode scalar type (parsed as double)
-      } else if (type_name == value::kTimeCode) {
+      }
+      OPT_MATCH(type_name == value::kTimeCode) {
         if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, pattr)) {
           return false;
         }
         pattr->set_type_name(array_qual ? std::string(value::kTimeCode) + "[]"
                                         : std::string(value::kTimeCode));
       // AOUSD Core Spec 6.5: Semantic aliases - half-precision variants
-      } else if (type_name == value::kNormal3h) {
+      }
+      OPT_MATCH(type_name == value::kNormal3h) {
         if (!ParseBasicPrimAttr<value::normal3h>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kPoint3h) {
+      }
+      OPT_MATCH(type_name == value::kPoint3h) {
         if (!ParseBasicPrimAttr<value::point3h>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kVector3h) {
+      }
+      OPT_MATCH(type_name == value::kVector3h) {
         if (!ParseBasicPrimAttr<value::vector3h>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kColor3h) {
+      }
+      OPT_MATCH(type_name == value::kColor3h) {
         if (!ParseBasicPrimAttr<value::color3h>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kColor4h) {
+      }
+      OPT_MATCH(type_name == value::kColor4h) {
         if (!ParseBasicPrimAttr<value::color4h>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
       // AOUSD Core Spec 6.5: Semantic aliases - double-precision variants
-      } else if (type_name == value::kPoint3d) {
+      }
+      OPT_MATCH(type_name == value::kPoint3d) {
         if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kNormal3d) {
+      }
+      OPT_MATCH(type_name == value::kNormal3d) {
         if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kVector3d) {
+      }
+      OPT_MATCH(type_name == value::kVector3d) {
         if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
                                                  pattr)) {
           return false;
         }
-      } else if (type_name == value::kColor3d) {
+      }
+      OPT_MATCH(type_name == value::kColor3d) {
         if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kColor4d) {
+      }
+      OPT_MATCH(type_name == value::kColor4d) {
         if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
       // AOUSD Core Spec 6.5: texCoord variants (all precisions)
-      } else if (type_name == value::kTexCoord2h) {
+      }
+      OPT_MATCH(type_name == value::kTexCoord2h) {
         if (!ParseBasicPrimAttr<value::texcoord2h>(array_qual, primattr_name,
                                                    pattr)) {
           return false;
         }
-      } else if (type_name == value::kTexCoord2f) {
+      }
+      OPT_MATCH(type_name == value::kTexCoord2f) {
         if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
                                                    pattr)) {
           return false;
         }
-      } else if (type_name == value::kTexCoord2d) {
+      }
+      OPT_MATCH(type_name == value::kTexCoord2d) {
         if (!ParseBasicPrimAttr<value::texcoord2d>(array_qual, primattr_name,
                                                    pattr)) {
           return false;
         }
-      } else if (type_name == value::kTexCoord3h) {
+      }
+      OPT_MATCH(type_name == value::kTexCoord3h) {
         if (!ParseBasicPrimAttr<value::texcoord3h>(array_qual, primattr_name,
                                                    pattr)) {
           return false;
         }
-      } else if (type_name == value::kTexCoord3f) {
+      }
+      OPT_MATCH(type_name == value::kTexCoord3f) {
         if (!ParseBasicPrimAttr<value::texcoord3f>(array_qual, primattr_name,
                                                    pattr)) {
           return false;
         }
-      } else if (type_name == value::kTexCoord3d) {
+      }
+      OPT_MATCH(type_name == value::kTexCoord3d) {
         if (!ParseBasicPrimAttr<value::texcoord3d>(array_qual, primattr_name,
                                                    pattr)) {
           return false;
         }
       // AOUSD Core Spec 6.5: frame4d (semantic alias for matrix4d)
-      } else if (type_name == value::kFrame4d) {
+      }
+      OPT_MATCH(type_name == value::kFrame4d) {
         if (!ParseBasicPrimAttr<value::frame4d>(array_qual, primattr_name,
                                                 pattr)) {
           return false;
         }
-      } else if (type_name == value::kAssetPath) {
+      }
+      OPT_MATCH(type_name == value::kAssetPath) {
         if (!ParseBasicPrimAttr<value::AssetPath>(array_qual, primattr_name,
                                                   pattr)) {
           return false;
         }
-      } else if (type_name == value::kPathExpression) {
+      }
+      OPT_MATCH(type_name == value::kPathExpression) {
         if (!ParseBasicPrimAttr<value::PathExpression>(array_qual,
                                                        primattr_name, pattr)) {
           return false;
         }
-      } else {
+      }
+#undef OPT_MATCH
+      if (!type_matched) {
         PUSH_ERROR_AND_RETURN("Unsupported property attribute type: " + type_name);
       }
     }

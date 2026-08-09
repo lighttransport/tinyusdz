@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Run test: representative RenderMode AOVs must trace non-blank frames on the
-# CUDA backend. The CUDA and HIP tracers share raytracer_kernel.inc, but both
+# CUDA backend. The CUDA and HIP tracers share raytracer_kernel_src.txt, but both
 # runtime compiler paths matter: NVRTC accepts/rejects a different subset than
 # hiprtc, and this catches AOV branches that compile but render blank.
 #

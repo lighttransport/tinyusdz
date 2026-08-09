@@ -167,7 +167,7 @@ set(TUSDRENDER_CXX_SOURCES
   tusdr_hip.cc
 )
 set_source_files_properties(${TUSDRENDER_CXX_SOURCES}
-    PROPERTIES COMPILE_FLAGS ${TUSDRENDER_CXX_FLAGS})
+    PROPERTIES COMPILE_FLAGS "${TUSDRENDER_CXX_FLAGS}")
 
 # Vendored C third-party code: suppress all warnings.
 set_source_files_properties(

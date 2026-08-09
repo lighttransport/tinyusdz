@@ -25,6 +25,10 @@
 #include "log.hh"
 #include "rt_scene_build.hh"  // Node, Inst, HostScene, BuildHostScene (shared)
 
+#if defined(_MSC_VER)
+#include "kernel_resource.hh"
+#endif
+
 namespace tusdview {
 
 namespace {
@@ -43,7 +47,17 @@ struct Cam {
 
 // Trace kernel source, shared with the HIP backend (compiled at runtime by
 // NVRTC here, hiprtc there).
+//
+// MSVC caps a single string literal at ~16,380 bytes (C2026), well under this
+// kernel's size, so it loads the source from an embedded Win32 resource
+// instead (see raytracer_kernel_resource.rc / kernel_resource.cc). GCC/Clang
+// have no such limit; they compile the CMake-generated raw-string literal
+// (see raytracer_kernel_src.txt in CMakeLists.txt).
+#if defined(_MSC_VER)
+static const char* kKernelSrc = GetEmbeddedKernelSource().c_str();
+#else
 #include "raytracer_kernel.inc"
+#endif
 
 char CachePathSeparator() {
 #if defined(_WIN32)

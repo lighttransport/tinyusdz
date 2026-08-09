@@ -67,7 +67,7 @@ struct Case {
     opts.clip_stage_loader = [base](const std::string& asset, Stage* out,
                                     std::string* warn, std::string* err) {
       std::string path = asset;
-      if (!path.empty() && path[0] != '/') {
+      if (!path.empty() && !AssetResolver::IsAbsolutePath(path)) {
         // Anchor authored-relative clip/manifest paths at the case directory.
         if (path.compare(0, 2, "./") == 0) path = path.substr(2);
         path = base + "/" + path;

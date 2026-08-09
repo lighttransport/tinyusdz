@@ -359,79 +359,147 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
     uint32_t elem_tid = tid & ~value::TYPE_ID_1D_ARRAY_BIT;
 
     // Dispatch on element type
+    //
+    // NOTE: this ~27-branch else-if chain on elem_tid was converted to
+    // standalone ifs -- same MSVC C1061 ("blocks nested too deeply") risk
+    // class already fixed for the same reason elsewhere in this codebase.
+    // `matched` is only needed to reproduce the final "nothing matched ->
+    // goto fallback" case correctly (each branch's own `goto fallback;` on
+    // failure is an unconditional jump, unaffected by if/else-if vs
+    // standalone-if; elem_tid equality checks are mutually exclusive by
+    // construction, so no branch-to-branch overlap risk here).
+    bool matched = false;
     nlohmann::json values;
 
     if (elem_tid == value::TypeTraits<float>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<float>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<double>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<double>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<double>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<int32_t>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<int32_t>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<int32_t>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<uint8_t>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<uint8_t>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<uint8_t>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<bool>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<bool>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<bool>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<uint32_t>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<uint32_t>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<uint32_t>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<int64_t>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<int64_t>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<int64_t>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<uint64_t>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<uint64_t>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<uint64_t>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::half>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::half>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::half>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<std::string>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<std::string>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<std::string>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::token>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::token>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::token>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::float2>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::float2>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::float2>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::float3>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::float3>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::float3>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::float4>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::float4>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::float4>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::double2>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::double2>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::double2>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::double3>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::double3>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::double3>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::double4>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::double4>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::double4>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::int2>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::int2>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::int2>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::int3>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::int3>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::int3>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::int4>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::int4>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::int4>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::half2>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::half2>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::half2>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::half3>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::half3>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::half3>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::half4>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::half4>::type_id()) {
+      matched = true;
       if (!TryGetArrayValue<value::half4>(val, values)) goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::matrix2d>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::matrix2d>::type_id()) {
+      matched = true;
       auto v = val.get_value<std::vector<value::matrix2d>>(false);
       if (v) values = MatrixArrayToJSON<value::matrix2d, 2, 2>(v.value());
       else goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::matrix3d>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::matrix3d>::type_id()) {
+      matched = true;
       auto v = val.get_value<std::vector<value::matrix3d>>(false);
       if (v) values = MatrixArrayToJSON<value::matrix3d, 3, 3>(v.value());
       else goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::matrix4d>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::matrix4d>::type_id()) {
+      matched = true;
       auto v = val.get_value<std::vector<value::matrix4d>>(false);
       if (v) values = MatrixArrayToJSON<value::matrix4d, 4, 4>(v.value());
       else goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::quatf>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::quatf>::type_id()) {
+      matched = true;
       auto v = val.get_value<std::vector<value::quatf>>(false);
       if (v) values = QuatArrayToJSON<value::quatf>(v.value());
       else goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::quatd>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::quatd>::type_id()) {
+      matched = true;
       auto v = val.get_value<std::vector<value::quatd>>(false);
       if (v) values = QuatArrayToJSON<value::quatd>(v.value());
       else goto fallback;
-    } else if (elem_tid == value::TypeTraits<value::quath>::type_id()) {
+    }
+    if (elem_tid == value::TypeTraits<value::quath>::type_id()) {
+      matched = true;
       auto v = val.get_value<std::vector<value::quath>>(false);
       if (v) values = QuatArrayToJSON<value::quath>(v.value());
       else goto fallback;
-    } else {
+    }
+    if (!matched) {
       goto fallback;
     }
 
@@ -439,135 +507,209 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
   }
 
   // Non-array: dispatch on type_id
+  //
+  // NOTE: this ~26-branch else-if chain on tid (plus a 7-branch inner utype
+  // fallback) was converted to standalone ifs -- same MSVC C1061 risk class
+  // fixed elsewhere in this codebase. Unlike the array dispatch above,
+  // `matched_known_tid` is genuinely required (not just for a trailing
+  // "goto fallback"): a tid branch can match but its inner get/TryGet call
+  // can fail without returning, and the original chain's structure meant
+  // that once a tid branch was selected, the utype (role-type) fallback
+  // below was skipped entirely regardless -- both cases (and the "no branch
+  // matched" case) fall through the same way to the fallback: label further
+  // down, so nothing extra is needed there.
   {
+    bool matched_known_tid = false;
+
     // Handle scalars
     if (tid == value::TypeTraits<float>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<float>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<double>::type_id()) {
+    }
+    if (tid == value::TypeTraits<double>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<double>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<int32_t>::type_id()) {
+    }
+    if (tid == value::TypeTraits<int32_t>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<int32_t>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<uint8_t>::type_id()) {
+    }
+    if (tid == value::TypeTraits<uint8_t>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<uint8_t>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<uint32_t>::type_id()) {
+    }
+    if (tid == value::TypeTraits<uint32_t>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<uint32_t>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<int64_t>::type_id()) {
+    }
+    if (tid == value::TypeTraits<int64_t>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<int64_t>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<uint64_t>::type_id()) {
+    }
+    if (tid == value::TypeTraits<uint64_t>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<uint64_t>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<bool>::type_id()) {
+    }
+    if (tid == value::TypeTraits<bool>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<bool>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<std::string>::type_id()) {
+    }
+    if (tid == value::TypeTraits<std::string>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<std::string>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::token>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::token>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetValueAs<value::token>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::half>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::half>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::half>(false);
       if (v) return {{"type", type_name}, {"value", value::half_to_float(v.value())}};
     }
     // Handle compounds
-    else if (tid == value::TypeTraits<value::float2>::type_id()) {
+    if (tid == value::TypeTraits<value::float2>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::float2>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::float3>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::float3>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::float3>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::float4>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::float4>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::float4>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::double2>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::double2>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::double2>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::double3>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::double3>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::double3>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::double4>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::double4>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::double4>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::int2>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::int2>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::int2>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::int3>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::int3>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::int3>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::int4>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::int4>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::int4>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::half2>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::half2>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::half2>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::half3>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::half3>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::half3>(val, v))
         return {{"type", type_name}, {"value", v}};
-    } else if (tid == value::TypeTraits<value::half4>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::half4>::type_id()) {
+      matched_known_tid = true;
       nlohmann::json v;
       if (TryGetCompound<value::half4>(val, v))
         return {{"type", type_name}, {"value", v}};
     }
     // Handle matrices
-    else if (tid == value::TypeTraits<value::matrix2f>::type_id()) {
+    if (tid == value::TypeTraits<value::matrix2f>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::matrix2f>(false);
       if (v) return {{"type", type_name}, {"value", MatrixToJSON<value::matrix2f, 2, 2>(v.value())}};
-    } else if (tid == value::TypeTraits<value::matrix3f>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::matrix3f>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::matrix3f>(false);
       if (v) return {{"type", type_name}, {"value", MatrixToJSON<value::matrix3f, 3, 3>(v.value())}};
-    } else if (tid == value::TypeTraits<value::matrix4f>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::matrix4f>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::matrix4f>(false);
       if (v) return {{"type", type_name}, {"value", MatrixToJSON<value::matrix4f, 4, 4>(v.value())}};
-    } else if (tid == value::TypeTraits<value::matrix2d>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::matrix2d>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::matrix2d>(false);
       if (v) return {{"type", type_name}, {"value", MatrixToJSON<value::matrix2d, 2, 2>(v.value())}};
-    } else if (tid == value::TypeTraits<value::matrix3d>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::matrix3d>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::matrix3d>(false);
       if (v) return {{"type", type_name}, {"value", MatrixToJSON<value::matrix3d, 3, 3>(v.value())}};
-    } else if (tid == value::TypeTraits<value::matrix4d>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::matrix4d>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::matrix4d>(false);
       if (v) return {{"type", type_name}, {"value", MatrixToJSON<value::matrix4d, 4, 4>(v.value())}};
     }
     // Handle quaternions
-    else if (tid == value::TypeTraits<value::quath>::type_id()) {
+    if (tid == value::TypeTraits<value::quath>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::quath>(false);
       if (v) return {{"type", type_name}, {"value", QuatToJSON(v.value())}};
-    } else if (tid == value::TypeTraits<value::quatf>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::quatf>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::quatf>(false);
       if (v) return {{"type", type_name}, {"value", QuatToJSON(v.value())}};
-    } else if (tid == value::TypeTraits<value::quatd>::type_id()) {
+    }
+    if (tid == value::TypeTraits<value::quatd>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::quatd>(false);
       if (v) return {{"type", type_name}, {"value", QuatToJSON(v.value())}};
     }
     // Handle AssetPath
-    else if (tid == value::TypeTraits<value::AssetPath>::type_id()) {
+    if (tid == value::TypeTraits<value::AssetPath>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::AssetPath>(false);
       if (v) {
         return {{"type", type_name},
@@ -576,7 +718,8 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
       }
     }
     // Handle dictionary
-    else if (tid == value::TypeTraits<value::dict>::type_id()) {
+    if (tid == value::TypeTraits<value::dict>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::dict>(false);
       if (v) {
         nlohmann::json dict_obj = nlohmann::json::object();
@@ -587,14 +730,15 @@ nlohmann::json ValueToJSON(const value::Value &val, uint32_t depth) {
       }
     }
     // Handle timecode
-    else if (tid == value::TypeTraits<value::timecode>::type_id()) {
+    if (tid == value::TypeTraits<value::timecode>::type_id()) {
+      matched_known_tid = true;
       auto v = val.get_value<value::timecode>(false);
       if (v) return {{"type", type_name}, {"value", v.value().value}};
     }
     // Role types share underlying type_id, so we need to handle them by
     // underlying type. Use the same dispatch as the underlying type.
     // We catch remaining known types via type_name string match for role types.
-    else {
+    if (!matched_known_tid) {
       // Try role type dispatch by name
       std::string utype = val.underlying_type_name();
       if (utype == "float2") {

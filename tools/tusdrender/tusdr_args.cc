@@ -235,10 +235,22 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
       return argv[++i];
     };
-    if (a == "-h" || a == "-help" || a == "--help") {
+    // NOTE: this ~90-branch else-if chain on CLI flag string `a` was
+    // converted to standalone ifs -- same MSVC C1061 ("blocks nested too
+    // deeply") risk class already fixed for the same reason elsewhere in
+    // this codebase (crate-writer-values.cc, stage-converter.cc). OPT_MATCH
+    // folds the "did anything match yet" guard into the condition itself
+    // (mirroring TRY_PACK_META's style) so the final unknown-option/
+    // positional-arg fallback below only fires when no flag matched --
+    // exactly the original else-if chain's semantics -- without needing to
+    // touch every branch body.
+    bool opt_matched = false;
+#define OPT_MATCH(cond) if (!opt_matched && (cond) && (opt_matched = true))
+    OPT_MATCH(a == "-h" || a == "-help" || a == "--help") {
       PrintUsage(argv[0]);
       std::exit(EXIT_SUCCESS);
-    } else if (a == "-w" || a == "-width" || a == "--width") {
+    }
+    OPT_MATCH(a == "-w" || a == "-width" || a == "--width") {
       const char *v = need_value(a.c_str());
       // Capped: the framebuffer is width*height*4 floats with no other guard, so
       // an absurd size is an OOM, not a render. 32k is far above real use.
@@ -247,19 +259,22 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid width (1..32768).\n";
         return false;
       }
-    } else if (a == "-height" || a == "--height") {
+    }
+    OPT_MATCH(a == "-height" || a == "--height") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->height) || opt->height <= 0 ||
           opt->height > 32768) {
         std::cerr << "Invalid height (1..32768).\n";
         return false;
       }
-    } else if (a == "-camera" || a == "--camera") {
+    }
+    OPT_MATCH(a == "-camera" || a == "--camera") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       opt->camera = v;
       opt->camera_explicit = true;
-    } else if (a == "-fitScale" || a == "--fitScale") {
+    }
+    OPT_MATCH(a == "-fitScale" || a == "--fitScale") {
       const char *v = need_value(a.c_str());
       // std::stof threw (uncaught -> SIGABRT) on non-numeric/out-of-range input.
       float fs = 0.0f;
@@ -268,14 +283,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->fit_scale = std::max(0.05f, fs);
-    } else if (a == "-viewDir" || a == "--viewDir") {
+    }
+    OPT_MATCH(a == "-viewDir" || a == "--viewDir") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseColor(v, &opt->view_dir) || Length(opt->view_dir) < 1.0e-6f) {
         std::cerr << "Invalid viewDir.\n";
         return false;
       }
       opt->has_view_dir = true;
-    } else if (a == "-purpose" || a == "--purpose") {
+    }
+    OPT_MATCH(a == "-purpose" || a == "--purpose") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       uint32_t mask = 0;
@@ -302,21 +319,27 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         pos = comma + 1;
       }
       opt->purpose_mask = mask;
-    } else if (a == "-showGuide" || a == "--showGuide") {
+    }
+    OPT_MATCH(a == "-showGuide" || a == "--showGuide") {
       opt->purpose_mask |= kPurposeGuideBit;
-    } else if (a == "-hideProxy" || a == "--hideProxy") {
+    }
+    OPT_MATCH(a == "-hideProxy" || a == "--hideProxy") {
       opt->purpose_mask &= ~kPurposeProxyBit;
-    } else if (a == "-hideRender" || a == "--hideRender") {
+    }
+    OPT_MATCH(a == "-hideRender" || a == "--hideRender") {
       opt->purpose_mask &= ~kPurposeRenderBit;
-    } else if (a == "-hideDefault" || a == "--hideDefault") {
+    }
+    OPT_MATCH(a == "-hideDefault" || a == "--hideDefault") {
       opt->purpose_mask &= ~kPurposeDefaultBit;
-    } else if (a == "-timecode" || a == "--timecode") {
+    }
+    OPT_MATCH(a == "-timecode" || a == "--timecode") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseDoubleStrict(v, &opt->timecode)) {
         std::cerr << "Invalid timecode.\n";
         return false;
       }
-    } else if (a == "-samples" || a == "--samples") {
+    }
+    OPT_MATCH(a == "-samples" || a == "--samples") {
       const char *v = need_value(a.c_str());
       // Capped: samples multiplies the whole render time with no other guard.
       if (!v || !ParseIntStrict(v, &opt->samples) || opt->samples <= 0 ||
@@ -324,21 +347,25 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid samples (1..65536).\n";
         return false;
       }
-    } else if (a == "-bg" || a == "--bg") {
+    }
+    OPT_MATCH(a == "-bg" || a == "--bg") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseColor(v, &opt->bg)) {
         std::cerr << "Invalid background color. Expected r,g,b.\n";
         return false;
       }
-    } else if (a == "-ambient" || a == "--ambient") {
+    }
+    OPT_MATCH(a == "-ambient" || a == "--ambient") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseFloatStrict(v, &opt->ambient) || opt->ambient < 0.0f) {
         std::cerr << "Invalid ambient value.\n";
         return false;
       }
-    } else if (a == "-smooth" || a == "--smooth") {
+    }
+    OPT_MATCH(a == "-smooth" || a == "--smooth") {
       opt->smooth = true;
-    } else if (a == "-ibl" || a == "--ibl") {
+    }
+    OPT_MATCH(a == "-ibl" || a == "--ibl") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       if (std::string(v) == "default") {
@@ -349,9 +376,11 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "-ibl must be default or envmap.\n";
         return false;
       }
-    } else if (a == "-noDisplace" || a == "--noDisplace") {
+    }
+    OPT_MATCH(a == "-noDisplace" || a == "--noDisplace") {
       opt->displace = false;
-    } else if (a == "-texMaxSize" || a == "--texMaxSize") {
+    }
+    OPT_MATCH(a == "-texMaxSize" || a == "--texMaxSize") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->texture_max_size) ||
           opt->texture_max_size < 0) {
@@ -359,7 +388,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->texture_max_size_explicit = true;
-    } else if (a == "-texBudgetMb" || a == "--texBudgetMb") {
+    }
+    OPT_MATCH(a == "-texBudgetMb" || a == "--texBudgetMb") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->texture_budget_mb) ||
           opt->texture_budget_mb < 0) {
@@ -367,7 +397,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->texture_budget_explicit = true;
-    } else if (a == "-texCompress" || a == "--texCompress") {
+    }
+    OPT_MATCH(a == "-texCompress" || a == "--texCompress") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string mode(v);
@@ -379,7 +410,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid texture compression mode.\n";
         return false;
       }
-    } else if (a == "-udim" || a == "--udim") {
+    }
+    OPT_MATCH(a == "-udim" || a == "--udim") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string mode(v);
@@ -391,22 +423,27 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid UDIM mode.\n";
         return false;
       }
-    } else if (a == "-displaceScale" || a == "--displaceScale") {
+    }
+    OPT_MATCH(a == "-displaceScale" || a == "--displaceScale") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseFloatStrict(v, &opt->displace_scale)) {
         std::cerr << "Invalid -displaceScale value.\n";
         return false;
       }
-    } else if (a == "-noShadows" || a == "--noShadows") {
+    }
+    OPT_MATCH(a == "-noShadows" || a == "--noShadows") {
       opt->shadows = false;
-    } else if (a == "-rtPreview" || a == "--rtPreview" ||
+    }
+    OPT_MATCH(a == "-rtPreview" || a == "--rtPreview" ||
                a == "-mmapRt" || a == "--mmapRt") {
       opt->rt_preview = true;
       opt->direct_prims = false;
       opt->backend_explicit = true;
-    } else if (a == "-legacyLoad" || a == "--legacyLoad") {
+    }
+    OPT_MATCH(a == "-legacyLoad" || a == "--legacyLoad") {
       opt->legacy_load = true;
-    } else if (a == "-materialResolver" || a == "--materialResolver") {
+    }
+    OPT_MATCH(a == "-materialResolver" || a == "--materialResolver") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string mode = v;
@@ -420,7 +457,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid material resolver. Expected legacy, tydra-next, or compare.\n";
         return false;
       }
-    } else if (a == "-materialShading" || a == "--materialShading") {
+    }
+    OPT_MATCH(a == "-materialShading" || a == "--materialShading") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string mode = v;
@@ -432,9 +470,11 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid material shading. Expected legacy or lightrt-bsdf.\n";
         return false;
       }
-    } else if (a == "-progress" || a == "--progress") {
+    }
+    OPT_MATCH(a == "-progress" || a == "--progress") {
       opt->progress = true;
-    } else if (a == "-quality" || a == "--quality") {
+    }
+    OPT_MATCH(a == "-quality" || a == "--quality") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string q = v;
@@ -448,13 +488,15 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid quality. Expected fast, default, or hq.\n";
         return false;
       }
-    } else if (a == "-threads" || a == "--threads") {
+    }
+    OPT_MATCH(a == "-threads" || a == "--threads") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->threads) || opt->threads < 0) {
         std::cerr << "Invalid thread count.\n";
         return false;
       }
-    } else if (a == "-maxMem" || a == "--maxMem") {
+    }
+    OPT_MATCH(a == "-maxMem" || a == "--maxMem") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
       double g = v ? std::strtod(v, &end) : 0.0;
@@ -464,10 +506,12 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
       opt->max_mem_gib = g;
       opt->max_mem_explicit = true;
-    } else if (a == "-lodStream" || a == "--lodStream") {
+    }
+    OPT_MATCH(a == "-lodStream" || a == "--lodStream") {
       opt->lod_stream = true;
       opt->lod_stream_explicit = true;
-    } else if (a == "-maxVram" || a == "--maxVram") {
+    }
+    OPT_MATCH(a == "-maxVram" || a == "--maxVram") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
       double g = v ? std::strtod(v, &end) : 0.0;
@@ -477,14 +521,18 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
       opt->max_vram_gib = g;
       opt->max_vram_explicit = true;
-    } else if (a == "-rtLod" || a == "--rtLod") {
+    }
+    OPT_MATCH(a == "-rtLod" || a == "--rtLod") {
       opt->rt_lod = true;
       opt->rt_lod_explicit = true;
-    } else if (a == "-rtLodNoProxy" || a == "--rtLodNoProxy") {
+    }
+    OPT_MATCH(a == "-rtLodNoProxy" || a == "--rtLodNoProxy") {
       opt->rt_lod_proxy = false;
-    } else if (a == "-rtLodFrustumCull" || a == "--rtLodFrustumCull") {
+    }
+    OPT_MATCH(a == "-rtLodFrustumCull" || a == "--rtLodFrustumCull") {
       opt->rt_lod_frustum_cull = true;
-    } else if (a == "-rtLodFullPx" || a == "--rtLodFullPx") {
+    }
+    OPT_MATCH(a == "-rtLodFullPx" || a == "--rtLodFullPx") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
       double g = v ? std::strtod(v, &end) : 0.0;
@@ -494,7 +542,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
       opt->rt_lod_full_px = float(g);
       opt->rt_lod_full_px_explicit = true;
-    } else if (a == "-rtLodCullPx" || a == "--rtLodCullPx") {
+    }
+    OPT_MATCH(a == "-rtLodCullPx" || a == "--rtLodCullPx") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
       double g = v ? std::strtod(v, &end) : 0.0;
@@ -504,7 +553,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
       opt->rt_lod_cull_px = float(g);
       opt->rt_lod_cull_px_explicit = true;
-    } else if (a == "-lodDistrictMem" || a == "--lodDistrictMem") {
+    }
+    OPT_MATCH(a == "-lodDistrictMem" || a == "--lodDistrictMem") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
       double g = v ? std::strtod(v, &end) : 0.0;
@@ -513,7 +563,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->lod_district_mem_gib = g;
-    } else if (a == "-lodDistrictVram" || a == "--lodDistrictVram") {
+    }
+    OPT_MATCH(a == "-lodDistrictVram" || a == "--lodDistrictVram") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
       double g = v ? std::strtod(v, &end) : 0.0;
@@ -522,7 +573,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->lod_district_vram_gib = g;
-    } else if (a == "-lodMinVerts" || a == "--lodMinVerts") {
+    }
+    OPT_MATCH(a == "-lodMinVerts" || a == "--lodMinVerts") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
       double g = v ? std::strtod(v, &end) : 0.0;
@@ -531,7 +583,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->lod_min_verts = g;
-    } else if (a == "-lodMaxVerts" || a == "--lodMaxVerts") {
+    }
+    OPT_MATCH(a == "-lodMaxVerts" || a == "--lodMaxVerts") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
       double g = v ? std::strtod(v, &end) : 0.0;
@@ -540,21 +593,24 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->lod_max_verts = g;
-    } else if (a == "-lodContainer" || a == "--lodContainer") {
+    }
+    OPT_MATCH(a == "-lodContainer" || a == "--lodContainer") {
       const char *v = need_value(a.c_str());
       if (!v) {
         std::cerr << "Invalid -lodContainer (expected a prim name).\n";
         return false;
       }
       opt->lod_container = v;
-    } else if (a == "-env" || a == "--env") {
+    }
+    OPT_MATCH(a == "-env" || a == "--env") {
       const char *v = need_value(a.c_str());
       if (!v) {
         std::cerr << "Invalid -env (expected an environment-map path).\n";
         return false;
       }
       opt->env_file = v;
-    } else if (a == "-subdiv" || a == "--subdiv" ||
+    }
+    OPT_MATCH(a == "-subdiv" || a == "--subdiv" ||
                a == "-subdivLevel" || a == "--subdivLevel" ||
                a == "-subdivisionLevel" || a == "--subdivisionLevel") {
       const char *v = need_value(a.c_str());
@@ -565,7 +621,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
                   << tinyusdz::tsd::kMaxLevel << ".\n";
         return false;
       }
-    } else if (a == "-complexity" || a == "--complexity") {
+    }
+    OPT_MATCH(a == "-complexity" || a == "--complexity") {
       // OpenUSD usdrecord refinement presets -> subdivision level
       // (low=1.0, medium=1.1, high=1.2, veryhigh=1.3 -> refine 0/1/2/3).
       const char *v = need_value(a.c_str());
@@ -582,9 +639,11 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid -complexity. Expected low|medium|high|veryhigh.\n";
         return false;
       }
-    } else if (a == "-autoframe" || a == "--autoframe") {
+    }
+    OPT_MATCH(a == "-autoframe" || a == "--autoframe") {
       opt->autoframe = true;
-    } else if (a == "-mask" || a == "--mask") {
+    }
+    OPT_MATCH(a == "-mask" || a == "--mask") {
       const char *v = need_value(a.c_str());
       if (!v) {
         std::cerr << "-mask requires PRIMPATH[,PRIMPATH...].\n";
@@ -600,16 +659,19 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       while (iss >> p) {
         if (!p.empty()) opt->mask.push_back(p);
       }
-    } else if (a == "-frames" || a == "--frames" || a == "-f") {
+    }
+    OPT_MATCH(a == "-frames" || a == "--frames" || a == "-f") {
       const char *v = need_value(a.c_str());
       if (!v) {
         std::cerr << "-frames requires a FRAMESPEC.\n";
         return false;
       }
       opt->frames = v;
-    } else if (a == "-defaultTime" || a == "--defaultTime") {
+    }
+    OPT_MATCH(a == "-defaultTime" || a == "--defaultTime") {
       opt->default_time = true;
-    } else if (a == "-variant" || a == "--variant") {
+    }
+    OPT_MATCH(a == "-variant" || a == "--variant") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string s = v;
@@ -620,36 +682,43 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->variant_overrides[s.substr(0, eq)] = s.substr(eq + 1);
-    } else if (a == "-largeSceneProfile" || a == "--largeSceneProfile" ||
+    }
+    OPT_MATCH(a == "-largeSceneProfile" || a == "--largeSceneProfile" ||
                a == "-large-scene-profile" || a == "--large-scene-profile") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseLargeSceneProfile(v, &opt->large_scene_profile)) {
         std::cerr << "-largeSceneProfile must be off, auto, caldera, island, or alab.\n";
         return false;
       }
-    } else if (a.rfind("--largeSceneProfile=", 0) == 0) {
+    }
+    OPT_MATCH(a.rfind("--largeSceneProfile=", 0) == 0) {
       if (!ParseLargeSceneProfile(a.substr(20), &opt->large_scene_profile)) {
         std::cerr << "-largeSceneProfile must be off, auto, caldera, island, or alab.\n";
         return false;
       }
-    } else if (a.rfind("--large-scene-profile=", 0) == 0) {
+    }
+    OPT_MATCH(a.rfind("--large-scene-profile=", 0) == 0) {
       if (!ParseLargeSceneProfile(a.substr(22), &opt->large_scene_profile)) {
         std::cerr << "-largeSceneProfile must be off, auto, caldera, island, or alab.\n";
         return false;
       }
-    } else if (a == "-vk" || a == "--vk") {
+    }
+    OPT_MATCH(a == "-vk" || a == "--vk") {
       opt->vulkan = true;
       opt->backend_explicit = true;
-    } else if (a == "-vkr" || a == "--vkr") {
+    }
+    OPT_MATCH(a == "-vkr" || a == "--vkr") {
       opt->vulkan = true;
       opt->vulkan_rt = true;
       opt->backend_explicit = true;
-    } else if (a == "-vkInstanced" || a == "--vkInstanced") {
+    }
+    OPT_MATCH(a == "-vkInstanced" || a == "--vkInstanced") {
       opt->vulkan = true;
       opt->vulkan_rt = true;
       opt->vulkan_instanced = true;
       opt->backend_explicit = true;
-    } else if (a == "-gpuShade" || a == "--gpuShade") {
+    }
+    OPT_MATCH(a == "-gpuShade" || a == "--gpuShade") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string mode = v;
@@ -661,13 +730,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "-gpuShade must be cpu or preview.\n";
         return false;
       }
-    } else if (a == "-d3d" || a == "--d3d" || a == "-dx" || a == "--dx") {
+    }
+    OPT_MATCH(a == "-d3d" || a == "--d3d" || a == "-dx" || a == "--dx") {
       opt->use_d3d = true;
       opt->backend_explicit = true;
-    } else if (a == "-hip" || a == "--hip") {
+    }
+    OPT_MATCH(a == "-hip" || a == "--hip") {
       opt->hip = true;
       opt->backend_explicit = true;
-    } else if (a == "-js" || a == "--js") {
+    }
+    OPT_MATCH(a == "-js" || a == "--js") {
       const char *v = need_value(a.c_str());
       if (!v) {
         std::cerr << "-js requires a script file path.\n";
@@ -676,11 +748,13 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->js_script = v;
       opt->rt_preview = true;
       opt->direct_prims = false;
-    } else if (a == "-mcp" || a == "--mcp") {
+    }
+    OPT_MATCH(a == "-mcp" || a == "--mcp") {
       opt->mcp = true;
       opt->rt_preview = true;
       opt->direct_prims = false;
-    } else if (a == "-streamHttp" || a == "--streamHttp") {
+    }
+    OPT_MATCH(a == "-streamHttp" || a == "--streamHttp") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->stream_http) ||
           opt->stream_http <= 0 || opt->stream_http > 65535) {
@@ -689,45 +763,56 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
       opt->rt_preview = true;
       opt->direct_prims = false;
-    } else if (a == "-streamCodec" || a == "--streamCodec") {
+    }
+    OPT_MATCH(a == "-streamCodec" || a == "--streamCodec") {
       const char *v = need_value(a.c_str());
       if (!v) {
         std::cerr << "-streamCodec requires png|qoi.\n";
         return false;
       }
       opt->stream_codec = v;
-    } else if (a == "-streamMotionRes" || a == "--streamMotionRes") {
+    }
+    OPT_MATCH(a == "-streamMotionRes" || a == "--streamMotionRes") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->stream_motion_res) ||
           opt->stream_motion_res <= 0) {
         std::cerr << "-streamMotionRes requires a positive pixel size.\n";
         return false;
       }
-    } else if (a == "-streamMotionQuality" || a == "--streamMotionQuality") {
+    }
+    OPT_MATCH(a == "-streamMotionQuality" || a == "--streamMotionQuality") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->stream_motion_quality) ||
           opt->stream_motion_quality < 1 || opt->stream_motion_quality > 100) {
         std::cerr << "-streamMotionQuality requires 1-100.\n";
         return false;
       }
-    } else if (a == "-streamIdleMs" || a == "--streamIdleMs") {
+    }
+    OPT_MATCH(a == "-streamIdleMs" || a == "--streamIdleMs") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->stream_idle_ms) ||
           opt->stream_idle_ms < 0) {
         std::cerr << "-streamIdleMs requires a non-negative millisecond value.\n";
         return false;
       }
-    } else if (a == "-noDirectPrims" || a == "--noDirectPrims") {
+    }
+    OPT_MATCH(a == "-noDirectPrims" || a == "--noDirectPrims") {
       opt->direct_prims = false;
-    } else if (a == "-stats" || a == "--stats") {
+    }
+    OPT_MATCH(a == "-stats" || a == "--stats") {
       opt->stats = true;
-    } else if (a == "-noar" || a == "--noar") {
+    }
+    OPT_MATCH(a == "-noar" || a == "--noar") {
       opt->no_assetresolver = true;
-    } else if (!a.empty() && a[0] == '-') {
-      std::cerr << "Unknown option: " << a << "\n";
-      return false;
-    } else {
-      positional.push_back(a);
+    }
+#undef OPT_MATCH
+    if (!opt_matched) {
+      if (!a.empty() && a[0] == '-') {
+        std::cerr << "Unknown option: " << a << "\n";
+        return false;
+      } else {
+        positional.push_back(a);
+      }
     }
   }
   // -js / -mcp drive output paths from the script / MCP calls, so only the

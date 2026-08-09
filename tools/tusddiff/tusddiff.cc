@@ -28,12 +28,8 @@
 #include <cstdlib>
 #include <cstring>
 
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
 #include "tinyusdz.hh"
+#include "io-util.hh"
 #include "layer.hh"
 #include "tiny-format.hh"
 #include "str-util.hh"
@@ -57,40 +53,36 @@ namespace {
 struct MMapFile {
   const char *p = nullptr;
   size_t n = 0;
-  int fd = -1;
+  tinyusdz::io::MMapFileHandle handle;
 };
 
+// Reuses the project's own cross-platform mmap primitive (io::MMapFile /
+// io::UnmapFile, io-util.hh/.cc), which already has a working Windows branch
+// via CreateFileMapping/MapViewOfFile, instead of the raw POSIX mmap(2) this
+// file used to call directly with no _WIN32 fallback at all.
+//
+// NOTE: unlike the old hand-rolled version, io::MMapFile returns false for a
+// 0-byte file (neither the POSIX nor the Windows implementation can map zero
+// pages). A 0-byte file is never valid USDA/USDC, so this only changes which
+// fallback path handles that edge case (the caller falls through to the
+// existing semantic-diff path) -- not observable behavior for real inputs.
 bool mmap_open(const std::string &path, MMapFile &m) {
-  m.fd = ::open(path.c_str(), O_RDONLY);
-  if (m.fd < 0) return false;
-  struct stat st {};
-  if (::fstat(m.fd, &st) != 0 || st.st_size < 0) {
-    ::close(m.fd);
-    m.fd = -1;
+  std::string err;
+  if (!tinyusdz::io::MMapFile(path, &m.handle, /* writable */ false, &err)) {
     return false;
   }
-  m.n = static_cast<size_t>(st.st_size);
-  if (m.n == 0) {
-    m.p = "";
-    return true;
-  }
-  void *a = ::mmap(nullptr, m.n, PROT_READ, MAP_PRIVATE, m.fd, 0);
-  if (a == MAP_FAILED) {
-    ::close(m.fd);
-    m.fd = -1;
-    return false;
-  }
-  ::madvise(a, m.n, MADV_SEQUENTIAL);
-  m.p = static_cast<const char *>(a);
+  m.p = reinterpret_cast<const char *>(m.handle.addr);
+  m.n = static_cast<size_t>(m.handle.size);
   return true;
 }
 
 void mmap_close(MMapFile &m) {
-  if (m.p && m.n) ::munmap(const_cast<char *>(m.p), m.n);
-  if (m.fd >= 0) ::close(m.fd);
+  if (m.handle.addr) {
+    std::string err;
+    tinyusdz::io::UnmapFile(m.handle, &err);
+  }
   m.p = nullptr;
   m.n = 0;
-  m.fd = -1;
 }
 
 struct FBlock {

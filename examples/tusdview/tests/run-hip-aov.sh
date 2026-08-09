@@ -2,7 +2,7 @@
 #
 # Run test: every representative RenderMode AOV must trace a non-blank frame on
 # the HIP/ROCm backend. The --cuda and --hip screenshot tracers share one kernel
-# (raytracer_kernel.inc), so this exercises the HIP-via-hiprtc compile + each AOV
+# (raytracer_kernel_src.txt), so this exercises the HIP-via-hiprtc compile + each AOV
 # branch on a real AMD GPU (the plain tusdview-hip-render test covers only the
 # default shaded view). Catches AOV branches that compile/run on NVIDIA/NVRTC but
 # break under hiprtc, and any single mode that renders nothing.
