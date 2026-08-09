@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cmath>
 
+#include "math-util.inc"
 #include "tinyusdz.hh"
 #include "tydra/color-management.hh"
 #include "tydra/render-data.hh"
@@ -639,45 +640,43 @@ def Xform "Root" {
   if (!mat.surfaceShader) return;
   const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
 
-  auto near = [](float a, float b) { return std::fabs(a - b) < 1e-3f; };
-
   // swizzle "bgr" of (0.1,0.6,0.9) -> (0.9,0.6,0.1)
-  TEST_CHECK(near(s.diffuseColor.value[0], 0.9f));
-  TEST_CHECK(near(s.diffuseColor.value[1], 0.6f));
-  TEST_CHECK(near(s.diffuseColor.value[2], 0.1f));
+  TEST_CHECK(math::is_close(s.diffuseColor.value[0], 0.9f, 1e-3f));
+  TEST_CHECK(math::is_close(s.diffuseColor.value[1], 0.6f, 1e-3f));
+  TEST_CHECK(math::is_close(s.diffuseColor.value[2], 0.1f, 1e-3f));
   TEST_MSG("swizzle diffuseColor = (%f,%f,%f)", s.diffuseColor.value[0],
            s.diffuseColor.value[1], s.diffuseColor.value[2]);
 
   // separate3(.outg) of (0.1,0.6,0.9) -> 0.6
-  TEST_CHECK(near(s.roughness.value, 0.6f));
+  TEST_CHECK(math::is_close(s.roughness.value, 0.6f, 1e-3f));
   TEST_MSG("separate outg roughness = %f", s.roughness.value);
 
   // smoothstep(0.8, 0, 1) = 0.8^2*(3-2*0.8) = 0.896
-  TEST_CHECK(near(s.metallic.value, 0.896f));
+  TEST_CHECK(math::is_close(s.metallic.value, 0.896f, 1e-3f));
   TEST_MSG("smoothstep metallic = %f", s.metallic.value);
 
   // ifgreatereq(0.5 >= 0.5) ? 0.7 : 0.2 -> 0.7
-  TEST_CHECK(near(s.clearcoat.value, 0.7f));
+  TEST_CHECK(math::is_close(s.clearcoat.value, 0.7f, 1e-3f));
   TEST_MSG("ifgreatereq clearcoat = %f", s.clearcoat.value);
 
   // combine4 -> separate4(.outa) = 0.8
-  TEST_CHECK(near(s.opacity.value, 0.8f));
+  TEST_CHECK(math::is_close(s.opacity.value, 0.8f, 1e-3f));
   TEST_MSG("combine4/separate4 opacity = %f", s.opacity.value);
 
   // saturate(amount=0) collapses to luminance:
   // 0.2126*0.1 + 0.7152*0.6 + 0.0722*0.9 = 0.51536
-  TEST_CHECK(near(s.emissiveColor.value[0], 0.51536f));
-  TEST_CHECK(near(s.emissiveColor.value[1], 0.51536f));
-  TEST_CHECK(near(s.emissiveColor.value[2], 0.51536f));
+  TEST_CHECK(math::is_close(s.emissiveColor.value[0], 0.51536f, 1e-3f));
+  TEST_CHECK(math::is_close(s.emissiveColor.value[1], 0.51536f, 1e-3f));
+  TEST_CHECK(math::is_close(s.emissiveColor.value[2], 0.51536f, 1e-3f));
   TEST_MSG("saturate emissiveColor = (%f,%f,%f)", s.emissiveColor.value[0],
            s.emissiveColor.value[1], s.emissiveColor.value[2]);
 
   // Convert each source into the graph's linear Rec.709 space before mixing.
   TEST_MSG("mixed specularColor = (%f,%f,%f)", s.specularColor.value[0],
            s.specularColor.value[1], s.specularColor.value[2]);
-  TEST_CHECK(near(s.specularColor.value[0], 0.1070205f));
-  TEST_CHECK(near(s.specularColor.value[1], 0.25f));
-  TEST_CHECK(near(s.specularColor.value[2], 0.0f));
+  TEST_CHECK(math::is_close(s.specularColor.value[0], 0.1070205f, 1e-3f));
+  TEST_CHECK(math::is_close(s.specularColor.value[1], 0.25f, 1e-3f));
+  TEST_CHECK(math::is_close(s.specularColor.value[2], 0.0f, 1e-3f));
 }
 
 // ---------------------------------------------------------------------------
@@ -754,11 +753,10 @@ def Xform "Root" {
   if (!mat.surfaceShader) return;
   const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
 
-  auto near = [](float a, float b) { return std::fabs(a - b) < 1e-3f; };
-  TEST_CHECK(near(s.diffuseColor.value[0], 0.0508761f));
-  TEST_CHECK(near(s.diffuseColor.value[1], 0.214041f));
-  TEST_CHECK(near(s.diffuseColor.value[2], 0.522522f));
-  TEST_CHECK(near(s.roughness.value, 0.35f));
+  TEST_CHECK(math::is_close(s.diffuseColor.value[0], 0.0508761f, 1e-3f));
+  TEST_CHECK(math::is_close(s.diffuseColor.value[1], 0.214041f, 1e-3f));
+  TEST_CHECK(math::is_close(s.diffuseColor.value[2], 0.522522f, 1e-3f));
+  TEST_CHECK(math::is_close(s.roughness.value, 0.35f, 1e-3f));
   TEST_MSG("nonlocal NG diffuse=(%f,%f,%f) roughness=%f",
            s.diffuseColor.value[0], s.diffuseColor.value[1],
            s.diffuseColor.value[2], s.roughness.value);
@@ -825,15 +823,14 @@ def Xform "Root" {
   if (!mat.surfaceShader) return;
   const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
 
-  auto near = [](float a, float b) { return std::fabs(a - b) < 1e-3f; };
-  TEST_CHECK(near(s.diffuseColor.value[0], 0.25f));
-  TEST_CHECK(near(s.diffuseColor.value[1], 0.5f));
-  TEST_CHECK(near(s.diffuseColor.value[2], 0.75f));
-  TEST_CHECK(near(s.emissiveColor.value[0], 0.4f));
-  TEST_CHECK(near(s.emissiveColor.value[1], 0.4f));
-  TEST_CHECK(near(s.emissiveColor.value[2], 0.4f));
-  TEST_CHECK(near(s.roughness.value, 0.25f));
-  TEST_CHECK(near(s.metallic.value, 0.4f));
+  TEST_CHECK(math::is_close(s.diffuseColor.value[0], 0.25f, 1e-3f));
+  TEST_CHECK(math::is_close(s.diffuseColor.value[1], 0.5f, 1e-3f));
+  TEST_CHECK(math::is_close(s.diffuseColor.value[2], 0.75f, 1e-3f));
+  TEST_CHECK(math::is_close(s.emissiveColor.value[0], 0.4f, 1e-3f));
+  TEST_CHECK(math::is_close(s.emissiveColor.value[1], 0.4f, 1e-3f));
+  TEST_CHECK(math::is_close(s.emissiveColor.value[2], 0.4f, 1e-3f));
+  TEST_CHECK(math::is_close(s.roughness.value, 0.25f, 1e-3f));
+  TEST_CHECK(math::is_close(s.metallic.value, 0.4f, 1e-3f));
 }
 
 // ---------------------------------------------------------------------------

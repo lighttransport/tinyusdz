@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+// Embeds the CUDA/HIP trace kernel source (raytracer_kernel_src.txt) as a
+// Win32 RCDATA resource. MSVC caps a single C++ string literal at ~16,380
+// bytes (C2026), well under this kernel's size; loading it as a resource at
+// runtime (see kernel_resource.cc) sidesteps that limit entirely. GCC/Clang
+// have no such limit, so non-Windows builds keep compiling the kernel source
+// directly as a generated raw-string literal (see CMakeLists.txt).
+#include "resource_ids.h"
+
+IDR_RAYTRACER_KERNEL RCDATA "raytracer_kernel_src.txt"

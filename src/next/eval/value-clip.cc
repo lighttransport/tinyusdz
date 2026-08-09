@@ -117,40 +117,45 @@ bool ExpandTemplate(const Dict& dict, ValueClipSet* out, std::string* error) {
                                  ? pattern.substr(integer_end)
                                  : pattern.substr(fraction_end);
 
-  const long double span =
-      static_cast<long double>(end) - static_cast<long double>(start);
-  const long double step_count = span / static_cast<long double>(stride);
-  const long double rounded_steps = std::round(step_count);
-  const long double tolerance =
-      8.0L * static_cast<long double>(std::numeric_limits<double>::epsilon()) *
-      std::max(1.0L, std::fabs(step_count));
-  const long double normalized_steps =
+  // NOTE: this used to compute span/step_count/tolerance/boundary_*/active_*
+  // in `long double` for extra headroom before the overflow/tolerance checks
+  // below. That headroom is real on GCC/Clang/x86 (80-bit extended
+  // precision) but MSVC's `long double` is bit-identical to `double` -- the
+  // intended safety margin silently vanished there, so the same USD file
+  // could round/reject differently per compiler. Do the checks in plain
+  // `double` instead, made correct by construction: IEEE-754 already turns
+  // an overflowing add/sub/div into +-inf (caught by std::isfinite) rather
+  // than silently wrapping, and the boundary/active overflow guard uses an
+  // explicit pre-check (the standard `a > MAX - b` idiom) instead of
+  // computing-then-comparing-to-max, so no compiler-specific extra
+  // precision is required for correctness on any platform.
+  const double span = end - start;
+  const double step_count = span / stride;
+  const double rounded_steps = std::round(step_count);
+  const double tolerance = 8.0 * std::numeric_limits<double>::epsilon() *
+                            std::max(1.0, std::fabs(step_count));
+  const double normalized_steps =
       std::fabs(step_count - rounded_steps) <= tolerance
           ? rounded_steps
           : std::floor(step_count);
-  if (!std::isfinite(step_count) || normalized_steps < 0.0L ||
-      normalized_steps >= static_cast<long double>(kMaxTemplateClipCount)) {
+  if (!std::isfinite(step_count) || normalized_steps < 0.0 ||
+      normalized_steps >= static_cast<double>(kMaxTemplateClipCount)) {
     if (error) *error = "Value-clip template exceeds expansion limit";
     return false;
   }
-  const long double max_double =
-      static_cast<long double>(std::numeric_limits<double>::max());
-  const long double absolute_offset =
-      std::fabs(static_cast<long double>(active_offset));
-  const long double boundary_start =
-      static_cast<long double>(start) - absolute_offset;
-  const long double boundary_end =
-      static_cast<long double>(end) + absolute_offset;
-  const long double active_start =
-      static_cast<long double>(start) +
-      static_cast<long double>(active_offset);
-  const long double active_end =
-      static_cast<long double>(end) + static_cast<long double>(active_offset);
-  if (!std::isfinite(boundary_start) || !std::isfinite(boundary_end) ||
-      !std::isfinite(active_start) || !std::isfinite(active_end) ||
-      std::fabs(boundary_start) > max_double ||
-      std::fabs(boundary_end) > max_double ||
-      std::fabs(active_start) > max_double || std::fabs(active_end) > max_double) {
+  const double kMaxD = std::numeric_limits<double>::max();
+  const double absolute_offset = std::fabs(active_offset);
+  auto safe_add = [kMaxD](double a, double b, double* out) -> bool {
+    if (b > 0.0 && a > kMaxD - b) return false;
+    if (b < 0.0 && a < -kMaxD - b) return false;
+    *out = a + b;
+    return std::isfinite(*out);
+  };
+  double boundary_start, boundary_end, active_start, active_end;
+  if (!safe_add(start, -absolute_offset, &boundary_start) ||
+      !safe_add(end, absolute_offset, &boundary_end) ||
+      !safe_add(start, active_offset, &active_start) ||
+      !safe_add(end, active_offset, &active_end)) {
     if (error) *error = "Value-clip template time overflow";
     return false;
   }
@@ -163,14 +168,9 @@ bool ExpandTemplate(const Dict& dict, ValueClipSet* out, std::string* error) {
   out->active.reserve(clip_count);
 
   for (size_t index = 0; index < clip_count; ++index) {
-    const long double generated =
-        static_cast<long double>(start) +
-        static_cast<long double>(index) * static_cast<long double>(stride);
-    double t = static_cast<double>(generated);
-    const long double time_tolerance =
-        tolerance * std::fabs(static_cast<long double>(stride));
-    if (t > end &&
-        generated - static_cast<long double>(end) <= time_tolerance) {
+    double t = start + static_cast<double>(index) * stride;
+    const double time_tolerance = tolerance * std::fabs(stride);
+    if (t > end && (t - end) <= time_tolerance) {
       t = end;
     }
     const double integer_part = std::trunc(t);

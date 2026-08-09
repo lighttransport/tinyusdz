@@ -16,10 +16,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#if defined(__linux__)
-#include <unistd.h>
-#endif
-
 #include "asset-resolution.hh"
 #include "common-macros.inc"
 #include "core/schema-registry.hh"

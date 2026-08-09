@@ -4716,15 +4716,15 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
       size_t start = 0;
       for (int c : face_counts) {
         if (c <= 0 || start + size_t(c) > face_indices.size()) break;
-        std::reverse(face_indices.begin() + long(start),
-                     face_indices.begin() + long(start + size_t(c)));
+        std::reverse(face_indices.begin() + start,
+                     face_indices.begin() + start + size_t(c));
         if (normals.size() >= start + size_t(c)) {
-          std::reverse(normals.begin() + long(start),
-                       normals.begin() + long(start + size_t(c)));
+          std::reverse(normals.begin() + start,
+                       normals.begin() + start + size_t(c));
         }
         if (uvs.size() >= start + size_t(c)) {
-          std::reverse(uvs.begin() + long(start),
-                       uvs.begin() + long(start + size_t(c)));
+          std::reverse(uvs.begin() + start,
+                       uvs.begin() + start + size_t(c));
         }
         start += size_t(c);
       }

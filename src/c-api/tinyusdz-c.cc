@@ -654,7 +654,7 @@ tusd_status tusd_stage_load(const char* filename,
   }
   if (ok) {
     const std::string fn(filename ? filename : "");
-    const size_t slash = fn.rfind('/');
+    const size_t slash = fn.find_last_of("/\\");
     stage->source_dir = (slash == std::string::npos) ? "" : fn.substr(0, slash);
   }
   if (!ok) {

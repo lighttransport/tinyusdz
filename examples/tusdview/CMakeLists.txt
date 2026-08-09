@@ -134,11 +134,39 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(tusdview_lightrt_mtlx_const PRIVATE -w)
 endif()
 
+# ---------------------------------------------------------------------------
+# CUDA/HIP trace kernel source (shared by cuda/cuda_raytracer.cc and
+# hip/hip_raytracer.cc, compiled at runtime by NVRTC/hiprtc). Its single
+# on-disk copy is raytracer_kernel_src.txt (plain CUDA C, no C++ wrapper).
+#
+# - MSVC: embedded as a Win32 RCDATA resource (raytracer_kernel_resource.rc)
+#   and loaded at runtime (kernel_resource.cc), because a single MSVC string
+#   literal is capped at ~16,380 bytes (C2026), well under this kernel's size.
+# - Everyone else: GCC/Clang have no such limit, so it's wrapped as a plain
+#   C++ raw-string literal and `#include`d directly. That wrapped file is
+#   generated here (re-run cmake after editing raytracer_kernel_src.txt).
+# ---------------------------------------------------------------------------
+if(NOT MSVC)
+  set(TUSDVIEW_KERNEL_SRC_TXT ${CMAKE_CURRENT_SOURCE_DIR}/raytracer_kernel_src.txt)
+  set(TUSDVIEW_KERNEL_INC_GEN ${CMAKE_CURRENT_BINARY_DIR}/generated/raytracer_kernel.inc)
+  file(READ ${TUSDVIEW_KERNEL_SRC_TXT} TUSDVIEW_KERNEL_SRC_CONTENT)
+  file(WRITE ${TUSDVIEW_KERNEL_INC_GEN}
+       "const char* kKernelSrc = R\"CUDA(${TUSDVIEW_KERNEL_SRC_CONTENT})CUDA\";\n")
+endif()
+
+if(MSVC)
+  enable_language(RC)
+  list(APPEND TUSDVIEW_SOURCES kernel_resource.cc raytracer_kernel_resource.rc)
+endif()
+
 add_executable(${EXAMPLE_TARGET}
     ${TUSDVIEW_SOURCES}
     ${TUSDVIEW_COMMON_SOURCES}
     $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
 add_dependencies(${EXAMPLE_TARGET} tusdview_lightrt_mtlx)
+if(NOT MSVC)
+  target_include_directories(${EXAMPLE_TARGET} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+endif()
 
 # Helper: apply -Weverything (Clang) / -Wall (GCC) to a C++ target's CXX sources.
 function(tusdview_set_warning_flags target)

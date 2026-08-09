@@ -43,6 +43,13 @@ add_library(tydra_next STATIC
 # Link to tinyusdz_next
 target_link_libraries(tydra_next PUBLIC tinyusdz_next)
 
+# Windows: GetProcessMemoryInfo (process RSS for the memory budget, see
+# mem-budget.hh) lives in psapi. PUBLIC so every consumer (test_tydra_next,
+# tusdview, tusdrender, tydra_to_renderscene) inherits the link automatically.
+if(WIN32)
+  target_link_libraries(tydra_next PUBLIC psapi)
+endif()
+
 # Keep Tydra-next on the repository C++17 baseline.
 target_compile_features(tydra_next PUBLIC cxx_std_17)
 

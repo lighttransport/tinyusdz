@@ -125,7 +125,12 @@ elif platform.system() == "Darwin":
     extra_compile_args += ["-O2"]
     extra_link_args += ["-lc++", "-Wl,-dead_strip", "-Wl,-x"]
 elif platform.system() == "Windows":
-    extra_compile_args += ["/O2"]
+    # Explicit C standard: the .c sources use C99 compound literals and
+    # designated initializers. Linux/Darwin get an implicit C99-superset
+    # default from GCC/Clang, but MSVC needs this spelled out. This repo's
+    # CI/build already targets VS2022, which has supported /std:c17 since
+    # 16.8.
+    extra_compile_args += ["/O2", "/std:c17"]
 
 
 define_macros = []

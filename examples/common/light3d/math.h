@@ -174,8 +174,8 @@ inline Vec3 transformVector(const Mat4& m, const Vec3& v) {
 }
 
 Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up);
-Mat4 perspective(float fovYRadians, float aspect, float near, float far);
+Mat4 perspective(float fovYRadians, float aspect, float zNear, float zFar);
 // Vulkan/WebGPU perspective: Z maps to [0, 1], Y is NOT flipped
-Mat4 perspectiveZeroOne(float fovYRadians, float aspect, float near, float far);
+Mat4 perspectiveZeroOne(float fovYRadians, float aspect, float zNear, float zFar);
 
 } // namespace light3d

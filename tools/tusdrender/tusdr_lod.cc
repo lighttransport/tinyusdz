@@ -20,8 +20,13 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <process.h>  // _getpid
+#include <stdlib.h>   // _fullpath, _MAX_PATH
+#else
 #include <climits>   // PATH_MAX
 #include <unistd.h>  // realpath, getpid
+#endif
 
 #include "next/pcp/prim-index.hh"  // pcp::CompositionOptions
 #include "tydra/next/resource-budget.hh"
@@ -97,15 +102,27 @@ bool DistrictOf(const std::string &path, const std::string &container,
 }
 
 std::string AbsolutePath(const std::string &p) {
+#ifdef _WIN32
+  char buf[_MAX_PATH];
+  if (_fullpath(buf, p.c_str(), _MAX_PATH)) return std::string(buf);
+#else
   char buf[PATH_MAX];
   if (realpath(p.c_str(), buf)) return std::string(buf);
+#endif
   return p;
 }
 
 std::string TempDir() {
+#ifdef _WIN32
+  const char *t = std::getenv("TEMP");
+  if (!t || !*t) t = std::getenv("TMP");
+  if (t && *t) return std::string(t);
+  return ".";
+#else
   const char *t = std::getenv("TMPDIR");
   if (t && *t) return std::string(t);
   return "/tmp";
+#endif
 }
 
 }  // namespace
@@ -330,8 +347,13 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   }
 
   const std::string abs_input = AbsolutePath(opt->input);
+#ifdef _WIN32
+  const int pid = _getpid();
+#else
+  const int pid = getpid();
+#endif
   const std::string wrapper =
-      TempDir() + "/tusdr_lod_" + std::to_string(getpid()) + ".usda";
+      TempDir() + "/tusdr_lod_" + std::to_string(pid) + ".usda";
   std::ofstream ofs(wrapper);
   if (!ofs) {
     std::cerr << "[lodStream] cannot write wrapper " << wrapper << "\n";
