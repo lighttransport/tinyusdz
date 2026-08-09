@@ -299,12 +299,13 @@ void CollectGpuPointsRec(
                                                   points[i * 3 + 2]});
       Vec3 normal{0.0f, 1.0f, 0.0f};
       Vec3 major_axis{1.0f, 0.0f, 0.0f};
-      if (have_orientations && i * 4 + 3 < orientations.size()) {
+      const size_t orientation_index = orientations.size() == 4 ? 0 : i * 4;
+      if (have_orientations && orientation_index + 3 < orientations.size()) {
         tinyusdz::value::quatf q;
-        q.real = orientations[i * 4 + 0];
-        q.imag[0] = orientations[i * 4 + 1];
-        q.imag[1] = orientations[i * 4 + 2];
-        q.imag[2] = orientations[i * 4 + 3];
+        q.real = orientations[orientation_index + 0];
+        q.imag[0] = orientations[orientation_index + 1];
+        q.imag[1] = orientations[orientation_index + 2];
+        q.imag[2] = orientations[orientation_index + 3];
         const tinyusdz::value::matrix3d r = tinyusdz::to_matrix3x3(q);
         const tinyusdz::value::matrix4d r4 =
             tinyusdz::to_matrix(r, tinyusdz::value::double3{0.0, 0.0, 0.0});
