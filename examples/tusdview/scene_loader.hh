@@ -38,6 +38,9 @@ struct LoadOptions {
   // legacy behavior. The loader applies these before geometry materialization.
   size_t maxMemoryBytes{0};
   size_t gpuGeometryBudgetBytes{0};
+  // Total CPU/GPU density budget for UsdVol grids. Zero derives a conservative
+  // share from gpuGeometryBudgetBytes (or uses the built-in preview default).
+  size_t volumeMemoryBudgetBytes{0};
   size_t uploadStagingBytes{0};
   // Maximum CPU geometry held between the next-loader producer and the GPU
   // context thread. Zero selects 64 MiB for interactive streaming.
