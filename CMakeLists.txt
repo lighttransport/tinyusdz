@@ -2669,6 +2669,44 @@ if(TINYUSDZ_BUILD_TESTS)
   # tests/tusdview/gpu_backend.py.
   #
   if(UNIX AND NOT APPLE AND TARGET tusdview)
+    # HIP is loaded dynamically by tusdview.  CTest often runs with a minimal
+    # loader environment, so discover the ROCm runtime directory at configure
+    # time and propagate it to tusdview tests.  Preserve any caller-supplied
+    # LD_LIBRARY_PATH after the discovered directory; this also supports
+    # versioned installations such as /opt/rocm/core-7.14/lib.
+    set(_tinyusdz_hip_library_dirs)
+    foreach(_tinyusdz_rocm_root IN ITEMS
+            "/opt/rocm" "$ENV{ROCM_PATH}" "$ENV{ROCM_HOME}")
+      if(_tinyusdz_rocm_root AND IS_DIRECTORY "${_tinyusdz_rocm_root}")
+        list(APPEND _tinyusdz_hip_library_dirs
+             "${_tinyusdz_rocm_root}/lib")
+        file(GLOB _tinyusdz_rocm_versioned_dirs LIST_DIRECTORIES true
+             "${_tinyusdz_rocm_root}/core-*/lib")
+        list(APPEND _tinyusdz_hip_library_dirs
+             ${_tinyusdz_rocm_versioned_dirs})
+      endif()
+    endforeach()
+    find_library(_tinyusdz_hip_runtime
+                 NAMES amdhip64 libamdhip64.so
+                 PATHS ${_tinyusdz_hip_library_dirs}
+                 NO_DEFAULT_PATH)
+    if(_tinyusdz_hip_runtime)
+      get_filename_component(_tinyusdz_hip_runtime_dir
+                             "${_tinyusdz_hip_runtime}" DIRECTORY)
+      if(DEFINED ENV{LD_LIBRARY_PATH} AND
+         NOT "$ENV{LD_LIBRARY_PATH}" STREQUAL "")
+        set(_tinyusdz_hip_ld_library_path
+            "${_tinyusdz_hip_runtime_dir}:$ENV{LD_LIBRARY_PATH}")
+      else()
+        set(_tinyusdz_hip_ld_library_path
+            "${_tinyusdz_hip_runtime_dir}")
+      endif()
+      message(STATUS "tinyusdz: HIP CTest runtime path: ${_tinyusdz_hip_runtime_dir}")
+    else()
+      set(_tinyusdz_hip_ld_library_path)
+      message(STATUS "tinyusdz: HIP runtime not found; HIP CTest cases will self-skip")
+    endif()
+
     find_program(TINYUSDZ_XVFB_RUN xvfb-run)
     if(TINYUSDZ_XVFB_RUN)
       add_test(
@@ -3948,6 +3986,23 @@ if(TINYUSDZ_BUILD_TESTS)
     else()
       message(STATUS "tinyusdz: NVIDIA offload requested but NVIDIA device/GLVND is not visible; tusdview tests keep their normal environment")
     endif()
+  endif()
+
+  if(_tinyusdz_hip_ld_library_path)
+    get_property(_tinyusdz_tusdview_tests DIRECTORY PROPERTY TESTS)
+    foreach(_tinyusdz_test IN LISTS _tinyusdz_tusdview_tests)
+      if(_tinyusdz_test MATCHES "^tusdview-")
+        get_property(_tinyusdz_test_env TEST "${_tinyusdz_test}"
+                     PROPERTY ENVIRONMENT)
+        if(NOT _tinyusdz_test_env)
+          set(_tinyusdz_test_env)
+        endif()
+        list(APPEND _tinyusdz_test_env
+             "LD_LIBRARY_PATH=${_tinyusdz_hip_ld_library_path}")
+        set_tests_properties("${_tinyusdz_test}"
+                             PROPERTIES ENVIRONMENT "${_tinyusdz_test_env}")
+      endif()
+    endforeach()
   endif()
 
 endif(TINYUSDZ_BUILD_TESTS)
