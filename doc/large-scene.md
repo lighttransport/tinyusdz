@@ -29,7 +29,7 @@ sharing** and **LOD/proxy variant selection** — *not* mmap (see §Roadmap).
 
 ## 1. Scene structures
 
-### 1.1 Moana Island (`/mnt/disk1/data/island`, ~17 GB)
+### 1.1 Moana Island (`<asset-root>/island`, ~17 GB)
 
 Root `usd/island.usda` (~22 KB) — a single `Xform "island"` (kind `assembly`)
 with 20 element children via `prepend references`. Each element uses a
@@ -45,7 +45,7 @@ three-file pattern (`element.usda` → `instance.usda` → `geometry.usda`) with
 | top-level `PointInstancer` | 0 (XGen instancing baked in binary `.usd`) |
 | largest file | `xgGroundCover.usd` 652 MB |
 
-### 1.2 ALab v2.3.0 (`/mnt/disk1/data/alab/v2.3.0.zip`, ~4 GB USD in-zip)
+### 1.2 ALab v2.3.0 (`<asset-root>/alab/v2.3.0.zip`, ~4 GB USD in-zip)
 
 Root `ALab/entry.usda` (309 B) composes via **subLayers**. Entities use
 subLayers for department contributions (`modelling`/`surfacing`/`preview`) +
@@ -64,7 +64,7 @@ assembly references, and `inherits`/`specializes` against `__class__`.
 ALab is the canonical "payload everything" scene: a typical working set loads
 only the chosen geometry LOD per asset (~80 % of geometry stays deferred).
 
-### 1.3 Caldera (`/mnt/disk1/data/caldera`, 9.7 GB)
+### 1.3 Caldera (`<asset-root>/caldera`, 9.7 GB)
 
 Root `caldera.usda` (text) → 4 subLayers
 (`map_source/mp_wz_island.usd` + `cameras`/`breadcrumbs`/`endpoints`). The root
@@ -185,7 +185,7 @@ large-scene-load <scene.usd[a]> [--mode=none|all|budget] [--budget-mb=N]
 ### 2.5.1 ALab per-element geometry, textures, and procedurals
 
 Before loading the complete ALab set, representative elements were measured
-individually from `/mnt/disk1/data/alab/_merged_ALab` with `tusdview --next`,
+individually from `<asset-root>/alab/_merged_ALab` with `tusdview --next`,
 `--load-payloads`, the `alab` large-scene profile, one headless Vulkan frame at
 time 1004, and `--timing`. Geometry-only cases use the modelling fragment;
 full cases use the entity layer, which adds surfacing/lighting and filesystem
@@ -202,7 +202,7 @@ work area; the extracted entity tree has no element literally named Kitchen.
 | Baked procedurals `main.usda` (no variant override) | 0.230 | — | — | 0 | 0 | 1/0 | 376 | — / 1.1 ms | no renderable geometry |
 | Baked procedurals, `alfro=render` selected | 0.038 | 0.000 | 0.630 | 0 | 0 | 3/0 | 554 | — / 541.0 ms | Curves conversion failed |
 
-The procedural package is present at `/mnt/disk1/data/alab/usd/baked_procedurals`;
+The procedural package is present at `<asset-root>/alab/usd/baked_procedurals`;
 the merged `baked_procedurals/main.usda` is only a placeholder layer. Loading
 the package's `main.usda` without selecting the `alfro=render` variant produces
 no geometry. With the variant selected, composition succeeds and retains the
@@ -216,7 +216,7 @@ Example variant wrapper:
 ```usda
 #usda 1.0
 (
-    subLayers = [ @/mnt/disk1/data/alab/usd/baked_procedurals/main.usda@ ]
+    subLayers = [ @<asset-root>/alab/usd/baked_procedurals/main.usda@ ]
     upAxis = "Y"
 )
 over "root" {
@@ -239,8 +239,8 @@ deferred proxy geometry on demand.
 composition locally:
 
 ```
-/mnt/disk1/data/alab/_merged_ALab/entry.usda
-/mnt/disk1/data/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
+<asset-root>/alab/_merged_ALab/entry.usda
+<asset-root>/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
 ```
 
 The packaged `ALab/entry.usda` path is valid, but in the local extracted
@@ -331,7 +331,7 @@ triangulate into huge planes that engulf the camera, so they must be hidden
 1280×720, `~4–5 GiB` RSS:
 
 ```sh
-T=tests; M=/mnt/disk1/data/caldera/caldera.usda
+T=tests; M=<asset-root>/caldera/caldera.usda
 ./build/tools/tusdrender/tusdrender $M cald_cpu.png -rtPreview -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14
 ./build/tools/tusdrender/tusdrender $M cald_vk.png  -vk  -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU compute trace
 ./build/tools/tusdrender/tusdrender $M cald_vkr.png -vkr -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU ray query
@@ -375,7 +375,7 @@ preview already uses. For full LOD, see §2.6.2.
 ### 2.6.1-a Island element composition and tusdview timings
 
 The following table records each partial element under
-`/mnt/disk1/data/island/usd/elements/*/element.usda`. Each run used the `next`
+`<asset-root>/island/usd/elements/*/element.usda`. Each run used the `next`
 loader, eager payload resolution (`--load-payloads`), the Island large-scene
 profile, one headless Vulkan frame at time 1, and `--timing`.
 
@@ -483,17 +483,17 @@ fi
 
 ```sh
 # Caldera (proxy composition baseline)
-CALDERA=/mnt/disk1/data/caldera/caldera.usda
+CALDERA=<asset-root>/caldera/caldera.usda
 [ -f "$CALDERA" ] && TINYUSDZ_NEXT_TIMING=1 "$NEXT_TUSD" -l \
   --compose-threads-auto --defer-payloads "$CALDERA"
 
 # ALab merged scene proxy mode
-ALAB=/mnt/disk1/data/alab/_merged_ALab/entry.usda
+ALAB=<asset-root>/alab/_merged_ALab/entry.usda
 [ -f "$ALAB" ] && "$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
   --lowmem --memstat "$ALAB"
 
 # Moana Island payload-heavy scene
-ISLAND=/mnt/disk1/data/island/usd/island.usda
+ISLAND=<asset-root>/island/usd/island.usda
 [ -f "$ISLAND" ] && "$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
   --lowmem --memstat "$ISLAND"
 ```
@@ -540,7 +540,7 @@ that sublayers the scene and re-authors *just that district* to `full`:
 ```usda
 #usda 1.0
 (
-    subLayers = [ @/mnt/disk1/data/caldera/caldera.usda@ ]
+    subLayers = [ @<asset-root>/caldera/caldera.usda@ ]
     upAxis = "Z"
 )
 over "world" { over "mp_wz_island" { over "mp_wz_island_paths" {
@@ -620,7 +620,7 @@ count is per *district*, so it is identical across that district's cameras.)
 
 These measurements promote one district to `districtLod = "full"` in a stronger
 wrapper layer and leave the other 44 districts at their authored `proxy` LOD.
-The input tree is `/mnt/disk1/data/caldera` (10,496,782,370 bytes, about 10.50
+The input tree is `<asset-root>/caldera` (10,496,782,370 bytes, about 10.50
 GB, including all USD and texture assets). Each run used `--load-payloads`,
 `--large-scene-profile caldera`, one headless Vulkan frame at time 1, and
 `--timing`. `Extract` is the sum of next-core extraction/collection phases;
@@ -715,7 +715,7 @@ first and `map_phosphate_mine` 8th; the coverage+alignment score ranks the mine
 first at `align=0.98`.)
 
 ```sh
-M=/mnt/disk1/data/caldera/caldera.usda
+M=<asset-root>/caldera/caldera.usda
 # CPU ray tracing, default budgets (host = 50% of MemAvailable):
 ./build/tools/tusdrender/tusdrender $M out.png -lodStream -rtPreview \
     -camera map_capital_square -purpose default,render,proxy -w 1280 -height 720 -stats
@@ -773,7 +773,7 @@ cost charge ignores per-district size variation — so on a tight machine lower
 
 `-lodStream` (above) is a tusdrender, ray-tracing, load-time selection. The
 interactive **tusdview** rasterizer hits a different wall on a fully assembled
-scene. The Moana island (`/mnt/disk1/data/island`) composes via `--next` to
+scene. The Moana island (`<asset-root>/island`) composes via `--next` to
 **83,801 draws / 42.9 M instances / 56.5 M unique tris**, and after instance
 dedup the geometry itself fits comfortably in 16 GiB VRAM (instance transforms
 ~2.06 GiB). The problem is **draw/buffer count**: the per-mesh raster path
@@ -793,7 +793,7 @@ unit cube, transformed per instance). The scene then uploads as **~N+1 buffers**
 Simple preview only: the proxy boxes shade flat, no shadows/GI.
 
 ```sh
-M=/mnt/disk1/data/island/usd/island.usda
+M=<asset-root>/island/usd/island.usda
 # 40 GiB host cgroup; keep the 4000 biggest meshes full, cap full VRAM at 16 GiB,
 # merge the other ~79.8 k meshes into one bbox proxy:
 systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
@@ -866,7 +866,7 @@ grid (`BuildRtLodGrid`) that frustum-rejects whole cells before the per-instance
 loop.
 
 ```sh
-M=/mnt/disk1/data/island/usd/island.usda
+M=<asset-root>/island/usd/island.usda
 # Whole island, VK raster, robust auto-frame; collapse anything under 48 px to a
 # box, drop anything under 1 px:
 systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
@@ -966,7 +966,7 @@ instances). On a 16 GiB GPU the **whole Moana island fits** — all 42.9 M insta
 over 30.0 M unique triangles (≈17.5 B effective), no LOD, no proxy.
 
 ```sh
-M=/mnt/disk1/data/island/usd/island.usda
+M=<asset-root>/island/usd/island.usda
 # Full island, HIP ray tracing, framed on the hero shot camera.
 # --max-instances 0 = unlimited (the 16 M default truncates by mesh order).
 ./build/tusdview --headless --next --hip \
@@ -1111,8 +1111,8 @@ pass the cross-backend tolerance test):
 - Live VRAM: tusdview logs `vram=used/budget GiB` in `[present]`/`[vk_rt]`
   lines (VK_EXT_memory_budget).
 
-**tusdview** (`T=./build/tusdview`, `ISL=/mnt/disk1/data/island/usd/island.usda`,
-`CAL=/mnt/disk1/data/caldera/caldera.usda`):
+**tusdview** (`T=./build/tusdview`, `ISL=<asset-root>/island/usd/island.usda`,
+`CAL=<asset-root>/caldera/caldera.usda`):
 
 | Config | Recipe | VRAM peak | Steady frame | Fits |
 |---|---|---|---|---|
@@ -1194,15 +1194,15 @@ deduplication is gone. Island composes 40.9 M instances / 11.7 G effective tris
 in this configuration and still fits the 30 GiB host headroom.
 
 ```bash
-CALDERA=/mnt/disk1/data/caldera/caldera.usda \
-ISLAND=/mnt/disk1/data/island/usd/island.usda \
-ALAB=/mnt/disk1/data/alab/_merged_ALab/entry.usda \
+CALDERA=<asset-root>/caldera/caldera.usda \
+ISLAND=<asset-root>/island/usd/island.usda \
+ALAB=<asset-root>/alab/_merged_ALab/entry.usda \
   bash examples/tusdview/tests/run-large-scene-profiles.sh
 
 # The full-payload run (weld + texture cap), per scene:
 /usr/bin/time -v ./build/tusdview --headless --large-scene-profile alab \
   --load-payloads --frames 1 --screenshot alab.ppm \
-  /mnt/disk1/data/alab/_merged_ALab/entry.usda
+  <asset-root>/alab/_merged_ALab/entry.usda
 # watch: 'next: weld N vertices from M points (Kx)'
 #        'next: textures N, decoded X MB (cap ..., budget ..., K downscaled)'
 ```
@@ -1647,13 +1647,13 @@ while keeping the output off disk:
 
 ```sh
 env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
-  /mnt/disk1/data/caldera/caldera.usda
+  <asset-root>/caldera/caldera.usda
 env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
-  /mnt/disk1/data/island/usd/island.usda
+  <asset-root>/island/usd/island.usda
 env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
-  /mnt/disk1/data/alab/_merged_ALab/entry.usda
+  <asset-root>/alab/_merged_ALab/entry.usda
 env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
-  /mnt/disk1/data/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
+  <asset-root>/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
 ```
 
 Recent measurements on the local workstation:
@@ -2075,14 +2075,14 @@ cd build-next-pcp && make feat-large-scene -j16 && \
 # focused payload-policy owner-anchor regression (next pcp unit level):
 cd build-next && ctest -R 'next_test_pcp$' --output-on-failure
 # structural load within budget (absolute path works from any cwd now):
-<build>/large-scene-load /mnt/disk1/data/caldera/caldera.usda --mode=none
+<build>/large-scene-load <asset-root>/caldera/caldera.usda --mode=none
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.
 # --load-some=N streams deferred proxy geometry on demand.
 # full composition + USDA writer stress checks:
 env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
-  /mnt/disk1/data/island/usd/island.usda
+  <asset-root>/island/usd/island.usda
 env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
-  /mnt/disk1/data/alab/_merged_ALab/entry.usda
+  <asset-root>/alab/_merged_ALab/entry.usda
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
                                            # MaterialX failures are unrelated)
 # suffix-fallback unit tests (§4):
