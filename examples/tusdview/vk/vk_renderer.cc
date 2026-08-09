@@ -7094,12 +7094,8 @@ void VulkanRenderer::rebuildTlas() {
           BuildTlas(order, static_cast<int>(count), centers, aabb);
       for (int& id : order) id += static_cast<int>(first);
       pointOrder.insert(pointOrder.end(), order.begin(), order.end());
-      for (Node& node : local) {
-        if (node.count == 0) {
-          node.left += static_cast<int>(bvhFirst);
-          node.right += static_cast<int>(bvhFirst);
-        }
-      }
+      // Keep BuildTlas' local child indices. The shader adds bvhFirst when
+      // selecting the chunk root; applying it here would double-offset them.
       pointNodes.insert(pointNodes.end(), local.begin(), local.end());
       pointChunks.push_back({static_cast<int>(first), static_cast<int>(count),
                              static_cast<int>(orderFirst),

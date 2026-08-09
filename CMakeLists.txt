@@ -3086,6 +3086,16 @@ if(TINYUSDZ_BUILD_TESTS)
                                       LABELS "tusdview")
 
       add_test(
+        NAME tusdview-vk-gaussian-chunks
+        COMMAND bash
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-gaussian-chunks.sh"
+                "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+      set_tests_properties(tusdview-vk-gaussian-chunks
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 105
+                                      LABELS "tusdview")
+
+      add_test(
         NAME tusdview-nonmesh-backend-parity
         COMMAND bash
                 "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-nonmesh-backend-parity.sh"

@@ -514,12 +514,6 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
         std::vector<Node> localBvh(
             pointHost_->pointBvh.begin() + bvhFirst,
             pointHost_->pointBvh.begin() + bvhFirst + bvhCount);
-        for (Node& node : localBvh) {
-          if (node.count > 0) {
-            node.left -= static_cast<int>(bvhFirst);
-            node.right -= static_cast<int>(bvhFirst);
-          }
-        }
         const PointBvhChunk localChunk{0, static_cast<int>(count), 0, 0,
                                        static_cast<int>(bvhCount)};
         freePointChunk();
