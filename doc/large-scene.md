@@ -1903,6 +1903,12 @@ The Vulkan flat upload path independently bounds device residency with
 `TUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144). It uploads/traces one BLAS/AS
 at a time and reduces nearest hits before shading, so a large non-instanced
 scene does not require one monolithic 8-GiB GPU allocation.
+Vulkan Gaussian splats are represented by bounded analytic BVH chunks. If the
+point descriptor/node buffers cannot be allocated, tusdview reports the
+allocation failure and falls back to camera-facing raster splats instead of
+binding null Vulkan buffers. `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB=N` forces a
+point-buffer ceiling for regression tests; when available, the Vulkan memory
+budget is also used to leave 256 MiB of headroom.
 For raster camera-facing helper geometry, Vulkan uses fence-retired upload
 buffers of at most 262,144 vertices per draw range; ranges are kept in separate
 buffers until the frame completes, avoiding unsafe reuse of a buffer recorded
