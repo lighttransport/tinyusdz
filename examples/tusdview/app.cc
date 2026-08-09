@@ -3981,6 +3981,14 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
   ++rendererGeneration_;
   renderer_->setDevicePreference(devicePreference_);
+  const size_t rtTextureBudget =
+      loadOpts_.textureOptions.textureBudgetMB > 0
+          ? static_cast<size_t>(loadOpts_.textureOptions.textureBudgetMB) *
+                1024ull * 1024ull
+          : (loadOpts_.textureGpuBudgetBytes > 0
+                 ? loadOpts_.textureGpuBudgetBytes / 4u
+                 : 0u);
+  renderer_->setRtTextureBudgetBytes(rtTextureBudget);
   if (headless_) renderer_->setHeadlessSize(winW, winH);
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)

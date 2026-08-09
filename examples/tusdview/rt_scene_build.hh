@@ -116,7 +116,8 @@ struct PointBvhChunk {
 void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
                            const std::vector<DrawMaterialCPU>& materials,
                            HostTextureTable* out,
-                           const std::vector<DrawLightCPU>* lights = nullptr);
+                           const std::vector<DrawLightCPU>* lights = nullptr,
+                           size_t maxTexelBytes = 0);
 
 // Build camera-independent solid approximations for Points and Curves. RT
 // backends consume these; raster backends retain the original carriers and
