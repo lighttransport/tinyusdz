@@ -1546,19 +1546,16 @@ int main(int argc, char **argv) {
     }
 #endif
 
-    bool has_triangle_geometry = false;
-    for (const RTPreviewStats::MeshGeometry &geo : geos) {
-      if (geo.positions.size() >= 9 && geo.indices.size() >= 3) {
-        has_triangle_geometry = true;
-        break;
-      }
-    }
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
-    if ((opt.vulkan || opt.use_d3d || opt.hip) && has_flat_curves &&
-        !has_triangle_geometry) {
+    if ((opt.vulkan || opt.use_d3d || opt.hip) && has_flat_curves) {
       // Flat/ribbon curves are view-dependent and are not suitable for the
-      // round-curve tessellator. Retain the direct CPU implementation until a
-      // Vulkan ribbon primitive is available.
+      // round-curve tessellator. The old condition only fell back for a
+      // curves-only scene, silently dropping flat curves when meshes were also
+      // present. Retain the complete direct scene until a Vulkan/HIP ribbon
+      // carrier is available; correctness is more important than a partial
+      // GPU image.
+      std::cerr << "GPU curve fallback: authored flat/ribbon curves require "
+                   "the direct CPU path.\n";
       return RunRTPreviewNext(opt);
     }
 #endif

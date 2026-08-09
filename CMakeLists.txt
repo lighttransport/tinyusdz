@@ -2371,6 +2371,7 @@ if(TINYUSDZ_BUILD_TESTS)
         frames-framespec
         geomsubset-materials
         hermite-curves
+        mixed-flat-curve-fallback
         ibl-specular-bound
         instancer-invisible-ids
         instancer-orientation
