@@ -2192,33 +2192,70 @@ bool PrimHasAnimatedXform(const tinyusdz::next::UsdPrim &prim) {
   return false;
 }
 
-// True if the mesh's renderable per-frame data is time-sampled. Points/topology
-// affect the BVH directly; authored normals affect the parallel smooth-shading
-// buffer, which is rebuilt alongside geometry when `-smooth` is active.
-bool MeshHasAnimatedGeom(const tinyusdz::next::UsdPrim &prim) {
-  const std::vector<tinyusdz::next::Path> *blend_targets =
-      prim.GetRelationship("skel:blendShapeTargets");
-  return prim.HasTimeSamples("points") ||
-         prim.HasTimeSamples("faceVertexIndices") ||
-         prim.HasTimeSamples("faceVertexCounts") ||
-         prim.HasTimeSamples("normals") ||
-         prim.HasTimeSamples("primvars:normals") ||
-         (blend_targets && !blend_targets->empty());
+// True if a renderable prim's authored per-frame data is time-sampled. Points/
+// topology affect the BVH directly; authored normals affect the parallel
+// smooth-shading buffer, which is rebuilt alongside geometry when `-smooth` is
+// active.
+bool GeometryPrimHasAnimatedData(const tinyusdz::next::UsdPrim &prim) {
+  const std::string &type = prim.GetTypeName();
+  if (type == "Mesh") {
+    const std::vector<tinyusdz::next::Path> *blend_targets =
+        prim.GetRelationship("skel:blendShapeTargets");
+    return prim.HasTimeSamples("points") ||
+           prim.HasTimeSamples("faceVertexIndices") ||
+           prim.HasTimeSamples("faceVertexCounts") ||
+           prim.HasTimeSamples("normals") ||
+           prim.HasTimeSamples("primvars:normals") ||
+           (blend_targets && !blend_targets->empty());
+  }
+  if (type == "BasisCurves" || type == "NurbsCurves" || type == "Points") {
+    return prim.HasTimeSamples("points") || prim.HasTimeSamples("widths") ||
+           prim.HasTimeSamples("normals") ||
+           prim.HasTimeSamples("curveVertexCounts") ||
+           prim.HasTimeSamples("velocities") ||
+           prim.HasTimeSamples("accelerations");
+  }
+  if (type == "ParticleField3DGaussianSplat") {
+    return prim.HasTimeSamples("positions") ||
+           prim.HasTimeSamples("scales") ||
+           prim.HasTimeSamples("orientations") ||
+           prim.HasTimeSamples("opacities") ||
+           prim.HasTimeSamples("sh");
+  }
+  if (type == "PointInstancer" || type == "UsdGeomPointInstancer") {
+    return prim.HasTimeSamples("positions") ||
+           prim.HasTimeSamples("orientations") ||
+           prim.HasTimeSamples("scales") ||
+           prim.HasTimeSamples("protoIndices") ||
+           prim.HasTimeSamples("invisibleIds");
+  }
+  return false;
 }
 
-// True if the subtree contains a rendered (masked) Mesh whose world-space
-// geometry varies with time: either the mesh's own points/topology are
-// time-sampled, or some xform op on the path (this prim or an ancestor) is.
-// Cameras and non-rendered prims are ignored, so camera-only animation does not
-// flag the geometry as dynamic (the BVH can then be reused across frames).
+bool IsRenderableGeometryPrim(const tinyusdz::next::UsdPrim &prim) {
+  const std::string &type = prim.GetTypeName();
+  return type == "Mesh" || type == "BasisCurves" ||
+         type == "NurbsCurves" || type == "Points" ||
+         type == "ParticleField3DGaussianSplat" ||
+         type == "PointInstancer" || type == "UsdGeomPointInstancer";
+}
+
+bool RenderablePrimHasAnimatedGeom(const tinyusdz::next::UsdPrim &prim) {
+  return GeometryPrimHasAnimatedData(prim);
+}
+
+// True if the subtree contains rendered (masked) geometry whose world-space
+// data varies with time: authored geometry or some xform op on the path (this
+// prim or an ancestor) is animated. Cameras and non-rendered prims are ignored,
+// so camera-only animation does not flag the BVH as dynamic.
 bool SubtreeGeometryAnimated(const tinyusdz::next::UsdPrim &prim,
                              const std::vector<std::string> &mask,
                              bool ancestor_xform_animated) {
   const bool xform_anim =
       ancestor_xform_animated || PrimHasAnimatedXform(prim);
-  if (prim.GetTypeName() == "Mesh" &&
+  if (IsRenderableGeometryPrim(prim) &&
       PathMatchesMask(prim.GetPath().str(), mask)) {
-    if (xform_anim || MeshHasAnimatedGeom(prim)) return true;
+    if (xform_anim || RenderablePrimHasAnimatedGeom(prim)) return true;
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
     if (SubtreeGeometryAnimated(child, mask, xform_anim)) return true;
@@ -5676,6 +5713,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   MemBudget::Get().SnapshotBase();
 
   ctx.up_axis = GetUpAxis(ctx.stage.GetUpAxis());
+  ctx.geometry_animated = SceneGeometryAnimated(ctx.stage, opt.mask);
 
   // Initial time: default value unless -timecode was given. -defaultTime forces
   // the default (NaN) explicitly.
@@ -5721,6 +5759,24 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   if (opt.stats && !ctx.lights.mesh.empty())
     std::cerr << "rt mesh light triangles: " << ctx.lights.mesh.size() << "\n";
 
+  // Extraction/BVH construction and mesh-light collection have consumed all
+  // static authored geometry needed by the renderer. Releasing those source
+  // arrays avoids retaining a second full copy beside the traced scene. Keep
+  // animated scenes intact: later -frames extraction must still read defaults
+  // and time samples from the Stage.
+  if (!ctx.geometry_animated) {
+    const tinyusdz::next::Stage::StaticGeometryReleaseStats released =
+        ctx.stage.ReleaseStaticGeometryArrays();
+    ctx.released_static_geometry_bytes = released.estimated_payload_bytes;
+    if (released.property_count != 0) {
+      std::cerr << "next: released " << released.property_count
+                << " static geometry arrays ("
+                << (double(released.estimated_payload_bytes) /
+                    (1024.0 * 1024.0))
+                << " MiB) after extraction\n";
+    }
+  }
+
   return true;
 }
 
@@ -5757,6 +5813,11 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
 void PrintRTStats(const RenderContext &ctx) {
   std::cerr << "rt preview: 1\n";
   std::cerr << "rt loader: next\n";
+  if (ctx.released_static_geometry_bytes != 0)
+    std::cerr << "rt released static geometry: "
+              << (double(ctx.released_static_geometry_bytes) /
+                  (1024.0 * 1024.0))
+              << " MiB\n";
   std::cerr << "rt meshes: " << ctx.stats.meshes << "\n";
   std::cerr << "rt skipped meshes: " << ctx.stats.skipped_meshes << "\n";
   std::cerr << "rt missing textures: " << ctx.stats.missing_textures << "\n";

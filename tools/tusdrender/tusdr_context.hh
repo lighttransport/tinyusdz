@@ -51,6 +51,11 @@ struct RenderContext {
   int height{540};
   // Time at which geometry + transforms are evaluated (NaN = default value).
   double frame_time{std::numeric_limits<double>::quiet_NaN()};
+  // Once the initial extraction has proved that rendered Mesh geometry is
+  // static, authored non-time-sampled geometry can be dropped from the
+  // composed Stage. Animated scenes retain it for per-frame re-streaming.
+  bool geometry_animated{false};
+  size_t released_static_geometry_bytes{0};
   double load_seconds{0.0}, stream_seconds{0.0}, bvh_seconds{0.0};
 
   // Free the TLAS before the BLAS scenes it references (blas[] destructs after
