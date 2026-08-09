@@ -335,7 +335,17 @@ void CollectGpuPointsRec(
     for (size_t i = 0; i + 2 < points.size(); i += 3) {
       const Vec3 p = TransformPoint(world, Vec3{points[i], points[i + 1],
                                                 points[i + 2]});
-      const float w = (i / 3 < widths.size()) ? widths[i / 3] : 0.05f;
+      const size_t pointIndex = i / 3;
+      const float authoredWidth =
+          widths.empty()
+              ? 0.05f
+              : (widths.size() == 1
+                     ? widths[0]
+                     : (pointIndex < widths.size() ? widths[pointIndex]
+                                                    : widths.back()));
+      const float w = std::isfinite(authoredWidth)
+                          ? std::max(0.0f, authoredWidth)
+                          : 0.0f;
       const float sx = Length(TransformVector(world, Vec3{1.0f, 0.0f, 0.0f}));
       const float sy = Length(TransformVector(world, Vec3{0.0f, 1.0f, 0.0f}));
       const float sz = Length(TransformVector(world, Vec3{0.0f, 0.0f, 1.0f}));
