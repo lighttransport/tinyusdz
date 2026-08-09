@@ -5718,6 +5718,22 @@ void PrintRTStats(const RenderContext &ctx) {
   if (ctx.stats.skipped_curves > 0)
     std::cerr << "rt skipped curves: " << ctx.stats.skipped_curves
               << " (invalid data: " << ctx.stats.invalid_curve_data << ")\n";
+  size_t round_curve_segments = 0, flat_curve_segments = 0;
+  size_t round_curve_chunks = ctx.direct.round_curve_chunks.size();
+  size_t flat_curve_chunks = ctx.direct.flat_curve_chunks.size();
+  for (const CurveSceneChunk &chunk : ctx.direct.round_curve_chunks)
+    round_curve_segments += chunk.info.size();
+  for (const CurveSceneChunk &chunk : ctx.direct.flat_curve_chunks)
+    flat_curve_segments += chunk.info.size();
+  if (round_curve_chunks != 0 || flat_curve_chunks != 0) {
+    const size_t metadata_bytes =
+        (round_curve_segments + flat_curve_segments) * sizeof(TriInfo);
+    std::cerr << "rt native curve chunks: round " << round_curve_chunks
+              << " (" << round_curve_segments << " segments), flat "
+              << flat_curve_chunks << " (" << flat_curve_segments
+              << " segments), metadata "
+              << double(metadata_bytes) / (1024.0 * 1024.0) << " MiB\n";
+  }
   size_t native_gaussian_count = 0;
   for (const EllipseSceneChunk &chunk : ctx.direct.ellipse_chunks)
     native_gaussian_count += chunk.info.size();
