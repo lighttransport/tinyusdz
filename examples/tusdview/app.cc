@@ -1587,7 +1587,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   // Threaded GL: the per-mesh progressive upload would free CPU geometry on the
   // main thread before the render thread drains the queued appendMesh ops (a
   // use-after-free). Use the one-shot uploadScene path instead (load stays async);
-  // progressive-threaded streaming is a follow-up.
+  // non-threaded GL/Vulkan raster paths use the bounded event stream.
   if (renderThreadActive_) progressive = false;
   if (!alreadyUploaded) {
     clearDeferredMeshAux();
@@ -2782,9 +2782,11 @@ void App::startLoadAsync(const std::string& path) {
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   renderThreadOwnsContext = renderThreadActive_;
 #endif
-  const bool progressiveStream =
-      useNext && backend_ == Backend::GL && !rt && !cudaRt_ && !hipRt_ &&
-      !renderThreadOwnsContext;
+  // Both raster backends consume the same bounded producer/consumer events.
+  // Keep RT/CUDA/HIP on their scene-owned paths, but do not make Vulkan raster
+  // materialize the complete DrawScene before the first upload.
+  const bool progressiveStream = useNext && !rt && !cudaRt_ && !hipRt_ &&
+                                 !renderThreadOwnsContext;
   if (progressiveStream) {
     const size_t maxBytes =
         opts.streamBufferBytes ? opts.streamBufferBytes : (size_t(64) << 20);

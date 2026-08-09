@@ -186,11 +186,13 @@ displays it with an ImGui docking UI.
     hierarchy is built, and textures/materials are decoded on completion (see
     `mesh_build.cc: BuildDrawSceneStreaming`). It produces a `DrawScene` identical
     to the monolithic `ConvertToRenderScene` + `BuildDrawScene` path.
-  - After the worker finishes, meshes are **streamed to the GPU progressively**
-    (time-budgeted per frame) so geometry pops in incrementally, then **textures
-    stream in lazily** (surfaces show base color until their texture lands).
-    The render loop never stalls on one big upload. Headless `--frames`
-    uploads synchronously for deterministic screenshots.
+  - Non-threaded OpenGL and Vulkan raster loads use a bounded producer/consumer
+    stream: meshes are **streamed to the GPU progressively** (time-budgeted per
+    frame) so geometry pops in incrementally, then **textures stream in lazily**
+    (surfaces show base color until their texture lands). The render loop never
+    stalls on one big upload. RT/CUDA/HIP paths retain their scene-owned upload
+    paths, and headless `--frames` drains the stream synchronously for
+    deterministic screenshots.
   - With an authored `--camera` (including the Caldera profile default), mesh
     admission inherits model/district extents and ranks conservative in-view
     bounds first. Static material batches are capped at 512K vertices during
