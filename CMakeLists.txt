@@ -1394,7 +1394,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   endif()
 
   set_source_files_properties(${TINYUSDZ_SOURCES}
-                              PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+                              PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
 
   # nlohmann/json is vendored third-party code. Clang 21's -Weverything emits
   # diagnostics from its header during template instantiation, so suppress only
@@ -1424,7 +1424,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
   if (TINYUSDZ_WITH_C_API)
     set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
-                                PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+                                PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
   endif()
 
 # Increase warning level for gcc.
@@ -1440,11 +1440,11 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   endif()
 
   set_source_files_properties(${TINYUSDZ_SOURCES}
-                              PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+                              PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
 
   if (TINYUSDZ_WITH_C_API)
     set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
-                                PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+                                PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
   endif()
 endif()
 
@@ -1456,11 +1456,11 @@ if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
   #if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     set(TUSDZ_CUSTOM_COMPILE_FLAGS "-fstack-usage ")
     set_source_files_properties(${TINYUSDZ_SOURCES}
-                              PROPERTIES COMPILE_FLAGS ${TUSDZ_CUSTOM_COMPILE_FLAGS})
+                              PROPERTIES COMPILE_FLAGS "${TUSDZ_CUSTOM_COMPILE_FLAGS}")
 
     if (TINYUSDZ_WITH_C_API)
       set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
-                                  PROPERTIES COMPILE_FLAGS ${TUSDZ_CUSTOM_COMPILE_FLAGS})
+                                  PROPERTIES COMPILE_FLAGS "${TUSDZ_CUSTOM_COMPILE_FLAGS}")
     endif()
   #endif()
 endif()
