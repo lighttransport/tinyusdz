@@ -8682,6 +8682,17 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
         c[0] *= s.colors[i * 3]; c[1] *= s.colors[i * 3 + 1];
         c[2] *= s.colors[i * 3 + 2];
       }
+      // HelperVertex is an RGB carrier (the overlay pipeline is opaque), so
+      // mirror the GL/RT fallback's displayOpacity behavior by premultiplying
+      // the authored opacity into the color.  This also keeps constant opacity
+      // (one value for the whole prim) distinct from per-point opacity.
+      if (!s.opacities.empty()) {
+        const size_t oi = s.opacities.size() == 1
+                              ? 0
+                              : std::min(i, s.opacities.size() - 1);
+        const float opacity = std::max(0.0f, std::min(1.0f, s.opacities[oi]));
+        c[0] *= opacity; c[1] *= opacity; c[2] *= opacity;
+      }
     };
     auto addQuad = [&](const float p0[3], const float p1[3], const float side[3],
                        float width, const float c[3]) {
