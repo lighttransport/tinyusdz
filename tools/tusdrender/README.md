@@ -55,6 +55,11 @@ For GPU mesh previews, next-loader traversal records are also collected and
 converted one stage root at a time. This keeps large instancer/job lists from
 being retained alongside the world-space geometry waiting for the GPU chunk
 upload; the final nearest-hit reduction and material order are unchanged.
+After a base BLAS group or mesh prototype is streamed, its consumed job records
+and GeomSubset face masks are released before the next prototype build. Curve
+job records are released immediately after native curve extraction as well, so
+subset-heavy instanced scenes do not retain authored job metadata throughout
+the entire BLAS/TLAS build.
 
 The flat next-loader mesh path also splits its native LightRT triangle BVH when
 needed. `TUSDR_TRIANGLE_CHUNK=N` sets the triangle limit (default 262,144);
