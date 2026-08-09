@@ -4422,6 +4422,11 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   // them via the DirectScene path in both the flat and TLAS render modes.
   if (!BuildNextCurves(ctx, curve_jobs, time)) return false;
   ctx.stats.curve_strands = curve_jobs.size();
+  // Curve extraction has copied the render-ready data into ctx.direct. The
+  // authored prim handles/world transforms are no longer needed by this build
+  // phase; releasing them before mesh material/BLAS work avoids carrying one
+  // scene-wide job table alongside the acceleration data.
+  std::vector<CurveJobNext>().swap(curve_jobs);
 
   lrt_tri_build_options build_opts;
   std::memset(&build_opts, 0, sizeof(build_opts));
@@ -4647,6 +4652,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     if (base_group_idx.empty()) base_group_idx.emplace_back();  // keep blas[0]
   }
   const size_t n_base_groups = base_group_idx.size();
+  const size_t base_job_count = base_jobs.size();
 
   // blas layout: [0] base group 0, [1..P] mesh protos, [P+1..P+C] curve protos,
   // [P+C+1..] base groups 1..n-1 (appended so proto/curve ids stay stable).
@@ -4674,7 +4680,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       const uint32_t b = base_blas_id(g);
       std::vector<MeshJobNext> gjobs;
       gjobs.reserve(base_group_idx[g].size());
-      for (size_t ji : base_group_idx[g]) gjobs.push_back(base_jobs[ji]);
+      for (size_t ji : base_group_idx[g])
+        gjobs.push_back(std::move(base_jobs[ji]));
       if (!StreamMeshJobs(
               gjobs, opt.purpose_mask, &ctx.stage, time, want_uvs,
               /*purpose_cull=*/true,
@@ -4700,6 +4707,11 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     for (std::thread &th : gpool) th.join();
   }
   for (const RTPreviewStats &gs : gstats) MergeStats(&ctx.stats, gs);
+  // Every base job has now been consumed by exactly one group. In particular,
+  // release GeomSubset face masks here; those can be one byte per authored face
+  // and otherwise overlap the subsequent prototype material/BLAS phase.
+  std::vector<MeshJobNext>().swap(base_jobs);
+  std::vector<std::vector<size_t>>().swap(base_group_idx);
   bool stream_ok = gstream_ok.load();
   // Each mesh prototype (local space) -> blas[blas_id].
   for (size_t i = 0; stream_ok && i < protos.size(); ++i) {
@@ -4719,6 +4731,10 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                                /*out_indices=*/static_cast<IdxVec *>(nullptr),
                                &ctx.textures,
                                opt.displace ? opt.displace_scale : 0.0f);
+    // The prototype's geometry and material data now live in ctx.blas[b].
+    // Do not retain the authored job records while the remaining prototypes
+    // build; this is significant for subset-heavy composed scenes.
+    std::vector<MeshJobNext>().swap(proto_jobs[i]);
   }
   if (!stream_ok) {
     std::cerr << "Aborting: triangle stream exceeded memory cap "
@@ -5273,7 +5289,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
     return false;
   }
-  ctx.stats.meshes = base_jobs.size() + instances.size();
+  ctx.stats.meshes = base_job_count + instances.size();
 
   lrt_result terr = LRT_RESULT_OK;
   ctx.tlas = lrt_tlas_build(blas_ptrs.data(), blas_ptrs.size(),
