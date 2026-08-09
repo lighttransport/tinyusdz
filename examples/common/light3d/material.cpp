@@ -660,7 +660,7 @@ float geometrySchlickGGX(float NoX, float roughness) {
     float k = (r * r) * 0.125;
     return NoX / max(NoX * (1.0 - k) + k, 1e-6);
 }
-
+)glsl" R"glsl(
 vec3 fresnelSchlick(float VoH, vec3 f0) {
     float f = pow(1.0 - clamp(VoH, 0.0, 1.0), 5.0);
     return f0 + (vec3(1.0) - f0) * f;
@@ -923,6 +923,7 @@ void main() {
             int tile = int(floor(vUV.x)) + 10 * int(floor(vUV.y));
             fragColor = vec4(idColor(tile), 1.0); return;
         }
+)glsl" R"glsl(
         if (uRenderMode == 34) {                                                             // source USD face id
             int fid = uHasFaceId ? int(texelFetch(uFaceIdTex, uFaceBase + gl_PrimitiveID).r) : -1;
             fragColor = vec4(idColor(fid), 1.0); return;
