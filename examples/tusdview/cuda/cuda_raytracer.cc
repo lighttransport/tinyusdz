@@ -249,14 +249,18 @@ void CudaRayTracer::freeScene() {
   F(dPointCenters_); F(dPointMajorAxes_); F(dPointNormals_);
   F(dPointRadii_); F(dPointColors_);
   F(dPointOrder_); F(dPointBvh_); F(dPointChunks_);
+  F(dPointDepth_);
   numVols_ = 0;
   numMats_ = 0;
   numLights_ = 0;
   numTextures_ = 0;
   pointCount_ = 0;
   pointChunkCount_ = 0;
-  outCap_ = 0; accumCap_ = 0; triCount_ = 0; nodeCount_ = 0;
+  outCap_ = 0; accumCap_ = 0; pointDepthCap_ = 0;
+  triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
+  pointPaging_ = false;
+  pointHost_.reset();
 }
 
 bool CudaRayTracer::init(std::string* err) {
@@ -432,10 +436,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
                     std::to_string(hs.pointCount) + ")";
     return false;
   }
-  // Reject an oversized analytic-point upload before allocating the many
-  // preceding scene buffers. The current CUDA kernel keeps all point records
-  // resident for one trace; its BVH chunks bound traversal metadata, but do
-  // not yet page the point records themselves.
+  // Keep an oversized analytic-point field on the host and page one BVH chunk
+  // at trace time. The normal path still keeps all records resident for speed.
   const uint64_t gaussianBytes =
       uint64_t(hs.pointCenters.size()) * sizeof(float) +
       uint64_t(hs.pointMajorAxes.size()) * sizeof(float) +
@@ -461,21 +463,32 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
     }
   }
   if (gaussianBudget != 0 && gaussianBytes > gaussianBudget) {
-    if (err) {
-      *err = "CUDA: Gaussian point buffers require " +
-             std::to_string(gaussianBytes) + " bytes, exceeding the available " +
-             std::to_string(gaussianBudget) +
-             " byte GPU budget; reduce splat count or raise "
-             "TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB";
-    }
-    return false;
+    pointPaging_ = true;
+    pointHost_.reset(new HostScene());
+    pointHost_->pointCenters = std::move(hs.pointCenters);
+    pointHost_->pointMajorAxes = std::move(hs.pointMajorAxes);
+    pointHost_->pointNormals = std::move(hs.pointNormals);
+    pointHost_->pointRadii = std::move(hs.pointRadii);
+    pointHost_->pointColors = std::move(hs.pointColors);
+    pointHost_->pointOrder = std::move(hs.pointOrder);
+    pointHost_->pointBvh = std::move(hs.pointBvh);
+    pointHost_->pointChunks = std::move(hs.pointChunks);
+    pointHost_->pointCount = hs.pointCount;
+    hs.pointCount = 0;
+    std::fprintf(stderr,
+                 "CUDA Gaussian buffers: %.1f MiB exceed %.1f MiB; paging %zu chunk(s)\n",
+                 double(gaussianBytes) / (1024.0 * 1024.0),
+                 double(gaussianBudget) / (1024.0 * 1024.0),
+                 pointHost_->pointChunks.size());
   }
   if (gaussianBytes > 0) {
     std::fprintf(stderr, "CUDA Gaussian buffers: %.1f MiB%s\n",
                  double(gaussianBytes) / (1024.0 * 1024.0),
-                 gaussianBudget ? " (within GPU budget)" : "");
+                 pointPaging_ ? " (paged)"
+                              : (gaussianBudget ? " (within GPU budget)" : ""));
   }
-  pointCount_ = static_cast<int>(hs.pointCount);
+  pointCount_ = static_cast<int>(pointPaging_ ? pointHost_->pointCount
+                                              : hs.pointCount);
 
   if (progress) { progress->phase = 3; progress->done = 0; progress->total = 0; }  // upload
   // Upload every array to the device.
@@ -542,16 +555,18 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
     if (!up(hs.volParams.data(), hs.volParams.size() * sizeof(HostVolParam), &dVolParams_))
       return false;
   }
-  if (!up(hs.pointCenters.data(), hs.pointCenters.size() * sizeof(float), &dPointCenters_)) return false;
-  if (!up(hs.pointMajorAxes.data(), hs.pointMajorAxes.size() * sizeof(float), &dPointMajorAxes_)) return false;
-  if (!up(hs.pointNormals.data(), hs.pointNormals.size() * sizeof(float), &dPointNormals_)) return false;
-  if (!up(hs.pointRadii.data(), hs.pointRadii.size() * sizeof(float), &dPointRadii_)) return false;
-  if (!up(hs.pointColors.data(), hs.pointColors.size() * sizeof(float), &dPointColors_)) return false;
-  if (!up(hs.pointOrder.data(), hs.pointOrder.size() * sizeof(int), &dPointOrder_)) return false;
-  if (!up(hs.pointBvh.data(), hs.pointBvh.size() * sizeof(Node), &dPointBvh_)) return false;
-  pointChunkCount_ = static_cast<int>(hs.pointChunks.size());
-  if (!up(hs.pointChunks.data(), hs.pointChunks.size() * sizeof(PointBvhChunk),
-          &dPointChunks_)) return false;
+  if (!pointPaging_) {
+    if (!up(hs.pointCenters.data(), hs.pointCenters.size() * sizeof(float), &dPointCenters_)) return false;
+    if (!up(hs.pointMajorAxes.data(), hs.pointMajorAxes.size() * sizeof(float), &dPointMajorAxes_)) return false;
+    if (!up(hs.pointNormals.data(), hs.pointNormals.size() * sizeof(float), &dPointNormals_)) return false;
+    if (!up(hs.pointRadii.data(), hs.pointRadii.size() * sizeof(float), &dPointRadii_)) return false;
+    if (!up(hs.pointColors.data(), hs.pointColors.size() * sizeof(float), &dPointColors_)) return false;
+    if (!up(hs.pointOrder.data(), hs.pointOrder.size() * sizeof(int), &dPointOrder_)) return false;
+    if (!up(hs.pointBvh.data(), hs.pointBvh.size() * sizeof(Node), &dPointBvh_)) return false;
+    pointChunkCount_ = static_cast<int>(hs.pointChunks.size());
+    if (!up(hs.pointChunks.data(), hs.pointChunks.size() * sizeof(PointBvhChunk),
+            &dPointChunks_)) return false;
+  }
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
   if (!up(hs.matBase.data(), hs.matBase.size() * sizeof(float), &dMatBase_)) return false;
   if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
@@ -622,6 +637,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
               dPR = dPointRadii_, dPCol = dPointColors_, dPO = dPointOrder_,
               dPB = dPointBvh_;
   CUdeviceptr dPChunks = dPointChunks_;
+  CUdeviceptr dDepth = 0;
   int numMats = numMats_;
   int numLights = numLights_;
   int numTextures = numTextures_;
@@ -633,16 +649,137 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,backMats,matPbr,matBase,
   // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
   // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
-  // volDens,volParams,numVols,emask,accum,sampleIdx,numSamples.
+  // volDens,volParams,numVols,emask,accum,sampleIdx,numSamples,hitDepth.
   void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dBM, &dMP, &dMB, &dML, &numMats, &dLP,
                   &numLights, &dMT, &dMTP, &dTx, &dTD, &numTextures, &dU, &dU1,
                   &dIn, &dF,  &dDw,
                   &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
                   &dVD, &dVP, &numVols, &dEm, &dPC, &dPA, &dPN, &dPR, &dPCol,
                   &dPO, &dPB, &pointCount_, &dPChunks, &pointChunkCount_,
-                  &dAcc, &sampleIdx, &numSamples};
+                  &dAcc, &sampleIdx, &numSamples, &dDepth};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   rgba->resize(bytes);
+  if (pointPaging_ && pointHost_ && !pointHost_->pointChunks.empty()) {
+    const size_t pixels = size_t(w) * size_t(h);
+    if (pointDepthCap_ < pixels) {
+      if (dPointDepth_) cuMemFree(static_cast<CUdeviceptr>(dPointDepth_));
+      CUdeviceptr p = 0;
+      if (cuMemAlloc(&p, pixels * sizeof(float)) != CUDA_SUCCESS) {
+        if (err) *err = "CUDA Gaussian paging depth allocation failed";
+        freeScene();
+        return false;
+      }
+      dPointDepth_ = static_cast<uintptr_t>(p);
+      pointDepthCap_ = pixels;
+    }
+    dDepth = static_cast<CUdeviceptr>(dPointDepth_);
+    std::vector<uint8_t> best(bytes), chunkRgba(bytes);
+    std::vector<uint8_t> bestSet(pixels);
+    std::vector<float> bestDepth(pixels), chunkDepth(pixels);
+    std::vector<uint32_t> sums(pixels * 3, 0);
+    auto allocCopy = [&](const void* src, size_t n, CUdeviceptr* dst) {
+      *dst = 0;
+      if (cuMemAlloc(dst, n ? n : 1) != CUDA_SUCCESS) return false;
+      if (n && cuMemcpyHtoD(*dst, src, n) != CUDA_SUCCESS) {
+        cuMemFree(*dst); *dst = 0; return false;
+      }
+      return true;
+    };
+    auto freePointChunk = [&]() {
+      if (dPC) cuMemFree(dPC);
+      if (dPA) cuMemFree(dPA);
+      if (dPN) cuMemFree(dPN);
+      if (dPR) cuMemFree(dPR);
+      if (dPCol) cuMemFree(dPCol);
+      if (dPO) cuMemFree(dPO);
+      if (dPB) cuMemFree(dPB);
+      if (dPChunks) cuMemFree(dPChunks);
+      dPC = dPA = dPN = dPR = dPCol = dPO = dPB = dPChunks = 0;
+    };
+    const int totalPointCount = pointCount_;
+    const int totalPointChunks = pointChunkCount_;
+    dAcc = 0;
+    numSamples = 1;
+    pointChunkCount_ = 1;
+    for (int s = 0; s < samples; ++s) {
+      std::fill(bestDepth.begin(), bestDepth.end(),
+                std::numeric_limits<float>::infinity());
+      std::fill(bestSet.begin(), bestSet.end(), uint8_t{0});
+      RtPixelJitter(s, samples, &cam.sceneMin[3], &cam.sceneExtent[3]);
+      for (const PointBvhChunk& srcChunk : pointHost_->pointChunks) {
+        const size_t first = static_cast<size_t>(srcChunk.first);
+        const size_t count = static_cast<size_t>(srcChunk.count);
+        const size_t orderFirst = static_cast<size_t>(srcChunk.orderFirst);
+        const size_t bvhFirst = static_cast<size_t>(srcChunk.bvhFirst);
+        const size_t bvhCount = static_cast<size_t>(srcChunk.bvhCount);
+        std::vector<int> localOrder(count);
+        for (size_t i = 0; i < count; ++i)
+          localOrder[i] = pointHost_->pointOrder[orderFirst + i] -
+                          static_cast<int>(first);
+        std::vector<Node> localBvh(
+            pointHost_->pointBvh.begin() + bvhFirst,
+            pointHost_->pointBvh.begin() + bvhFirst + bvhCount);
+        for (Node& node : localBvh) {
+          if (node.count > 0) {
+            node.left -= static_cast<int>(bvhFirst);
+            node.right -= static_cast<int>(bvhFirst);
+          }
+        }
+        const PointBvhChunk localChunk{0, static_cast<int>(count), 0, 0,
+                                       static_cast<int>(bvhCount)};
+        freePointChunk();
+        if (!allocCopy(pointHost_->pointCenters.data() + first * 3,
+                       count * 3 * sizeof(float), &dPC) ||
+            !allocCopy(pointHost_->pointMajorAxes.data() + first * 3,
+                       count * 3 * sizeof(float), &dPA) ||
+            !allocCopy(pointHost_->pointNormals.data() + first * 3,
+                       count * 3 * sizeof(float), &dPN) ||
+            !allocCopy(pointHost_->pointRadii.data() + first * 2,
+                       count * 2 * sizeof(float), &dPR) ||
+            !allocCopy(pointHost_->pointColors.data() + first * 4,
+                       count * 4 * sizeof(float), &dPCol) ||
+            !allocCopy(localOrder.data(), localOrder.size() * sizeof(int), &dPO) ||
+            !allocCopy(localBvh.data(), localBvh.size() * sizeof(Node), &dPB) ||
+            !allocCopy(&localChunk, sizeof(localChunk), &dPChunks)) {
+          if (err) *err = "CUDA Gaussian paging chunk upload failed";
+          freePointChunk(); freeScene(); return false;
+        }
+        pointCount_ = static_cast<int>(count);
+        sampleIdx = s;
+        CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1,
+                             8, 8, 1, 0, nullptr, args, nullptr),
+              "cuLaunchKernel Gaussian paging");
+        CU_OK(cuCtxSynchronize(), "cuCtxSynchronize Gaussian paging");
+        CU_OK(cuMemcpyDtoH(chunkRgba.data(), static_cast<CUdeviceptr>(dOut_), bytes),
+              "cuMemcpyDtoH Gaussian paging color");
+        CU_OK(cuMemcpyDtoH(chunkDepth.data(), dDepth,
+                           pixels * sizeof(float)),
+              "cuMemcpyDtoH Gaussian paging depth");
+        for (size_t pidx = 0; pidx < pixels; ++pidx) {
+          if (!bestSet[pidx] || chunkDepth[pidx] < bestDepth[pidx]) {
+            bestDepth[pidx] = chunkDepth[pidx];
+            bestSet[pidx] = 1;
+            std::memcpy(&best[pidx * 4], &chunkRgba[pidx * 4], 4);
+          }
+        }
+      }
+      for (size_t pidx = 0; pidx < pixels; ++pidx) {
+        sums[pidx * 3 + 0] += best[pidx * 4 + 0];
+        sums[pidx * 3 + 1] += best[pidx * 4 + 1];
+        sums[pidx * 3 + 2] += best[pidx * 4 + 2];
+      }
+    }
+    freePointChunk();
+    pointCount_ = totalPointCount;
+    pointChunkCount_ = totalPointChunks;
+    for (size_t pidx = 0; pidx < pixels; ++pidx) {
+      (*rgba)[pidx * 4 + 0] = static_cast<uint8_t>(sums[pidx * 3 + 0] / samples);
+      (*rgba)[pidx * 4 + 1] = static_cast<uint8_t>(sums[pidx * 3 + 1] / samples);
+      (*rgba)[pidx * 4 + 2] = static_cast<uint8_t>(sums[pidx * 3 + 2] / samples);
+      (*rgba)[pidx * 4 + 3] = 255;
+    }
+    return true;
+  }
   // Launch one kernel per Halton-jittered sample; the kernel accumulates on the
   // device (float per channel, same math as the old host loop -- byte-identical)
   // and resolves into the RGBA8 output on the last sample. One synchronize + one

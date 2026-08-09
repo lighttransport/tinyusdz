@@ -141,10 +141,13 @@ displays it with an ImGui docking UI.
   octahedron/tube proxies. Vulkan raster drawing and viewport click-picking for
   these carriers remain roadmap items; mesh picking is unchanged.
 - Gaussian splat point carriers use analytic ellipses on Vulkan ray query and
-  CUDA/HIP. Their BVH metadata is chunked, and the CUDA/HIP loaders now reject
-  an oversized resident point-buffer allocation before scene upload with a
-  backend-specific budget diagnostic; multi-pass GPU point paging remains a
-  follow-up.
+  CUDA/HIP. Their BVH metadata is chunked; when CUDA/HIP point records exceed
+  the configured GPU budget, one point/BVH chunk is uploaded and traced at a
+  time, with nearest-depth/color reduction. The resident and paged paths are
+  pixel-identical on the regression scene, while the paged path trades GPU
+  memory for additional frame passes. `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB` can
+  rehearse a smaller device; otherwise the backend derives a ceiling from free
+  VRAM with headroom.
 - **Surface displacement** (`UsdPreviewSurface inputs:displacement` — constant or
   a height texture, honoring the `UsdUVTexture` `scale`/`bias`). The **raster**
   paths displace in the vertex shader (coarse, no extra geometry), with an opt-in

@@ -113,6 +113,7 @@ class HipRayTracer {
   uintptr_t dPointOrder_{0};
   uintptr_t dPointBvh_{0};
   uintptr_t dPointChunks_{0};
+  uintptr_t dPointDepth_{0};
   int pointCount_{0};
   int pointChunkCount_{0};
   int numVols_{0};           // UsdVol: volume count
@@ -120,6 +121,7 @@ class HipRayTracer {
   size_t outCap_{0};         // bytes currently allocated for dOut_
   uintptr_t dAccum_{0};      // float RGBA supersample accumulator (spp > 1)
   size_t accumCap_{0};       // bytes currently allocated for dAccum_
+  size_t pointDepthCap_{0};
 
   size_t triCount_{0};       // unique prototype triangles (geometry stored once)
   size_t instCount_{0};      // total instances (TLAS leaves)
@@ -134,6 +136,8 @@ class HipRayTracer {
   std::unique_ptr<HostScene> retained_;
   RefitMap refitMap_;
   size_t textureBudgetBytes_{0};
+  bool pointPaging_{false};
+  std::unique_ptr<HostScene> pointHost_;
 };
 
 }  // namespace tusdview

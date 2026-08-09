@@ -645,7 +645,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const Node* pointBvh, int pointCount,
                                  const PointBvhChunk* pointChunks,
                                  int pointChunkCount,
-                                 float* accum, int sampleIdx, int numSamples){
+                                 float* accum, int sampleIdx, int numSamples,
+                                 float* hitDepth){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
   if (px>=W||py>=H) return;
@@ -1357,6 +1358,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     outc=mk(linearToSrgb1(outc.x),linearToSrgb1(outc.y),linearToSrgb1(outc.z));
   }
   int idx=(py*W+px)*4;
+  if (hitDepth) hitDepth[py*W+px] = t;
   unsigned char qr=(unsigned char)(fminf(fmaxf(outc.x,0.f),1.f)*255.f+0.5f);
   unsigned char qg=(unsigned char)(fminf(fmaxf(outc.y,0.f),1.f)*255.f+0.5f);
   unsigned char qb=(unsigned char)(fminf(fmaxf(outc.z,0.f),1.f)*255.f+0.5f);

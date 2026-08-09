@@ -12,6 +12,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@
 namespace tusdview {
 
 struct BuildProgress;  // rt_scene_build.hh (background-build progress)
+struct HostScene;      // rt_scene_build.hh (paged Gaussian host storage)
 
 class CudaRayTracer {
  public:
@@ -119,6 +121,7 @@ class CudaRayTracer {
   uintptr_t dPointOrder_{0};
   uintptr_t dPointBvh_{0};
   uintptr_t dPointChunks_{0};
+  uintptr_t dPointDepth_{0};
   int pointCount_{0};
   int pointChunkCount_{0};
   int numVols_{0};           // UsdVol: volume count
@@ -126,6 +129,7 @@ class CudaRayTracer {
   size_t outCap_{0};         // bytes currently allocated for dOut_
   uintptr_t dAccum_{0};      // float RGBA supersample accumulator (spp > 1)
   size_t accumCap_{0};       // bytes currently allocated for dAccum_
+  size_t pointDepthCap_{0};
 
   size_t triCount_{0};       // unique prototype triangles (geometry stored once)
   size_t instCount_{0};      // total instances (TLAS leaves)
@@ -136,6 +140,8 @@ class CudaRayTracer {
   std::string deviceName_;
   std::string cacheDirectory_;
   size_t textureBudgetBytes_{0};
+  bool pointPaging_{false};
+  std::unique_ptr<HostScene> pointHost_;
 };
 
 }  // namespace tusdview
