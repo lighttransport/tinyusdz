@@ -1850,6 +1850,12 @@ point BVH now reuses the retained world-center stream instead of making another
 full center copy during construction. The ALab test retained 1,914,278 visible
 samples across 35 point prims and still completed native Vulkan RT setup in
 about 0.6 s at 32x32.
+Ordinary `UsdGeomPoints` now use the same lazy, bounded carrier emission, so
+large non-Gaussian particle fields no longer materialize a complete
+`RenderPoints` object before being copied into the viewer scene. Constant or
+per-point widths, normals, display color, and display opacity are sliced with
+each chunk; authored normals continue to select the analytic disk/oval RT
+carrier.
 
 Non-instanced round and flat curve strands use bounded native BVHs as well.
 Curve points are read through the lazy array-view path, and complete strands are

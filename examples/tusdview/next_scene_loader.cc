@@ -5373,27 +5373,126 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       continue;
     }
 
-    tydn::RenderPoints rp;
-    if (!conv.ConvertPoints(rec.prim, &rp) || rp.point_count() == 0) {
-      draw->skipped.push_back("Points '" + rec.path + "': conversion failed/empty");
+    // Ordinary Points use the same lazy-array path as Gaussian splats. Going
+    // through RenderPoints here would materialize the complete prim and then
+    // copy it again into DrawPointsCPU, which is a significant transient peak
+    // for particle fields that are not Gaussian schemas.
+    tydn::ValueArrayRead<float> points;
+    if (!tydn::ReadFloatArray(rec.prim, "points", time, &points) ||
+        points.empty() || (points.size() % 3) != 0) {
+      draw->skipped.push_back("Points '" + rec.path +
+                             "': missing/invalid points data");
       continue;
     }
-    DrawPointsCPU dp;
-    dp.name = rp.name;
-    dp.absPath = rec.path;
-    dp.purpose = rec.purpose;
-    dp.materialId = resolveMaterialPath(rec.material_path, std::string(),
-                                        std::string());
-    dp.colorsInterpolation = static_cast<int>(rp.colors_interp);
-    dp.opacitiesInterpolation = static_cast<int>(rp.opacities_interp);
-    copyChunked(rp.points, &dp.points);
-    copyChunked(rp.normals, &dp.normals);
-    copyChunked(rp.widths, &dp.widths);
-    copyChunked(rp.colors, &dp.colors);
-    copyChunked(rp.opacities, &dp.opacities);
-    RowMatrixToColumnMajor(rec.world, dp.world);
-    addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin, dp.aabbMax);
-    draw->points.push_back(std::move(dp));
+    const size_t n = points.size() / 3;
+    tydn::ValueArrayRead<float> normals;
+    const bool haveNormals =
+        tydn::ReadFloatArray(rec.prim, "normals", time, &normals) &&
+        normals.size() == n * 3;
+    if (!haveNormals && !normals.empty()) {
+      draw->skipped.push_back("Points '" + rec.path +
+                             "': ignoring mismatched normals");
+    }
+    tydn::ValueArrayRead<float> widths;
+    const bool haveWidths =
+        tydn::ReadFloatArray(rec.prim, "widths", time, &widths) &&
+        (widths.size() == 1 || widths.size() == n);
+    if (!haveWidths && !widths.empty()) {
+      draw->skipped.push_back("Points '" + rec.path +
+                             "': ignoring mismatched widths");
+    }
+
+    auto readPointAttribute = [&](const char* name, size_t components,
+                                  tydn::ValueArrayRead<float>* value,
+                                  int* interpolation) -> bool {
+      if (!tydn::ReadFloatArray(rec.prim, name, time, value) ||
+          value->empty() || value->size() % components != 0) {
+        return false;
+      }
+      const size_t elems = value->size() / components;
+      std::string interpTok;
+      if (const tnext::PrimSpec* spec = rec.prim.GetPrimSpec()) {
+        if (const tnext::PropMeta* pm = spec->property_meta(name)) {
+          if (pm->authored & tnext::PropMeta::kInterpolation)
+            interpTok = pm->interpolation;
+        }
+      }
+      const bool constant = interpTok == "constant" ||
+                            (interpTok.empty() && elems == 1);
+      if (constant && elems == 1) {
+        *interpolation = 0;
+        return true;
+      }
+      if (!constant && elems == n) {
+        *interpolation = 1;
+        return true;
+      }
+      return false;
+    };
+
+    tydn::ValueArrayRead<float> colors, opacities;
+    int colorsInterpolation = 0;
+    int opacitiesInterpolation = 0;
+    const bool haveColors = readPointAttribute(
+        "primvars:displayColor", 3, &colors, &colorsInterpolation);
+    const bool haveOpacities = readPointAttribute(
+        "primvars:displayOpacity", 1, &opacities, &opacitiesInterpolation);
+    if (!haveColors && !colors.empty())
+      draw->skipped.push_back("Points '" + rec.path +
+                             "': ignoring mismatched displayColor");
+    if (!haveOpacities && !opacities.empty())
+      draw->skipped.push_back("Points '" + rec.path +
+                             "': ignoring mismatched displayOpacity");
+
+    const size_t chunkSize = opts.pointChunkSamples != 0
+                                 ? opts.pointChunkSamples
+                                 : size_t(64) * 1024;
+    const int materialId = resolveMaterialPath(
+        rec.material_path, std::string(), std::string());
+    size_t emitted = 0;
+    for (size_t first = 0; first < n; first += chunkSize) {
+      const size_t last = std::min(n, first + chunkSize);
+      DrawPointsCPU dp;
+      dp.name = rec.prim.GetName();
+      dp.absPath = rec.path;
+      dp.purpose = rec.purpose;
+      dp.materialId = materialId;
+      dp.colorsInterpolation = colorsInterpolation;
+      dp.opacitiesInterpolation = opacitiesInterpolation;
+      dp.points.insert(dp.points.end(), points.begin() + first * 3,
+                       points.begin() + last * 3);
+      if (haveNormals)
+        dp.normals.insert(dp.normals.end(), normals.begin() + first * 3,
+                          normals.begin() + last * 3);
+      if (haveWidths) {
+        if (widths.size() == 1)
+          dp.widths.push_back(widths.begin()[0]);
+        else
+          dp.widths.insert(dp.widths.end(), widths.begin() + first,
+                           widths.begin() + last);
+      }
+      if (haveColors) {
+        if (colorsInterpolation == 0)
+          dp.colors.insert(dp.colors.end(), colors.begin(), colors.begin() + 3);
+        else
+          dp.colors.insert(dp.colors.end(), colors.begin() + first * 3,
+                           colors.begin() + last * 3);
+      }
+      if (haveOpacities) {
+        if (opacitiesInterpolation == 0)
+          dp.opacities.push_back(opacities.begin()[0]);
+        else
+          dp.opacities.insert(dp.opacities.end(), opacities.begin() + first,
+                              opacities.begin() + last);
+      }
+      RowMatrixToColumnMajor(rec.world, dp.world);
+      addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin,
+                       dp.aabbMax);
+      emitted += last - first;
+      draw->points.push_back(std::move(dp));
+    }
+    if (emitted == 0)
+      draw->skipped.push_back("Points '" + rec.path + "': no samples");
   }
 
   // RenderCurves already contains tessellated centerlines for Basis, NURBS and
