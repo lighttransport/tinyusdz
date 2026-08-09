@@ -1872,6 +1872,9 @@ worker-sized batches; `TUSDVIEW_RT_BUILD_BATCH_MESHES=N` overrides the default
 of twice the worker count when a tighter CPU-memory ceiling is needed. This
 avoids retaining intermediate geometry for the entire scene while later meshes
 are still waiting for assembly.
+Points and curve CPU fallback proxies are also split at
+`TUSDVIEW_RT_PROXY_CHUNK_TRIS=N` (default 262,144), so a large non-analytic
+field cannot create one monolithic proxy before RT batching begins.
 
 The native RT texture table is usage-driven. It marks material texture slots
 and environment-light maps before decoding/packing, then leaves unreferenced
