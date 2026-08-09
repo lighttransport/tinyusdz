@@ -2563,7 +2563,7 @@ bool EndsWithPtx(const std::string& s) {
 std::string ResolveSiblingAsset(const std::string& resolved,
                                 const std::string& rel) {
   if (rel.empty()) return std::string();
-  if (rel[0] == '/') return rel;
+  if (tinyusdz::io::IsAbsPath(rel)) return rel;
   const size_t p = resolved.find_last_of('/');
   if (p == std::string::npos) return rel;
   return resolved.substr(0, p + 1) + rel;
@@ -4336,7 +4336,7 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
       if (textureFile && !textureFile->empty()) {
         light.textureFile = *textureFile;
         std::string tpath = *textureFile;
-        if (!tpath.empty() && tpath[0] != '/' && !baseDir.empty()) {
+        if (!tpath.empty() && !tinyusdz::io::IsAbsPath(tpath) && !baseDir.empty()) {
           tpath = baseDir + "/" + tpath;
         }
         if (texOpts.domeIbl > 0 && TexToolsAvailable()) {
@@ -4526,7 +4526,7 @@ void BuildNextVolumes(const tnext::Stage& stage, const std::string& usdPath,
 
         // Resolve the asset path relative to the USD file directory.
         std::string vpath = *ap;
-        if (!vpath.empty() && vpath[0] != '/' && !baseDir.empty()) {
+        if (!vpath.empty() && !tinyusdz::io::IsAbsPath(vpath) && !baseDir.empty()) {
           vpath = baseDir + "/" + vpath;
         }
         std::vector<tinyusdz::usdVol::VDBGrid> grids;

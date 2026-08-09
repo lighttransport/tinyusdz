@@ -1092,14 +1092,27 @@ int main(int argc, char **argv) {
 
   for (size_t i = 1; i < argc; i++) {
     std::string arg = argv[i];
-    if ((arg.compare("-h") == 0) || (arg.compare("--help") ==0)) {
+    bool arg_matched = false;
+    // NOTE: this ~40-branch else-if chain on CLI flag string `arg` was
+    // converted to standalone ifs -- same MSVC C1061 ("blocks nested too
+    // deeply") risk class already fixed for the same reason elsewhere in
+    // this codebase (crate-writer-values.cc, stage-converter.cc,
+    // tusdr_args.cc). OPT_MATCH folds the "did anything match yet" guard
+    // into the condition itself so the final positional-arg fallback below
+    // only fires when no flag matched -- exactly the original else-if
+    // chain's semantics -- without needing to touch every branch body.
+#define OPT_MATCH(cond) if (!arg_matched && (cond) && (arg_matched = true))
+    OPT_MATCH((arg.compare("-h") == 0) || (arg.compare("--help") ==0)) {
       print_help();
       return EXIT_FAILURE;
-    } else if ((arg.compare("-f") == 0) || (arg.compare("--flatten") == 0)) {
+    }
+    OPT_MATCH((arg.compare("-f") == 0) || (arg.compare("--flatten") == 0)) {
       has_flatten = true;
-    } else if (arg.compare("--relative") == 0) {
+    }
+    OPT_MATCH(arg.compare("--relative") == 0) {
       has_relative = true;
-    } else if ((arg.compare("--preserve-order") == 0) ||
+    }
+    OPT_MATCH((arg.compare("--preserve-order") == 0) ||
                (arg.compare("--usd-order") == 0)) {
       // Opt-in: emit prim children in authored (USD) order recovered from the
       // crate's primChildren field instead of the default lexicographical order
@@ -1107,7 +1120,8 @@ int main(int argc, char **argv) {
       // loading so the USDC reader records the order metadata.
       preserve_order = true;
       tinyusdz::pprint::SetPreserveAuthoredOrder(true);
-    } else if (arg.compare("--openusd-compat") == 0) {
+    }
+    OPT_MATCH(arg.compare("--openusd-compat") == 0) {
       // Aggregate opt-in: emit output as close to OpenUSD `usdcat` as tinyusdz
       // can -- authored child order + alphabetical properties (Layer output),
       // OpenUSD float notation, and OpenUSD USDA text layout (metadata paren on
@@ -1118,18 +1132,22 @@ int main(int argc, char **argv) {
       tinyusdz::SetUSDFloatFormat(true);
       tinyusdz::pprint::SetUSDTextFormat(true);
       tinyusdz::SetNormalizeAssetPathOnFlatten(true);
-    } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
+    }
+    OPT_MATCH((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
       load_only = true;
-    } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {
+    }
+    OPT_MATCH((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {
       json_output = true;
-    } else if ((arg.compare("-o") == 0) || (arg.compare("--output") == 0)) {
+    }
+    OPT_MATCH((arg.compare("-o") == 0) || (arg.compare("--output") == 0)) {
       if (i + 1 >= argc) {
         std::cerr << "-o/--output requires a filename argument\n";
         return EXIT_FAILURE;
       }
       i++; // Move to next argument
       output_filepath = argv[i];
-    } else if (tinyusdz::startsWith(arg, "--output-format=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--output-format=")) {
       std::string fmt = tinyusdz::removePrefix(arg, "--output-format=");
       if (fmt.empty()) {
         std::cerr << "No format specified to --output-format.\n";
@@ -1140,11 +1158,14 @@ int main(int argc, char **argv) {
                   << ". Must be 'usda', 'usdc', or 'usdz'.\n";
         return EXIT_FAILURE;
       }
-    } else if (arg.compare("--compress-float-arrays") == 0) {
+    }
+    OPT_MATCH(arg.compare("--compress-float-arrays") == 0) {
       compress_float_arrays = true;
-    } else if (arg.compare("--extract-variants") == 0) {
+    }
+    OPT_MATCH(arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
-    } else if (tinyusdz::startsWith(arg, "--variant-format=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--variant-format=")) {
       std::string fmt = tinyusdz::removePrefix(arg, "--variant-format=");
       if (fmt.empty()) {
         std::cerr << "No format specified to --variant-format.\n";
@@ -1157,11 +1178,14 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid variant format: " << fmt << ". Must be 'yaml' or 'json'.\n";
         exit(-1);
       }
-    } else if (arg.compare("--memstat") == 0) {
+    }
+    OPT_MATCH(arg.compare("--memstat") == 0) {
       memstat = true;
-    } else if (arg.compare("--relax-asset-cap") == 0) {
+    }
+    OPT_MATCH(arg.compare("--relax-asset-cap") == 0) {
       max_composition_asset_mb = 8192;
-    } else if (tinyusdz::startsWith(arg, "--max-composition-asset-mb=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--max-composition-asset-mb=")) {
       std::string mb_str =
           tinyusdz::removePrefix(arg, "--max-composition-asset-mb=");
       if (mb_str.empty()) {
@@ -1176,19 +1200,26 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
       }
       max_composition_asset_mb = static_cast<size_t>(mb);
-    } else if (arg.compare("--no-asset-path-fallback") == 0) {
+    }
+    OPT_MATCH(arg.compare("--no-asset-path-fallback") == 0) {
       asset_path_fallback = false;
-    } else if (arg.compare("--error-detail") == 0) {
+    }
+    OPT_MATCH(arg.compare("--error-detail") == 0) {
       error_detail = true;
-    } else if (arg.compare("--progress") == 0) {
+    }
+    OPT_MATCH(arg.compare("--progress") == 0) {
       show_progress = true;
-    } else if (arg.compare("--dumpcrate") == 0) {
+    }
+    OPT_MATCH(arg.compare("--dumpcrate") == 0) {
       do_dumpcrate = true;
-    } else if (tinyusdz::startsWith(arg, "--dumpcrate-path=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--dumpcrate-path=")) {
       dump_opts.path_filter = tinyusdz::removePrefix(arg, "--dumpcrate-path=");
-    } else if (tinyusdz::startsWith(arg, "--dumpcrate-token=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--dumpcrate-token=")) {
       dump_opts.token_filter = tinyusdz::removePrefix(arg, "--dumpcrate-token=");
-    } else if (tinyusdz::startsWith(arg, "--dumpcrate-limit=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--dumpcrate-limit=")) {
       std::string limit_str = tinyusdz::removePrefix(arg, "--dumpcrate-limit=");
       nonstd::optional<int> limit_val = tinyusdz::atoi(limit_str);
       if (!limit_val.has_value() || limit_val.value() < 1) {
@@ -1200,14 +1231,18 @@ int main(int argc, char **argv) {
       dump_opts.max_fieldsets = limit_val.value();
       dump_opts.max_paths = limit_val.value();
       dump_opts.max_specs = limit_val.value();
-    } else if (arg.compare("--strict-mtlx-check") == 0) {
+    }
+    OPT_MATCH(arg.compare("--strict-mtlx-check") == 0) {
       strict_mtlx_check = true;
-    } else if (arg.compare("--validate") == 0) {
+    }
+    OPT_MATCH(arg.compare("--validate") == 0) {
       validate_against_core = true;
-    } else if (arg.compare("--validate-all") == 0) {
+    }
+    OPT_MATCH(arg.compare("--validate-all") == 0) {
       validate_against_core = true;
       validate_all_groups = true;
-    } else if (tinyusdz::startsWith(arg, "--dump-comp-graph")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--dump-comp-graph")) {
       do_dump_comp_graph = true;
       std::string rest = arg.substr(strlen("--dump-comp-graph"));
       if (rest.empty() || rest == "=yaml") {
@@ -1220,25 +1255,34 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid format for --dump-comp-graph. Use: json, yaml, or dot\n";
         return EXIT_FAILURE;
       }
-    } else if (arg.compare("--comp-graph-recursive") == 0) {
+    }
+    OPT_MATCH(arg.compare("--comp-graph-recursive") == 0) {
       comp_graph_recursive = true;
-    } else if (arg.compare("--comp-graph-no-payload") == 0) {
+    }
+    OPT_MATCH(arg.compare("--comp-graph-no-payload") == 0) {
       comp_graph_no_payload = true;
-    } else if (arg.compare("--inspect") == 0) {
+    }
+    OPT_MATCH(arg.compare("--inspect") == 0) {
       do_inspect = true;
       inspect_opts.format = tinyusdz::InspectOutputFormat::Yaml;
-    } else if (arg.compare("--inspect-json") == 0) {
+    }
+    OPT_MATCH(arg.compare("--inspect-json") == 0) {
       do_inspect = true;
       inspect_opts.format = tinyusdz::InspectOutputFormat::Json;
-    } else if (arg.compare("--mesh-subset-report") == 0) {
+    }
+    OPT_MATCH(arg.compare("--mesh-subset-report") == 0) {
       do_mesh_subset_report = true;
-    } else if (arg.compare("--material-report") == 0) {
+    }
+    OPT_MATCH(arg.compare("--material-report") == 0) {
       do_material_report = true;
-    } else if (arg.compare("--geom-report") == 0) {
+    }
+    OPT_MATCH(arg.compare("--geom-report") == 0) {
       do_geom_report = true;
-    } else if (arg.compare("--skinning-report") == 0) {
+    }
+    OPT_MATCH(arg.compare("--skinning-report") == 0) {
       do_skinning_report = true;
-    } else if (tinyusdz::startsWith(arg, "--value=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--value=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--value=");
       if (value_str == "none") {
         inspect_opts.value_mode = tinyusdz::InspectValueMode::NoValue;
@@ -1251,7 +1295,8 @@ int main(int argc, char **argv) {
                   << ". Use: none, snip, or full\n";
         return EXIT_FAILURE;
       }
-    } else if (tinyusdz::startsWith(arg, "--snip=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--snip=")) {
       std::string snip_str = tinyusdz::removePrefix(arg, "--snip=");
       nonstd::optional<int> snip_val = tinyusdz::atoi(snip_str);
       if (!snip_val.has_value()) {
@@ -1264,11 +1309,14 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
       }
       inspect_opts.snip_count = static_cast<size_t>(snip_val.value());
-    } else if (tinyusdz::startsWith(arg, "--path=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--path=")) {
       inspect_opts.prim_path_pattern = tinyusdz::removePrefix(arg, "--path=");
-    } else if (tinyusdz::startsWith(arg, "--attr=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--attr=")) {
       inspect_opts.attr_pattern = tinyusdz::removePrefix(arg, "--attr=");
-    } else if (tinyusdz::startsWith(arg, "--time=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--time=")) {
       std::string time_str = tinyusdz::removePrefix(arg, "--time=");
       inspect_opts.has_time_query = true;
       // Check for range format "start:end"
@@ -1294,7 +1342,8 @@ int main(int argc, char **argv) {
         inspect_opts.time_start = t.value();
         inspect_opts.time_end = t.value();
       }
-    } else if (arg.compare("--loglevel") == 0) {
+    }
+    OPT_MATCH(arg.compare("--loglevel") == 0) {
       if (i + 1 >= argc) {
         std::cerr << "--loglevel requires an integer argument\n";
         return EXIT_FAILURE;
@@ -1314,7 +1363,8 @@ int main(int argc, char **argv) {
         tinyusdz::logging::Logger::getInstance().setLogLevel(
             static_cast<tinyusdz::logging::LogLevel>(ll));
       }
-    } else if (tinyusdz::startsWith(arg, "--composition=")) {
+    }
+    OPT_MATCH(tinyusdz::startsWith(arg, "--composition=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
         std::cerr << "No values specified to --composition.\n";
@@ -1348,7 +1398,9 @@ int main(int argc, char **argv) {
         }
       }
 
-    } else {
+    }
+#undef OPT_MATCH
+    if (!arg_matched) {
       filepath = arg;
       input_index = i;
     }
