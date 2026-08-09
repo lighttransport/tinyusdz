@@ -402,6 +402,15 @@ struct RtPointGPU {
 };
 static_assert(sizeof(RtPointGPU) == 80, "RtPointGPU scalar layout");
 
+struct RtPointChunkGPU {
+  int first;
+  int count;
+  int orderFirst;
+  int bvhFirst;
+  int bvhCount;
+};
+static_assert(sizeof(RtPointChunkGPU) == 20, "RtPointChunkGPU scalar layout");
+
 }  // namespace
 
 uint64_t QueryDeviceLocalVramBytes() {
@@ -4690,14 +4699,18 @@ void VulkanRenderer::destroyScene() {
   if (rtPointNodeMem_) { vkFreeMemory(device_, rtPointNodeMem_, nullptr); rtPointNodeMem_ = VK_NULL_HANDLE; }
   if (rtPointOrderBuf_) { vkDestroyBuffer(device_, rtPointOrderBuf_, nullptr); rtPointOrderBuf_ = VK_NULL_HANDLE; }
   if (rtPointOrderMem_) { vkFreeMemory(device_, rtPointOrderMem_, nullptr); rtPointOrderMem_ = VK_NULL_HANDLE; }
-  rtPointCount_ = rtPointNodeCount_ = 0;
+  if (rtPointChunkBuf_) { vkDestroyBuffer(device_, rtPointChunkBuf_, nullptr); rtPointChunkBuf_ = VK_NULL_HANDLE; }
+  if (rtPointChunkMem_) { vkFreeMemory(device_, rtPointChunkMem_, nullptr); rtPointChunkMem_ = VK_NULL_HANDLE; }
+  rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
   if (rtPointBuf_) { vkDestroyBuffer(device_, rtPointBuf_, nullptr); rtPointBuf_ = VK_NULL_HANDLE; }
   if (rtPointMem_) { vkFreeMemory(device_, rtPointMem_, nullptr); rtPointMem_ = VK_NULL_HANDLE; }
   if (rtPointNodeBuf_) { vkDestroyBuffer(device_, rtPointNodeBuf_, nullptr); rtPointNodeBuf_ = VK_NULL_HANDLE; }
   if (rtPointNodeMem_) { vkFreeMemory(device_, rtPointNodeMem_, nullptr); rtPointNodeMem_ = VK_NULL_HANDLE; }
   if (rtPointOrderBuf_) { vkDestroyBuffer(device_, rtPointOrderBuf_, nullptr); rtPointOrderBuf_ = VK_NULL_HANDLE; }
   if (rtPointOrderMem_) { vkFreeMemory(device_, rtPointOrderMem_, nullptr); rtPointOrderMem_ = VK_NULL_HANDLE; }
-  rtPointCount_ = rtPointNodeCount_ = 0;
+  if (rtPointChunkBuf_) { vkDestroyBuffer(device_, rtPointChunkBuf_, nullptr); rtPointChunkBuf_ = VK_NULL_HANDLE; }
+  if (rtPointChunkMem_) { vkFreeMemory(device_, rtPointChunkMem_, nullptr); rtPointChunkMem_ = VK_NULL_HANDLE; }
+  rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
   tlasDirty_ = true;
 
   for (auto v : texSlotViews_) {
@@ -4895,6 +4908,7 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
 
 void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
                                size_t meshCount) {
+  rtLightsCpu_ = lights;
   rasterLights_ = PackRasterLights(lights, meshCount);
   if (std::getenv("TUSDVIEW_DEBUG_LIGHTS"))
     {
@@ -6748,7 +6762,19 @@ void VulkanRenderer::rebuildRtTextureTable() {
   rtMatTexParamMem_ = VK_NULL_HANDLE;
 
   HostTextureTable textures;
-  BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &textures);
+  BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &textures,
+                        &rtLightsCpu_);
+  auto mapEnvmap = [&](int sourceId) -> int {
+    return (sourceId >= 0 && static_cast<size_t>(sourceId) <
+                                    textures.sourceToTable.size())
+               ? textures.sourceToTable[static_cast<size_t>(sourceId)]
+               : -1;
+  };
+  lightParams_.assign(rtLightsCpu_.size() * kVkRtLightFloats, 0.0f);
+  for (size_t i = 0; i < rtLightsCpu_.size(); ++i) {
+    PackRtLightParams(rtLightsCpu_[i], mapEnvmap(rtLightsCpu_[i].envmapTexture),
+                      &lightParams_[i * kVkRtLightFloats]);
+  }
   const uint32_t dummyTexel = 0xffffffffu;
   HostTextureDesc dummyDesc;
   for (int& layer : dummyDesc.udimLayer) layer = -1;
@@ -6871,7 +6897,9 @@ void VulkanRenderer::rebuildTlas() {
   if (rtPointNodeMem_) { vkFreeMemory(device_, rtPointNodeMem_, nullptr); rtPointNodeMem_ = VK_NULL_HANDLE; }
   if (rtPointOrderBuf_) { vkDestroyBuffer(device_, rtPointOrderBuf_, nullptr); rtPointOrderBuf_ = VK_NULL_HANDLE; }
   if (rtPointOrderMem_) { vkFreeMemory(device_, rtPointOrderMem_, nullptr); rtPointOrderMem_ = VK_NULL_HANDLE; }
-  rtPointCount_ = rtPointNodeCount_ = 0;
+  if (rtPointChunkBuf_) { vkDestroyBuffer(device_, rtPointChunkBuf_, nullptr); rtPointChunkBuf_ = VK_NULL_HANDLE; }
+  if (rtPointChunkMem_) { vkFreeMemory(device_, rtPointChunkMem_, nullptr); rtPointChunkMem_ = VK_NULL_HANDLE; }
+  rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
 
   // Ensure every mesh has a BLAS, and build the instance + descriptor arrays. A
   // non-instanced mesh contributes ONE TLAS instance at its world transform; an
@@ -6900,32 +6928,78 @@ void VulkanRenderer::rebuildTlas() {
       }
       float ml = std::sqrt(major[0]*major[0]+major[1]*major[1]+major[2]*major[2]);
       float nl = std::sqrt(normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]);
-      if (ml <= 1e-8f || nl <= 1e-8f) continue;
+      const float opacity = src.opacities.empty() ? 1.0f :
+          src.opacities[src.opacities.size() > i ? i : 0];
+      const float rx = src.ellipseRadii[i*2] * ml;
+      const float ry = src.ellipseRadii[i*2+1] * ml;
+      if (!std::isfinite(opacity) || opacity < 0.01f ||
+          !std::isfinite(ml) || !std::isfinite(nl) || ml <= 1e-8f ||
+          nl <= 1e-8f || !std::isfinite(rx) || !std::isfinite(ry) ||
+          rx <= 1e-8f || ry <= 1e-8f) continue;
       for (int k = 0; k < 3; ++k) { p.major[k] = major[k] / ml; p.normal[k] = normal[k] / nl; }
-      p.radii[0] = src.ellipseRadii[i*2] * ml;
-      p.radii[1] = src.ellipseRadii[i*2+1] * ml;
+      p.radii[0] = rx;
+      p.radii[1] = ry;
       const size_t ci = src.colors.size() >= (i+1)*3 ? i*3 : 0;
       p.color[0] = src.colors.size() >= 3 ? src.colors[ci] : 1.0f;
       p.color[1] = src.colors.size() >= 3 ? src.colors[ci+1] : 1.0f;
       p.color[2] = src.colors.size() >= 3 ? src.colors[ci+2] : 1.0f;
-      p.color[3] = src.opacities.empty() ? 1.0f : src.opacities[src.opacities.size() > i ? i : 0];
+      p.color[3] = opacity;
       pointDescs.push_back(p);
     }
   }
   std::vector<Node> pointNodes;
   std::vector<int> pointOrder;
+  std::vector<RtPointChunkGPU> pointChunks;
   if (!pointDescs.empty()) {
-    std::vector<float> centers(pointDescs.size()*3), aabb(pointDescs.size()*6);
-    for (size_t i = 0; i < pointDescs.size(); ++i) {
-      for (int k = 0; k < 3; ++k) centers[i*3+k] = pointDescs[i].center[k];
-      const float r = std::max(pointDescs[i].radii[0], pointDescs[i].radii[1]);
-      for (int k = 0; k < 3; ++k) { aabb[i*6+k] = centers[i*3+k]-r; aabb[i*6+3+k] = centers[i*3+k]+r; }
-      pointOrder.push_back(static_cast<int>(i));
+    size_t chunkLimit = size_t(262) * 1024;
+    if (const char* value = std::getenv("TUSDVIEW_GAUSSIAN_CHUNK")) {
+      char* end = nullptr;
+      const unsigned long long parsed = std::strtoull(value, &end, 10);
+      if (value[0] != '\0' && end != value && (!end || *end == '\0') &&
+          parsed > 0)
+        chunkLimit = std::min<size_t>(
+            static_cast<size_t>(parsed),
+            static_cast<size_t>(std::numeric_limits<int>::max()));
     }
-    pointNodes = BuildTlas(pointOrder, static_cast<int>(pointDescs.size()), centers, aabb);
+    for (size_t first = 0; first < pointDescs.size(); first += chunkLimit) {
+      const size_t count = std::min(pointDescs.size(), first + chunkLimit) - first;
+      std::vector<float> centers(count * 3), aabb(count * 6);
+      std::vector<int> order(count);
+      for (size_t i = 0; i < count; ++i) {
+        order[i] = static_cast<int>(i);
+        for (int k = 0; k < 3; ++k)
+          centers[i * 3 + k] = pointDescs[first + i].center[k];
+        const float r = std::max(pointDescs[first + i].radii[0],
+                                 pointDescs[first + i].radii[1]);
+        for (int k = 0; k < 3; ++k) {
+          aabb[i * 6 + k] = centers[i * 3 + k] - r;
+          aabb[i * 6 + 3 + k] = centers[i * 3 + k] + r;
+        }
+      }
+      const size_t orderFirst = pointOrder.size();
+      const size_t bvhFirst = pointNodes.size();
+      std::vector<Node> local =
+          BuildTlas(order, static_cast<int>(count), centers, aabb);
+      for (int& id : order) id += static_cast<int>(first);
+      pointOrder.insert(pointOrder.end(), order.begin(), order.end());
+      for (Node& node : local) {
+        if (node.count == 0) {
+          node.left += static_cast<int>(bvhFirst);
+          node.right += static_cast<int>(bvhFirst);
+        }
+      }
+      pointNodes.insert(pointNodes.end(), local.begin(), local.end());
+      pointChunks.push_back({static_cast<int>(first), static_cast<int>(count),
+                             static_cast<int>(orderFirst),
+                             static_cast<int>(bvhFirst),
+                             static_cast<int>(local.size())});
+    }
+    LOGI("Vulkan RT Gaussian point BVH: %zu point(s) in %zu chunk(s), limit %zu",
+         pointDescs.size(), pointChunks.size(), chunkLimit);
   }
   rtPointCount_ = static_cast<uint32_t>(pointDescs.size());
   rtPointNodeCount_ = static_cast<uint32_t>(pointNodes.size());
+  rtPointChunkCount_ = static_cast<uint32_t>(pointChunks.size());
   // One descriptor per mesh + one trailing slot for the shared box proxy
   // (boxMeshId == meshes_.size()).
   const uint32_t boxMeshId = static_cast<uint32_t>(meshes_.size());
@@ -7361,7 +7435,19 @@ void VulkanRenderer::rebuildTlas() {
   std::vector<float> lights = lightParams_;  // packed DrawLightCPU light records
   if (lights.empty()) lights.assign(kVkRtLightFloats, 0.0f);
   HostTextureTable rtTextures;
-  BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures);
+  BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures,
+                        &rtLightsCpu_);
+  auto mapEnvmap = [&](int sourceId) -> int {
+    return (sourceId >= 0 && static_cast<size_t>(sourceId) <
+                                    rtTextures.sourceToTable.size())
+               ? rtTextures.sourceToTable[static_cast<size_t>(sourceId)]
+               : -1;
+  };
+  lightParams_.assign(rtLightsCpu_.size() * kVkRtLightFloats, 0.0f);
+  for (size_t i = 0; i < rtLightsCpu_.size(); ++i) {
+    PackRtLightParams(rtLightsCpu_[i], mapEnvmap(rtLightsCpu_[i].envmapTexture),
+                      &lightParams_[i * kVkRtLightFloats]);
+  }
   const uint32_t dummyTexel = 0xffffffffu;
   HostTextureDesc dummyTexDesc;
   for (int& layer : dummyTexDesc.udimLayer) layer = -1;
@@ -7414,6 +7500,14 @@ void VulkanRenderer::rebuildTlas() {
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    pointOrder.empty() ? static_cast<const void*>(&dummyOrder) : static_cast<const void*>(pointOrder.data()),
                    &rtPointOrderBuf_, &rtPointOrderMem_);
+  RtPointChunkGPU dummyPointChunk{};
+  createHostBuffer(pointChunks.empty() ? sizeof(dummyPointChunk)
+                                       : pointChunks.size() * sizeof(RtPointChunkGPU),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   pointChunks.empty()
+                       ? static_cast<const void*>(&dummyPointChunk)
+                       : static_cast<const void*>(pointChunks.data()),
+                   &rtPointChunkBuf_, &rtPointChunkMem_);
 
   // Update descriptors: TLAS(0), meshDesc(2), material(3), instInfo(4),
   // LightRT material block(6), packed lights(7). Image(1) and accumulation image(5)
@@ -7438,7 +7532,8 @@ void VulkanRenderer::rebuildTlas() {
   VkDescriptorBufferInfo pointInfo{rtPointBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo pointNodeInfo{rtPointNodeBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo pointOrderInfo{rtPointOrderBuf_, 0, VK_WHOLE_SIZE};
-  VkWriteDescriptorSet w[16]{};
+  VkDescriptorBufferInfo pointChunkInfo{rtPointChunkBuf_, 0, VK_WHOLE_SIZE};
+  VkWriteDescriptorSet w[17]{};
   w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   w[0].pNext = &asInfo;
   w[0].dstSet = rtSet_;
@@ -7534,7 +7629,13 @@ void VulkanRenderer::rebuildTlas() {
     w[13 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     w[13 + i].pBufferInfo = pointInfos[i];
   }
-  vkUpdateDescriptorSets(device_, 16, w, 0, nullptr);
+  w[16].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[16].dstSet = rtSet_;
+  w[16].dstBinding = 18;
+  w[16].descriptorCount = 1;
+  w[16].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w[16].pBufferInfo = &pointChunkInfo;
+  vkUpdateDescriptorSets(device_, 17, w, 0, nullptr);
 
   tlasDirty_ = false;
   rtTextureTableDirty_ = false;
@@ -7544,7 +7645,7 @@ void VulkanRenderer::rebuildTlas() {
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
   constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
-  VkDescriptorSetLayoutBinding b[18]{};
+  VkDescriptorSetLayoutBinding b[19]{};
   b[0].binding = 0;
   b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   b[0].descriptorCount = kMaxTlasChunks;
@@ -7574,13 +7675,17 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   b[9].binding = 9;  // GGX-prefiltered cube (surface specular IBL)
   b[10] = b[8];
   b[10].binding = 10;  // split-sum BRDF LUT (RG16F 2D)
-  for (uint32_t i = 11; i < 18; ++i) {
+  for (uint32_t i = 11; i < 19; ++i) {
     b[i] = b[2];
     b[i].binding = i;  // raw texels, descriptors, semantic ids, sample params
   }
+  b[18].binding = 18;
+  b[18].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  b[18].descriptorCount = 1;
+  b[18].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 18;
+  lci.bindingCount = 19;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &rtSetLayout_),
            "rt descriptor set layout");
@@ -7588,7 +7693,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   VkDescriptorPoolSize ps[4]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxTlasChunks};
   ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
-  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 12};
+  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 13};
   ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
   VkDescriptorPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -7879,6 +7984,7 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lens[3] = static_cast<float>(rtTlasChunkStride_);
   pc.pointParams[0] = static_cast<float>(rtPointCount_);
   pc.pointParams[1] = static_cast<float>(rtPointNodeCount_);
+  pc.pointParams[2] = static_cast<float>(rtPointChunkCount_);
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
@@ -7990,7 +8096,9 @@ void VulkanRenderer::destroyRt() {
   if (rtPointNodeMem_) { vkFreeMemory(device_, rtPointNodeMem_, nullptr); rtPointNodeMem_ = VK_NULL_HANDLE; }
   if (rtPointOrderBuf_) { vkDestroyBuffer(device_, rtPointOrderBuf_, nullptr); rtPointOrderBuf_ = VK_NULL_HANDLE; }
   if (rtPointOrderMem_) { vkFreeMemory(device_, rtPointOrderMem_, nullptr); rtPointOrderMem_ = VK_NULL_HANDLE; }
-  rtPointCount_ = rtPointNodeCount_ = 0;
+  if (rtPointChunkBuf_) { vkDestroyBuffer(device_, rtPointChunkBuf_, nullptr); rtPointChunkBuf_ = VK_NULL_HANDLE; }
+  if (rtPointChunkMem_) { vkFreeMemory(device_, rtPointChunkMem_, nullptr); rtPointChunkMem_ = VK_NULL_HANDLE; }
+  rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
   if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
   if (rtImage_) { vkDestroyImage(device_, rtImage_, nullptr); rtImage_ = VK_NULL_HANDLE; }
   if (rtImageMem_) { vkFreeMemory(device_, rtImageMem_, nullptr); rtImageMem_ = VK_NULL_HANDLE; }

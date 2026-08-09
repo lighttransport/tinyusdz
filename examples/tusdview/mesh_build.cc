@@ -752,15 +752,32 @@ size_t TextureBytes(const light3d::Image& img) {
          static_cast<size_t>(std::max(img.channels, 0));
 }
 
+size_t CompressedTextureBytes(const DrawCompressedImageCPU& compressed) {
+  size_t total = compressed.data.size();
+  for (const DrawCompressedMipCPU& mip : compressed.mips)
+    total += mip.data.size();
+  return total;
+}
+
+size_t TexturePayloadBytes(const light3d::Image& image,
+                           const std::vector<light3d::Image>& mips,
+                           const DrawCompressedImageCPU& compressed) {
+  size_t total = TextureBytes(image) + CompressedTextureBytes(compressed);
+  for (const light3d::Image& mip : mips) total += TextureBytes(mip);
+  return total;
+}
+
 size_t TextureBytes(const DrawTextureCPU& tex) {
   if (tex.isUdim && !tex.udimTiles.empty()) {
     size_t total = 0;
     for (const DrawUdimTileCPU& tile : tex.udimTiles) {
-      total += TextureBytes(tile.image);
+      total += TexturePayloadBytes(tile.image, tile.mipImages,
+                                   tile.compressed);
     }
-    return total;
+    return total + TexturePayloadBytes(tex.image, tex.mipImages,
+                                       tex.compressed);
   }
-  return TextureBytes(tex.image);
+  return TexturePayloadBytes(tex.image, tex.mipImages, tex.compressed);
 }
 
 bool ResizeDrawImage(light3d::Image* img, int dstW, int dstH, bool srgb,

@@ -1808,17 +1808,120 @@ full ALab payload and on `tests/usda/tusdview-gaussian-splat.usda`.
 The native LightRT CPU ellipse primitive is now connected to tusdrender's next
 RT-preview collector. Gaussian-only stages build an analytic ellipse BVH and
 render without triangle conversion; quaternion roll is retained in the leaf
-representation. `TUSDR_GAUSSIAN_MAX` bounds diagnostic loads. CUDA's serialized
+representation. `TUSDR_GAUSSIAN_MAX` bounds diagnostic loads. Large fields are
+split into 262,144-splat LightRT chunks (`TUSDR_GAUSSIAN_CHUNK` overrides the
+size); CPU tracing visits every chunk, while Vulkan traces chunks sequentially
+and retains the nearest hit per ray. CUDA's serialized
 point path consumes the same ellipse/roll fields, and the Vulkan compute BVH now
 traverses the serialized point leaves natively. NVIDIA Vulkan was verified on
 the full ALab payload (1,914,280 non-transparent splats) without tessellated
-triangles.
+triangles; CPU chunked tracing was verified on the full ALAB payload
+(1,914,278 non-transparent splats) at 15 chunks; Vulkan uses the same chunking
+when the NVIDIA driver is available.
 
 The tusdview carrier path retains Gaussian radii, normals, and major-axis
 orientation. Its CUDA and Vulkan ray-tracing scene builders upload native
 ellipse records and traverse a dedicated analytic point BVH; no triangle proxy
 is emitted. The minimal fixture and the full ALab payload were captured on
-NVIDIA CUDA and Vulkan with zero RT triangles.
+NVIDIA CUDA and Vulkan with zero RT triangles. The HIP backend now uploads and
+binds the same ellipse buffers and kernel arguments; on hosts without ROCm it
+reports the runtime as unavailable instead of silently dropping the primitive.
+CUDA now discards an analytic point hit when the triangle traversal found a
+nearer surface, keeping Gaussian occlusion behavior consistent with Vulkan,
+HIP, and LightRT.
+
+The tusdview RT builders split the analytic point BVH into bounded chunks while
+retaining one compact attribute stream. `TUSDVIEW_GAUSSIAN_CHUNK=N` controls the
+per-BVH point limit (default 262,144); CUDA, HIP, and Vulkan traverse every
+chunk and choose the nearest valid ellipse. This limits BVH construction
+working memory and avoids a monolithic point-BVH allocation on large fields.
+
+Large Gaussian fields no longer pass through the general `RenderPoints` copy
+path in tusdview. Their lazy numeric arrays are read as views and emitted as
+bounded 64K-sample `DrawPointsCPU` chunks (configurable through
+`LoadOptions::pointChunkSamples`), avoiding a second full positions/scales
+allocation and allowing the renderer to consume the field as multiple bounded
+carriers. Non-finite, zero-radius, and opacity-below-0.01 samples are rejected
+before carrier/BVH construction, including non-finite transformed centers. The
+point BVH now reuses the retained world-center stream instead of making another
+full center copy during construction. The ALab test retained 1,914,278 visible
+samples across 35 point prims and still completed native Vulkan RT setup in
+about 0.6 s at 32x32.
+
+Non-instanced round and flat curve strands use bounded native BVHs as well.
+Curve points are read through the lazy array-view path, and complete strands are
+packed into chunks instead of duplicating the full source array for each BVH.
+`TUSDR_CURVE_CHUNK=N` controls the segment limit (default 262,144); the CPU
+integrator checks every chunk and Vulkan tessellates each round-curve chunk at
+the upload boundary.
+
+The flat next-loader mesh path uses the same bounded native-BVH policy. Mesh
+triangles are split at `TUSDR_TRIANGLE_CHUNK=N` (default 262,144), with global
+material, UV, color, and normal indices preserved across chunks. Shadow and
+primary rays visit all chunks; `-stats` reports aggregate chunk memory.
+The Vulkan flat upload path independently bounds device residency with
+`TUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144). It uploads/traces one BLAS/AS
+at a time and reduces nearest hits before shading, so a large non-instanced
+scene does not require one monolithic 8-GiB GPU allocation.
+
+For tusdview CUDA/HIP scene builds, `TUSDVIEW_RT_BUILD_THREADS=N` bounds
+geometry extraction concurrency (default `min(host_threads, 8)`). Assembly now
+moves each completed mesh's SoA into the final scene and releases the consumed
+per-mesh storage immediately, avoiding a second full geometry copy while later
+meshes are still waiting for assembly.
+
+The native RT texture table is usage-driven. It marks material texture slots
+and environment-light maps before decoding/packing, then leaves unreferenced
+source textures out of the compact texel and descriptor buffers. This avoids
+retaining disconnected decoded images in the 8-GiB-class GPU path while
+preserving source-to-table remapping for materials, lights, UDIMs, and mip
+chains. The diagnostic reports source count, packed descriptor count, packed
+MiB, and skipped unused sources; `tusdview_lightrt_bridge_test` covers the
+compaction and mip/UDIM mapping behavior.
+
+Tusdrender now keeps the shared texture-budget lease alive for every retained
+base image and generated mip chain. Mip storage is charged before allocation;
+when `-texBudgetMb` is full, the renderer retains the base level and reports
+`rt texture mip fallbacks` instead of temporarily exceeding the texture cap.
+This matters for scenes with many materials because decoder-time budgeting
+alone otherwise released its reservation as soon as each temporary decode
+object went out of scope.
+
+Tusdview's pre-finalization texture budget also counts the complete retained
+CPU payload: base images, authored mip levels, and compressed payloads. The
+budget pass therefore cannot measure only level zero and then exceed the cap
+when mip/compression processing runs.
+
+Tusdrender's Vulkan mesh-chunk path similarly releases each source mesh's
+positions, normals, UVs, and indices immediately after that mesh has been
+copied into its bounded GPU upload batch. Only the per-triangle shading data
+needed after all chunk traces is retained. This reduces the peak from source
+geometry plus chunk staging plus shading arrays to source geometry plus the
+accumulated shading arrays, without changing nearest-hit reduction.
+
+The same shared bounded chunk builder is used by the HIP/ROCm backend. When
+`TUSDR_GPU_TRIANGLE_CHUNK=N` is exceeded, HIP traces one chunk at a time and
+reduces nearest hits before CPU shading, releasing consumed source geometry in
+the same way. If ROCm is unavailable, the backend reports the runtime error
+and exits cleanly rather than silently producing an incomplete image.
+
+Gaussian splats follow the same backend policy: Vulkan ray query keeps the
+native analytic ellipse BVH, while HIP/ROCm and D3D11 use the bounded oriented
+ellipse tessellation fallback because those LightRT interfaces do not expose
+analytic ellipse primitives. This prevents AMD scenes from reaching the GPU
+backend with zero geometry and preserves a visible, diagnosable fallback.
+For those fallback backends the loader also skips constructing the native
+ellipse arrays entirely, avoiding a full Gaussian CPU-data duplicate before
+tessellation.
+The fallback collector now reads Gaussian attributes through lazy array views,
+so positions, scales, orientations, opacity, and SH data are not copied into
+five full temporary vectors before tessellation.
+It also applies opacity to the fallback color buckets and rejects non-finite or
+near-zero opacity samples, matching native ellipse filtering.
+
+Chunk vertex remapping is sparse and chunk-local rather than an array indexed by
+the source mesh's full vertex count. A small GPU chunk therefore no longer
+allocates a second full-mesh remap table while processing a very large mesh.
 
 ## 7. Verification
 

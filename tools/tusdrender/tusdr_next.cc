@@ -893,7 +893,34 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     if (color_transform) t.color_transform = *color_transform;
     t.scale = scale;
     t.bias = bias;
-    t.build_mips();
+    const std::shared_ptr<tinyusdz::next::TextureBudgetState> budget_state =
+        img.budget_lease ? img.budget_lease->state : nullptr;
+    t.budget_leases.push_back(std::move(img.budget_lease));
+    size_t mip_bytes = 0;
+    int mip_w = t.width;
+    int mip_h = t.height;
+    while (mip_w > 1 || mip_h > 1) {
+      mip_w = std::max(1, mip_w / 2);
+      mip_h = std::max(1, mip_h / 2);
+      const size_t level_bytes = size_t(mip_w) * size_t(mip_h) *
+                                 size_t(std::max(0, t.channels));
+      if (level_bytes > (std::numeric_limits<size_t>::max)() - mip_bytes) {
+        mip_bytes = (std::numeric_limits<size_t>::max)();
+        break;
+      }
+      mip_bytes += level_bytes;
+    }
+    bool build_mips = true;
+    if (budget_state && mip_bytes != 0) {
+      build_mips = budget_state->try_add(static_cast<uint64_t>(mip_bytes));
+      if (build_mips) {
+        t.budget_leases.push_back(std::make_shared<
+            tinyusdz::next::TextureBudgetLease>(budget_state, mip_bytes));
+      } else if (tc.texture_mip_fallbacks) {
+        ++(*tc.texture_mip_fallbacks);
+      }
+    }
+    if (build_mips) t.build_mips();
     tc.decoded_bytes = size_t(DecoderFor(tc).decoded_bytes());
     *out = std::move(t);
     return true;
@@ -929,6 +956,10 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
       tile.channels = tile_tex.channels;
       tile.pixels = std::move(tile_tex.pixels);
       tile.mips = std::move(tile_tex.mips);
+      udim.budget_leases.insert(
+          udim.budget_leases.end(),
+          std::make_move_iterator(tile_tex.budget_leases.begin()),
+          std::make_move_iterator(tile_tex.budget_leases.end()));
       udim.udim_tiles.push_back(std::move(tile));
     }
     if (!udim.udim_tiles.empty()) {
@@ -2814,8 +2845,15 @@ bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim) {
 std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
     const tinyusdz::next::UsdPrim &prim, double time,
     const tinyusdz::next::ValueClipStageLoader &clip_loader) {
-  std::vector<float> pf = ReadFloatArrayLazy(prim, "points", time);
-  if (pf.empty() && clip_loader) {
+  tinyusdz::tydra::next::ValueArrayRead<float> points_view;
+  std::vector<float> clipped_floats;
+  const float *pf = nullptr;
+  size_t pn = 0;
+  if (ReadFloatArrayViewLazy(prim, "points", time, &points_view) &&
+      !points_view.empty()) {
+    pf = points_view.begin();
+    pn = points_view.size();
+  } else if (clip_loader) {
     for (tinyusdz::next::UsdPrim owner = prim; owner.IsValid();
          owner = owner.GetParent()) {
       const tinyusdz::next::PrimSpec *spec = owner.GetPrimSpec();
@@ -2831,11 +2869,14 @@ std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
       tinyusdz::next::ArrayScratch<float> scratch;
       tinyusdz::next::ArrayView<float> view;
       if (!tinyusdz::next::GetFloatArrayView(clipped, &scratch, &view)) break;
-      pf.assign(view.begin(), view.end());
+      clipped_floats.assign(view.begin(), view.end());
+      pf = clipped_floats.data();
+      pn = clipped_floats.size();
       break;
     }
   }
-  std::vector<tinyusdz::value::point3f> pts(pf.size() / 3);
+  if (!pf || pn < 3) return {};
+  std::vector<tinyusdz::value::point3f> pts(pn / 3);
   for (size_t i = 0; i < pts.size(); ++i)
     pts[i] = {pf[3 * i + 0], pf[3 * i + 1], pf[3 * i + 2]};
   return pts;
@@ -2892,25 +2933,81 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     s.npoints = radii.size();
     return s;
   };
-  if (!round_first.empty()) {
-    lrt_hair_strands s =
-        make_strands(round_points, round_radii, round_first, round_count);
-    ctx.direct.round_curves.reset(
-        lrt_roundcurve_scene_build(&s, &build_opts, &lrt_err));
-    if (!ctx.direct.round_curves) {
-      std::cerr << "Failed to build LightRT round curve scene.\n";
-      return false;
-    }
+  size_t chunk_segments = size_t(262144);
+  if (const char *s = std::getenv("TUSDR_CURVE_CHUNK")) {
+    char *end = nullptr;
+    const unsigned long long n = std::strtoull(s, &end, 10);
+    if (end != s && n > 0) chunk_segments = static_cast<size_t>(n);
   }
-  if (!flat_first.empty()) {
-    lrt_hair_strands s =
-        make_strands(flat_points, flat_radii, flat_first, flat_count);
-    ctx.direct.flat_curves.reset(
-        lrt_flatcurve_scene_build(&s, &build_opts, &lrt_err));
-    if (!ctx.direct.flat_curves) {
-      std::cerr << "Failed to build LightRT flat curve scene.\n";
-      return false;
+  auto build_curve_chunks = [&](const std::vector<float> &pts,
+                                const std::vector<float> &radii,
+                                const std::vector<uint32_t> &strand_first,
+                                const std::vector<uint32_t> &strand_count,
+                                const std::vector<TriInfo> &info,
+                                std::vector<CurveSceneChunk> *chunks,
+                                bool flat, const char *label) -> bool {
+    for (size_t s = 0; s < strand_first.size();) {
+      size_t segs = 0;
+      const size_t group_start = s;
+      while (s < strand_first.size()) {
+        const size_t add = strand_count[s] > 1 ? strand_count[s] - 1 : 0;
+        if (segs != 0 && segs + add > chunk_segments) break;
+        segs += add;
+        ++s;
+      }
+      if (segs == 0) {
+        continue;
+      }
+      const uint32_t point0 = strand_first[group_start];
+      const uint32_t point1 = strand_first[s - 1] + strand_count[s - 1];
+      std::vector<float> sub_points(
+          pts.begin() + size_t(point0) * 3,
+          pts.begin() + size_t(point1) * 3);
+      std::vector<float> sub_radii(
+          radii.begin() + point0, radii.begin() + point1);
+      std::vector<uint32_t> sub_first;
+      std::vector<uint32_t> sub_count;
+      sub_first.reserve(s - group_start);
+      sub_count.reserve(s - group_start);
+      for (size_t k = group_start; k < s; ++k) {
+        sub_first.push_back(strand_first[k] - point0);
+        sub_count.push_back(strand_count[k]);
+      }
+      lrt_hair_strands hs =
+          make_strands(sub_points, sub_radii, sub_first, sub_count);
+      CurveSceneChunk chunk;
+      chunk.first = info.empty() ? 0 : (chunks->empty() ? 0 :
+          chunks->back().first + chunks->back().count);
+      chunk.count = segs;
+      chunk.scene.reset(flat ? lrt_flatcurve_scene_build(&hs, &build_opts, &lrt_err)
+                             : lrt_roundcurve_scene_build(&hs, &build_opts, &lrt_err));
+      if (!chunk.scene) {
+        std::cerr << "Failed to build LightRT " << label << " curve chunk ["
+                  << chunk.first << ", " << (chunk.first + chunk.count)
+                  << "] (err=" << int(lrt_err)
+                  << "). Try TUSDR_CURVE_CHUNK.\n";
+        return false;
+      }
+      chunks->push_back(std::move(chunk));
     }
+    return true;
+  };
+  ctx.direct.round_curve_chunks.clear();
+  ctx.direct.flat_curve_chunks.clear();
+  if (!round_first.empty() &&
+      !build_curve_chunks(round_points, round_radii, round_first, round_count,
+                          ctx.direct.round_curve_info,
+                          &ctx.direct.round_curve_chunks, false, "round"))
+    return false;
+  if (!flat_first.empty() &&
+      !build_curve_chunks(flat_points, flat_radii, flat_first, flat_count,
+                          ctx.direct.flat_curve_info,
+                          &ctx.direct.flat_curve_chunks, true, "flat"))
+    return false;
+  if (ctx.opt.stats) {
+    std::cerr << "native curves: round " << ctx.direct.round_curve_chunks.size()
+              << " chunk(s), flat " << ctx.direct.flat_curve_chunks.size()
+              << " chunk(s), segment limit " << chunk_segments << "\n";
   }
   return true;
 }
@@ -2933,34 +3030,101 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
     const unsigned long long n = std::strtoull(s, &end, 10);
     if (end != s && n > 0) budget = static_cast<size_t>(n);
   }
+  size_t chunk_size = size_t(262144);
+  if (const char *s = std::getenv("TUSDR_GAUSSIAN_CHUNK")) {
+    char *end = nullptr;
+    const unsigned long long n = std::strtoull(s, &end, 10);
+    if (end != s && n > 0) chunk_size = static_cast<size_t>(n);
+  }
+  lrt_tri_build_options opts;
+  std::memset(&opts, 0, sizeof(opts));
+  opts.quality = ctx.opt.quality;
+  opts.layout = LRT_TRI_LAYOUT_AUTO;
+  opts.num_threads = WorkerThreadCount(ctx.opt.threads);
+  ctx.direct.ellipse_chunks.clear();
+  bool build_ok = true;
+  auto flush_chunk = [&]() -> bool {
+    const size_t count = centers.size() / 3;
+    if (count == 0) return true;
+    lrt_result e = LRT_RESULT_OK;
+    EllipseSceneChunk chunk;
+    chunk.first = info.size() - count;
+    chunk.count = count;
+    chunk.scene.reset(lrt_ellipse_scene_build_oriented(
+        centers.data(), radii.data(), normals.data(), major_axes.data(), count,
+        &opts, &e));
+    if (!chunk.scene) {
+      std::cerr << "Failed to build LightRT Gaussian ellipse chunk ["
+                << chunk.first << ", " << (chunk.first + count)
+                << "] (err=" << int(e)
+                << "). Try -maxMem, -mask, or TUSDR_GAUSSIAN_CHUNK.\n";
+      return false;
+    }
+    ctx.direct.ellipse_chunks.push_back(std::move(chunk));
+    centers.clear();
+    radii.clear();
+    normals.clear();
+    major_axes.clear();
+    return true;
+  };
   size_t count_seen = 0;
   auto visit = [&](const auto &self, const tinyusdz::next::UsdPrim &prim,
                    const matrix4d &parent) -> void {
-    if (!prim.IsActive()) return;
+    if (!prim.IsActive() || !build_ok) return;
     double dmat[16];
     tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
     const matrix4d local = Mat4FromArray(dmat);
     const matrix4d world = local * parent;
     if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
-      const std::vector<float> p = ReadFloatArrayLazy(prim, "positions", time);
-      const std::vector<float> s = ReadFloatArrayLazy(prim, "scales", time);
-      const std::vector<float> qv = ReadFloatArrayLazy(prim, "orientations", time);
-      const std::vector<float> op = ReadFloatArrayLazy(prim, "opacities", time);
-      const std::vector<float> sh = ReadFloatArrayLazy(
-          prim, "radiance:sphericalHarmonicsCoefficients", time);
+      // Keep uncompressed USDC arrays borrowed from the retained crate buffer
+      // (and decode compressed/lazy values only into the ValueArrayRead's
+      // bounded scratch). The previous Copy helper held five complete source
+      // arrays live while the final ellipse arrays were being built.
+      tinyusdz::tydra::next::ValueArrayRead<float> p;
+      tinyusdz::tydra::next::ValueArrayRead<float> s;
+      tinyusdz::tydra::next::ValueArrayRead<float> qv;
+      tinyusdz::tydra::next::ValueArrayRead<float> op;
+      tinyusdz::tydra::next::ValueArrayRead<float> sh;
+      const bool have_p = ReadFloatArrayViewLazy(prim, "positions", time, &p);
+      const bool have_s = ReadFloatArrayViewLazy(prim, "scales", time, &s);
+      const bool have_q = ReadFloatArrayViewLazy(prim, "orientations", time, &qv);
+      const bool have_op = ReadFloatArrayViewLazy(prim, "opacities", time, &op);
+      const bool have_sh = ReadFloatArrayViewLazy(
+          prim, "radiance:sphericalHarmonicsCoefficients", time, &sh);
+      if (!have_p || !have_s || p.size() < 3 || s.size() < 3) {
+        for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+          self(self, child, world);
+        return;
+      }
       const size_t n = std::min(p.size() / 3, s.size() / 3);
-      const size_t sh_stride = n ? (sh.size() / 3) / n : 0;
+      const size_t sh_stride = (have_sh && n) ? (sh.size() / 3) / n : 0;
+      const float *pp = p.begin();
+      const float *ss = s.begin();
+      const float *qq = have_q ? qv.begin() : nullptr;
+      const float *oo = have_op ? op.begin() : nullptr;
+      const float *hh = have_sh ? sh.begin() : nullptr;
       for (size_t i = 0; i < n && (budget == 0 || info.size() < budget); ++i) {
         ++count_seen;
-        if (i < op.size() && op[i] < 0.01f) continue;
-        const Vec3 c = TransformPoint(world, Vec3{p[i * 3], p[i * 3 + 1],
-                                                   p[i * 3 + 2]});
+        const float opacity = (oo && op.size() > 1 && i < op.size())
+                                  ? oo[i]
+                                  : (oo && op.size() == 1 ? oo[0] : 1.0f);
+        const float sx = std::fabs(ss[i * 3]);
+        const float sy = std::fabs(ss[i * 3 + 1]);
+        const float sz = std::fabs(ss[i * 3 + 2]);
+        if (!std::isfinite(opacity) || opacity < 0.01f ||
+            !std::isfinite(sx) || !std::isfinite(sy) ||
+            !std::isfinite(sz) || sx <= 1.0e-8f || sy <= 1.0e-8f ||
+            !std::isfinite(pp[i * 3]) || !std::isfinite(pp[i * 3 + 1]) ||
+            !std::isfinite(pp[i * 3 + 2]))
+          continue;
+        const Vec3 c = TransformPoint(world, Vec3{pp[i * 3], pp[i * 3 + 1],
+                                                   pp[i * 3 + 2]});
         tinyusdz::value::quatf q;
         q.real = 1.0f;
         q.imag[0] = q.imag[1] = q.imag[2] = 0.0f;
-        if (qv.size() >= (i + 1) * 4) {
-          q.real = qv[i * 4]; q.imag[0] = qv[i * 4 + 1];
-          q.imag[1] = qv[i * 4 + 2]; q.imag[2] = qv[i * 4 + 3];
+        if (qq && qv.size() >= (i + 1) * 4) {
+          q.real = qq[i * 4]; q.imag[0] = qq[i * 4 + 1];
+          q.imag[1] = qq[i * 4 + 2]; q.imag[2] = qq[i * 4 + 3];
         }
         const tinyusdz::value::matrix3d r = tinyusdz::to_matrix3x3(q);
         const tinyusdz::value::matrix4d r4 = tinyusdz::to_matrix(
@@ -2968,8 +3132,8 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
         const Vec3 nx = TransformVector(world, TransformVector(r4, Vec3{1, 0, 0}));
         const Vec3 ny = TransformVector(world, TransformVector(r4, Vec3{0, 1, 0}));
         const Vec3 nz = Normalize(TransformVector(world, TransformVector(r4, Vec3{0, 0, 1})));
-        const float rx = std::max(1.0e-6f, 2.0f * std::fabs(s[i * 3]) * Length(nx));
-        const float ry = std::max(1.0e-6f, 2.0f * std::fabs(s[i * 3 + 1]) * Length(ny));
+        const float rx = std::max(1.0e-6f, 2.0f * sx * Length(nx));
+        const float ry = std::max(1.0e-6f, 2.0f * sy * Length(ny));
         centers.insert(centers.end(), {c.x, c.y, c.z});
         radii.insert(radii.end(), {rx, ry});
         normals.insert(normals.end(), {nz.x, nz.y, nz.z});
@@ -2978,19 +3142,22 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
         TriInfo ti;
         ti.p0 = c;
         ti.p1 = nz;
-        const float opacity = i < op.size() ? std::max(0.0f, std::min(1.0f, op[i])) : 1.0f;
         ti.base_color = Vec3{0.72f, 0.72f, 0.72f};
-        if (sh_stride >= 1 && i * sh_stride * 3 + 2 < sh.size()) {
+        if (hh && sh_stride >= 1 && i * sh_stride * 3 + 2 < sh.size()) {
           const size_t j = i * sh_stride * 3;
           ti.base_color = Vec3{
-              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * sh[j])),
-              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * sh[j + 1])),
-              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * sh[j + 2]))};
+              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[j])),
+              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[j + 1])),
+              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[j + 2]))};
         }
         ti.base_color = Mul(ti.base_color, opacity);
         info.push_back(ti);
         Expand(&ctx.bounds, Vec3{c.x - std::max(rx, ry), c.y - std::max(rx, ry), c.z - std::max(rx, ry)});
         Expand(&ctx.bounds, Vec3{c.x + std::max(rx, ry), c.y + std::max(rx, ry), c.z + std::max(rx, ry)});
+        if (centers.size() / 3 >= chunk_size) {
+          build_ok = flush_chunk();
+          if (!build_ok) break;
+        }
       }
     }
     for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
@@ -2998,23 +3165,12 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
   };
   for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims())
     visit(visit, root, matrix4d::identity());
+  if (!build_ok) return false;
+  if (!flush_chunk()) return false;
   if (info.empty()) return true;
-  lrt_tri_build_options opts;
-  std::memset(&opts, 0, sizeof(opts));
-  opts.quality = ctx.opt.quality;
-  opts.layout = LRT_TRI_LAYOUT_AUTO;
-  opts.num_threads = WorkerThreadCount(ctx.opt.threads);
-  lrt_result e = LRT_RESULT_OK;
-  ctx.direct.ellipses.reset(lrt_ellipse_scene_build_oriented(
-      centers.data(), radii.data(), normals.data(), major_axes.data(),
-      info.size(), &opts, &e));
-  if (!ctx.direct.ellipses) {
-    std::cerr << "Failed to build LightRT Gaussian ellipse scene (err="
-              << int(e) << ").\n";
-    return false;
-  }
   ctx.direct.ellipse_info = std::move(info);
-  std::cerr << "native Gaussian ellipses: " << ctx.direct.ellipse_info.size();
+  std::cerr << "native Gaussian ellipses: " << ctx.direct.ellipse_info.size()
+            << " in " << ctx.direct.ellipse_chunks.size() << " chunk(s)";
   if (budget != 0) std::cerr << " / " << count_seen << " budgeted";
   std::cerr << "\n";
   return true;
@@ -3959,6 +4115,10 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.bounds = Bounds();
   ctx.stats = RTPreviewStats();
   ctx.direct.ellipses.reset();
+  ctx.direct.ellipse_chunks.clear();
+  ctx.triangle_chunks.clear();
+  ctx.direct.round_curve_chunks.clear();
+  ctx.direct.flat_curve_chunks.clear();
   ctx.direct.ellipse_info.clear();
   const bool want_openpbr =
       opt.material_shading == Options::MaterialShading::LightRtBsdf;
@@ -4024,6 +4184,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       tc.unsupported_mtlx = &ctx.stats.unsupported_mtlx;
       tc.material_diagnostic_examples = &ctx.stats.material_diagnostic_examples;
       tc.missing_textures = &ctx.stats.missing_textures;
+      tc.texture_mip_fallbacks = &ctx.stats.texture_mip_fallbacks;
       std::unordered_map<std::string, ResolvedMat> mat_cache;
       // Per-face GeomSubset materials: split subset-bound meshes into one job
       // per subset BEFORE resolution, so each job resolves its own material.
@@ -4059,8 +4220,9 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     ctx.stats.build_seconds = ctx.stream_seconds;
     ctx.stats.packed_triangle_bytes =
         uint64_t(ctx.vertices.size()) * sizeof(float);
-    const bool have_curves = ctx.direct.round_curves || ctx.direct.flat_curves ||
-                             ctx.direct.bez_curves || ctx.direct.ellipses;
+    const bool have_curves = ctx.direct.has_round_curves() ||
+                             ctx.direct.has_flat_curves() ||
+                             ctx.direct.bez_curves || ctx.direct.has_ellipses();
     if (ctx.tris.empty()) {
       if (have_curves) return true;  // curves-only scene: traced via DirectScene
       std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
@@ -4075,16 +4237,40 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
       return false;
     }
-    const auto bvh_t0 = std::chrono::steady_clock::now();
-    lrt_result lrt_err = LRT_RESULT_OK;
-    ctx.scene = lrt_tri_scene_build(ctx.vertices.data(), ctx.tris.size(),
-                                    &build_opts, &lrt_err);
-    const auto bvh_t1 = std::chrono::steady_clock::now();
-    if (!ctx.scene) {
-      std::cerr << "Failed to build LightRT scene (err=" << int(lrt_err) << ").\n";
-      return false;
+    size_t chunk_limit = size_t(262144);
+    if (const char *s = std::getenv("TUSDR_TRIANGLE_CHUNK")) {
+      char *end = nullptr;
+      const unsigned long long n = std::strtoull(s, &end, 10);
+      if (end != s && n > 0) chunk_limit = static_cast<size_t>(n);
     }
+    const auto bvh_t0 = std::chrono::steady_clock::now();
+    for (size_t first = 0; first < ctx.tris.size(); first += chunk_limit) {
+      const size_t count = std::min(chunk_limit, ctx.tris.size() - first);
+      lrt_result lrt_err = LRT_RESULT_OK;
+      TriangleSceneChunk chunk;
+      chunk.first = first;
+      chunk.count = count;
+      chunk.scene.reset(lrt_tri_scene_build(
+          ctx.vertices.data() + first * 9, count, &build_opts, &lrt_err));
+      if (!chunk.scene) {
+        std::cerr << "Failed to build LightRT triangle chunk [" << first << ", "
+                  << (first + count) << "] (err=" << int(lrt_err)
+                  << "). Try TUSDR_TRIANGLE_CHUNK.\n";
+        return false;
+      }
+      ctx.triangle_chunks.push_back(std::move(chunk));
+    }
+    const auto bvh_t1 = std::chrono::steady_clock::now();
     ctx.bvh_seconds = std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
+    if (ctx.triangle_chunks.size() == 1) {
+      // Preserve the established single-scene path and its diagnostics for
+      // ordinary-sized inputs.
+      ctx.scene = ctx.triangle_chunks.front().scene.release();
+      ctx.triangle_chunks.clear();
+    } else if (ctx.opt.stats) {
+      std::cerr << "native triangle BVHs: " << ctx.triangle_chunks.size()
+                << " chunk(s), triangle limit " << chunk_limit << "\n";
+    }
     return true;
   }
 
@@ -4130,6 +4316,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     tc.unsupported_mtlx = &ctx.stats.unsupported_mtlx;
     tc.material_diagnostic_examples = &ctx.stats.material_diagnostic_examples;
     tc.missing_textures = &ctx.stats.missing_textures;
+    tc.texture_mip_fallbacks = &ctx.stats.texture_mip_fallbacks;
     std::unordered_map<std::string, ResolvedMat> mat_cache;
     // Per-face GeomSubset materials: split subset-bound meshes (base and
     // prototype alike) into one job per subset before resolution.
@@ -5302,7 +5489,8 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.tri_colors.empty() ? nullptr : &ctx.tri_colors,
       ctx.tri_normals.empty() ? nullptr : &ctx.tri_normals,
       ctx.volumes.empty() ? nullptr : &ctx.volumes,
-      ctx.flat_openpbr_mats.empty() ? nullptr : &ctx.flat_openpbr_mats);
+      ctx.flat_openpbr_mats.empty() ? nullptr : &ctx.flat_openpbr_mats,
+      ctx.triangle_chunks.empty() ? nullptr : &ctx.triangle_chunks);
   const auto t1 = std::chrono::steady_clock::now();
   tinyusdz::image::WriteOption wopt;
   wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
@@ -5320,6 +5508,8 @@ void PrintRTStats(const RenderContext &ctx) {
   std::cerr << "rt meshes: " << ctx.stats.meshes << "\n";
   std::cerr << "rt skipped meshes: " << ctx.stats.skipped_meshes << "\n";
   std::cerr << "rt missing textures: " << ctx.stats.missing_textures << "\n";
+  std::cerr << "rt texture mip fallbacks: " << ctx.stats.texture_mip_fallbacks
+            << "\n";
   size_t backface_materials = 0;
   for (const TriMat &m : ctx.flat_mats)
     backface_materials += m.backface_id < ctx.flat_mats.size();
@@ -5374,12 +5564,30 @@ void PrintRTStats(const RenderContext &ctx) {
     std::cerr << "rt nested instances: " << ctx.stats.nested_instances << "\n";
     std::cerr << "rt unique triangles: " << unique_tris << "\n";
   } else {
-    lrt_tri_stats st;
-    std::memset(&st, 0, sizeof(st));
-    lrt_tri_scene_stats(ctx.scene, &st);
-    std::cerr << "lightrt: " << lrt_tri_kernel_name(ctx.scene) << "\n";
-    std::cerr << "bvh nodes: " << st.node_count << ", leaves: " << st.leaf_count
-              << ", memory: " << st.memory_bytes << " bytes\n";
+    if (ctx.scene) {
+      lrt_tri_stats st;
+      std::memset(&st, 0, sizeof(st));
+      lrt_tri_scene_stats(ctx.scene, &st);
+      std::cerr << "lightrt: " << lrt_tri_kernel_name(ctx.scene) << "\n";
+      std::cerr << "bvh nodes: " << st.node_count << ", leaves: " << st.leaf_count
+                << ", memory: " << st.memory_bytes << " bytes\n";
+    } else {
+      size_t nodes = 0, leaves = 0, memory = 0;
+      const char *kernel = nullptr;
+      for (const TriangleSceneChunk &chunk : ctx.triangle_chunks) {
+        lrt_tri_stats st;
+        std::memset(&st, 0, sizeof(st));
+        lrt_tri_scene_stats(chunk.scene.get(), &st);
+        nodes += st.node_count;
+        leaves += st.leaf_count;
+        memory += st.memory_bytes;
+        if (!kernel) kernel = lrt_tri_kernel_name(chunk.scene.get());
+      }
+      std::cerr << "lightrt: " << (kernel ? kernel : "none") << "\n";
+      std::cerr << "bvh chunks: " << ctx.triangle_chunks.size()
+                << ", nodes: " << nodes << ", leaves: " << leaves
+                << ", memory: " << memory << " bytes\n";
+    }
   }
 }
 

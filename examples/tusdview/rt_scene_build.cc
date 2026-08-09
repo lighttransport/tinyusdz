@@ -9,11 +9,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
+#include <limits>
 #include <thread>
 #include <unordered_set>
 
 #include "displacement_bake.hh"  // SampleTextureRed
 #include "lightrt_mtlx_bridge.hh"
+#include "log.hh"
 #include "texture_tools.hh"
 
 namespace tusdview {
@@ -66,11 +69,14 @@ inline void O2WAabb(const float o2w[12], const float lo[3], const float hi[3],
   }
 }
 
+unsigned RtBuildWorkerLimit();
+
 // Run f(i) for i in [0,n) across hardware threads (serial for small n).
 template <class F>
 void ParallelFor(size_t n, F f) {
   unsigned nt = std::max(1u, std::thread::hardware_concurrency());
   if (n < 64 || nt <= 1) { for (size_t i = 0; i < n; ++i) f(i); return; }
+  nt = std::min(nt, RtBuildWorkerLimit());
   nt = static_cast<unsigned>(std::min<size_t>(nt, n));
   const size_t chunk = (n + nt - 1) / nt;
   std::vector<std::thread> ts;
@@ -80,6 +86,39 @@ void ParallelFor(size_t n, F f) {
     ts.emplace_back([&f, b, e] { for (size_t i = b; i < e; ++i) f(i); });
   }
   for (auto& th : ts) th.join();
+}
+
+size_t GaussianBvhChunkLimit() {
+  constexpr size_t kDefault = size_t(262) * 1024;
+  const char* value = std::getenv("TUSDVIEW_GAUSSIAN_CHUNK");
+  if (!value || !*value) return kDefault;
+  char* end = nullptr;
+  const unsigned long long parsed = std::strtoull(value, &end, 10);
+  if (end == value || (end && *end != '\0') || parsed == 0)
+    return kDefault;
+  return std::min<size_t>(static_cast<size_t>(parsed),
+                          static_cast<size_t>(std::numeric_limits<int>::max()));
+}
+
+unsigned RtBuildWorkerLimit() {
+  const unsigned hardware = std::max(1u, std::thread::hardware_concurrency());
+  constexpr unsigned kDefault = 8;
+  const char* value = std::getenv("TUSDVIEW_RT_BUILD_THREADS");
+  if (!value || !*value)
+    return std::min(hardware, kDefault);
+  char* end = nullptr;
+  const unsigned long parsed = std::strtoul(value, &end, 10);
+  if (end == value || (end && *end != '\0') || parsed == 0)
+    return std::min(hardware, kDefault);
+  return std::min(hardware, static_cast<unsigned>(
+      std::min<unsigned long>(parsed, std::numeric_limits<unsigned>::max())));
+}
+
+template <typename T>
+void AppendMove(std::vector<T>& dst, std::vector<T>& src) {
+  dst.insert(dst.end(), std::make_move_iterator(src.begin()),
+             std::make_move_iterator(src.end()));
+  std::vector<T>().swap(src);
 }
 
 // Per-mesh build result (leaf-order geometry + a LOCAL-ref BLAS + placements).
@@ -441,7 +480,8 @@ uint32_t RtLightCollectionMaskForMesh(
 
 void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
                            const std::vector<DrawMaterialCPU>& materials,
-                           HostTextureTable* out) {
+                           HostTextureTable* out,
+                           const std::vector<DrawLightCPU>* lights) {
   if (!out) return;
   *out = HostTextureTable{};
   out->matTex.assign(
@@ -452,41 +492,68 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
   out->sourceToTable.assign(sourceTextures.size(), -1);
   out->textures.reserve(sourceTextures.size());
 
-  auto decodedImage = [](const light3d::Image& src,
-                         const DrawCompressedImageCPU& compressed) {
-    light3d::Image image = src;
-    if ((image.width <= 0 || image.height <= 0 || image.data.empty()) &&
-        compressed.format != DrawCompressedFormat::None &&
-        !compressed.data.empty()) {
-      DrawCompressedImageCPU unused;
-      light3d::Image rgba;
-      TextureCompressCaps noGpuFormats;
-      if (TexToolsAdaptCompressed(compressed.data.data(), compressed.data.size(),
-                                  false, compressed.format,
-                                  static_cast<uint32_t>(compressed.width),
-                                  static_cast<uint32_t>(compressed.height),
-                                  noGpuFormats, &unused, &rgba)) {
-        image = std::move(rgba);
-      }
-    }
-    return image;
+  // Keep the packed RT table usage-driven. Source texture arrays can contain
+  // decoded assets which are not connected to a renderable material (or an
+  // environment light); retaining those bytes needlessly increases both CPU
+  // staging and GPU residency for large scenes.
+  std::vector<uint8_t> used(sourceTextures.size(), 0);
+  auto markTexture = [&](int textureId) {
+    if (textureId >= 0 && static_cast<size_t>(textureId) < used.size())
+      used[static_cast<size_t>(textureId)] = 1;
   };
-  auto decodedMips = [&](const std::vector<light3d::Image>& sourceMips,
-                         const DrawCompressedImageCPU& compressed) {
-    if (!sourceMips.empty()) return sourceMips;
-    std::vector<light3d::Image> result;
-    result.reserve(compressed.mips.size());
+  for (const DrawMaterialCPU& dm : materials) {
+    markTexture(dm.baseColorTex);
+    markTexture(dm.metallicTex);
+    markTexture(dm.roughnessTex);
+    markTexture(dm.normalTex);
+    markTexture(dm.emissiveTex);
+    markTexture(dm.opacityTex);
+    markTexture(dm.occlusionTex);
+    markTexture(dm.coatWeightTex);
+    markTexture(dm.coatColorTex);
+    markTexture(dm.coatRoughnessTex);
+    markTexture(dm.specularColorTex);
+    markTexture(dm.coatNormalTex);
+  }
+  if (lights) {
+    for (const DrawLightCPU& light : *lights) markTexture(light.envmapTexture);
+  }
+  size_t skippedUnused = 0;
+
+  auto decodeImage = [](const light3d::Image& src,
+                        const DrawCompressedImageCPU& compressed,
+                        light3d::Image* decoded) -> const light3d::Image* {
+    if (src.width > 0 && src.height > 0 && !src.data.empty()) return &src;
+    if (compressed.format == DrawCompressedFormat::None ||
+        compressed.data.empty()) return nullptr;
+    DrawCompressedImageCPU unused;
+    TextureCompressCaps noGpuFormats;
+    if (!TexToolsAdaptCompressed(
+            compressed.data.data(), compressed.data.size(), false,
+            compressed.format, static_cast<uint32_t>(compressed.width),
+            static_cast<uint32_t>(compressed.height), noGpuFormats, &unused,
+            decoded))
+      return nullptr;
+    return decoded;
+  };
+  auto decodeMips = [&](const std::vector<light3d::Image>& sourceMips,
+                        const DrawCompressedImageCPU& compressed,
+                        std::vector<light3d::Image>* decoded) ->
+      const std::vector<light3d::Image>* {
+    if (!sourceMips.empty()) return &sourceMips;
+    decoded->clear();
+    decoded->reserve(compressed.mips.size());
     for (const DrawCompressedMipCPU& mip : compressed.mips) {
       DrawCompressedImageCPU level;
       level.format = compressed.format;
       level.width = mip.width;
       level.height = mip.height;
       level.data = mip.data;
-      light3d::Image decoded = decodedImage(light3d::Image{}, level);
-      if (decoded.width <= 0 || decoded.height <= 0 || decoded.data.empty()) break;
-      result.push_back(std::move(decoded));
+      light3d::Image levelImage;
+      if (!decodeImage(light3d::Image{}, level, &levelImage)) break;
+      decoded->push_back(std::move(levelImage));
     }
-    return result;
+    return decoded;
   };
   auto appendImage = [&](const light3d::Image& image,
                          const std::vector<light3d::Image>& sourceMips,
@@ -529,6 +596,10 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
     return id;
   };
   for (size_t ti = 0; ti < sourceTextures.size(); ++ti) {
+    if (!used[ti]) {
+      ++skippedUnused;
+      continue;
+    }
     const DrawTextureCPU& tex = sourceTextures[ti];
     if (tex.isUdim) {
       HostTextureDesc virtualTex;
@@ -540,10 +611,13 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       const int virtualId = static_cast<int>(out->textures.size());
       out->textures.push_back(virtualTex);
       for (const DrawUdimTileCPU& tile : tex.udimTiles) {
-        const light3d::Image image = decodedImage(tile.image, tile.compressed);
-        const std::vector<light3d::Image> mips =
-            decodedMips(tile.mipImages, tile.compressed);
-        const int tileId = appendImage(image, mips, tex);
+        light3d::Image decoded;
+        std::vector<light3d::Image> decodedMipsStorage;
+        const light3d::Image* image =
+            decodeImage(tile.image, tile.compressed, &decoded);
+        const std::vector<light3d::Image>* mips =
+            decodeMips(tile.mipImages, tile.compressed, &decodedMipsStorage);
+        const int tileId = image ? appendImage(*image, *mips, tex) : -1;
         const int lut = static_cast<int>(tile.udim) - 1001;
         if (tileId >= 0 && lut >= 0 && lut < 100) {
           out->textures[static_cast<size_t>(virtualId)].udimLayer[lut] = tileId;
@@ -551,10 +625,14 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       }
       out->sourceToTable[ti] = virtualId;
     } else {
-      const light3d::Image image = decodedImage(tex.image, tex.compressed);
-      const std::vector<light3d::Image> mips =
-          decodedMips(tex.mipImages, tex.compressed);
-      out->sourceToTable[ti] = appendImage(image, mips, tex);
+      light3d::Image decoded;
+      std::vector<light3d::Image> decodedMipsStorage;
+      const light3d::Image* image =
+          decodeImage(tex.image, tex.compressed, &decoded);
+      const std::vector<light3d::Image>* mips =
+          decodeMips(tex.mipImages, tex.compressed, &decodedMipsStorage);
+      out->sourceToTable[ti] =
+          image ? appendImage(*image, *mips, tex) : -1;
     }
   }
   auto mapTex = [&](int t) -> int {
@@ -579,6 +657,11 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
     PackRtMaterialTextureParams(
         dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
   }
+  LOGI("RT texture table: %zu source texture(s), %zu descriptor(s), %.2f MiB "
+       "packed, skipped %zu unused source texture(s)",
+       sourceTextures.size(), out->textures.size(),
+       static_cast<double>(out->texels.size()) / (1024.0 * 1024.0),
+       skippedUnused);
 }
 
 namespace {
@@ -906,7 +989,17 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
         src.ellipseNormals.size() < n * 3 || src.ellipseMajorAxes.size() < n * 3)
       continue;
     for (size_t i = 0; i < n; ++i) {
+      const float opacity = src.opacities.empty()
+                                ? 1.0f
+                                : src.opacities[src.opacities.size() > i ? i : 0];
+      // A splat below this threshold contributes less than one percent even
+      // at its center. Do not pay BVH/build/upload cost for it. This mirrors
+      // the native tusdrender path and only affects analytic RT carriers.
+      if (!std::isfinite(opacity) || opacity < 0.01f) continue;
       float c[3]; CarrierWorldPoint(src.world, &src.points[i * 3], c);
+      if (!std::isfinite(c[0]) || !std::isfinite(c[1]) ||
+          !std::isfinite(c[2]))
+        continue;
       float major[3], normal[3];
       for (int k = 0; k < 3; ++k) {
         major[k] = src.world[0 * 4 + k] * src.ellipseMajorAxes[i * 3 + 0] +
@@ -918,37 +1011,68 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       }
       const float ml = std::sqrt(major[0]*major[0]+major[1]*major[1]+major[2]*major[2]);
       const float nl = std::sqrt(normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]);
-      if (ml <= 1.0e-8f || nl <= 1.0e-8f) continue;
+      if (!std::isfinite(ml) || !std::isfinite(nl) || ml <= 1.0e-8f ||
+          nl <= 1.0e-8f) continue;
+      const float rx = src.ellipseRadii[i * 2] * ml;
+      const float ry = src.ellipseRadii[i * 2 + 1] * ml;
+      if (!std::isfinite(rx) || !std::isfinite(ry) || rx <= 1.0e-8f ||
+          ry <= 1.0e-8f)
+        continue;
       out->pointCenters.insert(out->pointCenters.end(), c, c + 3);
       for (float& v : major) v /= ml;
       for (float& v : normal) v /= nl;
       out->pointMajorAxes.insert(out->pointMajorAxes.end(), major, major + 3);
       out->pointNormals.insert(out->pointNormals.end(), normal, normal + 3);
-      out->pointRadii.push_back(src.ellipseRadii[i * 2] * ml);
-      out->pointRadii.push_back(src.ellipseRadii[i * 2 + 1] * ml);
+      out->pointRadii.push_back(rx);
+      out->pointRadii.push_back(ry);
       const size_t ci = src.colors.size() >= (i + 1) * 3 ? i * 3 : 0;
       out->pointColors.push_back(src.colors.size() >= 3 ? src.colors[ci] : 1.0f);
       out->pointColors.push_back(src.colors.size() >= 3 ? src.colors[ci + 1] : 1.0f);
       out->pointColors.push_back(src.colors.size() >= 3 ? src.colors[ci + 2] : 1.0f);
-      const size_t oi = src.opacities.size() > i ? i : 0;
-      out->pointColors.push_back(src.opacities.empty() ? 1.0f : src.opacities[oi]);
+      out->pointColors.push_back(opacity);
     }
   }
   out->pointCount = out->pointCenters.size() / 3;
   if (out->pointCount > 0) {
-    std::vector<float> pc(out->pointCount * 3), pa(out->pointCount * 6);
-    std::vector<int> pi(out->pointCount);
-    for (size_t i = 0; i < out->pointCount; ++i) {
-      pi[i] = static_cast<int>(i);
-      for (int k = 0; k < 3; ++k) pc[i * 3 + k] = out->pointCenters[i * 3 + k];
-      const float r = std::max(out->pointRadii[i * 2], out->pointRadii[i * 2 + 1]);
-      for (int k = 0; k < 3; ++k) {
-        pa[i * 6 + k] = pc[i * 3 + k] - r;
-        pa[i * 6 + 3 + k] = pc[i * 3 + k] + r;
+    const size_t chunkLimit = GaussianBvhChunkLimit();
+    for (size_t first = 0; first < out->pointCount; first += chunkLimit) {
+      const size_t count = std::min(out->pointCount, first + chunkLimit) - first;
+      std::vector<float> centers(count * 3), aabb(count * 6);
+      std::vector<int> order(count);
+      for (size_t i = 0; i < count; ++i) {
+        order[i] = static_cast<int>(i);
+        for (int k = 0; k < 3; ++k)
+          centers[i * 3 + k] = out->pointCenters[(first + i) * 3 + k];
+        const float r = std::max(out->pointRadii[(first + i) * 2],
+                                 out->pointRadii[(first + i) * 2 + 1]);
+        for (int k = 0; k < 3; ++k) {
+          aabb[i * 6 + k] = centers[i * 3 + k] - r;
+          aabb[i * 6 + 3 + k] = centers[i * 3 + k] + r;
+        }
       }
+      const size_t orderFirst = out->pointOrder.size();
+      const size_t bvhFirst = out->pointBvh.size();
+      std::vector<Node> localBvh =
+          BuildTlas(order, static_cast<int>(count), centers, aabb);
+      for (int& index : order) index += static_cast<int>(first);
+      out->pointOrder.insert(out->pointOrder.end(), order.begin(), order.end());
+      for (Node& node : localBvh) {
+        // Leaf `left` addresses this chunk's order span; interior children
+        // address this chunk's node span. Keep both local so the kernel can
+        // traverse each root with bounded pointer ranges.
+        if (node.count == 0) {
+          node.left += static_cast<int>(bvhFirst);
+          node.right += static_cast<int>(bvhFirst);
+        }
+      }
+      out->pointBvh.insert(out->pointBvh.end(), localBvh.begin(), localBvh.end());
+      out->pointChunks.push_back({static_cast<int>(first), static_cast<int>(count),
+                                  static_cast<int>(orderFirst),
+                                  static_cast<int>(bvhFirst),
+                                  static_cast<int>(localBvh.size())});
     }
-    out->pointBvh = BuildTlas(pi, static_cast<int>(out->pointCount), pc, pa);
-    out->pointOrder = std::move(pi);
+    LOGI("RT Gaussian point BVH: %zu point(s) in %zu chunk(s), limit %zu",
+         out->pointCount, out->pointChunks.size(), chunkLimit);
   }
 
   // Phase A: build every mesh's geometry in parallel (the dominant cost on
@@ -960,6 +1084,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   for (const DrawMeshCPU& mesh : nonMeshProxies) sourceMeshes.push_back(&mesh);
   std::vector<MeshBuild> mbs(sourceMeshes.size());
   setPhase(0, sourceMeshes.size());  // geometry
+  LOGI("RT geometry build: %zu mesh(es), %u worker(s)", sourceMeshes.size(),
+       RtBuildWorkerLimit());
   ParallelFor(sourceMeshes.size(), [&](size_t i) {
     mbs[i] = BuildOneMesh(scene, *sourceMeshes[i], displacementScale);
     tick();
@@ -994,31 +1120,33 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       rm.leafOrder = std::move(mb.leafOrder);
       refitOut->meshes.push_back(std::move(rm));
     }
+    const size_t mbTriCount = mb.mat.size();
     const size_t nodeOff = out->blas.size();
     const int blasRoot = static_cast<int>(nodeOff);
-    out->tris.insert(out->tris.end(), mb.tris.begin(), mb.tris.end());
-    out->nrms.insert(out->nrms.end(), mb.nrms.begin(), mb.nrms.end());
-    out->cols.insert(out->cols.end(), mb.cols.begin(), mb.cols.end());
-    out->uv.insert(out->uv.end(), mb.uv.begin(), mb.uv.end());
-    out->uv1.insert(out->uv1.end(), mb.uv1.begin(), mb.uv1.end());
-    out->infl.insert(out->infl.end(), mb.infl.begin(), mb.infl.end());
-    out->domw.insert(out->domw.end(), mb.domw.begin(), mb.domw.end());
-    out->geo.insert(out->geo.end(), mb.geo.begin(), mb.geo.end());
-    out->emask.insert(out->emask.end(), mb.emask.begin(), mb.emask.end());
-    out->mat.insert(out->mat.end(), mb.mat.begin(), mb.mat.end());
+    AppendMove(out->tris, mb.tris);
+    AppendMove(out->nrms, mb.nrms);
+    AppendMove(out->cols, mb.cols);
+    AppendMove(out->uv, mb.uv);
+    AppendMove(out->uv1, mb.uv1);
+    AppendMove(out->infl, mb.infl);
+    AppendMove(out->domw, mb.domw);
+    AppendMove(out->geo, mb.geo);
+    AppendMove(out->emask, mb.emask);
+    AppendMove(out->mat, mb.mat);
     if (!mb.backMat.empty()) {
       if (out->backMat.empty()) out->backMat.assign(triOff, -1);
-      out->backMat.insert(out->backMat.end(), mb.backMat.begin(), mb.backMat.end());
+      AppendMove(out->backMat, mb.backMat);
     } else if (!out->backMat.empty()) {
-      out->backMat.insert(out->backMat.end(), mb.mat.size(), -1);
+      out->backMat.insert(out->backMat.end(), mbTriCount, -1);
     }
-    out->face.insert(out->face.end(), mb.face.begin(), mb.face.end());
-    out->domj.insert(out->domj.end(), mb.domj.begin(), mb.domj.end());
+    AppendMove(out->face, mb.face);
+    AppendMove(out->domj, mb.domj);
     for (Node nd : mb.blas) {
       if (nd.count > 0) nd.left += static_cast<int>(triOff);
       else { nd.left += static_cast<int>(nodeOff); nd.right += static_cast<int>(nodeOff); }
       out->blas.push_back(nd);
     }
+    std::vector<Node>().swap(mb.blas);
     const int proto = static_cast<int>(protoBox.size());
     protoBox.push_back({mb.lo[0], mb.lo[1], mb.lo[2], mb.hi[0], mb.hi[1], mb.hi[2]});
     const size_t np = mb.instTint.size() / 4;
@@ -1125,7 +1253,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                              kLightRtOpenPBRFloats,
                          0.0f);
   HostTextureTable textureTable;
-  BuildHostTextureTable(scene.textures, scene.materials, &textureTable);
+  BuildHostTextureTable(scene.textures, scene.materials, &textureTable,
+                        &scene.lights);
   out->texels = std::move(textureTable.texels);
   out->textures = std::move(textureTable.textures);
   out->matTex = std::move(textureTable.matTex);

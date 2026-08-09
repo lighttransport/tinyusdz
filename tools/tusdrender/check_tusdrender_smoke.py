@@ -2,6 +2,7 @@
 """Smoke-test tusdrender output without third-party Python packages."""
 
 import re
+import os
 import struct
 import subprocess
 import sys
@@ -459,6 +460,31 @@ def Xform "World"
             raise RuntimeError(
                 f"active=false not honored ({expected!r}):\n{active_stats.stderr}")
 
+    # The public curve fixture has two mesh triangles. Force one triangle per
+    # native BVH to exercise global primitive offsets in primary and shadow
+    # rays, while retaining the same rendered result as the single-BVH path.
+    mesh_chunk_scene = srcdir / "tests" / "usda" / "curves.usda"
+    mesh_chunk_out = outdir / "tusdrender-triangle-chunks.png"
+    mesh_chunk_stats = subprocess.run(
+        [exe, str(mesh_chunk_scene), str(mesh_chunk_out), "-w", "32",
+         "-height", "32", "-rtPreview", "-stats"],
+        env={**os.environ, "TUSDR_TRIANGLE_CHUNK": "1"},
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if "native triangle BVHs: 2 chunk(s)" not in mesh_chunk_stats.stderr:
+        raise RuntimeError(
+            "triangle BVH chunking was not exercised:\n"
+            + mesh_chunk_stats.stderr)
+    w, h, rgba = read_png_rgba(mesh_chunk_out)
+    if w != 32 or h <= 0:
+        raise RuntimeError(f"unexpected triangle-chunk dimensions {(w, h)}")
+    pixels = [rgba[i:i + 4] for i in range(0, len(rgba), 4)]
+    if len(set(pixels)) <= 1:
+        raise RuntimeError("triangle-chunk RT preview render appears blank")
+
     # BasisCurves ray tracing in the -rtPreview path (curves build into the
     # DirectScene as LightRT hair strands), including curve-prototype instancing
     # (a PointInstancer whose prototype is a BasisCurves is baked per instance).
@@ -502,6 +528,7 @@ def Xform "World"
     curve_stats = subprocess.run(
         [exe, str(curve_scene), str(curve_out), "-w", "64", "-height", "64",
          "-rtPreview", "-stats", "-autoframe"],
+        env={**os.environ, "TUSDR_CURVE_CHUNK": "1"},
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -510,6 +537,9 @@ def Xform "World"
     # 1 direct BasisCurves "Hair" (DirectScene) + a curve-prototype instancer
     # whose Blade curve geometry is stored once and TLAS-instanced 2×.
     for expected in (
+        # The direct Hair prim is one strand, so it remains whole even though
+        # its two segments exceed the one-segment limit.
+        "native curves: round 1 chunk(s)",
         "rt curve strands: 1",
         "rt curve instances: 2",
         "rt point instances: 2",
@@ -522,6 +552,56 @@ def Xform "World"
     pixels = [rgba[i:i + 4] for i in range(0, len(rgba), 4)]
     if len(set(pixels)) <= 1:
         raise RuntimeError("curve RT preview render appears blank")
+
+    # Gaussian splats must remain native ellipse carriers and must not require
+    # one monolithic BVH. Force one sample per chunk so this also exercises the
+    # chunk offset/nearest-hit path on both the CPU and Vulkan smoke profiles.
+    gaussian_scene = srcdir / "tests" / "usda" / "tusdview-gaussian-splat.usda"
+    gaussian_out = outdir / "tusdrender-gaussian-splat.png"
+    gaussian_stats = subprocess.run(
+        [exe, str(gaussian_scene), str(gaussian_out), "-w", "32", "-height", "32",
+         "-rtPreview", "-stats", "-autoframe"],
+        env={**os.environ, "TUSDR_GAUSSIAN_CHUNK": "1"},
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if "native Gaussian ellipses: 2 in 2 chunk(s)" not in gaussian_stats.stderr:
+        raise RuntimeError(
+            "Gaussian ellipse chunking was not exercised:\n"
+            + gaussian_stats.stderr)
+    w, h, rgba = read_png_rgba(gaussian_out)
+    if w != 32 or h <= 0:
+        raise RuntimeError(f"unexpected Gaussian dimensions {(w, h)}")
+    pixels = [rgba[i:i + 4] for i in range(0, len(rgba), 4)]
+    if len(set(pixels)) <= 1:
+        raise RuntimeError("Gaussian RT preview render appears blank")
+
+    # AMD/HIP does not expose LightRT's analytic ellipse primitive. It must
+    # select the oriented-ellipse tessellation fallback rather than reaching
+    # the HIP backend with an empty mesh. A host without ROCm is still a valid
+    # smoke environment: in that case only the runtime-unavailable diagnostic
+    # is required.
+    hip_gaussian_out = outdir / "tusdrender-hip-gaussian-splat.png"
+    hip_gaussian = subprocess.run(
+        [exe, str(gaussian_scene), str(hip_gaussian_out), "-hip", "-w", "16",
+         "-height", "16", "-stats"],
+        env={**os.environ, "TUSDR_GPU_TRIANGLE_CHUNK": "1"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    hip_log = hip_gaussian.stdout + hip_gaussian.stderr
+    if "[gpu] gaussian splats:" not in hip_log:
+        raise RuntimeError(
+            "HIP Gaussian tessellation fallback was not selected:\n" + hip_log)
+    if hip_gaussian.returncode != 0 and "HIP ray tracing unavailable" not in hip_log:
+        raise RuntimeError("unexpected HIP Gaussian failure:\n" + hip_log)
+    if hip_gaussian_out.exists():
+        w, h, rgba = read_png_rgba(hip_gaussian_out)
+        if (w, h) != (16, 16):
+            raise RuntimeError(f"unexpected HIP Gaussian dimensions {(w, h)}")
 
     # primvars:displayColor (constant) as base color + primvars:displayOpacity
     # (constant) see-through blend: a 0.5-opacity green quad in front of an opaque
@@ -942,6 +1022,7 @@ def check_vulkan(exe, srcdir, outdir):
     for flag, name in (("-vk", "compute trace"), ("-vkr", "ray query")):
         out = outdir / f"tusdrender{flag}.png"
         run = subprocess.run([exe, str(scene), str(out), *size, flag],
+                             env={**os.environ, "TUSDR_GPU_TRIANGLE_CHUNK": "400"},
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         log = run.stdout + run.stderr
         if run.returncode != 0 or not out.exists():
@@ -950,6 +1031,8 @@ def check_vulkan(exe, srcdir, outdir):
             continue
         if "backend: LightRT VK" not in log:
             raise RuntimeError(f"{flag}: expected 'backend: LightRT VK' in output:\n{log}")
+        if "GPU chunks)" not in log:
+            raise RuntimeError(f"{flag}: GPU mesh chunk path was not exercised:\n{log}")
         w, h, rgba = read_png_rgba(out)
         if (w, h) != (rw, rh):
             raise RuntimeError(

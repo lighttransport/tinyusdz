@@ -8,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "image-writer.hh"
@@ -135,6 +136,96 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   }
   if (!build_cpu_scene) return true;
   return BuildGpuCpuScene(threads, out, quality);
+}
+
+bool BuildGpuTriChunk(
+    const std::vector<Vec3> &base_colors,
+    std::vector<RTPreviewStats::MeshGeometry> &geos, size_t limit,
+    size_t *mesh_index, size_t *tri_index,
+    std::vector<Vec3> *chunk_colors,
+    std::vector<RTPreviewStats::MeshGeometry> *chunk_geos,
+    size_t *chunk_triangles) {
+  if (!mesh_index || !tri_index || !chunk_colors || !chunk_geos ||
+      !chunk_triangles || limit == 0) return false;
+  chunk_colors->clear();
+  chunk_geos->clear();
+  *chunk_triangles = 0;
+  while (*mesh_index < geos.size() && *chunk_triangles < limit) {
+    const size_t source_mesh = *mesh_index;
+    const auto &src = geos[source_mesh];
+    const size_t nv = src.positions.size() / 3u;
+    const size_t ntri = src.indices.size() / 3u;
+    if (src.positions.size() % 3u != 0u || src.indices.size() % 3u != 0u) {
+      std::cerr << "Invalid GPU mesh chunk source at mesh " << *mesh_index
+                << ".\n";
+      return false;
+    }
+    if (*tri_index >= ntri) {
+      if (ntri == 0) {
+        RTPreviewStats::MeshGeometry &released = geos[source_mesh];
+        std::vector<float>().swap(released.positions);
+        std::vector<float>().swap(released.normals);
+        std::vector<float>().swap(released.uvs);
+        std::vector<uint32_t>().swap(released.indices);
+      }
+      ++*mesh_index;
+      *tri_index = 0;
+      continue;
+    }
+    const size_t take = std::min(limit - *chunk_triangles, ntri - *tri_index);
+    RTPreviewStats::MeshGeometry dst;
+    dst.normals.reserve(std::min(nv, take * 3u) * 3u);
+    // Only vertices touched by this bounded chunk need a remap. A dense
+    // vertex-count array made a tiny chunk retain an additional allocation
+    // proportional to a potentially enormous source mesh.
+    std::unordered_map<uint32_t, uint32_t> remap;
+    remap.reserve(std::min(nv, take * size_t(3)));
+    const bool per_vertex_normals = src.normals.size() == nv * 3u;
+    for (size_t t = 0; t < take; ++t) {
+      const size_t src_tri = *tri_index + t;
+      for (size_t k = 0; k < 3; ++k) {
+        const uint32_t old_id = src.indices[src_tri * 3u + k];
+        if (old_id >= nv) {
+          std::cerr << "Invalid GPU mesh index " << old_id << " at mesh "
+                    << *mesh_index << ".\n";
+          return false;
+        }
+        auto remap_it = remap.find(old_id);
+        uint32_t new_id = 0;
+        if (remap_it == remap.end()) {
+          new_id = static_cast<uint32_t>(dst.positions.size() / 3u);
+          remap.emplace(old_id, new_id);
+          dst.positions.insert(dst.positions.end(),
+                               src.positions.begin() + old_id * 3u,
+                               src.positions.begin() + old_id * 3u + 3u);
+          if (per_vertex_normals) {
+            dst.normals.insert(dst.normals.end(),
+                               src.normals.begin() + old_id * 3u,
+                               src.normals.begin() + old_id * 3u + 3u);
+          }
+        } else {
+          new_id = remap_it->second;
+        }
+        dst.indices.push_back(new_id);
+      }
+    }
+    chunk_geos->push_back(std::move(dst));
+    chunk_colors->push_back(
+        source_mesh < base_colors.size() ? base_colors[source_mesh]
+                                         : Vec3{0.5f, 0.5f, 0.5f});
+    *tri_index += take;
+    *chunk_triangles += take;
+    if (*tri_index == ntri) {
+      RTPreviewStats::MeshGeometry &released = geos[source_mesh];
+      std::vector<float>().swap(released.positions);
+      std::vector<float>().swap(released.normals);
+      std::vector<float>().swap(released.uvs);
+      std::vector<uint32_t>().swap(released.indices);
+      ++*mesh_index;
+      *tri_index = 0;
+    }
+  }
+  return *chunk_triangles != 0;
 }
 
 bool BuildGpuCpuScene(int threads, GpuTriScene *out, lrt_tri_quality quality) {

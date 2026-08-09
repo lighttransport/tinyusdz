@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 #include "hipew.h"
 #include "displacement_bake.hh"
@@ -61,10 +62,15 @@ void HipRayTracer::freeScene() {
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_); F(dAccum_);
   F(dVolDens_); F(dVolParams_);
+  F(dPointCenters_); F(dPointMajorAxes_); F(dPointNormals_);
+  F(dPointRadii_); F(dPointColors_); F(dPointOrder_); F(dPointBvh_);
+  F(dPointChunks_);
   numVols_ = 0;
   numMats_ = 0;
   numLights_ = 0;
   numTextures_ = 0;
+  pointCount_ = 0;
+  pointChunkCount_ = 0;
   outCap_ = 0; accumCap_ = 0; triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
 }
@@ -158,6 +164,12 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   numLights_ = hs.numLights;
   numTextures_ = hs.numTextures;
   numVols_ = hs.numVols;
+  if (hs.pointCount > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    if (err) *err = "HIP: Gaussian point count exceeds kernel limit (" +
+                    std::to_string(hs.pointCount) + ")";
+    return false;
+  }
+  pointCount_ = static_cast<int>(hs.pointCount);
 
   if (progress) { progress->phase = 3; progress->done = 0; progress->total = 0; }  // upload
   // Upload every array to the device.
@@ -196,6 +208,23 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
     if (!up(hs.volParams.data(), hs.volParams.size() * sizeof(HostVolParam), &dVolParams_))
       return false;
   }
+  if (!up(hs.pointCenters.data(), hs.pointCenters.size() * sizeof(float),
+          &dPointCenters_)) return false;
+  if (!up(hs.pointMajorAxes.data(), hs.pointMajorAxes.size() * sizeof(float),
+          &dPointMajorAxes_)) return false;
+  if (!up(hs.pointNormals.data(), hs.pointNormals.size() * sizeof(float),
+          &dPointNormals_)) return false;
+  if (!up(hs.pointRadii.data(), hs.pointRadii.size() * sizeof(float),
+          &dPointRadii_)) return false;
+  if (!up(hs.pointColors.data(), hs.pointColors.size() * sizeof(float),
+          &dPointColors_)) return false;
+  if (!up(hs.pointOrder.data(), hs.pointOrder.size() * sizeof(int),
+          &dPointOrder_)) return false;
+  if (!up(hs.pointBvh.data(), hs.pointBvh.size() * sizeof(Node),
+          &dPointBvh_)) return false;
+  pointChunkCount_ = static_cast<int>(hs.pointChunks.size());
+  if (!up(hs.pointChunks.data(), hs.pointChunks.size() * sizeof(PointBvhChunk),
+          &dPointChunks_)) return false;
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
   if (!up(hs.matBase.data(), hs.matBase.size() * sizeof(float), &dMatBase_)) return false;
   if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
@@ -302,6 +331,14 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
         *dI = reinterpret_cast<void*>(dInstances_), *dO = reinterpret_cast<void*>(dOut_);
   void* dVD = reinterpret_cast<void*>(dVolDens_), *dVP = reinterpret_cast<void*>(dVolParams_);
   void* dEm = reinterpret_cast<void*>(dEmask_);
+  void* dPC = reinterpret_cast<void*>(dPointCenters_);
+  void* dPA = reinterpret_cast<void*>(dPointMajorAxes_);
+  void* dPN = reinterpret_cast<void*>(dPointNormals_);
+  void* dPR = reinterpret_cast<void*>(dPointRadii_);
+  void* dPCol = reinterpret_cast<void*>(dPointColors_);
+  void* dPO = reinterpret_cast<void*>(dPointOrder_);
+  void* dPB = reinterpret_cast<void*>(dPointBvh_);
+  void* dPChunks = reinterpret_cast<void*>(dPointChunks_);
   int numMats = numMats_;
   int numLights = numLights_;
   int numTextures = numTextures_;
@@ -313,12 +350,14 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,backMats,matPbr,matBase,
   // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
   // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
-  // volDens,volParams,numVols,emask,accum,sampleIdx,numSamples.
+  // volDens,volParams,numVols,emask,point arrays,pointCount,accum,sampleIdx,numSamples.
   void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dBM, &dMP, &dMB, &dML, &numMats, &dLP,
                   &numLights, &dMT, &dMTP, &dTx, &dTD, &numTextures, &dU, &dU1,
                   &dIn, &dF,  &dDw,
                   &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
-                  &dVD, &dVP, &numVols, &dEm, &dAcc, &sampleIdx, &numSamples};
+                  &dVD, &dVP, &numVols, &dEm, &dPC, &dPA, &dPN, &dPR, &dPCol,
+                  &dPO, &dPB, &pointCount_, &dPChunks, &pointChunkCount_,
+                  &dAcc, &sampleIdx, &numSamples};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   rgba->resize(bytes);
   // Launch one kernel per Halton-jittered sample; the kernel accumulates on the

@@ -98,12 +98,25 @@ struct HostTextureTable {
   std::vector<int> sourceToTable;
 };
 
+// A bounded analytic-Gaussian BVH range. Point attributes remain in one
+// compact global stream; each range owns a local BVH root and order span so
+// backends can build/traverse large fields incrementally without one monolithic
+// point-BVH working set.
+struct PointBvhChunk {
+  int first{0};
+  int count{0};
+  int orderFirst{0};
+  int bvhFirst{0};
+  int bvhCount{0};
+};
+
 // Build the backend-neutral mipmapped texture table used by CUDA/HIP and
 // Vulkan ray query. Handles decoded images, compressed-only inputs, sparse
 // UDIM tiles, semantic material slots, UV transforms, and channel metadata.
 void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
                            const std::vector<DrawMaterialCPU>& materials,
-                           HostTextureTable* out);
+                           HostTextureTable* out,
+                           const std::vector<DrawLightCPU>* lights = nullptr);
 
 // Build camera-independent solid approximations for Points and Curves. RT
 // backends consume these; raster backends retain the original carriers and
@@ -118,6 +131,7 @@ struct HostScene {
   std::vector<float> pointRadii, pointColors;
   std::vector<int> pointOrder;
   std::vector<Node> pointBvh;
+  std::vector<PointBvhChunk> pointChunks;
   size_t pointCount{0};
   // cols is RGBA per triangle vertex: displayColor.rgb + displayOpacity.
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;

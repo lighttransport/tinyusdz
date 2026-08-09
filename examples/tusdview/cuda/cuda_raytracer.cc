@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <vector>
 
 #if defined(_WIN32)
@@ -247,12 +248,13 @@ void CudaRayTracer::freeScene() {
   F(dVolDens_); F(dVolParams_);
   F(dPointCenters_); F(dPointMajorAxes_); F(dPointNormals_);
   F(dPointRadii_); F(dPointColors_);
-  F(dPointOrder_); F(dPointBvh_);
+  F(dPointOrder_); F(dPointBvh_); F(dPointChunks_);
   numVols_ = 0;
   numMats_ = 0;
   numLights_ = 0;
   numTextures_ = 0;
   pointCount_ = 0;
+  pointChunkCount_ = 0;
   outCap_ = 0; accumCap_ = 0; triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
 }
@@ -425,14 +427,47 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   numLights_ = hs.numLights;
   numTextures_ = hs.numTextures;
   numVols_ = hs.numVols;
+  if (hs.pointCount > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    if (err) *err = "CUDA: Gaussian point count exceeds kernel limit (" +
+                    std::to_string(hs.pointCount) + ")";
+    return false;
+  }
   pointCount_ = static_cast<int>(hs.pointCount);
 
   if (progress) { progress->phase = 3; progress->done = 0; progress->total = 0; }  // upload
   // Upload every array to the device.
   auto up = [&](const void* host, size_t bytes, uintptr_t* dptr) -> bool {
+    size_t freeBytes = 0, totalBytes = 0;
+    const bool haveMemInfo = cuMemGetInfo &&
+                             cuMemGetInfo(&freeBytes, &totalBytes) == CUDA_SUCCESS;
     CUdeviceptr p;
-    CU_OK(cuMemAlloc(&p, bytes ? bytes : 1), "cuMemAlloc");
-    if (bytes) CU_OK(cuMemcpyHtoD(p, host, bytes), "cuMemcpyHtoD");
+    const CUresult ar = cuMemAlloc(&p, bytes ? bytes : 1);
+    if (ar != CUDA_SUCCESS) {
+      const char* s = nullptr;
+      if (cuGetErrorString) cuGetErrorString(ar, &s);
+      if (err) {
+        *err = "CUDA scene upload allocation failed (" +
+               std::to_string(bytes) + " bytes";
+        if (haveMemInfo)
+          *err += ", " + std::to_string(freeBytes) + " bytes free / " +
+                  std::to_string(totalBytes) + " total";
+        *err += std::string("): ") + (s ? s : "error");
+      }
+      freeScene();
+      return false;
+    }
+    if (bytes) {
+      const CUresult cr = cuMemcpyHtoD(p, host, bytes);
+      if (cr != CUDA_SUCCESS) {
+        const char* s = nullptr;
+        if (cuGetErrorString) cuGetErrorString(cr, &s);
+        cuMemFree(p);
+        if (err) *err = std::string("CUDA scene upload copy failed: ") +
+                        (s ? s : "error");
+        freeScene();
+        return false;
+      }
+    }
     *dptr = static_cast<uintptr_t>(p);
     return true;
   };
@@ -471,6 +506,9 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.pointColors.data(), hs.pointColors.size() * sizeof(float), &dPointColors_)) return false;
   if (!up(hs.pointOrder.data(), hs.pointOrder.size() * sizeof(int), &dPointOrder_)) return false;
   if (!up(hs.pointBvh.data(), hs.pointBvh.size() * sizeof(Node), &dPointBvh_)) return false;
+  pointChunkCount_ = static_cast<int>(hs.pointChunks.size());
+  if (!up(hs.pointChunks.data(), hs.pointChunks.size() * sizeof(PointBvhChunk),
+          &dPointChunks_)) return false;
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
   if (!up(hs.matBase.data(), hs.matBase.size() * sizeof(float), &dMatBase_)) return false;
   if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
@@ -540,6 +578,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   CUdeviceptr dPC = dPointCenters_, dPA = dPointMajorAxes_, dPN = dPointNormals_,
               dPR = dPointRadii_, dPCol = dPointColors_, dPO = dPointOrder_,
               dPB = dPointBvh_;
+  CUdeviceptr dPChunks = dPointChunks_;
   int numMats = numMats_;
   int numLights = numLights_;
   int numTextures = numTextures_;
@@ -557,7 +596,8 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                   &dIn, &dF,  &dDw,
                   &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
                   &dVD, &dVP, &numVols, &dEm, &dPC, &dPA, &dPN, &dPR, &dPCol,
-                  &dPO, &dPB, &pointCount_, &dAcc, &sampleIdx, &numSamples};
+                  &dPO, &dPB, &pointCount_, &dPChunks, &pointChunkCount_,
+                  &dAcc, &sampleIdx, &numSamples};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   rgba->resize(bytes);
   // Launch one kernel per Halton-jittered sample; the kernel accumulates on the

@@ -59,6 +59,9 @@ struct LoadOptions {
   // Sampling retains complete polylines so hair topology remains valid.
   size_t maxCurvePrims{0};
   size_t maxCurveStrands{0};
+  // Gaussian/Points carriers are emitted in bounded records so a large point
+  // field never requires one giant DrawPointsCPU allocation. Zero selects 64K.
+  size_t pointChunkSamples{0};
   // Register ordinary texture slots during material conversion, then decode,
   // resize and compress them after geometry publication on bounded workers.
   bool asyncTextureDecode{false};

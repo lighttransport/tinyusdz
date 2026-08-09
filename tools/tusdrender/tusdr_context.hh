@@ -7,6 +7,7 @@
 #include <functional>
 
 #include "next/eval/value-clip.hh"
+#include "tydra/next/render-extract.hh"
 #include "tusdr_types.hh"
 
 namespace tusdr {
@@ -32,6 +33,7 @@ struct RenderContext {
   Bounds bounds;
   RTPreviewStats stats;
   lrt_tri_scene *scene{nullptr};  // owned flat BVH (no-instance path)
+  std::vector<TriangleSceneChunk> triangle_chunks;
   // Two-level (instanced) BVH path: built when the composed scene has native
   // instances. blas[0] is the base (non-instanced) geometry; blas[1..] are the
   // unique prototypes. instances[] place them; tlas is the top-level BVH.
@@ -213,14 +215,20 @@ bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask);
 unsigned WorkerThreadCount(int requested);
 int PurposeAnyHitFilter(void *user, uint32_t prim_id, float, float, float);
 
-bool IntersectVisibleTriangles(lrt_tri_scene *scene,
-                               const std::vector<FlatTri> &tris,
-                               const lrt_ray &ray, uint32_t purpose_mask,
-                               lrt_hit *hit);
+bool IntersectVisibleTriangles(
+    lrt_tri_scene *scene, const std::vector<FlatTri> &tris,
+    const lrt_ray &ray, uint32_t purpose_mask, lrt_hit *hit,
+    size_t tri_first = 0, size_t tri_count = (std::numeric_limits<size_t>::max)());
+
+bool IntersectVisibleTriangleChunks(
+    const std::vector<TriangleSceneChunk> &chunks,
+    const std::vector<FlatTri> &tris, const lrt_ray &ray,
+    uint32_t purpose_mask, lrt_hit *hit);
 
 bool Occluded(lrt_tri_scene *scene, const std::vector<FlatTri> &tris,
               const Vec3 &p, const Vec3 &n, const Vec3 &l, float max_t,
-              const DirectScene *direct, uint32_t purpose_mask);
+              const DirectScene *direct, uint32_t purpose_mask,
+              const std::vector<TriangleSceneChunk> *chunks = nullptr);
 
 bool OccludedTLAS(const lrt_tlas *tlas, const Vec3 &p, const Vec3 &n,
                   const Vec3 &l, float max_t);
@@ -273,7 +281,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            //   - the emission of an analytic mesh light, which direct lighting
            //     already delivers (TriInfo::area_light marks those triangles).
            // Without this, both are counted twice in `-materialShading lightrt-bsdf`.
-           bool indirect = false);
+           bool indirect = false,
+           const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr);
 
 uint8_t ToSRGB8(float linear);
 
@@ -300,7 +309,8 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<float> *tri_normals = nullptr,
                             const std::vector<VolumeData> *volumes = nullptr,
                             const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
-                                *openpbr_mats = nullptr);
+                                *openpbr_mats = nullptr,
+                            const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr);
 
 bool LoadProgress(float progress, void *);
 
@@ -327,11 +337,9 @@ int RunStreamServer(const Options &opt);
 #ifdef HAVE_VULKAN
 bool RunVulkanLightRT(const Options &opt,
                               const std::vector<Vec3> &base_colors,
-                              const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                              std::vector<RTPreviewStats::MeshGeometry> &geos,
                               const CameraFrame &camera, int height);
-bool RunVulkanGaussianLightRT(const Options &opt, lrt_tri_scene *scene,
-                              const std::vector<Vec3> &base_colors,
-                              const std::vector<Vec3> &normals,
+bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
                               const CameraFrame &camera, int height);
 #endif
 
@@ -345,7 +353,7 @@ bool RunD3D11LightRT(const Options &opt,
 #ifdef HAVE_HIP
 bool RunHipLightRT(const Options &opt,
                    const std::vector<Vec3> &base_colors,
-                   const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                   std::vector<RTPreviewStats::MeshGeometry> &geos,
                    const CameraFrame &camera, int height);
 #endif
 
@@ -360,6 +368,10 @@ uint32_t PurposeBit(tinyusdz::Purpose purpose);
 
 std::vector<float> ReadFloatArrayLazy(const tinyusdz::next::UsdPrim &prim,
                                       const char *name, double time);
+
+bool ReadFloatArrayViewLazy(
+    const tinyusdz::next::UsdPrim &prim, const char *name, double time,
+    tinyusdz::tydra::next::ValueArrayRead<float> *out);
 
 std::vector<int32_t> ReadIntArrayLazy(const tinyusdz::next::UsdPrim &prim,
                                       const char *name, double time);

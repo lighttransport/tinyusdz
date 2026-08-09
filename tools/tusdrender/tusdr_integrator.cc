@@ -21,14 +21,16 @@ namespace tusdr {
 
 int PurposeAnyHitFilter(void *user, uint32_t prim_id, float, float, float) {
   const PurposeFilter *filter = reinterpret_cast<const PurposeFilter *>(user);
-  if (!filter || !filter->tris || size_t(prim_id) >= filter->tris->size()) {
+  if (!filter || !filter->tris || filter->first >= filter->tris->size() ||
+      size_t(prim_id) >= filter->count ||
+      size_t(prim_id) >= filter->tris->size() - filter->first) {
     return 0;
   }
   // Back-face culling is a VISIBILITY property, not an occlusion one: a
   // single-sided surface still blocks light from either side (an opaque
   // occluder, like the raster backends' shadowing), so shadow rays are NOT
   // face-culled -- only the primary/bounce visibility walk is.
-  return PurposeVisible((*filter->tris)[size_t(prim_id)].purpose_bit,
+  return PurposeVisible((*filter->tris)[filter->first + size_t(prim_id)].purpose_bit,
                         filter->mask)
              ? 1
              : 0;
@@ -37,8 +39,11 @@ int PurposeAnyHitFilter(void *user, uint32_t prim_id, float, float, float) {
 bool IntersectVisibleTriangles(lrt_tri_scene *scene,
                                const std::vector<FlatTri> &tris,
                                const lrt_ray &ray, uint32_t purpose_mask,
-                               lrt_hit *hit) {
+                               lrt_hit *hit, size_t tri_first,
+                               size_t tri_count) {
   if (!scene || !hit) return false;
+  if (tri_first >= tris.size()) return false;
+  tri_count = std::min(tri_count, tris.size() - tri_first);
   static constexpr size_t kMaxHits = 64;
   lrt_ray query = ray;
   for (int iter = 0; iter < 8; ++iter) {
@@ -47,10 +52,10 @@ bool IntersectVisibleTriangles(lrt_tri_scene *scene,
     if (n == 0) return false;
     for (size_t i = 0; i < n; ++i) {
       const uint32_t prim_id = hits[i].prim_id;
-      if (prim_id == LRT_TRI_NO_HIT || size_t(prim_id) >= tris.size()) {
+      if (prim_id == LRT_TRI_NO_HIT || size_t(prim_id) >= tri_count) {
         continue;
       }
-      const FlatTri &ft = tris[size_t(prim_id)];
+      const FlatTri &ft = tris[tri_first + size_t(prim_id)];
       if (!PurposeVisible(ft.purpose_bit, purpose_mask)) continue;
       // Back-face cull a single-sided triangle: the ray sees through it to
       // whatever lies behind (USD doubleSided=false, matching the raster
@@ -71,9 +76,36 @@ bool IntersectVisibleTriangles(lrt_tri_scene *scene,
   return false;
 }
 
+bool IntersectVisibleTriangleChunks(
+    const std::vector<TriangleSceneChunk> &chunks,
+    const std::vector<FlatTri> &tris, const lrt_ray &ray,
+    uint32_t purpose_mask, lrt_hit *hit) {
+  if (!hit) return false;
+  bool found = false;
+  float best_t = ray.tmax;
+  for (const TriangleSceneChunk &chunk : chunks) {
+    if (!chunk.scene || chunk.first >= tris.size() || chunk.count == 0) continue;
+    lrt_ray query = ray;
+    query.tmax = best_t;
+    lrt_hit local;
+    if (!IntersectVisibleTriangles(chunk.scene.get(), tris, query,
+                                    purpose_mask, &local, chunk.first,
+                                    chunk.count))
+      continue;
+    if (!found || local.t < best_t) {
+      best_t = local.t;
+      *hit = local;
+      hit->prim_id = static_cast<uint32_t>(chunk.first + local.prim_id);
+      found = true;
+    }
+  }
+  return found;
+}
+
 bool Occluded(lrt_tri_scene *scene, const std::vector<FlatTri> &tris,
               const Vec3 &p, const Vec3 &n, const Vec3 &l, float max_t,
-              const DirectScene *direct, uint32_t purpose_mask) {
+              const DirectScene *direct, uint32_t purpose_mask,
+              const std::vector<TriangleSceneChunk> *chunks) {
   // Self-intersection offset must scale with the surface point's magnitude: at
   // large world coordinates a fixed 1e-4 offset is below a float32 ULP (e.g.
   // ULP(40000) ~ 0.005), so `p + n*1e-4 == p` and the shadow ray would start
@@ -93,17 +125,35 @@ bool Occluded(lrt_tri_scene *scene, const std::vector<FlatTri> &tris,
   ray.dir[2] = l.z;
   ray.tmax = max_t;
   if (scene) {
-    PurposeFilter filter{&tris, purpose_mask};
+    PurposeFilter filter{&tris, purpose_mask, 0, tris.size()};
     if (lrt_tri_occluded1_filtered(scene, &ray, PurposeAnyHitFilter, &filter)) {
       return true;
     }
   }
+  if (chunks) {
+    for (const TriangleSceneChunk &chunk : *chunks) {
+      if (!chunk.scene || chunk.first >= tris.size() || chunk.count == 0) continue;
+      PurposeFilter filter{&tris, purpose_mask, chunk.first,
+                           std::min(chunk.count, tris.size() - chunk.first)};
+      if (lrt_tri_occluded1_filtered(chunk.scene.get(), &ray,
+                                     PurposeAnyHitFilter, &filter))
+        return true;
+    }
+  }
   if (direct) {
     if (direct->spheres && lrt_tri_occluded1(direct->spheres.get(), &ray)) return true;
-    if (direct->round_curves &&
-        lrt_tri_occluded1(direct->round_curves.get(), &ray)) return true;
-    if (direct->flat_curves &&
-        lrt_tri_occluded1(direct->flat_curves.get(), &ray)) return true;
+    if (direct->has_round_curves()) {
+      if (direct->round_curves &&
+          lrt_tri_occluded1(direct->round_curves.get(), &ray)) return true;
+      for (const CurveSceneChunk &chunk : direct->round_curve_chunks)
+        if (lrt_tri_occluded1(chunk.scene.get(), &ray)) return true;
+    }
+    if (direct->has_flat_curves()) {
+      if (direct->flat_curves &&
+          lrt_tri_occluded1(direct->flat_curves.get(), &ray)) return true;
+      for (const CurveSceneChunk &chunk : direct->flat_curve_chunks)
+        if (lrt_tri_occluded1(chunk.scene.get(), &ray)) return true;
+    }
     if (direct->points && lrt_tri_occluded1(direct->points.get(), &ray)) return true;
     if (direct->bez_curves &&
         lrt_tri_occluded1(direct->bez_curves.get(), &ray)) return true;
@@ -577,14 +627,14 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
   ray.dir[2] = ray_dir.z;
   ray.tmax = tmax;
   auto test_scene = [&](lrt_tri_scene *scene, const std::vector<TriInfo> &info,
-                        bool sphere) {
+                        size_t first, size_t count, bool sphere) {
     if (!scene) return;
     lrt_hit h;
     if (!lrt_tri_intersect1(scene, &ray, &h) || h.prim_id == LRT_TRI_NO_HIT ||
-        size_t(h.prim_id) >= info.size() || h.t >= best->t) {
+        size_t(h.prim_id) >= count || h.t >= best->t) {
       return;
     }
-    const TriInfo &ti = info[size_t(h.prim_id)];
+    const TriInfo &ti = info[first + size_t(h.prim_id)];
     Vec3 p = Add(ray_org, Mul(ray_dir, h.t));
     best->t = h.t;
     if (sphere) {
@@ -600,17 +650,27 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
     best->emission = ti.emission;
     best->hit = true;
   };
-  test_scene(direct->spheres.get(), direct->sphere_info, true);
-  test_scene(direct->round_curves.get(), direct->round_curve_info, false);
-  test_scene(direct->flat_curves.get(), direct->flat_curve_info, false);
-  test_scene(direct->points.get(), direct->point_info, true);
-  auto test_ellipses = [&](lrt_tri_scene *scene,
-                           const std::vector<TriInfo> &info) {
+  test_scene(direct->spheres.get(), direct->sphere_info, 0,
+             direct->sphere_info.size(), true);
+  auto test_curve_chunks = [&](const std::vector<CurveSceneChunk> &chunks,
+                               const std::vector<TriInfo> &info) {
+    for (const CurveSceneChunk &chunk : chunks)
+      test_scene(chunk.scene.get(), info, chunk.first, chunk.count, false);
+  };
+  test_scene(direct->round_curves.get(), direct->round_curve_info, 0,
+             direct->round_curve_info.size(), false);
+  test_curve_chunks(direct->round_curve_chunks, direct->round_curve_info);
+  test_scene(direct->flat_curves.get(), direct->flat_curve_info, 0,
+             direct->flat_curve_info.size(), false);
+  test_curve_chunks(direct->flat_curve_chunks, direct->flat_curve_info);
+  test_scene(direct->points.get(), direct->point_info, 0,
+             direct->point_info.size(), true);
+  auto test_ellipses = [&](lrt_tri_scene *scene, size_t first, size_t count) {
     if (!scene) return;
     lrt_hit h;
     if (!lrt_tri_intersect1(scene, &ray, &h) || h.prim_id == LRT_TRI_NO_HIT ||
-        size_t(h.prim_id) >= info.size() || h.t >= best->t) return;
-    const TriInfo &ti = info[size_t(h.prim_id)];
+        size_t(h.prim_id) >= count || h.t >= best->t) return;
+    const TriInfo &ti = direct->ellipse_info[first + size_t(h.prim_id)];
     best->t = h.t;
     best->n = Normalize(ti.p1);
     if (Length(best->n) < 1.0e-6f) best->n = Normalize(Sub(ray_org, Add(ray_org, Mul(ray_dir, h.t))));
@@ -618,8 +678,14 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
     best->emission = ti.emission;
     best->hit = true;
   };
-  test_ellipses(direct->ellipses.get(), direct->ellipse_info);
-  test_scene(direct->bez_curves.get(), direct->bez_curve_info, false);
+  if (!direct->ellipse_chunks.empty()) {
+    for (const EllipseSceneChunk &chunk : direct->ellipse_chunks)
+      test_ellipses(chunk.scene.get(), chunk.first, chunk.count);
+  } else {
+    test_ellipses(direct->ellipses.get(), 0, direct->ellipse_info.size());
+  }
+  test_scene(direct->bez_curves.get(), direct->bez_curve_info, 0,
+             direct->bez_curve_info.size(), false);
   if (direct->tets) {
     lrt_hit h;
     if (lrt_tri_intersect1(direct->tets.get(), &ray, &h) &&
@@ -1028,7 +1094,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<float> *tri_normals,
            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
                *openpbr_mats,
-           bool indirect) {
+           bool indirect,
+           const std::vector<TriangleSceneChunk> *triangle_chunks) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -1054,7 +1121,13 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     }
   } else {
     lrt_hit hit;
-    if (IntersectVisibleTriangles(scene, tris, ray, opt.purpose_mask, &hit) &&
+    const bool visible = triangle_chunks && !triangle_chunks->empty()
+                             ? IntersectVisibleTriangleChunks(
+                                   *triangle_chunks, tris, ray,
+                                   opt.purpose_mask, &hit)
+                             : IntersectVisibleTriangles(
+                                   scene, tris, ray, opt.purpose_mask, &hit);
+    if (visible &&
         hit.prim_id != LRT_TRI_NO_HIT && size_t(hit.prim_id) < tris.size()) {
       // Rebuild the full TriInfo from the slim FlatTri (geometry + purpose) and
       // its material table entry, exactly the record the flat path stored inline
@@ -1254,7 +1327,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                       float omax) -> bool {
     return tlas ? OccludedTLAS(tlas, op, on, ol, omax)
                 : Occluded(scene, tris, op, on, ol, omax, direct,
-                           opt.purpose_mask);
+                           opt.purpose_mask, triangle_chunks);
   };
   Vec3 p = Add(ray_org, Mul(ray_dir, hit_t));
   Vec3 n = tri.n;
@@ -1753,7 +1826,8 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<float> *tri_normals,
                             const std::vector<VolumeData> *volumes,
                             const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
-                                *openpbr_mats) {
+                                *openpbr_mats,
+                            const std::vector<TriangleSceneChunk> *triangle_chunks) {
   tinyusdz::Image img;
   img.width = opt.width;
   img.height = height;
@@ -1793,7 +1867,8 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           rd.valid = true;
           Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, camera, opt,
                             org, dir, textures, tri_uvs, tlas, blas, instances,
-                            rd, 0, tri_colors, tri_normals, openpbr_mats);
+                            rd, 0, tri_colors, tri_normals, openpbr_mats,
+                            false, triangle_chunks);
           if (volumes && !volumes->empty()) {
             surf = CompositeVolumes(*volumes, org, dir, surf);
           }

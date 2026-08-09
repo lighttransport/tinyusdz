@@ -61,6 +61,9 @@ struct Texture {
     std::vector<Mip> mips;
   };
   std::vector<Mip> mips;
+  // Keep decoder budget reservations alive for retained pixels and mips.
+  std::vector<std::shared_ptr<tinyusdz::next::TextureBudgetLease>>
+      budget_leases;
   bool is_udim{false};
   std::vector<UdimTile> udim_tiles;
   WrapMode wrap_s{WrapMode::Repeat};
@@ -652,6 +655,29 @@ struct TetPrim {
   Vec3 emission{0.0f, 0.0f, 0.0f};
 };
 
+struct EllipseSceneChunk {
+  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> scene{nullptr,
+                                                                  lrt_tri_scene_free};
+  size_t first{0};
+  size_t count{0};
+};
+
+struct CurveSceneChunk {
+  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> scene{nullptr,
+                                                                  lrt_tri_scene_free};
+  size_t first{0};
+  size_t count{0};
+};
+
+// A bounded flat-mesh LightRT scene. `first`/`count` address the shared
+// material/UV/triangle arrays; the native BVH only owns the local range.
+struct TriangleSceneChunk {
+  std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> scene{nullptr,
+                                                                    lrt_tri_scene_free};
+  size_t first{0};
+  size_t count{0};
+};
+
 struct DirectScene {
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> spheres{nullptr,
                                                                     lrt_tri_scene_free};
@@ -666,6 +692,9 @@ struct DirectScene {
   // anisotropic rather than spherical.
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> ellipses{nullptr,
                                                                      lrt_tri_scene_free};
+  std::vector<EllipseSceneChunk> ellipse_chunks;
+  std::vector<CurveSceneChunk> round_curve_chunks;
+  std::vector<CurveSceneChunk> flat_curve_chunks;
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> bez_curves{nullptr,
                                                                        lrt_tri_scene_free};
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> tets{nullptr,
@@ -679,6 +708,12 @@ struct DirectScene {
   std::vector<TetPrim> tet_prims;
   std::vector<DirectShape> shapes;
   std::unordered_set<std::string> direct_paths;
+
+  bool has_ellipses() const { return ellipses || !ellipse_chunks.empty(); }
+  bool has_round_curves() const {
+    return round_curves || !round_curve_chunks.empty();
+  }
+  bool has_flat_curves() const { return flat_curves || !flat_curve_chunks.empty(); }
 };
 
 struct RTPreviewStats {
@@ -695,6 +730,7 @@ struct RTPreviewStats {
   size_t degraded_materials{0};  // materials rendered through a degraded surface
   size_t unsupported_mtlx{0};  // unsupported MaterialX surface nodes
   size_t missing_textures{0};  // textures/images that failed to load or resolve
+  size_t texture_mip_fallbacks{0};  // mips omitted because the budget was full
   std::vector<std::string> material_diagnostic_examples;
   size_t triangles{0};
   uint64_t mmap_deferred_bytes{0};
@@ -732,6 +768,8 @@ struct MeshJob {
 struct PurposeFilter {
   const std::vector<FlatTri> *tris{nullptr};
   uint32_t mask{kPurposeDefaultMask};
+  size_t first{0};
+  size_t count{0};
 };
 
 struct Blas {
@@ -883,6 +921,7 @@ struct TextureCache {
   size_t *unsupported_mtlx{nullptr};  // -> RTPreviewStats::unsupported_mtlx
   std::vector<std::string> *material_diagnostic_examples{nullptr};
   size_t *missing_textures{nullptr};  // -> RTPreviewStats::missing_textures
+  size_t *texture_mip_fallbacks{nullptr};
 };
 
 struct ResolvedMat {
