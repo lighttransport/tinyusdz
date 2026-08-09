@@ -149,7 +149,8 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (retainForRefit) retained_.reset(new HostScene());
   HostScene& hs = retained_ ? *retained_ : local;
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs, err,
-                      progress, retained_ ? &refitMap_ : nullptr)) {
+                      progress, retained_ ? &refitMap_ : nullptr,
+                      textureBudgetBytes_)) {
     if (err) *err = "HIP: " + *err;
     retained_.reset();
     return false;

@@ -413,7 +413,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   // Build the host scene (parallel per-mesh geometry + TLAS) -- shared with HIP.
   HostScene hs;
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs, err,
-                      progress)) {
+                      progress, nullptr, textureBudgetBytes_)) {
     if (err) *err = "CUDA: " + *err;
     return false;
   }

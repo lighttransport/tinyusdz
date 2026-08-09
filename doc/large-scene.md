@@ -1891,6 +1891,10 @@ Tusdview's pre-finalization texture budget also counts the complete retained
 CPU payload: base images, authored mip levels, and compressed payloads. The
 budget pass therefore cannot measure only level zero and then exceed the cap
 when mip/compression processing runs.
+The native RT texture table now receives that same byte budget for Vulkan,
+CUDA, and HIP. Entries that cannot fit are mapped to the backend fallback
+texture with an explicit budget-rejected diagnostic, rather than allowing the
+RT staging buffer to grow beyond the scene budget.
 
 Tusdrender's Vulkan mesh-chunk path similarly releases each source mesh's
 positions, normals, UVs, and indices immediately after that mesh has been

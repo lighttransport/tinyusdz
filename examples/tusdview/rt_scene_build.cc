@@ -1061,7 +1061,8 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
 
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     float displacementScale, HostScene* out, std::string* err,
-                    BuildProgress* progress, RefitMap* refitOut) {
+                    BuildProgress* progress, RefitMap* refitOut,
+                    size_t textureBudgetBytes) {
   if (refitOut) {
     refitOut->valid = false;
     refitOut->meshes.clear();
@@ -1363,7 +1364,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                          0.0f);
   HostTextureTable textureTable;
   BuildHostTextureTable(scene.textures, scene.materials, &textureTable,
-                        &scene.lights);
+                        &scene.lights, textureBudgetBytes);
   out->texels = std::move(textureTable.texels);
   out->textures = std::move(textureTable.textures);
   out->matTex = std::move(textureTable.matTex);

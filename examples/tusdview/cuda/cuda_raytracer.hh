@@ -38,6 +38,7 @@ class CudaRayTracer {
   // Override the platform tusdview CUDA-kernel cache directory. An empty path
   // keeps the platform default (for example ~/.cache/tusdview/cuda on Linux).
   void setCacheDirectory(const std::string& path) { cacheDirectory_ = path; }
+  void setTextureBudgetBytes(size_t bytes) { textureBudgetBytes_ = bytes; }
 
   // Flatten `scene` into world-space triangles, build a BVH, and upload everything
   // to the device. `maxTris` caps the flattened triangle count (instances are
@@ -134,6 +135,7 @@ class CudaRayTracer {
   bool truncated_{false};
   std::string deviceName_;
   std::string cacheDirectory_;
+  size_t textureBudgetBytes_{0};
 };
 
 }  // namespace tusdview

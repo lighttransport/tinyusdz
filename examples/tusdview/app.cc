@@ -3989,6 +3989,8 @@ int App::run(const std::string& initialFile, int maxFrames,
                  ? loadOpts_.textureGpuBudgetBytes / 4u
                  : 0u);
   renderer_->setRtTextureBudgetBytes(rtTextureBudget);
+  cudaTracer_.setTextureBudgetBytes(rtTextureBudget);
+  hipTracer_.setTextureBudgetBytes(rtTextureBudget);
   if (headless_) renderer_->setHeadlessSize(winW, winH);
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
