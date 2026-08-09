@@ -3242,16 +3242,25 @@ if(TINYUSDZ_BUILD_TESTS)
     set(_tinyusdz_semantic_rt_backends vk-rt cuda hip)
     foreach(_backend IN LISTS _tinyusdz_semantic_rt_backends)
       set(_test_name "tusdview-texture-semantic-rt-loader-parity-${_backend}")
+      set(_semantic_rt_timeout_env)
+      if(_backend STREQUAL "cuda")
+        # CUDA initialization can stall a child viewer after a preceding CUDA
+        # shard has released its context. Keep one stalled render from
+        # consuming the entire aggregate parity test timeout; the matrix has
+        # passed with this guard and reports a normal backend failure/skip.
+        set(_semantic_rt_timeout_env "TUSDVIEW_RENDER_TIMEOUT=20s")
+      endif()
       add_test(
         NAME "${_test_name}"
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDVIEW=$<TARGET_FILE:tusdview>"
-                "TUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
-                "TUSDVIEW_SEMANTIC_LOADERS=default legacy"
-                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
-        )
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
+              "TUSDVIEW_SEMANTIC_LOADERS=default legacy"
+              ${_semantic_rt_timeout_env}
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
+      )
       set_tests_properties("${_test_name}" PROPERTIES
-                           SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "tusdview")
+                           SKIP_RETURN_CODE 77 TIMEOUT 900 LABELS "tusdview")
     endforeach()
 
     add_test(

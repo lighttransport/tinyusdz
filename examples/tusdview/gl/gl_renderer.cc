@@ -3857,9 +3857,15 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
       drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::Opaque);
       glEnable(GL_BLEND);
       glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      // Transparent meshes are sorted back-to-front below. Keeping depth
+      // testing enabled here rejects transparent layers against one another
+      // and loses valid middle layers; the opaque pass has already populated
+      // the depth buffer.
+      glDisable(GL_DEPTH_TEST);
       glDepthMask(GL_FALSE);
       drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::Translucent);
       glDepthMask(GL_TRUE);
+      glEnable(GL_DEPTH_TEST);
       glDisable(GL_BLEND);
     } else {
       drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::All);

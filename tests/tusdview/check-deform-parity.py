@@ -53,6 +53,13 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
     if not os.path.exists(config):
         with open(config, "w") as f:
             f.write('{"window_size":{"width":320,"height":320}}\n')
+    # The fixture may not contain the requested camera, in which case tusdview
+    # auto-fits. Do not let a previous loader/run's ImGui camera layout change
+    # that auto-fit and turn a geometry comparison into a view-state comparison.
+    try:
+        os.remove(os.path.join(os.path.dirname(config), "imgui.ini"))
+    except FileNotFoundError:
+        pass
     cmd = [binary, loader, "--headless", "--mode", "depth", "--camera", camera,
            "--frames", "3", "--time", str(time), "--config", config,
            "--no-skeleton",

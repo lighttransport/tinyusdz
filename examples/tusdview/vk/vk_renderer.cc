@@ -1567,6 +1567,11 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   // transparent surfaces composite over the opaque geometry behind them.
   if (r == VK_SUCCESS) {
     VkPipelineDepthStencilStateCreateInfo dsT = ds;
+    // The translucent pass is already sorted back-to-front. Do not reject a
+    // farther transparent layer against an earlier transparent fragment: the
+    // depth buffer contains only the opaque pass, while transparent surfaces
+    // must all participate in the over composite.
+    dsT.depthTestEnable = VK_FALSE;
     dsT.depthWriteEnable = VK_FALSE;
     dsT.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     VkPipelineColorBlendAttachmentState cbaT = cba;

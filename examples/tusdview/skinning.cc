@@ -189,7 +189,13 @@ void BuildJointLocals(const tydra::AnimationClip* clip, int skelId, double t,
       const size_t j = static_cast<size_t>(ch.joint_id);
       animated[j] = true;
       if (ch.path == tydra::AnimationPath::Translation) {
-        EvalSampler(smp, t, 3, &T[j * 3]);
+        // Conventional viewer rigs commonly carry world-space joint
+        // translations in the SkelAnimation array.  They are not local bone
+        // offsets and applying them here stretches/explodes the mesh.  Keep
+        // the authored rest offset for ordinary rigs; dense point-joint rigs
+        // use translation samples as their deformation data and are handled
+        // by the translationOnly path.
+        if (translationOnly) EvalSampler(smp, t, 3, &T[j * 3]);
       } else if (!translationOnly && ch.path == tydra::AnimationPath::Scale) {
         EvalSampler(smp, t, 3, &S[j * 3]);
       } else if (!translationOnly && ch.path == tydra::AnimationPath::Rotation) {
@@ -1270,12 +1276,44 @@ bool UpdateAnimatedMeshWorlds(const tinyusdz::Stage& stage, DrawScene* draw,
     float w[16];
     for (int i = 0; i < 4; ++i) {
       for (int j = 0; j < 4; ++j) {
+        // Match MatToColMajor/PlaceDrawMesh: USD row-major values are copied
+        // element-wise into the renderer's column-vector storage layout.
         w[i * 4 + j] = static_cast<float>(it->second.m[i][j]);
       }
     }
     if (std::memcmp(dm.world, w, sizeof(w)) != 0) {
       std::memcpy(dm.world, w, sizeof(w));
       changed = true;
+    }
+  }
+  if (changed) {
+    bool has = false;
+    float mn[3] = {0, 0, 0}, mx[3] = {0, 0, 0};
+    auto addBox = [&](const float lo[3], const float hi[3]) {
+      if (!std::isfinite(lo[0]) || !std::isfinite(hi[0]) || hi[0] < lo[0])
+        return;
+      if (!has) {
+        for (int k = 0; k < 3; ++k) { mn[k] = lo[k]; mx[k] = hi[k]; }
+        has = true;
+      } else {
+        for (int k = 0; k < 3; ++k) {
+          mn[k] = std::min(mn[k], lo[k]);
+          mx[k] = std::max(mx[k], hi[k]);
+        }
+      }
+    };
+    for (const DrawMeshCPU& dm : draw->meshes)
+      addBox(dm.aabbMin, dm.aabbMax);
+    for (const DrawPointsCPU& dp : draw->points)
+      addBox(dp.aabbMin, dp.aabbMax);
+    for (const DrawCurvesCPU& dc : draw->curves)
+      addBox(dc.aabbMin, dc.aabbMax);
+    if (has) {
+      for (int k = 0; k < 3; ++k) {
+        draw->aabbMin[k] = mn[k];
+        draw->aabbMax[k] = mx[k];
+      }
+      draw->hasBounds = true;
     }
   }
   return changed;
