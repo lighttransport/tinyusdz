@@ -1244,15 +1244,9 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
           BuildTlas(order, static_cast<int>(count), centers, aabb);
       for (int& index : order) index += static_cast<int>(first);
       out->pointOrder.insert(out->pointOrder.end(), order.begin(), order.end());
-      for (Node& node : localBvh) {
-        // Leaf `left` addresses this chunk's order span; interior children
-        // address this chunk's node span. Keep both local so the kernel can
-        // traverse each root with bounded pointer ranges.
-        if (node.count == 0) {
-          node.left += static_cast<int>(bvhFirst);
-          node.right += static_cast<int>(bvhFirst);
-        }
-      }
+      // BuildTlas returns a local root and local child indices. Traversal
+      // adds bvhFirst once when selecting this chunk, so do not globally
+      // offset interior children here. Leaf `left` remains an order index.
       out->pointBvh.insert(out->pointBvh.end(), localBvh.begin(), localBvh.end());
       out->pointChunks.push_back({static_cast<int>(first), static_cast<int>(count),
                                   static_cast<int>(orderFirst),
