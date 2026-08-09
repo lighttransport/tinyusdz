@@ -1883,6 +1883,11 @@ UDIM, Ptex, and mutable page-cache carriers keep their specialized source state.
 This prevents progressive loads from pinning a second scene-wide CPU texture
 copy after the GPU has consumed it.
 
+Dense UsdVol grids follow the same rule: each VDB field is queued and uploaded
+individually, while the progressive scene retains only dimensions, transforms,
+and bounds. The queue byte limit includes the float density payload, and a
+cancelled volume event aborts conversion without leaving later grids resident.
+
 Non-instanced round and flat curve strands use bounded native BVHs as well.
 Curve points are read through the lazy array-view path, and complete strands are
 packed into chunks instead of duplicating the full source array for each BVH.

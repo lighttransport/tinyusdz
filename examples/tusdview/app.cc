@@ -2218,6 +2218,40 @@ void App::drainProgressiveLoad() {
         draw_.curves.push_back(std::move(metadata));
         if (usefulPurpose) streamHasUsefulGeometry_ = true;
       }
+    } else if (event.type == ProgressiveSceneEvent::Type::Volume) {
+      if (!streamRendererBegun_) {
+        draw_.materials.emplace_back();
+        renderer_->beginScene(draw_.materials, 0);
+        streamRendererBegun_ = true;
+      }
+      DrawVolumeCPU volume = std::move(event.volume);
+      const bool useful = !volume.density.empty();
+      for (int a = 0; a < 3; ++a) {
+        streamBoundsMin_[a] = std::min(streamBoundsMin_[a], volume.aabbMin[a]);
+        streamBoundsMax_[a] = std::max(streamBoundsMax_[a], volume.aabbMax[a]);
+      }
+      if (!streamCameraFramed_ && useful) {
+        camera_.fitToScene(streamBoundsMin_, streamBoundsMax_);
+        streamCameraFramed_ = true;
+      }
+      if (useful) {
+        DrawVolumeCPU metadata;
+        metadata.name = volume.name;
+        std::memcpy(metadata.dim, volume.dim, sizeof(metadata.dim));
+        std::memcpy(metadata.world, volume.world, sizeof(metadata.world));
+        std::memcpy(metadata.aabbMin, volume.aabbMin,
+                    sizeof(metadata.aabbMin));
+        std::memcpy(metadata.aabbMax, volume.aabbMax,
+                    sizeof(metadata.aabbMax));
+        metadata.densityScale = volume.densityScale;
+        std::memcpy(metadata.albedo, volume.albedo, sizeof(metadata.albedo));
+        std::memcpy(metadata.emission, volume.emission,
+                    sizeof(metadata.emission));
+        metadata.background = volume.background;
+        renderer_->appendVolume(volume);
+        draw_.volumes.push_back(std::move(metadata));
+        streamHasUsefulGeometry_ = true;
+      }
     } else if (event.type == ProgressiveSceneEvent::Type::Texture) {
       if (event.textureSlot < 0) continue;
       const size_t slot = static_cast<size_t>(event.textureSlot);
@@ -2252,6 +2286,7 @@ void App::drainProgressiveLoad() {
     } else if (event.type == ProgressiveSceneEvent::Type::Complete) {
       clearPtexDecode();
       std::vector<DrawMeshCPU> streamedMeshes = std::move(draw_.meshes);
+      std::vector<DrawVolumeCPU> streamedVolumes = std::move(draw_.volumes);
       std::vector<DrawTextureCPU> streamedTextures = std::move(draw_.textures);
       DrawScene finalScene = std::move(event.scene);
       renderer_->syncSceneResources(finalScene.materials,
@@ -2262,6 +2297,7 @@ void App::drainProgressiveLoad() {
         renderer_->appendCurves(std::move(curves));
       draw_ = std::move(finalScene);
       draw_.meshes = std::move(streamedMeshes);
+      if (!streamedVolumes.empty()) draw_.volumes = std::move(streamedVolumes);
       if (draw_.textures.size() < streamedTextures.size())
         draw_.textures.resize(streamedTextures.size());
       for (size_t i = 0; i < streamedTextures.size(); ++i) {

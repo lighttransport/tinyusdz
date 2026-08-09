@@ -175,6 +175,10 @@ size_t ProgressiveCurvesBytes(const DrawCurvesCPU& c) {
          c.colors.size() * sizeof(float) + c.opacities.size() * sizeof(float);
 }
 
+size_t ProgressiveVolumeBytes(const DrawVolumeCPU& v) {
+  return v.density.size() * sizeof(float);
+}
+
 size_t ProgressiveTextureBytes(const DrawTextureCPU& t) {
   size_t bytes = t.image.data.size();
   for (const light3d::Image& mip : t.mipImages) bytes += mip.data.size();
@@ -291,6 +295,27 @@ bool ProgressiveSceneStream::pushCurves(
   QueuedEvent queued;
   queued.event.type = ProgressiveSceneEvent::Type::Curves;
   queued.event.curves = std::move(curves);
+  queued.bytes = bytes;
+  queuedBytes_ += bytes;
+  queue_.push_back(std::move(queued));
+  ready_.notify_one();
+  return true;
+}
+
+bool ProgressiveSceneStream::pushVolume(
+    DrawVolumeCPU&& volume, const std::atomic<bool>* externallyCancelled) {
+  const size_t bytes = ProgressiveVolumeBytes(volume);
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (!cancelled_ &&
+         !(queuedBytes_ == 0 || queuedBytes_ + bytes <= maxBytes_)) {
+    if (externallyCancelled && externallyCancelled->load()) return false;
+    space_.wait_for(lock, std::chrono::milliseconds(20));
+  }
+  if (cancelled_ || (externallyCancelled && externallyCancelled->load()))
+    return false;
+  QueuedEvent queued;
+  queued.event.type = ProgressiveSceneEvent::Type::Volume;
+  queued.event.volume = std::move(volume);
   queued.bytes = bytes;
   queuedBytes_ += bytes;
   queue_.push_back(std::move(queued));
@@ -4606,11 +4631,14 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
 // resolve each `field:*` relationship to its field-asset prim, load the .vdb
 // (relative to the USD file dir), and emit a DrawVolumeCPU. Extends `bounds`
 // with the volume world-AABB so the camera frames it.
-void BuildNextVolumes(const tnext::Stage& stage, const std::string& usdPath,
-                      double time, DrawScene* draw, Bounds* bounds) {
+bool BuildNextVolumes(
+    const tnext::Stage& stage, const std::string& usdPath, double time,
+    DrawScene* draw, Bounds* bounds,
+    const std::function<bool(DrawVolumeCPU&&)>* publish = nullptr) {
   const std::string baseDir = tinyusdz::io::GetBaseDir(usdPath);
 
-  std::function<void(const tnext::UsdPrim&)> rec = [&](const tnext::UsdPrim& p) {
+  std::function<bool(const tnext::UsdPrim&)> rec =
+      [&](const tnext::UsdPrim& p) {
     if (p.GetTypeName() == "Volume") {
       double w16[16];
       tydn::ComputeWorldTransform(stage, p, w16, time);
@@ -4672,12 +4700,22 @@ void BuildNextVolumes(const tnext::Stage& stage, const std::string& usdPath,
                     lp[2] * float(w16[2 * 4 + c]) + float(w16[3 * 4 + c]);
           bounds->add(wp);
         }
-        draw->volumes.push_back(std::move(dv));
+        if (publish && *publish) {
+          if (!(*publish)(std::move(dv))) return false;
+        } else {
+          draw->volumes.push_back(std::move(dv));
+        }
       }
     }
-    for (const tnext::UsdPrim& c : p.GetChildren()) rec(c);
+    for (const tnext::UsdPrim& c : p.GetChildren()) {
+      if (!rec(c)) return false;
+    }
+    return true;
   };
-  for (const tnext::UsdPrim& r : stage.GetRootPrims()) rec(r);
+  for (const tnext::UsdPrim& r : stage.GetRootPrims()) {
+    if (!rec(r)) return false;
+  }
+  return true;
 }
 
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
@@ -5046,7 +5084,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   size_t streamedCurveSamples = 0;
   size_t streamedGaussianChunks = 0;
   size_t streamedGaussianSamples = 0;
+  size_t streamedVolumeCount = 0;
   Bounds streamedCarrierBounds;
+  Bounds streamedVolumeBounds;
   Bounds streamedTightBounds;
   bool streamOk = true;
   bool loggedFirstProduced = false;
@@ -5162,6 +5202,19 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       ++streamedTexturePayloadCount;
     }
   };
+  std::function<bool(DrawVolumeCPU&&)> publishVolume;
+  if (stream) {
+    publishVolume = [&](DrawVolumeCPU&& volume) {
+      if (std::isfinite(volume.aabbMin[0]) &&
+          std::isfinite(volume.aabbMax[0])) {
+        streamedVolumeBounds.add(volume.aabbMin);
+        streamedVolumeBounds.add(volume.aabbMax);
+      }
+      ++streamedVolumeCount;
+      return stream->pushVolume(std::move(volume),
+                                ctrl ? &ctrl->cancel : nullptr);
+    };
+  }
 
   // --- 3a. PointInstancer pass: emit one GPU-instanced DrawMeshCPU per prototype
   //         mesh. Prototype geometry lives at the converter's authored location,
@@ -7392,11 +7445,20 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       tight.add(streamedCarrierBounds.mn);
       tight.add(streamedCarrierBounds.mx);
     }
+    if (streamedVolumeBounds.has) {
+      tight.add(streamedVolumeBounds.mn);
+      tight.add(streamedVolumeBounds.mx);
+    }
     if (tight.has) bounds = tight;
   }
 
   // UsdVol volumes (OpenVDB): emit DrawVolumeCPU + extend bounds.
-  BuildNextVolumes(stage, path, time, draw, &bounds);
+  if (!BuildNextVolumes(stage, path, time, draw, &bounds,
+                        stream ? &publishVolume : nullptr)) {
+    if (err) *err = "next: progressive volume load cancelled";
+    if (stream) streamOk = false;
+    return false;
+  }
   BuildNextLights(stage, conv, path, time, opts.textureOptions, draw);
 
   if (bounds.has) {
@@ -7594,7 +7656,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // can recompose it on demand; only reject truly empty, non-deferred stages.
   if (streamedMeshCount + draw->meshes.size() == 0 &&
       streamedPointCount == 0 && streamedCurveCount == 0 &&
-      draw->points.empty() && draw->curves.empty() && draw->volumes.empty() &&
+      streamedVolumeCount == 0 && draw->points.empty() &&
+      draw->curves.empty() && draw->volumes.empty() &&
       deferredPayloads.empty()) {
     if (err) *err = "next: no renderable geometry produced";
     if (stream)
