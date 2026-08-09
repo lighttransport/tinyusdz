@@ -40,9 +40,10 @@ Large `ParticleField3DGaussianSplat` fields are built as bounded native ellipse
 BVH chunks instead of one GPU allocation. The default chunk size is 262,144
 splats; `TUSDR_GAUSSIAN_CHUNK=N` tunes it for a smaller VRAM budget. CPU RT
 tests all chunks directly, while the Vulkan path uploads/traces them
-sequentially and keeps the closest hit per ray. Statistics report the retained
-sample count and chunk count; a failed chunk reports its range and the tuning
-knob to reduce it.
+sequentially, keeps the closest hit per ray, and releases each LightRT BVH as
+soon as that reduction completes; only compact per-splat shading metadata stays
+resident until image output. Statistics report the retained sample count and
+chunk count; a failed chunk reports its range and the tuning knob to reduce it.
 The transformed ellipse streams are flushed into LightRT as each chunk fills,
 so the loader does not accumulate a second full-size geometry copy before BVH
 construction. On HIP/ROCm and D3D11, where the fallback is tessellated into

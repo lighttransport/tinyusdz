@@ -333,7 +333,7 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   return ok;
 }
 
-bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
+bool RunVulkanGaussianLightRT(const Options &opt, DirectScene *direct,
                               const CameraFrame &camera, int height) {
   if (!direct || direct->ellipse_chunks.empty())
     return false;
@@ -365,7 +365,8 @@ bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
     h.prim_id = LRT_TRI_NO_HIT;
   }
   std::vector<lrt_hit> chunk_hits(nrays);
-  for (const EllipseSceneChunk &chunk : direct->ellipse_chunks) {
+  size_t released_chunks = 0;
+  for (EllipseSceneChunk &chunk : direct->ellipse_chunks) {
     int traced = lrt_vk_trace_scene(vk, chunk.scene.get(), rays.data(),
                                     uint32_t(nrays), chunk_hits.data(), &err);
     if (traced < 0) {
@@ -382,6 +383,12 @@ bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
         hits[i].prim_id += static_cast<uint32_t>(chunk.first);
       }
     }
+    // The nearest-hit reduction above is the only later consumer of the
+    // LightRT scene.  Keep the compact TriInfo metadata for shading, but drop
+    // the chunk BVH immediately so large Gaussian fields do not retain every
+    // uploaded/build allocation until the final image write.
+    chunk.scene.reset();
+    ++released_chunks;
   }
   size_t total_ellipses = 0;
   for (const EllipseSceneChunk &chunk : direct->ellipse_chunks)
@@ -391,6 +398,7 @@ bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
   if (ok) {
     std::cerr << "native Gaussian ellipses: " << total_ellipses
               << " in " << direct->ellipse_chunks.size() << " Vulkan chunk(s)\n"
+              << "released Gaussian BVH chunks: " << released_chunks << "\n"
               << "\nbackend: LightRT VK (native point/ellipse BVH)\n";
   }
   lrt_vk_engine_destroy(vk);
