@@ -204,7 +204,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
       *err = "HIP: Gaussian point buffers require " +
              std::to_string(gaussianBytes) + " bytes, exceeding the available " +
              std::to_string(gaussianBudget) +
-             " byte GPU budget; lower splat count/chunking or raise "
+             " byte GPU budget; reduce splat count or raise "
              "TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB";
     }
     freeScene();

@@ -140,6 +140,11 @@ displays it with an ImGui docking UI.
   curve ribbons; Vulkan ray query and CUDA/HIP trace width-aware solid
   octahedron/tube proxies. Vulkan raster drawing and viewport click-picking for
   these carriers remain roadmap items; mesh picking is unchanged.
+- Gaussian splat point carriers use analytic ellipses on Vulkan ray query and
+  CUDA/HIP. Their BVH metadata is chunked, and the CUDA/HIP loaders now reject
+  an oversized resident point-buffer allocation before scene upload with a
+  backend-specific budget diagnostic; multi-pass GPU point paging remains a
+  follow-up.
 - **Surface displacement** (`UsdPreviewSurface inputs:displacement` — constant or
   a height texture, honoring the `UsdUVTexture` `scale`/`bias`). The **raster**
   paths displace in the vertex shader (coarse, no extra geometry), with an opt-in
