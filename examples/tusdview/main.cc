@@ -1277,15 +1277,16 @@ int main(int argc, char** argv) {
     if (curvePreviewStrands) lo.maxCurveStrands = *curvePreviewStrands;
     lo.timing = timing;
     lo.streamBufferBytes = streamBufferMB * 1024ull * 1024ull;
-    if (effectiveProfile != LargeSceneProfile::Off) {
-      lo.maxMemoryBytes = static_cast<size_t>(targetBudget.host_limit);
-      lo.gpuGeometryBudgetBytes = static_cast<size_t>(
-          maxGpuMemExplicit && maxGpuMemGiB > 0.0
-              ? maxGpuMemGiB * double(tinyusdz::tydra::next::GiB(1))
-              : double(targetBudget.gpu_geometry_limit));
-      lo.uploadStagingBytes =
-          static_cast<size_t>(targetBudget.upload_staging_limit);
-    }
+    // Keep the next loader bounded even without a named large-scene profile.
+    // Profiles may tighten these values below, but ordinary preview/headless
+    // loads must not fall back to unlimited composition or GPU staging.
+    lo.maxMemoryBytes = static_cast<size_t>(targetBudget.host_limit);
+    lo.gpuGeometryBudgetBytes = static_cast<size_t>(
+        maxGpuMemExplicit && maxGpuMemGiB > 0.0
+            ? maxGpuMemGiB * double(tinyusdz::tydra::next::GiB(1))
+            : double(targetBudget.gpu_geometry_limit));
+    lo.uploadStagingBytes =
+        static_cast<size_t>(targetBudget.upload_staging_limit);
     if (config.status == tusdview::ConfigLoadStatus::Loaded) {
       if (config.config.composition && !noComposition) {
         lo.composition = *config.config.composition;

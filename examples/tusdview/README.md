@@ -218,6 +218,11 @@ displays it with an ImGui docking UI.
     **time budget**) aborts mid-conversion.
   - **Triangle / vertex-memory budget** stops building once the cap is hit and
     marks the scene *truncated* (editable in the Stats > Render budget panel).
+  - The probed host/VRAM resource budget also applies to ordinary `--next`
+    loads, not only named large-scene profiles: composition retention, GPU
+    geometry, upload staging, and decoded textures are capped before
+    materialization. If authored composition exceeds the host cap, tusdview
+    reports a bounded load error instead of allowing an OOM-sized allocation.
 - **HiDPI-ready appearance**: Maya-like dark theme, **Cascadia Mono** font
   (embedded, `examples/common/cascadia_mono.h`), and a UI scale that defaults to
   **2×** for 4K panels (font 16 → 32 px, crisp — the scale is baked into the font
