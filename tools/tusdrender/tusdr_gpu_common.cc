@@ -210,6 +210,9 @@ bool BuildGpuTriChunk(
     const bool per_vertex_normals = src.normals.size() == nv * 3u;
     const size_t first_index = *tri_index * 3u;
     const size_t index_count = take * 3u;
+    dst.positions.reserve(index_count * 3u);
+    dst.indices.reserve(index_count);
+    if (per_vertex_normals) dst.normals.reserve(index_count * 3u);
     bool sequential = first_index + index_count <= src.indices.size() &&
                       first_index + index_count <= nv;
     for (size_t i = 0; sequential && i < index_count; ++i) {
