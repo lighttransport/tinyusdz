@@ -7,7 +7,7 @@
 // via hiprtc. If HIP / hiprtc / a device is unavailable the tracer reports
 // `initialized() == false` and the caller falls back to another backend.
 //
-// It shares the exact trace kernel source (raytracer_kernel.inc) and the 2-level
+// It shares the exact trace kernel source (raytracer_kernel_src.txt) and the 2-level
 // BVH build with the CUDA backend; only the GPU runtime/driver calls differ.
 #pragma once
 

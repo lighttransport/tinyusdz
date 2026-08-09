@@ -4066,8 +4066,16 @@ int App::run(const std::string& initialFile, int maxFrames,
   gui_.setNextStage(nextStageSnapshot_.get());
   gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
-  gui_.setCaptureViewportOnly(headless_ && maxFrames >= 0 &&
-                              streamHttpPort_ <= 0);
+  // Viewport-only capture (no docked GUI chrome) applies to any fixed-frame
+  // --screenshot run, windowed or headless: a windowed run's docked "Viewport"
+  // panel gets whatever fraction of the window ImGui's dock builder assigns it
+  // on that frame, which on the first windowed frame(s) can be a transient tiny
+  // size before the dock layout settles (see the LOD vpReady guard above for the
+  // same underlying issue) -- that shrank --screenshot captures to a few dozen
+  // pixels instead of the requested window size. --window-shot deliberately
+  // wants the full docked window, so it opts out.
+  gui_.setCaptureViewportOnly(maxFrames >= 0 && streamHttpPort_ <= 0 &&
+                              windowShot_.empty());
   // Route the GUI's GPU side-effects (viewport resize, instance visibility) to the
   // render thread; runs inline on the single-threaded path.
   gui_.setPostGpu([this](std::function<void()> op) { postGpu(std::move(op)); });

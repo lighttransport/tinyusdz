@@ -153,7 +153,7 @@ and capability-skip when their backend is unavailable.
 ## HIP/ROCm ray-tracing run test (verified working on AMD)
 
 `--hip` is the AMD counterpart of `--cuda`: it traces the same scene BVH and runs
-the **same trace kernel** (shared via `examples/tusdview/raytracer_kernel.inc`),
+the **same trace kernel** (shared via `examples/tusdview/raytracer_kernel_src.txt`),
 but on the **HIP runtime + hiprtc loaded at runtime via hipew**
 (`src/external/hipew/`) — **no link-time ROCm dependency**; only `libamdhip64`
 and `libhiprtc` need to be present to *run*. The kernel is compiled at runtime

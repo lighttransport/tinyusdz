@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // tusdview — shared CPU BVH builders for the CUDA/HIP screenshot ray tracers.
 // `Node` must stay layout-compatible with the `Node` struct in the trace kernel
-// (raytracer_kernel.inc): count>0 => leaf (left = first prim), count==0 =>
+// (raytracer_kernel_src.txt): count>0 => leaf (left = first prim), count==0 =>
 // interior (left/right = child node indices).
 #pragma once
 
