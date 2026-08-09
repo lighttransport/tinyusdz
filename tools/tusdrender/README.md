@@ -47,7 +47,9 @@ Large `ParticleField3DGaussianSplat` fields are built as bounded native ellipse
 BVH chunks instead of one GPU allocation. Pure Gaussian scenes use the native
 Vulkan ellipse path; mixed mesh+splat Vulkan scenes use the bounded tessellated
 fallback so the splats are not lost when all geometry shares one flat trace. The
-default chunk size is 262,144
+native Vulkan BVH is deferred until the scene is known to be pure Gaussian, so
+mixed scenes do not build and then discard a second full splat representation.
+The default chunk size is 262,144
 splats; `TUSDR_GAUSSIAN_CHUNK=N` tunes it for a smaller VRAM budget. CPU RT
 tests all chunks directly, while the Vulkan path uploads/traces them
 sequentially, keeps the closest hit per ray, and releases each LightRT BVH as
