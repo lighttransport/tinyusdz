@@ -120,7 +120,7 @@ layout(push_constant) uniform PC {
   vec4 sceneMin;     // xyz = position AOV bbox min, w = accumulated sample index
   vec4 sceneExtent;  // xyz bbox; abs(w)=TLAS chunks, positive=accumulation enabled
   vec4 lens;         // focus distance, aperture radius, enabled, TLAS chunk stride
-  vec4 pointParams;  // native Gaussian point count, node count, chunk count
+  uvec4 pointParams; // native Gaussian point count, node count, chunk count
 } pc;
 
 uint globalInstanceId(uint chunk, int localId) {
@@ -468,12 +468,12 @@ bool pointBoxHit(RtPointNode n, vec3 o, vec3 inv, float best) {
 float tracePointEllipses(vec3 o, vec3 d, out int hit, out float gaussianWeight) {
   hit = -1;
   gaussianWeight = 0.0;
-  int count = int(pc.pointParams.x + 0.5);
-  int chunkCount = int(pc.pointParams.z + 0.5);
-  if (count <= 0 || chunkCount <= 0) return 1e30;
+  uint count = pc.pointParams.x;
+  uint chunkCount = pc.pointParams.z;
+  if (count == 0u || chunkCount == 0u) return 1e30;
   vec3 inv = 1.0 / d;
   float best = 1e30;
-  for (int chunk = 0; chunk < chunkCount; ++chunk) {
+  for (uint chunk = 0u; chunk < chunkCount; ++chunk) {
     RtPointChunk ch = pointChunks[chunk];
     int stack[64]; int sp = 0; stack[sp++] = 0;
     while (sp > 0) {

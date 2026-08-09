@@ -361,7 +361,7 @@ struct RtPushC {
   float sceneMin[4];    // position AOV bbox
   float sceneExtent[4];
   float lens[4];        // focus distance, aperture radius, enabled, reserved
-  float pointParams[4]; // native Gaussian point count, node count, reserved
+  uint32_t pointParams[4]; // native Gaussian point count, node count, chunk count
 };
 
 // Per-mesh descriptor for the RT shader (scalar layout, must match raytrace.comp).
@@ -8149,9 +8149,9 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lens[1] = cameraLens_.apertureRadius;
   pc.lens[2] = cameraLens_.enabled() ? 1.0f : 0.0f;
   pc.lens[3] = static_cast<float>(rtTlasChunkStride_);
-  pc.pointParams[0] = static_cast<float>(rtPointCount_);
-  pc.pointParams[1] = static_cast<float>(rtPointNodeCount_);
-  pc.pointParams[2] = static_cast<float>(rtPointChunkCount_);
+  pc.pointParams[0] = rtPointCount_;
+  pc.pointParams[1] = rtPointNodeCount_;
+  pc.pointParams[2] = rtPointChunkCount_;
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
