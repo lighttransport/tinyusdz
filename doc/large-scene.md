@@ -1887,6 +1887,10 @@ metadata is owned by each bounded chunk, so chunking also bounds the retained
 segment shading stream rather than only the LightRT geometry build. GPU curve
 fallback chunks retain only tessellated positions and indices; normals are
 recomputed during flattening and unused UV staging is omitted.
+During Vulkan/HIP/D3D fallback conversion, each consumed native round-curve
+BVH is released immediately after bounded tessellation, so native curve
+acceleration data does not remain resident alongside the complete fallback
+triangle stream.
 
 The flat next-loader mesh path uses the same bounded native-BVH policy. Mesh
 triangles are split at `TUSDR_TRIANGLE_CHUNK=N` (default 262,144), with global

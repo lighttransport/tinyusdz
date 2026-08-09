@@ -428,7 +428,7 @@ void CollectGpuPointsRec(
 // GPU paths on their backend by converting round-linear curves to bounded tube
 // triangle streams at the upload boundary.
 bool AppendGpuRoundCurves(
-    const DirectScene &direct, std::vector<Vec3> *base_colors,
+    DirectScene &direct, std::vector<Vec3> *base_colors,
     std::vector<RTPreviewStats::MeshGeometry> *geos) {
   if (!base_colors || !geos) return false;
   constexpr uint32_t kCurveSides = 6;
@@ -459,8 +459,15 @@ bool AppendGpuRoundCurves(
     return true;
   };
   if (!append(direct.round_curves.get())) return false;
-  for (const CurveSceneChunk &chunk : direct.round_curve_chunks)
+  direct.round_curves.reset();
+  for (CurveSceneChunk &chunk : direct.round_curve_chunks) {
     if (!append(chunk.scene.get())) return false;
+    // The GPU fallback has consumed this native BVH; retaining it alongside
+    // the tessellated source geometry needlessly doubles the curve peak.
+    chunk.scene.reset();
+    chunk.info.clear();
+  }
+  direct.round_curve_chunks.clear();
   return true;
 }
 #endif
