@@ -207,6 +207,10 @@ displays it with an ImGui docking UI.
     CPU-encode GPU-native blocks while the viewport remains interactive. Each
     completed texture uploads independently. USDZ, UDIM, Ptex, and
     kept-compressed KTX2 retain their specialized synchronous readers for now.
+    Native RT texture tables apply the same decoded-byte budget (normally 25%
+    of probed device VRAM), deduplicate identical used images, and leave
+    over-budget textures on the backend fallback image instead of risking an
+    unbounded RT staging allocation.
 - **Interruptible / budgeted loading** so huge scenes can't freeze the app or
   thrash VRAM:
   - **Cancel** button in the loading modal (and an automatic conversion

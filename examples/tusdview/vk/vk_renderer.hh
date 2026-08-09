@@ -54,6 +54,10 @@ class VulkanRenderer final : public Renderer {
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
   void evictTexture(int slot) override;
   size_t textureResidentBytes(int slot) const override;
+  void setRtTextureBudgetBytes(size_t bytes) override {
+    rtTextureBudgetBytes_ = bytes;
+    rtTextureTableDirty_ = true;
+  }
   bool updateTextureRegion(int slot, int x, int y, int w, int h,
                            const uint8_t* rgba,
                            size_t rowBytes = 0) override;
@@ -757,6 +761,7 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkImage> texUdimArrayImgs_;
   std::vector<VkDeviceMemory> texUdimArrayMems_;
   std::vector<uint8_t> texIsUdim_;
+  size_t rtTextureBudgetBytes_{0};
   VkImage udimLutAtlasImg_{VK_NULL_HANDLE};
   VkDeviceMemory udimLutAtlasMem_{VK_NULL_HANDLE};
   VkImageView udimLutAtlasView_{VK_NULL_HANDLE};

@@ -482,7 +482,8 @@ uint32_t RtLightCollectionMaskForMesh(
 void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
                            const std::vector<DrawMaterialCPU>& materials,
                            HostTextureTable* out,
-                           const std::vector<DrawLightCPU>* lights) {
+                           const std::vector<DrawLightCPU>* lights,
+                           size_t maxTexelBytes) {
   if (!out) return;
   *out = HostTextureTable{};
   out->matTex.assign(
@@ -520,6 +521,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
     for (const DrawLightCPU& light : *lights) markTexture(light.envmapTexture);
   }
   size_t skippedUnused = 0;
+  size_t skippedBudget = 0;
+  bool budgetRejected = false;
   std::unordered_map<uint64_t, std::vector<int>> packedTextureCandidates;
   size_t deduplicated = 0;
 
@@ -621,6 +624,24 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
           mip.channels != 4 || mip.data.empty()) break;
       levels.push_back(&mip);
     }
+    size_t payloadBytes = 0;
+    for (const light3d::Image* level : levels) {
+      if (level->data.size() > std::numeric_limits<size_t>::max() - payloadBytes)
+        return -1;
+      payloadBytes += level->data.size();
+    }
+    if (maxTexelBytes > 0 &&
+        (payloadBytes > maxTexelBytes || out->texels.size() >
+             maxTexelBytes - payloadBytes)) {
+      budgetRejected = true;
+      return -1;
+    }
+    if (out->texels.size() > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+        payloadBytes > static_cast<size_t>(std::numeric_limits<int>::max()) -
+                           out->texels.size()) {
+      budgetRejected = maxTexelBytes > 0;
+      return -1;
+    }
     for (size_t level = 0; level < levels.size(); ++level) {
       const light3d::Image& src = *levels[level];
       HostTextureDesc td;
@@ -667,6 +688,10 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
         const std::vector<light3d::Image>* mips =
             decodeMips(tile.mipImages, tile.compressed, &decodedMipsStorage);
         const int tileId = image ? appendImage(*image, *mips, tex) : -1;
+        if (budgetRejected) {
+          ++skippedBudget;
+          budgetRejected = false;
+        }
         const int lut = static_cast<int>(tile.udim) - 1001;
         if (tileId >= 0 && lut >= 0 && lut < 100) {
           out->textures[static_cast<size_t>(virtualId)].udimLayer[lut] = tileId;
@@ -705,6 +730,10 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       }
       if (tableId < 0) {
         tableId = appendImage(*image, *mips, tex);
+        if (budgetRejected) {
+          ++skippedBudget;
+          budgetRejected = false;
+        }
         if (tableId >= 0) packedTextureCandidates[hash].push_back(tableId);
       }
       out->sourceToTable[ti] = tableId;
@@ -733,10 +762,15 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
         dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
   }
   LOGI("RT texture table: %zu source texture(s), %zu descriptor(s), %.2f MiB "
-       "packed, skipped %zu unused source texture(s), deduplicated %zu",
+       "packed, skipped %zu unused / %zu budget-rejected source texture(s), "
+       "deduplicated %zu%s",
        sourceTextures.size(), out->textures.size(),
        static_cast<double>(out->texels.size()) / (1024.0 * 1024.0),
-       skippedUnused, deduplicated);
+       skippedUnused, skippedBudget, deduplicated,
+       maxTexelBytes ? (" (budget " +
+                        std::to_string(maxTexelBytes / (1024.0 * 1024.0)) +
+                        " MiB)").c_str()
+                     : "");
 }
 
 namespace {

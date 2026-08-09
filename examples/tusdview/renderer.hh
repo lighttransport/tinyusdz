@@ -247,6 +247,9 @@ class Renderer {
   // Approximate live GPU allocation owned by one texture slot. This is the
   // quantity used by the application residency budget (not CPU staging bytes).
   virtual size_t textureResidentBytes(int slot) const = 0;
+  // Bound the raw texture table used by native RT backends. Textures beyond
+  // the cap remain valid material slots but use the backend's fallback image.
+  virtual void setRtTextureBudgetBytes(size_t /*bytes*/) {}
   // Replace an RGBA8 rectangle in an already-uploaded ordinary 2D texture.
   // Used by bounded Ptex page streaming; compressed and array textures reject
   // updates. `rowBytes` permits uploading a sub-rectangle from a larger CPU

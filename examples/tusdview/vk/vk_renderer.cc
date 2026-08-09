@@ -6763,7 +6763,7 @@ void VulkanRenderer::rebuildRtTextureTable() {
 
   HostTextureTable textures;
   BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &textures,
-                        &rtLightsCpu_);
+                        &rtLightsCpu_, rtTextureBudgetBytes_);
   auto mapEnvmap = [&](int sourceId) -> int {
     return (sourceId >= 0 && static_cast<size_t>(sourceId) <
                                     textures.sourceToTable.size())
@@ -7436,7 +7436,7 @@ void VulkanRenderer::rebuildTlas() {
   if (lights.empty()) lights.assign(kVkRtLightFloats, 0.0f);
   HostTextureTable rtTextures;
   BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures,
-                        &rtLightsCpu_);
+                        &rtLightsCpu_, rtTextureBudgetBytes_);
   auto mapEnvmap = [&](int sourceId) -> int {
     return (sourceId >= 0 && static_cast<size_t>(sourceId) <
                                     rtTextures.sourceToTable.size())

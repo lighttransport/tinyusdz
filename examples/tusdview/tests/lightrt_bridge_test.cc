@@ -956,6 +956,16 @@ int main() {
     std::fprintf(stderr, "shared RT identical-texture deduplication is incorrect\n");
     return 1;
   }
+  tusdview::HostTextureTable budgetTable;
+  tusdview::BuildHostTextureTable({mipTexture}, {mipMaterial}, &budgetTable,
+                                  nullptr, 32);
+  if (!budgetTable.textures.empty() || !budgetTable.texels.empty() ||
+      budgetTable.sourceToTable.size() != 1 ||
+      budgetTable.sourceToTable[0] != -1 || budgetTable.matTex.empty() ||
+      budgetTable.matTex[0] != -1) {
+    std::fprintf(stderr, "shared RT texture byte budget is incorrect\n");
+    return 1;
+  }
   tusdview::DrawTextureCPU udimTexture;
   udimTexture.isUdim = true;
   tusdview::DrawUdimTileCPU tile;
