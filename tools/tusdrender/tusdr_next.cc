@@ -3353,9 +3353,10 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
         tinyusdz::value::quatf q;
         q.real = 1.0f;
         q.imag[0] = q.imag[1] = q.imag[2] = 0.0f;
-        if (qq && qv.size() >= (i + 1) * 4) {
-          q.real = qq[i * 4]; q.imag[0] = qq[i * 4 + 1];
-          q.imag[1] = qq[i * 4 + 2]; q.imag[2] = qq[i * 4 + 3];
+        const size_t orientation_index = qv.size() == 4 ? 0 : i * 4;
+        if (qq && orientation_index + 3 < qv.size()) {
+          q.real = qq[orientation_index]; q.imag[0] = qq[orientation_index + 1];
+          q.imag[1] = qq[orientation_index + 2]; q.imag[2] = qq[orientation_index + 3];
         }
         const tinyusdz::value::matrix3d r = tinyusdz::to_matrix3x3(q);
         const tinyusdz::value::matrix4d r4 = tinyusdz::to_matrix(
