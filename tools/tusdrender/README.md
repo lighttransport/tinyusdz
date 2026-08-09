@@ -52,6 +52,9 @@ whole flat scene to fit in an 8-GiB device allocation.
 The Direct3D 11 path uses the same chunk limit and nearest-hit reduction, rather
 than flattening all source meshes into one long-lived BVH. Consumed source
 geometry is released after each chunk is built.
+Ordinary `UsdGeomPoints` are accumulated into the same bounded GPU geometry
+chunks (disc primitives when normals are authored, sphere primitives otherwise),
+so large point clouds do not create one mesh/descriptors per point.
 
 Curve point arrays use the same lazy view reader before conversion to the
 native LightRT strand representation, so ordinary uncompressed USDC curves do
