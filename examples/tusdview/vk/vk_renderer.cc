@@ -1323,8 +1323,31 @@ bool VulkanRenderer::createOverlayLoadPass(std::string* err) {
 void VulkanRenderer::drawLineSet(VkCommandBuffer cb,
                                  const std::vector<HelperVertex>& copy, VkBuffer* buf,
                                  VkDeviceMemory* mem, VkDeviceSize* cap,
-                                 VkPipeline pipeline, const float vp[16]) {
+                                 VkPipeline pipeline, const float vp[16],
+                                 std::vector<NonMeshChunkUpload>* chunkUploads) {
   if (copy.empty() || !pipeline) return;
+  constexpr size_t kVerticesPerUpload = size_t(262144);
+  if (chunkUploads && copy.size() > kVerticesPerUpload) {
+    for (size_t first = 0; first < copy.size(); first += kVerticesPerUpload) {
+      const size_t count = std::min(kVerticesPerUpload, copy.size() - first);
+      NonMeshChunkUpload upload;
+      const VkDeviceSize bytes = count * sizeof(HelperVertex);
+      if (!createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                            copy.data() + first, &upload.buf, &upload.mem)) {
+        LOGE("Vulkan non-mesh helper chunk upload failed at %zu/%zu vertices",
+             first, copy.size());
+        return;
+      }
+      chunkUploads->push_back(upload);
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+      vkCmdPushConstants(cb, lineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                         sizeof(float) * 16, vp);
+      VkDeviceSize off = 0;
+      vkCmdBindVertexBuffers(cb, 0, 1, &upload.buf, &off);
+      vkCmdDraw(cb, static_cast<uint32_t>(count), 1, 0, 0);
+    }
+    return;
+  }
   const VkDeviceSize bytes = copy.size() * sizeof(HelperVertex);
   if (bytes > *cap) {
     if (*buf) vkDestroyBuffer(device_, *buf, nullptr);
@@ -4621,6 +4644,11 @@ void VulkanRenderer::destroyScene() {
   nativeCurves_.clear();
   nonMeshCopy_.clear();
   for (int i = 0; i < kFramesInFlight; ++i) {
+    for (const NonMeshChunkUpload& upload : nonMeshChunkUploads_[i]) {
+      if (upload.buf) vkDestroyBuffer(device_, upload.buf, nullptr);
+      if (upload.mem) vkFreeMemory(device_, upload.mem, nullptr);
+    }
+    nonMeshChunkUploads_[i].clear();
     if (nonMeshBuf_[i]) vkDestroyBuffer(device_, nonMeshBuf_[i], nullptr);
     if (nonMeshMem_[i]) vkFreeMemory(device_, nonMeshMem_[i], nullptr);
     nonMeshBuf_[i] = VK_NULL_HANDLE;
@@ -9034,6 +9062,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   static const bool timePresent = std::getenv("TUSDVIEW_TIME_PRESENT") != nullptr;
   const auto tw0 = std::chrono::steady_clock::now();
   vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+  for (const NonMeshChunkUpload& upload : nonMeshChunkUploads_[frame_]) {
+    if (upload.buf) vkDestroyBuffer(device_, upload.buf, nullptr);
+    if (upload.mem) vkFreeMemory(device_, upload.mem, nullptr);
+  }
+  nonMeshChunkUploads_[frame_].clear();
   const double waitMs =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tw0)
           .count();
@@ -9159,7 +9192,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       // All no-depth: the RT image carries no depth, so even grid/axes/bbox draw
       // as x-ray here (a reasonable RT-overlay compromise).
       drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_], &nonMeshMem_[frame_],
-                  &nonMeshCap_[frame_], nonMeshPipeline_, VP.m);
+                  &nonMeshCap_[frame_], nonMeshPipeline_, VP.m,
+                  &nonMeshChunkUploads_[frame_]);
       drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
                   &helperCap_[frame_], linePipelineNoDepth_, VP.m);
       drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
@@ -9779,7 +9813,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // top (depth-test-disabled pipeline). VP = P * V (column-major light3d).
     const light3d::Mat4 VP = ToMat4(proj_) * ToMat4(view_);
     drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_], &nonMeshMem_[frame_],
-                &nonMeshCap_[frame_], nonMeshPipeline_, VP.m);
+                &nonMeshCap_[frame_], nonMeshPipeline_, VP.m,
+                &nonMeshChunkUploads_[frame_]);
     drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
                 &helperCap_[frame_], linePipeline_, VP.m);
     drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
