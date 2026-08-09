@@ -1276,10 +1276,11 @@ int main(int argc, char **argv) {
     // below or the splats would silently disappear. HIP/ROCm and D3D11 always use
     // that fallback; building the native arrays for those backends would only
     // duplicate every Gaussian's residency before rereading the authored arrays.
-    const bool native_gaussian =
-        opt.vulkan && BuildNextGaussianEllipses(
-                          stage, gaussian_ctx, opt.timecode) &&
-        gaussian_ctx.direct.has_ellipses();
+    // Do not build the native Gaussian BVHs until mesh/curve collection tells
+    // us this is a pure splat stage.  A mixed flat GPU trace cannot consume the
+    // DirectScene, so building it up front would duplicate the authored splat
+    // arrays before CollectGpuPointsRec creates the bounded fallback geometry.
+    bool native_gaussian = false;
 
     {
       // Collect meshes WITH their world transforms, purpose, and -mask, exactly
@@ -1521,11 +1522,12 @@ int main(int argc, char **argv) {
     // Vulkan uses the native analytic ellipse path for a pure splat scene.
     // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
     // fallback as HIP/ROCm and D3D11 so all geometry reaches one flat trace.
-    if (gpu_backend && (!native_gaussian || !opt.vulkan || !geos.empty())) {
-      if (native_gaussian && opt.vulkan && !geos.empty()) {
-        std::cerr << "[gpu] mixed mesh/Gaussian scene: using bounded tessellated "
-                     "Gaussian fallback with the mesh trace.\n";
-      }
+    if (gpu_backend && opt.vulkan && geos.empty()) {
+      native_gaussian =
+          BuildNextGaussianEllipses(stage, gaussian_ctx, opt.timecode) &&
+          gaussian_ctx.direct.has_ellipses();
+    }
+    if (gpu_backend && (!native_gaussian || !opt.vulkan)) {
       for (const auto &root : stage.GetRootPrims()) {
         CollectGpuPointsRec(root, matrix4d::identity(), opt.timecode,
                             &base_colors, &geos);
