@@ -6994,8 +6994,15 @@ void VulkanRenderer::rebuildTlas() {
                              static_cast<int>(bvhFirst),
                              static_cast<int>(local.size())});
     }
-    LOGI("Vulkan RT Gaussian point BVH: %zu point(s) in %zu chunk(s), limit %zu",
-         pointDescs.size(), pointChunks.size(), chunkLimit);
+    const size_t pointBytes = pointDescs.size() * sizeof(RtPointGPU);
+    const size_t bvhBytes = pointNodes.size() * sizeof(Node) +
+                            pointOrder.size() * sizeof(int) +
+                            pointChunks.size() * sizeof(RtPointChunkGPU);
+    LOGI("Vulkan RT Gaussian point BVH: %zu point(s) in %zu chunk(s), limit %zu, "
+         "records %.1f MiB, BVH/order %.1f MiB",
+         pointDescs.size(), pointChunks.size(), chunkLimit,
+         double(pointBytes) / (1024.0 * 1024.0),
+         double(bvhBytes) / (1024.0 * 1024.0));
   }
   rtPointCount_ = static_cast<uint32_t>(pointDescs.size());
   rtPointNodeCount_ = static_cast<uint32_t>(pointNodes.size());
