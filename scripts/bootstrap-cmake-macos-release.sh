@@ -1,13 +1,13 @@
 curdir=`pwd`
 
-builddir=${curdir}/build
+builddir=${curdir}/build_release
 
 rm -rf ${builddir}
 mkdir ${builddir}
 
 
 cd ${builddir} && cmake \
-  -DSANITIZE_ADDRESS=1 \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   ..
 
