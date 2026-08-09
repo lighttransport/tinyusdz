@@ -2043,6 +2043,31 @@ void App::drainProgressiveLoad() {
   }
 
   ProgressiveSceneEvent event;
+  auto retainPointMetadata = [](const DrawPointsCPU& source) {
+    DrawPointsCPU metadata;
+    metadata.name = source.name;
+    metadata.absPath = source.absPath;
+    metadata.purpose = source.purpose;
+    metadata.gaussian = source.gaussian;
+    metadata.colorsInterpolation = source.colorsInterpolation;
+    metadata.opacitiesInterpolation = source.opacitiesInterpolation;
+    metadata.materialId = source.materialId;
+    std::memcpy(metadata.world, source.world, sizeof(metadata.world));
+    std::memcpy(metadata.aabbMin, source.aabbMin, sizeof(metadata.aabbMin));
+    std::memcpy(metadata.aabbMax, source.aabbMax, sizeof(metadata.aabbMax));
+    return metadata;
+  };
+  auto retainCurveMetadata = [](const DrawCurvesCPU& source) {
+    DrawCurvesCPU metadata;
+    metadata.name = source.name;
+    metadata.absPath = source.absPath;
+    metadata.purpose = source.purpose;
+    metadata.materialId = source.materialId;
+    std::memcpy(metadata.world, source.world, sizeof(metadata.world));
+    std::memcpy(metadata.aabbMin, source.aabbMin, sizeof(metadata.aabbMin));
+    std::memcpy(metadata.aabbMax, source.aabbMax, sizeof(metadata.aabbMax));
+    return metadata;
+  };
   while (loadStream_->tryPop(&event)) {
     if (event.type == ProgressiveSceneEvent::Type::PreviewScene) {
       DrawScene preview = std::move(event.scene);
@@ -2147,6 +2172,52 @@ void App::drainProgressiveLoad() {
              vertices, triangles);
       }
       if (elapsedMs() >= budgetMs) break;
+    } else if (event.type == ProgressiveSceneEvent::Type::Points) {
+      if (!streamRendererBegun_) {
+        draw_.materials.emplace_back();
+        renderer_->beginScene(draw_.materials, 0);
+        streamRendererBegun_ = true;
+      }
+      DrawPointsCPU points = std::move(event.points);
+      const bool useful = !points.points.empty();
+      for (int a = 0; a < 3; ++a) {
+        streamBoundsMin_[a] = std::min(streamBoundsMin_[a], points.aabbMin[a]);
+        streamBoundsMax_[a] = std::max(streamBoundsMax_[a], points.aabbMax[a]);
+      }
+      if (!streamCameraFramed_ && points.purpose != "guide" && useful) {
+        camera_.fitToScene(streamBoundsMin_, streamBoundsMax_);
+        streamCameraFramed_ = true;
+      }
+      if (useful) {
+        const bool usefulPurpose = points.purpose != "guide";
+        DrawPointsCPU metadata = retainPointMetadata(points);
+        renderer_->appendPoints(std::move(points));
+        draw_.points.push_back(std::move(metadata));
+        if (usefulPurpose) streamHasUsefulGeometry_ = true;
+      }
+    } else if (event.type == ProgressiveSceneEvent::Type::Curves) {
+      if (!streamRendererBegun_) {
+        draw_.materials.emplace_back();
+        renderer_->beginScene(draw_.materials, 0);
+        streamRendererBegun_ = true;
+      }
+      DrawCurvesCPU curves = std::move(event.curves);
+      const bool useful = !curves.points.empty();
+      for (int a = 0; a < 3; ++a) {
+        streamBoundsMin_[a] = std::min(streamBoundsMin_[a], curves.aabbMin[a]);
+        streamBoundsMax_[a] = std::max(streamBoundsMax_[a], curves.aabbMax[a]);
+      }
+      if (!streamCameraFramed_ && curves.purpose != "guide" && useful) {
+        camera_.fitToScene(streamBoundsMin_, streamBoundsMax_);
+        streamCameraFramed_ = true;
+      }
+      if (useful) {
+        const bool usefulPurpose = curves.purpose != "guide";
+        DrawCurvesCPU metadata = retainCurveMetadata(curves);
+        renderer_->appendCurves(std::move(curves));
+        draw_.curves.push_back(std::move(metadata));
+        if (usefulPurpose) streamHasUsefulGeometry_ = true;
+      }
     } else if (event.type == ProgressiveSceneEvent::Type::Texture) {
       if (event.textureSlot < 0) continue;
       const size_t slot = static_cast<size_t>(event.textureSlot);

@@ -159,6 +159,21 @@ size_t ProgressiveMeshBytes(const DrawMeshCPU& m) {
          m.instanceColors.size() * sizeof(float) +
          m.instanceOpacities.size() * sizeof(float);
 }
+
+size_t ProgressivePointsBytes(const DrawPointsCPU& p) {
+  return p.points.size() * sizeof(float) + p.normals.size() * sizeof(float) +
+         p.widths.size() * sizeof(float) + p.colors.size() * sizeof(float) +
+         p.opacities.size() * sizeof(float) +
+         p.ellipseRadii.size() * sizeof(float) +
+         p.ellipseNormals.size() * sizeof(float) +
+         p.ellipseMajorAxes.size() * sizeof(float);
+}
+
+size_t ProgressiveCurvesBytes(const DrawCurvesCPU& c) {
+  return c.vertexCounts.size() * sizeof(uint32_t) +
+         c.points.size() * sizeof(float) + c.widths.size() * sizeof(float) +
+         c.colors.size() * sizeof(float) + c.opacities.size() * sizeof(float);
+}
 }  // namespace
 
 ProgressiveSceneStream::ProgressiveSceneStream(size_t maxBytes)
@@ -217,6 +232,48 @@ bool ProgressiveSceneStream::pushMesh(
   QueuedEvent queued;
   queued.event.type = ProgressiveSceneEvent::Type::Mesh;
   queued.event.mesh = std::move(mesh);
+  queued.bytes = bytes;
+  queuedBytes_ += bytes;
+  queue_.push_back(std::move(queued));
+  ready_.notify_one();
+  return true;
+}
+
+bool ProgressiveSceneStream::pushPoints(
+    DrawPointsCPU&& points, const std::atomic<bool>* externallyCancelled) {
+  const size_t bytes = ProgressivePointsBytes(points);
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (!cancelled_ &&
+         !(queuedBytes_ == 0 || queuedBytes_ + bytes <= maxBytes_)) {
+    if (externallyCancelled && externallyCancelled->load()) return false;
+    space_.wait_for(lock, std::chrono::milliseconds(20));
+  }
+  if (cancelled_ || (externallyCancelled && externallyCancelled->load()))
+    return false;
+  QueuedEvent queued;
+  queued.event.type = ProgressiveSceneEvent::Type::Points;
+  queued.event.points = std::move(points);
+  queued.bytes = bytes;
+  queuedBytes_ += bytes;
+  queue_.push_back(std::move(queued));
+  ready_.notify_one();
+  return true;
+}
+
+bool ProgressiveSceneStream::pushCurves(
+    DrawCurvesCPU&& curves, const std::atomic<bool>* externallyCancelled) {
+  const size_t bytes = ProgressiveCurvesBytes(curves);
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (!cancelled_ &&
+         !(queuedBytes_ == 0 || queuedBytes_ + bytes <= maxBytes_)) {
+    if (externallyCancelled && externallyCancelled->load()) return false;
+    space_.wait_for(lock, std::chrono::milliseconds(20));
+  }
+  if (cancelled_ || (externallyCancelled && externallyCancelled->load()))
+    return false;
+  QueuedEvent queued;
+  queued.event.type = ProgressiveSceneEvent::Type::Curves;
+  queued.event.curves = std::move(curves);
   queued.bytes = bytes;
   queuedBytes_ += bytes;
   queue_.push_back(std::move(queued));
@@ -4955,6 +5012,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   size_t streamedRenderCount = 0;
   size_t streamedMaterialCount = 0;
   size_t streamedTextureCount = 0;
+  size_t streamedPointCount = 0;
+  size_t streamedCurveCount = 0;
+  size_t streamedPointSamples = 0;
+  size_t streamedCurveSamples = 0;
+  size_t streamedGaussianChunks = 0;
+  size_t streamedGaussianSamples = 0;
+  Bounds streamedCarrierBounds;
   Bounds streamedTightBounds;
   bool streamOk = true;
   bool loggedFirstProduced = false;
@@ -4990,6 +5054,57 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       if (!stream->pushMesh(std::move(dm), ctrl ? &ctrl->cancel : nullptr)) {
         streamOk = false;
         break;
+      }
+    }
+  };
+  auto publishAvailableNonMeshes = [&]() {
+    if (!stream || !streamOk) return;
+    if (streamedMaterialCount != draw->materials.size() ||
+        streamedTextureCount != draw->textures.size()) {
+      streamOk = stream->pushResources(
+          draw->materials, static_cast<int>(draw->textures.size()), draw->upAxis);
+      streamedMaterialCount = draw->materials.size();
+      streamedTextureCount = draw->textures.size();
+      if (!streamOk) return;
+    }
+    std::vector<DrawPointsCPU> points;
+    points.swap(draw->points);
+    for (DrawPointsCPU& point : points) {
+      if (std::isfinite(point.aabbMin[0]) &&
+          std::isfinite(point.aabbMax[0])) {
+        streamedCarrierBounds.add(point.aabbMin);
+        streamedCarrierBounds.add(point.aabbMax);
+      }
+      ++streamedPointCount;
+      streamedPointSamples += point.points.size() / 3;
+      if (point.purpose == "guide") ++streamedGuideCount;
+      else if (point.purpose == "proxy") ++streamedProxyCount;
+      else if (point.purpose == "render") ++streamedRenderCount;
+      if (point.gaussian) {
+        ++streamedGaussianChunks;
+        streamedGaussianSamples += point.points.size() / 3;
+      }
+      if (!stream->pushPoints(std::move(point), ctrl ? &ctrl->cancel : nullptr)) {
+        streamOk = false;
+        return;
+      }
+    }
+    std::vector<DrawCurvesCPU> curves;
+    curves.swap(draw->curves);
+    for (DrawCurvesCPU& curve : curves) {
+      if (std::isfinite(curve.aabbMin[0]) &&
+          std::isfinite(curve.aabbMax[0])) {
+        streamedCarrierBounds.add(curve.aabbMin);
+        streamedCarrierBounds.add(curve.aabbMax);
+      }
+      ++streamedCurveCount;
+      streamedCurveSamples += curve.points.size() / 3;
+      if (curve.purpose == "guide") ++streamedGuideCount;
+      else if (curve.purpose == "proxy") ++streamedProxyCount;
+      else if (curve.purpose == "render") ++streamedRenderCount;
+      if (!stream->pushCurves(std::move(curve), ctrl ? &ctrl->cancel : nullptr)) {
+        streamOk = false;
+        return;
       }
     }
   };
@@ -5392,6 +5507,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin, dp.aabbMax);
         emitted += dp.points.size() / 3;
         draw->points.push_back(std::move(dp));
+        publishAvailableNonMeshes();
+        if (!streamOk) break;
       }
       if (emitted == 0)
         draw->skipped.push_back("GaussianSplat '" + rec.path +
@@ -5516,6 +5633,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                        dp.aabbMax);
       emitted += last - first;
       draw->points.push_back(std::move(dp));
+      publishAvailableNonMeshes();
+      if (!streamOk) break;
     }
     if (emitted == 0)
       draw->skipped.push_back("Points '" + rec.path + "': no samples");
@@ -5652,6 +5771,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     RowMatrixToColumnMajor(rec.world, dc.world);
     addCarrierBounds(rec.world, dc.points, dc.widths, dc.aabbMin, dc.aabbMax);
     draw->curves.push_back(std::move(dc));
+    publishAvailableNonMeshes();
+    if (!streamOk) break;
   }
   if (curvePrimsDeferred > 0 || curveStrandsDeferred > 0) {
     draw->truncated = true;
@@ -7213,6 +7334,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         tight.add(curves.aabbMax);
       }
     }
+    if (streamedCarrierBounds.has) {
+      tight.add(streamedCarrierBounds.mn);
+      tight.add(streamedCarrierBounds.mx);
+    }
     if (tight.has) bounds = tight;
   }
 
@@ -7256,15 +7381,19 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   LOGI("next: '%s' -> %zu draws (%zu guide, %zu proxy, %zu render), %lld instances, "
        "%zu unique tris (%lld effective), %zu materials, %zu textures, "
        "%zu cameras, instXform VRAM ~%.2f GB, up=%s%s",
-       path.c_str(), streamedMeshCount + draw->meshes.size(), nGuide, nProxy,
+       path.c_str(), streamedMeshCount + draw->meshes.size() +
+                         streamedPointCount + streamedCurveCount,
+       nGuide, nProxy,
        nRender, instTotal,
        draw->triangleCount, effectiveTris, draw->materials.size(),
        draw->textures.size(), draw->cameras.size(),
        double(instTotal) * 48.0 / 1e9,
        draw->upAxis.c_str(), draw->truncated ? " (truncated)" : "");
-  if (!draw->points.empty() || !draw->curves.empty()) {
+  if (!draw->points.empty() || !draw->curves.empty() ||
+      streamedPointCount > 0 || streamedCurveCount > 0) {
     size_t pointSamples = 0, curveSamples = 0, opacityPrims = 0;
-    size_t gaussianChunks = 0, gaussianSamples = 0;
+    size_t gaussianChunks = streamedGaussianChunks;
+    size_t gaussianSamples = streamedGaussianSamples;
     size_t constantWidthCurves = 0;
     for (const DrawPointsCPU& p : draw->points) {
       pointSamples += p.points.size() / 3;
@@ -7281,7 +7410,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
     LOGI("next: retained %zu Points prim(s) / %zu samples and %zu Curves "
          "prim(s) / %zu tessellated samples",
-         draw->points.size(), pointSamples, draw->curves.size(), curveSamples);
+         streamedPointCount + draw->points.size(),
+         streamedPointSamples + pointSamples,
+         streamedCurveCount + draw->curves.size(),
+         streamedCurveSamples + curveSamples);
     if (opacityPrims > 0) {
       LOGI("next: retained displayOpacity for %zu non-mesh prim(s)",
            opacityPrims);
@@ -7396,8 +7528,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // A stage whose only renderable content lives below a deferred payload is a
   // valid initial composition. Keep its session alive so MCP/UI payload loading
   // can recompose it on demand; only reject truly empty, non-deferred stages.
-  if (streamedMeshCount + draw->meshes.size() == 0 && draw->points.empty() &&
-      draw->curves.empty() && draw->volumes.empty() && deferredPayloads.empty()) {
+  if (streamedMeshCount + draw->meshes.size() == 0 &&
+      streamedPointCount == 0 && streamedCurveCount == 0 &&
+      draw->points.empty() && draw->curves.empty() && draw->volumes.empty() &&
+      deferredPayloads.empty()) {
     if (err) *err = "next: no renderable geometry produced";
     if (stream)
       stream->pushFailed(err ? *err : "next: no renderable geometry produced");
@@ -7414,6 +7548,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     LogProcessMemory("after finalize");
   }
   if (stream) {
+    publishAvailableNonMeshes();
+    if (!streamOk) {
+      if (err) *err = "next: progressive load cancelled";
+      return false;
+    }
     if (streamedMaterialCount != draw->materials.size() ||
         streamedTextureCount != draw->textures.size()) {
       stream->pushResources(draw->materials,
