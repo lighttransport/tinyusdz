@@ -834,10 +834,15 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
   proxies.reserve(scene.points.size() + scene.curves.size());
   const size_t proxyTriangleLimit = RtProxyTriangleLimit();
   for (const DrawPointsCPU& src : scene.points) {
-    if (src.gaussian && src.ellipseRadii.size() >= (src.points.size() / 3) * 2 &&
-        src.ellipseNormals.size() >= (src.points.size() / 3) * 3 &&
-        src.ellipseMajorAxes.size() >= (src.points.size() / 3) * 3) {
-      continue;  // native ellipse carrier is uploaded by CUDA/Vulkan RT paths
+    const size_t pointCount = src.points.size() / 3;
+    const bool native_gaussian =
+        src.gaussian && src.ellipseRadii.size() >= pointCount * 2 &&
+        src.ellipseNormals.size() >= pointCount * 3 &&
+        src.ellipseMajorAxes.size() >= pointCount * 3;
+    const bool analytic_points =
+        !src.gaussian && src.normals.size() >= pointCount * 3;
+    if (native_gaussian || analytic_points) {
+      continue;  // native ellipse carrier is uploaded by CUDA/HIP/Vulkan RT paths
     }
     DrawMeshCPU mesh;
     InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
@@ -848,7 +853,7 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
       mesh = DrawMeshCPU{};
       InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
     };
-    const size_t count = src.points.size() / 3;
+    const size_t count = pointCount;
     const float scale = CarrierWorldScale(src.world);
     if (src.gaussian && src.ellipseRadii.size() >= count * 2 &&
         src.ellipseNormals.size() >= count * 3 &&
@@ -1120,13 +1125,17 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
   };
 
-  // Keep Gaussian splats as analytic ellipses. The carrier stores local-space
-  // radii and axes; bake only the affine placement here so all RT backends see
-  // the same world-space primitive.
+  // Keep Gaussian splats and authored-normal Points as analytic ellipses. The
+  // carrier stores local-space radii and axes; bake only the affine placement
+  // here so CUDA/HIP RT does not expand disk/oval point clouds into triangles.
   for (const DrawPointsCPU& src : scene.points) {
     const size_t n = src.points.size() / 3;
-    if (!src.gaussian || src.ellipseRadii.size() < n * 2 ||
-        src.ellipseNormals.size() < n * 3 || src.ellipseMajorAxes.size() < n * 3)
+    const bool gaussian =
+        src.gaussian && src.ellipseRadii.size() >= n * 2 &&
+        src.ellipseNormals.size() >= n * 3 &&
+        src.ellipseMajorAxes.size() >= n * 3;
+    const bool analytic_points = !src.gaussian && src.normals.size() >= n * 3;
+    if (!gaussian && !analytic_points)
       continue;
     for (size_t i = 0; i < n; ++i) {
       const float opacity = src.opacities.empty()
@@ -1141,26 +1150,65 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
           !std::isfinite(c[2]))
         continue;
       float major[3], normal[3];
-      for (int k = 0; k < 3; ++k) {
-        major[k] = src.world[0 * 4 + k] * src.ellipseMajorAxes[i * 3 + 0] +
-                  src.world[1 * 4 + k] * src.ellipseMajorAxes[i * 3 + 1] +
-                  src.world[2 * 4 + k] * src.ellipseMajorAxes[i * 3 + 2];
-        normal[k] = src.world[0 * 4 + k] * src.ellipseNormals[i * 3 + 0] +
-                   src.world[1 * 4 + k] * src.ellipseNormals[i * 3 + 1] +
-                   src.world[2 * 4 + k] * src.ellipseNormals[i * 3 + 2];
+      if (gaussian) {
+        for (int k = 0; k < 3; ++k) {
+          major[k] = src.world[0 * 4 + k] * src.ellipseMajorAxes[i * 3 + 0] +
+                    src.world[1 * 4 + k] * src.ellipseMajorAxes[i * 3 + 1] +
+                    src.world[2 * 4 + k] * src.ellipseMajorAxes[i * 3 + 2];
+          normal[k] = src.world[0 * 4 + k] * src.ellipseNormals[i * 3 + 0] +
+                     src.world[1 * 4 + k] * src.ellipseNormals[i * 3 + 1] +
+                     src.world[2 * 4 + k] * src.ellipseNormals[i * 3 + 2];
+        }
+      } else {
+        for (int k = 0; k < 3; ++k) {
+          major[k] = src.world[0 * 4 + k];
+          normal[k] = src.world[0 * 4 + k] * src.normals[i * 3 + 0] +
+                     src.world[1 * 4 + k] * src.normals[i * 3 + 1] +
+                     src.world[2 * 4 + k] * src.normals[i * 3 + 2];
+        }
       }
-      const float ml = std::sqrt(major[0]*major[0]+major[1]*major[1]+major[2]*major[2]);
-      const float nl = std::sqrt(normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]);
+      const float nl = std::sqrt(normal[0] * normal[0] +
+                                  normal[1] * normal[1] +
+                                  normal[2] * normal[2]);
+      if (!std::isfinite(nl) || nl <= 1.0e-8f) continue;
+      for (float& v : normal) v /= nl;
+      if (!gaussian) {
+        const float d = major[0] * normal[0] + major[1] * normal[1] +
+                        major[2] * normal[2];
+        for (int k = 0; k < 3; ++k) major[k] -= d * normal[k];
+      }
+      const float ml = std::sqrt(major[0] * major[0] +
+                                 major[1] * major[1] +
+                                 major[2] * major[2]);
       if (!std::isfinite(ml) || !std::isfinite(nl) || ml <= 1.0e-8f ||
           nl <= 1.0e-8f) continue;
-      const float rx = src.ellipseRadii[i * 2] * ml;
-      const float ry = src.ellipseRadii[i * 2 + 1] * ml;
+      float rx = 0.0f, ry = 0.0f;
+      if (gaussian) {
+        rx = src.ellipseRadii[i * 2] * ml;
+        ry = src.ellipseRadii[i * 2 + 1] * ml;
+      } else {
+        const float minor[3] = {
+            normal[1] * major[2] - normal[2] * major[1],
+            normal[2] * major[0] - normal[0] * major[2],
+            normal[0] * major[1] - normal[1] * major[0]};
+        const float minor_len = std::sqrt(minor[0] * minor[0] +
+                                          minor[1] * minor[1] +
+                                          minor[2] * minor[2]);
+        const float width = src.widths.empty()
+                                ? 1.0f
+                                : (src.widths.size() == 1
+                                       ? src.widths[0]
+                                       : src.widths[i < src.widths.size()
+                                                       ? i
+                                                       : src.widths.size() - 1]);
+        rx = 0.5f * std::fabs(width) * ml;
+        ry = 0.5f * std::fabs(width) * minor_len;
+      }
       if (!std::isfinite(rx) || !std::isfinite(ry) || rx <= 1.0e-8f ||
           ry <= 1.0e-8f)
         continue;
       out->pointCenters.insert(out->pointCenters.end(), c, c + 3);
       for (float& v : major) v /= ml;
-      for (float& v : normal) v /= nl;
       out->pointMajorAxes.insert(out->pointMajorAxes.end(), major, major + 3);
       out->pointNormals.insert(out->pointNormals.end(), normal, normal + 3);
       out->pointRadii.push_back(rx);

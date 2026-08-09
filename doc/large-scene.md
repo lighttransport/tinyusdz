@@ -291,11 +291,11 @@ The same GPU upload bridge now covers `UsdGeomPoints`: point widths become
 low-cost round point spheres, while authored point normals become double-sided
 disc geometry. This is used by the Vulkan, HIP, and D3D triangle backends. The
 minimal public regression fixture `tests/usda/tusdrender-points.usda` renders
-on the NVIDIA Vulkan path as **160 GPU triangles**. Analytic point/curve scene
-ABIs remain available to CPU LightRT; Vulkan currently receives their
-triangleized upload representation. The GPU collector reads point arrays
-lazily, avoiding a second full positions/widths/normals copy before bounded
-upload chunks are formed.
+on the NVIDIA Vulkan path as **160 GPU triangles**. In the LightRT path,
+authored-normal points are retained as analytic disk/oval records for CUDA,
+HIP, and Vulkan; points without normals retain the bounded sphere proxy. The
+GPU collector reads point arrays lazily, avoiding a second full
+positions/widths/normals copy before bounded upload chunks are formed.
 
 ALab's `extras/alab_sdr_splat.usdc` is a
 `ParticleField3DGaussianSplat` with **2,274,589** particles. The GPU collector
@@ -1921,8 +1921,11 @@ The Direct3D 11 backend now follows the same bounded upload and nearest-hit
 reduction policy, so its single-dispatch implementation no longer requires a
 monolithic scene/BVH allocation.
 Ordinary `UsdGeomPoints` are accumulated into bounded disc/sphere mesh chunks
-as well; `TUSDR_GPU_TRIANGLE_CHUNK` therefore bounds point-cloud geometry
-objects and descriptor count instead of creating one GPU mesh per point.
+for the triangle backends; `TUSDR_GPU_TRIANGLE_CHUNK` therefore bounds
+point-cloud geometry objects and descriptor count instead of creating one GPU
+mesh per point. Authored-normal points use the LightRT analytic ellipse carrier
+when that primitive is available, avoiding triangle expansion and reducing
+host/GPU geometry memory for large disk/oval point sets.
 Round curves use the same LightRT tessellation fallback on Vulkan, HIP/ROCm,
 and D3D11; the helper is no longer hidden behind a Vulkan-only compile guard.
 

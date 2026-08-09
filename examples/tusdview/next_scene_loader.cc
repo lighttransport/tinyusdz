@@ -5387,6 +5387,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     dp.colorsInterpolation = static_cast<int>(rp.colors_interp);
     dp.opacitiesInterpolation = static_cast<int>(rp.opacities_interp);
     copyChunked(rp.points, &dp.points);
+    copyChunked(rp.normals, &dp.normals);
     copyChunked(rp.widths, &dp.widths);
     copyChunked(rp.colors, &dp.colors);
     copyChunked(rp.opacities, &dp.opacities);

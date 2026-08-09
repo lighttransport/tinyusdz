@@ -742,6 +742,7 @@ struct DrawPointsCPU {
   std::string absPath;
   std::string purpose{"default"};
   std::vector<float> points;   // local xyz
+  std::vector<float> normals;  // optional per-point disk/oval normals
   std::vector<float> widths;   // empty, constant, or per-point
   std::vector<float> colors;   // empty, constant rgb, or per-point rgb
   std::vector<float> opacities;  // empty, constant, or per-point
