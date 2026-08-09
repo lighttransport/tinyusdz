@@ -58,7 +58,7 @@ bool IsStaticGeometryArray(const std::string& type,
     }
     return false;
   }
-  if (type == "PointInstancer") {
+  if (type == "PointInstancer" || type == "UsdGeomPointInstancer") {
     if (primvar) return true;
     static const PropNameId kIdProtoIndices =
         GetPropNameTable().intern("protoIndices");
@@ -88,7 +88,8 @@ bool IsStaticGeometryArray(const std::string& type,
     }
     return false;
   }
-  if (type == "BasisCurves" || type == "Points") {
+  if (type == "BasisCurves" || type == "NurbsCurves" ||
+      type == "Points") {
     if (primvar) return true;
     static const PropNameId kIdPoints =
         GetPropNameTable().intern("points");
@@ -115,6 +116,21 @@ bool IsStaticGeometryArray(const std::string& type,
     static const PropNameId kIdIndices =
         GetPropNameTable().intern("indices");
     return property_id == kIdIndices;
+  }
+  if (type == "ParticleField3DGaussianSplat") {
+    if (primvar) return true;
+    static const PropNameId kIdPositions =
+        GetPropNameTable().intern("positions");
+    static const PropNameId kIdScales =
+        GetPropNameTable().intern("scales");
+    static const PropNameId kIdOrientations =
+        GetPropNameTable().intern("orientations");
+    static const PropNameId kIdOpacities =
+        GetPropNameTable().intern("opacities");
+    static const PropNameId kIdSh = GetPropNameTable().intern("sh");
+    return property_id == kIdPositions || property_id == kIdScales ||
+           property_id == kIdOrientations || property_id == kIdOpacities ||
+           property_id == kIdSh;
   }
   return false;
 }
