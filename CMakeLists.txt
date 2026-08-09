@@ -2380,6 +2380,7 @@ if(TINYUSDZ_BUILD_TESTS)
         mtlx-usdz-texture-equivalence
         mtlx-usdz-udim-equivalence
         opacity-texture-alpha
+        payload-mask
         purpose-filtering
         purpose-visibility
         shaped-area-lights
