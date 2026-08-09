@@ -1911,6 +1911,9 @@ and exits cleanly rather than silently producing an incomplete image.
 The Direct3D 11 backend now follows the same bounded upload and nearest-hit
 reduction policy, so its single-dispatch implementation no longer requires a
 monolithic scene/BVH allocation.
+Ordinary `UsdGeomPoints` are accumulated into bounded disc/sphere mesh chunks
+as well; `TUSDR_GPU_TRIANGLE_CHUNK` therefore bounds point-cloud geometry
+objects and descriptor count instead of creating one GPU mesh per point.
 Round curves use the same LightRT tessellation fallback on Vulkan, HIP/ROCm,
 and D3D11; the helper is no longer hidden behind a Vulkan-only compile guard.
 

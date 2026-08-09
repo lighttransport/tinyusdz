@@ -123,20 +123,19 @@ tinyusdz::Image MakeBlankImage(const Options &opt, int height) {
 // be Vulkan-only: HIP/ROCm and D3D11 use the same bounded triangle fallback for
 // round curves when no analytic curve primitive is exposed by their API.
 void AppendGpuPointSphere(const Vec3 &center, float radius,
-                          std::vector<Vec3> *base_colors,
-                          std::vector<RTPreviewStats::MeshGeometry> *geos) {
+                          RTPreviewStats::MeshGeometry *geo) {
+  if (!geo) return;
   constexpr float kPi = 3.14159265358979323846f;
   constexpr int kStacks = 4;
   constexpr int kSlices = 8;
-  RTPreviewStats::MeshGeometry geo;
-  geo.positions.reserve(kStacks * kSlices * 18);
-  geo.normals.reserve(kStacks * kSlices * 18);
-  geo.uvs.reserve(kStacks * kSlices * 12);
-  geo.indices.reserve(kStacks * kSlices * 6);
+  geo->positions.reserve(geo->positions.size() + kStacks * kSlices * 18);
+  geo->normals.reserve(geo->normals.size() + kStacks * kSlices * 18);
+  geo->uvs.reserve(geo->uvs.size() + kStacks * kSlices * 12);
+  geo->indices.reserve(geo->indices.size() + kStacks * kSlices * 6);
   auto add = [&](const Vec3 &p, const Vec3 &n) {
-    geo.positions.insert(geo.positions.end(), {p.x, p.y, p.z});
-    geo.normals.insert(geo.normals.end(), {n.x, n.y, n.z});
-    geo.uvs.insert(geo.uvs.end(), {0.0f, 0.0f});
+    geo->positions.insert(geo->positions.end(), {p.x, p.y, p.z});
+    geo->normals.insert(geo->normals.end(), {n.x, n.y, n.z});
+    geo->uvs.insert(geo->uvs.end(), {0.0f, 0.0f});
   };
   for (int y = 0; y < kStacks; ++y) {
     const float v0 = float(y) / float(kStacks);
@@ -154,17 +153,15 @@ void AppendGpuPointSphere(const Vec3 &center, float radius,
                      std::cos(p1) * std::sin(a0)};
       const Vec3 n11{std::cos(p1) * std::cos(a1), std::sin(p1),
                      std::cos(p1) * std::sin(a1)};
-      const uint32_t base = uint32_t(geo.positions.size() / 3);
+      const uint32_t base = uint32_t(geo->positions.size() / 3);
       add(Add(center, Mul(n00, radius)), n00);
       add(Add(center, Mul(n10, radius)), n10);
       add(Add(center, Mul(n11, radius)), n11);
       add(Add(center, Mul(n01, radius)), n01);
-      geo.indices.insert(geo.indices.end(), {base, base + 1, base + 2,
-                                             base, base + 2, base + 3});
+      geo->indices.insert(geo->indices.end(), {base, base + 1, base + 2,
+                                                base, base + 2, base + 3});
     }
   }
-  base_colors->push_back(Vec3{0.90f, 0.72f, 0.26f});
-  geos->push_back(std::move(geo));
 }
 
 void AppendGpuEllipseToGeometry(const Vec3 &center, const Vec3 &normal,
@@ -217,12 +214,8 @@ void AppendGpuEllipseToGeometry(const Vec3 &center, const Vec3 &normal,
 }
 
 void AppendGpuPointDisc(const Vec3 &center, const Vec3 &normal, float radius,
-                        std::vector<Vec3> *base_colors,
-                        std::vector<RTPreviewStats::MeshGeometry> *geos) {
-  RTPreviewStats::MeshGeometry geo;
-  AppendGpuEllipseToGeometry(center, normal, radius, radius, nullptr, 16, &geo);
-  base_colors->push_back(Vec3{0.90f, 0.72f, 0.26f});
-  geos->push_back(std::move(geo));
+                        RTPreviewStats::MeshGeometry *geo) {
+  AppendGpuEllipseToGeometry(center, normal, radius, radius, nullptr, 16, geo);
 }
 
 void CollectGpuPointsRec(
@@ -335,6 +328,21 @@ void CollectGpuPointsRec(
     const std::vector<float> points = ReadFloatArrayLazy(prim, "points", time);
     const std::vector<float> widths = ReadFloatArrayLazy(prim, "widths", time);
     const std::vector<float> normals = ReadFloatArrayLazy(prim, "normals", time);
+    size_t batchLimit = 262144;
+    if (const char *env = std::getenv("TUSDR_GPU_TRIANGLE_CHUNK")) {
+      char *end = nullptr;
+      const unsigned long long parsed = std::strtoull(env, &end, 10);
+      if (end != env && parsed > 0) batchLimit = static_cast<size_t>(parsed);
+    }
+    RTPreviewStats::MeshGeometry batch;
+    size_t emitted = 0;
+    auto flush = [&]() {
+      if (batch.indices.empty()) return;
+      base_colors->push_back(Vec3{0.90f, 0.72f, 0.26f});
+      geos->push_back(std::move(batch));
+      batch = RTPreviewStats::MeshGeometry{};
+      emitted = 0;
+    };
     for (size_t i = 0; i + 2 < points.size(); i += 3) {
       const Vec3 p = TransformPoint(world, Vec3{points[i], points[i + 1],
                                                 points[i + 2]});
@@ -353,15 +361,19 @@ void CollectGpuPointsRec(
       const float sy = Length(TransformVector(world, Vec3{0.0f, 1.0f, 0.0f}));
       const float sz = Length(TransformVector(world, Vec3{0.0f, 0.0f, 1.0f}));
       const float r = std::max(1.0e-5f, 0.5f * w * std::max(sx, std::max(sy, sz)));
+      const size_t pointTriangles = normals.size() >= i + 3 ? 32 : 64;
+      if (emitted != 0 && emitted + pointTriangles > batchLimit) flush();
       if (normals.size() >= i + 3) {
         AppendGpuPointDisc(p, TransformVector(world,
                                               Vec3{normals[i], normals[i + 1],
                                                    normals[i + 2]}),
-                           r, base_colors, geos);
+                           r, &batch);
       } else {
-        AppendGpuPointSphere(p, r, base_colors, geos);
+        AppendGpuPointSphere(p, r, &batch);
       }
+      emitted += pointTriangles;
     }
+    flush();
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
     CollectGpuPointsRec(child, world, time, base_colors, geos);
