@@ -1872,7 +1872,10 @@ the upload boundary. Tusdrender builds those chunks one curve prim at a time,
 so a scene with many large curve prims does not accumulate a second
 scene-wide transformed point/radius stream before chunking. Authored points are
 consumed directly from lazy float views; only value-clip curves require a
-bounded per-prim materialized fallback. In `-stats` mode, inconsistent
+bounded per-prim materialized fallback. Direct curve chunks default to 262,144
+segments; instanced prototype BLASes retain a 1,048,576-segment default when
+the variable is unset, and both paths honor `TUSDR_CURVE_CHUNK=N`. In `-stats`
+mode, inconsistent
 `curveVertexCounts`/`points` data is reported as `rt skipped curves` with an
 invalid-data count rather than being silently partially rendered. Curve hit
 metadata is owned by each bounded chunk, so chunking also bounds the retained
