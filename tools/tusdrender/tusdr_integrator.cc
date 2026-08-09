@@ -652,17 +652,16 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
   };
   test_scene(direct->spheres.get(), direct->sphere_info, 0,
              direct->sphere_info.size(), true);
-  auto test_curve_chunks = [&](const std::vector<CurveSceneChunk> &chunks,
-                               const std::vector<TriInfo> &info) {
+  auto test_curve_chunks = [&](const std::vector<CurveSceneChunk> &chunks) {
     for (const CurveSceneChunk &chunk : chunks)
-      test_scene(chunk.scene.get(), info, chunk.first, chunk.count, false);
+      test_scene(chunk.scene.get(), chunk.info, 0, chunk.info.size(), false);
   };
   test_scene(direct->round_curves.get(), direct->round_curve_info, 0,
              direct->round_curve_info.size(), false);
-  test_curve_chunks(direct->round_curve_chunks, direct->round_curve_info);
+  test_curve_chunks(direct->round_curve_chunks);
   test_scene(direct->flat_curves.get(), direct->flat_curve_info, 0,
              direct->flat_curve_info.size(), false);
-  test_curve_chunks(direct->flat_curve_chunks, direct->flat_curve_info);
+  test_curve_chunks(direct->flat_curve_chunks);
   test_scene(direct->points.get(), direct->point_info, 0,
              direct->point_info.size(), true);
   auto test_ellipses = [&](const EllipseSceneChunk &chunk) {

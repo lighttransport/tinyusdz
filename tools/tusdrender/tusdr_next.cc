@@ -2938,6 +2938,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
                                 const std::vector<float> &radii,
                                 const std::vector<uint32_t> &strand_first,
                                 const std::vector<uint32_t> &strand_count,
+                                std::vector<TriInfo> *info,
                                 std::vector<CurveSceneChunk> *chunks,
                                 bool flat, const char *label) -> bool {
     for (size_t s = 0; s < strand_first.size();) {
@@ -2973,6 +2974,15 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
       chunk.first = chunks->empty() ? 0 :
           chunks->back().first + chunks->back().count;
       chunk.count = segs;
+      if (!info || info->size() < segs) {
+        std::cerr << "Failed to map " << label << " curve metadata at chunk ["
+                  << chunk.first << ", " << (chunk.first + segs) << "].\n";
+        return false;
+      }
+      chunk.info.reserve(segs);
+      for (size_t i = 0; i < segs; ++i)
+        chunk.info.push_back(std::move((*info)[i]));
+      info->erase(info->begin(), info->begin() + segs);
       chunk.scene.reset(flat ? lrt_flatcurve_scene_build(&hs, &build_opts, &lrt_err)
                              : lrt_roundcurve_scene_build(&hs, &build_opts, &lrt_err));
       if (!chunk.scene) {
@@ -2988,6 +2998,8 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
   };
   ctx.direct.round_curve_chunks.clear();
   ctx.direct.flat_curve_chunks.clear();
+  ctx.direct.round_curve_info.clear();
+  ctx.direct.flat_curve_info.clear();
   // Process one authored curve prim at a time. The previous implementation
   // accumulated every transformed point/radius in scene-wide vectors before
   // splitting them, which defeated the chunk limit for scenes with many large
@@ -3029,18 +3041,19 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     const bool flat = job.prim.GetPropertyValue("normals") != nullptr;
     std::vector<float> curve_points, curve_radii;
     std::vector<uint32_t> curve_first, curve_count;
-    std::vector<TriInfo> *info = flat ? &ctx.direct.flat_curve_info
-                                      : &ctx.direct.round_curve_info;
+    std::vector<TriInfo> curve_info;
     AppendLinearCurveStrands(point_source.view.begin(),
                              point_source.view.size() / 3, counts, widths,
                              job.world, &curve_points, &curve_radii,
-                             &curve_first, &curve_count, info, &ctx.bounds);
+                             &curve_first, &curve_count, &curve_info,
+                             &ctx.bounds);
     if (curve_first.empty()) {
       ++ctx.stats.skipped_curves;
       continue;
     }
     if (!build_curve_chunks(
             curve_points, curve_radii, curve_first, curve_count,
+            &curve_info,
             flat ? &ctx.direct.flat_curve_chunks
                  : &ctx.direct.round_curve_chunks,
             flat, flat ? "flat" : "round"))
