@@ -1325,29 +1325,38 @@ void VulkanRenderer::drawLineSet(VkCommandBuffer cb,
                                  VkDeviceMemory* mem, VkDeviceSize* cap,
                                  VkPipeline pipeline, const float vp[16]) {
   if (copy.empty() || !pipeline) return;
-  const VkDeviceSize bytes = copy.size() * sizeof(HelperVertex);
-  if (bytes > *cap) {
-    if (*buf) vkDestroyBuffer(device_, *buf, nullptr);
-    if (*mem) vkFreeMemory(device_, *mem, nullptr);
-    *buf = VK_NULL_HANDLE;
-    *mem = VK_NULL_HANDLE;
-    if (createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, copy.data(), buf,
-                         mem)) {
+  // Helper geometry is rebuilt every frame and can contain millions of curve
+  // vertices. Upload/draw bounded ranges so one camera-facing fallback stream
+  // cannot consume a monolithic host-visible allocation.
+  constexpr size_t kVerticesPerUpload = size_t(262144);
+  for (size_t first = 0; first < copy.size(); first += kVerticesPerUpload) {
+    const size_t count = std::min(kVerticesPerUpload, copy.size() - first);
+    const VkDeviceSize bytes = count * sizeof(HelperVertex);
+    if (bytes > *cap) {
+      if (*buf) vkDestroyBuffer(device_, *buf, nullptr);
+      if (*mem) vkFreeMemory(device_, *mem, nullptr);
+      *buf = VK_NULL_HANDLE;
+      *mem = VK_NULL_HANDLE;
+      *cap = 0;
+      if (!createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                            copy.data() + first, buf, mem))
+        return;
       *cap = bytes;
+    } else {
+      if (!*buf || !*mem) return;
+      void* p = nullptr;
+      vkMapMemory(device_, *mem, 0, bytes, 0, &p);
+      std::memcpy(p, copy.data() + first, static_cast<size_t>(bytes));
+      vkUnmapMemory(device_, *mem);
     }
-  } else {
-    void* p = nullptr;
-    vkMapMemory(device_, *mem, 0, bytes, 0, &p);
-    std::memcpy(p, copy.data(), static_cast<size_t>(bytes));
-    vkUnmapMemory(device_, *mem);
-  }
-  if (*buf) {
+    if (*buf) {
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkCmdPushConstants(cb, lineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
                        sizeof(float) * 16, vp);
     VkDeviceSize off = 0;
     vkCmdBindVertexBuffers(cb, 0, 1, buf, &off);
-    vkCmdDraw(cb, static_cast<uint32_t>(copy.size()), 1, 0, 0);
+      vkCmdDraw(cb, static_cast<uint32_t>(count), 1, 0, 0);
+    }
   }
 }
 
