@@ -551,10 +551,10 @@ static void ApplyLargeSceneProfile(Options *opt) {
   {
     const tinyusdz::tydra::next::TextureBudget texture_budget =
         tinyusdz::tydra::next::DeriveTextureBudget(budget);
-    if (opt->texture_max_size == 0 && texture_budget.max_edge > 0) {
+    if (!opt->texture_max_size_explicit && texture_budget.max_edge > 0) {
       opt->texture_max_size = int(texture_budget.max_edge);
     }
-    if (opt->texture_budget_mb == 0 && texture_budget.budget_bytes > 0) {
+    if (!opt->texture_budget_explicit && texture_budget.budget_bytes > 0) {
       opt->texture_budget_mb =
           int(texture_budget.budget_bytes / (1024ull * 1024ull));
     }
@@ -1139,6 +1139,26 @@ int main(int argc, char **argv) {
   // OOM-killed on huge (instance-expanded) scenes; it aborts with a clear
   // message instead.
   MemBudget::Get().Init(opt.max_mem_gib);
+  // Apply the same bounded texture defaults even without a named large-scene
+  // profile. Explicit texture flags remain authoritative, including an
+  // explicit zero when a caller intentionally requests source resolution.
+  {
+    const tinyusdz::tydra::next::ResourceBudget budget =
+        tinyusdz::tydra::next::ComputeResourceBudget(
+            MemBudget::Get().Cap(), QueryDeviceLocalVRAMBytes());
+    const tinyusdz::tydra::next::TextureBudget texture_budget =
+        tinyusdz::tydra::next::DeriveTextureBudget(budget);
+    if (!opt.texture_max_size_explicit && texture_budget.max_edge > 0)
+      opt.texture_max_size = static_cast<int>(texture_budget.max_edge);
+    if (!opt.texture_budget_explicit && texture_budget.budget_bytes > 0) {
+      opt.texture_budget_mb = static_cast<int>(
+          texture_budget.budget_bytes / (1024ull * 1024ull));
+    }
+    if (opt.stats) {
+      std::cerr << "texture budget: " << opt.texture_budget_mb
+                << " MiB, max edge " << opt.texture_max_size << "\n";
+    }
+  }
   if (opt.stats) {
     std::cerr << "memory cap: " << MemBudget::GiB(MemBudget::Get().Cap());
     size_t avail = MemBudget::AvailableSystemMemory();

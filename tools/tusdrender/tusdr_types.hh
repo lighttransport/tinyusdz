@@ -623,6 +623,8 @@ struct Options {
   float displace_scale{1.0f};      // -displaceScale: global displacement multiplier
   int texture_max_size{0};         // -texMaxSize: longest edge cap, 0 = source
   int texture_budget_mb{0};        // -texBudgetMb: best-effort decoded budget
+  bool texture_max_size_explicit{false};
+  bool texture_budget_explicit{false};
   enum class TextureCompress { Off, BCn };
   TextureCompress texture_compress{TextureCompress::Off};  // -texCompress
   enum class UdimMode { Sparse, Atlas };
