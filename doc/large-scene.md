@@ -1854,6 +1854,11 @@ point BVH now reuses the retained world-center stream instead of making another
 full center copy during construction. The ALab test retained 1,914,278 visible
 samples across 35 point prims and still completed native Vulkan RT setup in
 about 0.6 s at 32x32.
+When the completed scene is handed to Vulkan, those point and curve carriers
+are moved into the renderer's native RT/raster storage instead of copied; the
+scene keeps their metadata and bounds while releasing the duplicate CPU
+payload. Backends that do not retain CPU carriers continue using the existing
+const-reference upload path.
 Ordinary `UsdGeomPoints` now use the same lazy, bounded carrier emission, so
 large non-Gaussian particle fields no longer materialize a complete
 `RenderPoints` object before being copied into the viewer scene. Constant or

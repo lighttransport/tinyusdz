@@ -2176,10 +2176,10 @@ void App::drainProgressiveLoad() {
       DrawScene finalScene = std::move(event.scene);
       renderer_->syncSceneResources(finalScene.materials,
                                     static_cast<int>(finalScene.textures.size()));
-      for (const DrawPointsCPU& points : finalScene.points)
-        renderer_->appendPoints(points);
-      for (const DrawCurvesCPU& curves : finalScene.curves)
-        renderer_->appendCurves(curves);
+      for (DrawPointsCPU& points : finalScene.points)
+        renderer_->appendPoints(std::move(points));
+      for (DrawCurvesCPU& curves : finalScene.curves)
+        renderer_->appendCurves(std::move(curves));
       draw_ = std::move(finalScene);
       draw_.meshes = std::move(streamedMeshes);
       if (draw_.textures.size() < streamedTextures.size())

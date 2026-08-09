@@ -232,6 +232,15 @@ class Renderer {
   virtual void appendMesh(const DrawMeshCPU& mesh) = 0;
   virtual void appendPoints(const DrawPointsCPU& /*points*/) {}
   virtual void appendCurves(const DrawCurvesCPU& /*curves*/) {}
+  // Ownership-transfer upload for backends that retain CPU carriers for a
+  // later RT build. The default preserves the const-reference behavior used
+  // by GL and other non-owning backends.
+  virtual void appendPoints(DrawPointsCPU&& points) {
+    appendPoints(static_cast<const DrawPointsCPU&>(points));
+  }
+  virtual void appendCurves(DrawCurvesCPU&& curves) {
+    appendCurves(static_cast<const DrawCurvesCPU&>(curves));
+  }
   // Progressive surface-first upload. The default preserves existing behavior;
   // GL defers wireframe/source-face buffers until uploadMeshAux.
   virtual void appendMeshSurface(const DrawMeshCPU& mesh) { appendMesh(mesh); }

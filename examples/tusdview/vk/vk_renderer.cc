@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <utility>
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -6030,6 +6031,14 @@ void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
 
 void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
   if (curves.points.size() >= 6) nativeCurves_.push_back(curves);
+}
+
+void VulkanRenderer::appendPoints(DrawPointsCPU&& points) {
+  if (!points.points.empty()) nativePoints_.push_back(std::move(points));
+}
+
+void VulkanRenderer::appendCurves(DrawCurvesCPU&& curves) {
+  if (curves.points.size() >= 6) nativeCurves_.push_back(std::move(curves));
 }
 
 void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
