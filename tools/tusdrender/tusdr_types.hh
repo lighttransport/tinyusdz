@@ -658,6 +658,9 @@ struct TetPrim {
 struct EllipseSceneChunk {
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> scene{nullptr,
                                                                   lrt_tri_scene_free};
+  // Hit metadata is local to this scene: LightRT primitive ids are chunk-local.
+  // Keeping it here avoids retaining a second scene-wide metadata stream.
+  std::vector<TriInfo> info;
   size_t first{0};
   size_t count{0};
 };
@@ -704,7 +707,6 @@ struct DirectScene {
   std::vector<TriInfo> flat_curve_info;
   std::vector<TriInfo> bez_curve_info;
   std::vector<TriInfo> point_info;
-  std::vector<TriInfo> ellipse_info;
   std::vector<TetPrim> tet_prims;
   std::vector<DirectShape> shapes;
   std::unordered_set<std::string> direct_paths;

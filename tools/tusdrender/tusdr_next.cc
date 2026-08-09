@@ -3068,7 +3068,7 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
   std::vector<float> radii;
   std::vector<float> normals;
   std::vector<float> major_axes;
-  std::vector<TriInfo> info;
+  std::vector<TriInfo> chunk_info;
   size_t budget = 0;
   if (const char *s = std::getenv("TUSDR_GAUSSIAN_MAX")) {
     char *end = nullptr;
@@ -3088,13 +3088,15 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
   opts.num_threads = WorkerThreadCount(ctx.opt.threads);
   ctx.direct.ellipse_chunks.clear();
   bool build_ok = true;
+  size_t total_count = 0;
   auto flush_chunk = [&]() -> bool {
     const size_t count = centers.size() / 3;
     if (count == 0) return true;
     lrt_result e = LRT_RESULT_OK;
     EllipseSceneChunk chunk;
-    chunk.first = info.size() - count;
+    chunk.first = total_count;
     chunk.count = count;
+    chunk.info = std::move(chunk_info);
     chunk.scene.reset(lrt_ellipse_scene_build_oriented(
         centers.data(), radii.data(), normals.data(), major_axes.data(), count,
         &opts, &e));
@@ -3110,6 +3112,8 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
     radii.clear();
     normals.clear();
     major_axes.clear();
+    chunk_info.clear();
+    total_count += count;
     return true;
   };
   size_t count_seen = 0;
@@ -3148,7 +3152,7 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
       const float *qq = have_q ? qv.begin() : nullptr;
       const float *oo = have_op ? op.begin() : nullptr;
       const float *hh = have_sh ? sh.begin() : nullptr;
-      for (size_t i = 0; i < n && (budget == 0 || info.size() < budget); ++i) {
+      for (size_t i = 0; i < n && (budget == 0 || total_count + chunk_info.size() < budget); ++i) {
         ++count_seen;
         const float opacity = (oo && op.size() > 1 && i < op.size())
                                   ? oo[i]
@@ -3196,7 +3200,7 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
               std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[j + 2]))};
         }
         ti.base_color = Mul(ti.base_color, opacity);
-        info.push_back(ti);
+        chunk_info.push_back(ti);
         Expand(&ctx.bounds, Vec3{c.x - std::max(rx, ry), c.y - std::max(rx, ry), c.z - std::max(rx, ry)});
         Expand(&ctx.bounds, Vec3{c.x + std::max(rx, ry), c.y + std::max(rx, ry), c.z + std::max(rx, ry)});
         if (centers.size() / 3 >= chunk_size) {
@@ -3212,9 +3216,8 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
     visit(visit, root, matrix4d::identity());
   if (!build_ok) return false;
   if (!flush_chunk()) return false;
-  if (info.empty()) return true;
-  ctx.direct.ellipse_info = std::move(info);
-  std::cerr << "native Gaussian ellipses: " << ctx.direct.ellipse_info.size()
+  if (total_count == 0) return true;
+  std::cerr << "native Gaussian ellipses: " << total_count
             << " in " << ctx.direct.ellipse_chunks.size() << " chunk(s)";
   if (budget != 0) std::cerr << " / " << count_seen << " budgeted";
   std::cerr << "\n";
@@ -4287,7 +4290,6 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.triangle_chunks.clear();
   ctx.direct.round_curve_chunks.clear();
   ctx.direct.flat_curve_chunks.clear();
-  ctx.direct.ellipse_info.clear();
   const bool want_openpbr =
       opt.material_shading == Options::MaterialShading::LightRtBsdf;
 
@@ -5700,9 +5702,12 @@ void PrintRTStats(const RenderContext &ctx) {
   if (ctx.stats.skipped_curves > 0)
     std::cerr << "rt skipped curves: " << ctx.stats.skipped_curves
               << " (invalid data: " << ctx.stats.invalid_curve_data << ")\n";
-  if (!ctx.direct.ellipse_info.empty())
-    std::cerr << "rt native Gaussian ellipses: " << ctx.direct.ellipse_info.size()
-              << "\n";
+  size_t native_gaussian_count = 0;
+  for (const EllipseSceneChunk &chunk : ctx.direct.ellipse_chunks)
+    native_gaussian_count += chunk.info.size();
+  if (native_gaussian_count != 0)
+    std::cerr << "rt native Gaussian ellipses: " << native_gaussian_count
+              << " in " << ctx.direct.ellipse_chunks.size() << " chunk(s)\n";
   std::cerr << "load seconds: " << ctx.load_seconds << "\n";
   std::cerr << "rt triangle stream seconds: " << ctx.stream_seconds << "\n";
   std::cerr << "rt bvh build seconds: " << ctx.bvh_seconds << "\n";
