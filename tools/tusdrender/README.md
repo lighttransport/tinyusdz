@@ -34,7 +34,14 @@ own nested payloads. The loader reports the number of deferred payloads.
 | `-materialResolver legacy\|tydra-next\|compare` | next-loader material resolver. `tydra-next` is the default shared path; `legacy` keeps the hand-rolled compatibility path; `compare` renders legacy and reports resolver field differences. |
 | `-materialShading legacy\|lightrt-bsdf` | CPU shading path. `lightrt-bsdf` is experimental and evaluates direct-light/headlight response through the shared LightRT OpenPBR BSDF; `legacy` remains the default. |
 | `-maxMem <GiB>` | memory cap override (automatic policy reserves 2 GiB on the 32 GiB target) |
+| `-texMaxSize <N>` | longest texture edge cap; derived automatically from the host/VRAM budget unless explicitly set |
+| `-texBudgetMb <N>` | decoded texture residency budget; derived automatically from the host/VRAM budget unless explicitly set |
 | `-stats` | print mesh/triangle/memory/timing stats |
+
+Texture decode is bounded for ordinary `-rtPreview` runs as well as the named
+large-scene profiles. The derived cap applies before material conversion, and
+the texture cache releases decoded pixels after upload; explicit texture flags
+remain authoritative, including an explicit zero.
 
 Large `ParticleField3DGaussianSplat` fields are built as bounded native ellipse
 BVH chunks instead of one GPU allocation. The default chunk size is 262,144

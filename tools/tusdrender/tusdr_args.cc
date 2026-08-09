@@ -206,8 +206,10 @@ void PrintUsage(const char *prog) {
       << "                        back to cpu until that shader path is enabled.\n"
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
       << "  -hip                  Use the HIP/ROCm GPU-compute backend (AMD).\n"
-      << "  -texMaxSize <N>       Downsize loaded textures whose longest edge exceeds N.\n"
-      << "  -texBudgetMb <N>      Best-effort decoded texture budget in MiB.\n"
+      << "  -texMaxSize <N>       Downsize loaded textures whose longest edge exceeds N\n"
+      << "                         (auto-bounded unless explicitly set).\n"
+      << "  -texBudgetMb <N>      Decoded texture budget in MiB (auto-derived unless\n"
+      << "                         explicitly set).\n"
       << "  -texCompress off|bc   Request BCn compression; currently falls back to\n"
       << "                        resized 8-bit textures where a backend lacks BCn.\n"
       << "  -udim sparse|atlas    UDIM handling mode (default sparse).\n"
@@ -356,6 +358,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid texture max size.\n";
         return false;
       }
+      opt->texture_max_size_explicit = true;
     } else if (a == "-texBudgetMb" || a == "--texBudgetMb") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseIntStrict(v, &opt->texture_budget_mb) ||
@@ -363,6 +366,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid texture budget.\n";
         return false;
       }
+      opt->texture_budget_explicit = true;
     } else if (a == "-texCompress" || a == "--texCompress") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
