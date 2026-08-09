@@ -1174,6 +1174,41 @@ static void FreeMeshGeometryCPUForRT(DrawMeshCPU& m) {
   std::vector<float>().swap(m.instanceOpacities);
 }
 
+static void FreePointGeometryCPUForRT(DrawPointsCPU& p) {
+  std::vector<float>().swap(p.points);
+  std::vector<float>().swap(p.normals);
+  std::vector<float>().swap(p.widths);
+  std::vector<float>().swap(p.colors);
+  std::vector<float>().swap(p.opacities);
+  std::vector<float>().swap(p.ellipseRadii);
+  std::vector<float>().swap(p.ellipseNormals);
+  std::vector<float>().swap(p.ellipseMajorAxes);
+}
+
+static void FreeCurveGeometryCPUForRT(DrawCurvesCPU& c) {
+  std::vector<uint32_t>().swap(c.vertexCounts);
+  std::vector<float>().swap(c.points);
+  std::vector<float>().swap(c.widths);
+  std::vector<float>().swap(c.colors);
+  std::vector<float>().swap(c.opacities);
+}
+
+static void FreeTexturePayloadCPUForRT(DrawTextureCPU& t) {
+  std::vector<uint8_t>().swap(t.image.data);
+  std::vector<uint8_t>().swap(t.ptexSourceData);
+  std::vector<uint8_t>().swap(t.compressed.data);
+  for (DrawCompressedMipCPU& mip : t.compressed.mips)
+    std::vector<uint8_t>().swap(mip.data);
+  for (DrawUdimTileCPU& tile : t.udimTiles) {
+    std::vector<uint8_t>().swap(tile.image.data);
+    std::vector<uint8_t>().swap(tile.compressed.data);
+    for (DrawCompressedMipCPU& mip : tile.compressed.mips)
+      std::vector<uint8_t>().swap(mip.data);
+    for (light3d::Image& mip : tile.mipImages)
+      std::vector<uint8_t>().swap(mip.data);
+  }
+}
+
 // Zig-zagged deltas make sequential face ids and locally coherent topology
 // small, while still covering arbitrary uint32 index order. Size first so the
 // byte vector has exactly one allocation; progressive loading already has the
@@ -3624,6 +3659,9 @@ bool App::renderHipViewport() {
     };
     const size_t before = rssMB();
     for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPUForRT(m);
+    for (DrawPointsCPU& p : draw_.points) FreePointGeometryCPUForRT(p);
+    for (DrawCurvesCPU& c : draw_.curves) FreeCurveGeometryCPUForRT(c);
+    for (DrawTextureCPU& t : draw_.textures) FreeTexturePayloadCPUForRT(t);
     const size_t after = rssMB();
     if (before > after)
       LOGI("freed CPU geometry after RT build: %zu -> %zu MB host RSS", before, after);
