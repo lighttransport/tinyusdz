@@ -1909,7 +1909,9 @@ buffers until the frame completes, avoiding unsafe reuse of a buffer recorded
 by multiple draw calls; any reusable monolithic helper buffer is released when
 the chunked path is selected. `TUSDVIEW_VK_HELPER_CHUNK_VERTS=N` overrides the
 per-range limit for diagnostics and regression tests.
-The `tusdrender` next-loader also releases large, non-time-sampled Mesh,
+The `tusdrender` next-loader reports retained texture count and resident bytes
+in `-stats` (`rt textures: N (resident X MiB)`), including UDIM tiles and
+generated mip capacities. It also releases large, non-time-sampled Mesh,
 curve, Points, point-instancer, and Gaussian source arrays after extraction and
 mesh-light collection when the rendered geometry is static. Animated geometry
 keeps its authored arrays for subsequent frame re-streaming; `-stats` reports

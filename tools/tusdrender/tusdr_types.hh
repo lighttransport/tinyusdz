@@ -736,6 +736,8 @@ struct RTPreviewStats {
   size_t unsupported_mtlx{0};  // unsupported MaterialX surface nodes
   size_t missing_textures{0};  // textures/images that failed to load or resolve
   size_t texture_mip_fallbacks{0};  // mips omitted because the budget was full
+  size_t texture_count{0};
+  uint64_t texture_resident_bytes{0};  // retained base pixels + generated mips
   std::vector<std::string> material_diagnostic_examples;
   size_t triangles{0};
   uint64_t mmap_deferred_bytes{0};
