@@ -8531,6 +8531,13 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
     };
     size_t carrierIndex = 0;
     for (const DrawPointsCPU& s : nativePoints_) {
+      // Native Gaussian points are already shaded by the analytic RT BVH. Do
+      // not expand millions of splats into camera-facing overlay triangles on
+      // every RT frame; retain the proxy only for raster/non-RT frames.
+      if (rtActive_ && rtSupported_ && s.gaussian) {
+        ++carrierIndex;
+        continue;
+      }
       if ((params.purposeVisibleMask & (1u << PurposeId(s.purpose))) == 0 ||
           (params.carrierVisible && carrierIndex < static_cast<size_t>(params.carrierVisibleCount) &&
            !params.carrierVisible[carrierIndex])) { ++carrierIndex; continue; }
