@@ -1907,7 +1907,8 @@ For raster camera-facing helper geometry, Vulkan uses fence-retired upload
 buffers of at most 262,144 vertices per draw range; ranges are kept in separate
 buffers until the frame completes, avoiding unsafe reuse of a buffer recorded
 by multiple draw calls; any reusable monolithic helper buffer is released when
-the chunked path is selected.
+the chunked path is selected. `TUSDVIEW_VK_HELPER_CHUNK_VERTS=N` overrides the
+per-range limit for diagnostics and regression tests.
 All GPU backends reject aggregate triangle counts above the 32-bit hit-ID
 limit before allocation, with an explicit diagnostic instead of truncating
 chunk offsets.

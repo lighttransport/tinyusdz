@@ -50,6 +50,18 @@ namespace tusdview {
 
 namespace {
 
+size_t VulkanHelperChunkVertexLimit() {
+  constexpr size_t kDefault = size_t(262144);
+  const char* value = std::getenv("TUSDVIEW_VK_HELPER_CHUNK_VERTS");
+  if (!value || !value[0]) return kDefault;
+  char* end = nullptr;
+  const unsigned long long parsed = std::strtoull(value, &end, 10);
+  if (end == value || *end != '\0' || parsed == 0) return kDefault;
+  const unsigned long long maxSize =
+      static_cast<unsigned long long>(std::numeric_limits<size_t>::max());
+  return static_cast<size_t>(std::min(parsed, maxSize));
+}
+
 // ---------------------------------------------------------------------------
 // Persistent VkPipelineCache for the ray-query compute pipeline.
 //
@@ -1326,7 +1338,7 @@ void VulkanRenderer::drawLineSet(VkCommandBuffer cb,
                                  VkPipeline pipeline, const float vp[16],
                                  std::vector<NonMeshChunkUpload>* chunkUploads) {
   if (copy.empty() || !pipeline) return;
-  constexpr size_t kVerticesPerUpload = size_t(262144);
+  const size_t kVerticesPerUpload = VulkanHelperChunkVertexLimit();
   if (chunkUploads && copy.size() > kVerticesPerUpload) {
     // The reusable monolithic buffer is not needed while this carrier uses
     // transient ranges. Drop it before allocating the per-range buffers so a
