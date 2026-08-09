@@ -5,6 +5,10 @@
 
 # App-specific
 .opencode/
+
+# macOS metadata
+.DS_Store
+
 # Locally built glslang (examples/common/build-glslang.sh) — build artifacts.
 examples/common/glslang/
 examples/common/glslang-src/
