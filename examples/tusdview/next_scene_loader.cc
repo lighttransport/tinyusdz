@@ -41,6 +41,7 @@
 #include "next/schema/usd-shade.hh"    // GetInheritedBoundMaterialPath
 #include "next/schema/usd-skel.hh"     // GetSkeletonData / GetSkelAnimationData
 #include "next/schema/geom-xform.hh"   // HasAnimatedTransform
+#include "next/types/value-view.hh"    // CanBorrowLazyFlat
 #include "tydra/scene-access.hh"       // SkinPointsLBS / ConcatJointTransforms
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
@@ -5290,8 +5291,29 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           tydn::ReadFloatArray(rec.prim, "orientations", time, &orientations);
       const bool haveOpacities =
           tydn::ReadFloatArray(rec.prim, "opacities", time, &opacities);
-      const bool haveSh = tydn::ReadFloatArray(
+      // Only the first three (DC RGB) coefficients are used by the preview.
+      // A compressed crate-backed SH array otherwise forces a full decode just
+      // to obtain those three values per splat, creating a large transient
+      // allocation on top of the positions/scales carriers.  Keep SH for
+      // directly borrowable/non-lazy values; use the neutral fallback color
+      // when decoding the optional high-order payload would exceed the loader's
+      // memory budget.
+      bool allowSh = true;
+      if (const tnext::Value* shValue = rec.prim.GetPropertyValue(
+              "radiance:sphericalHarmonicsCoefficients")) {
+        constexpr size_t kMaxDecodedShBytes = size_t(128) * 1024 * 1024;
+        const size_t shElements = shValue->array_size();
+        const bool oversized =
+            shElements > kMaxDecodedShBytes / sizeof(float);
+        allowSh = !oversized || !shValue->is_lazy() ||
+                  tnext::CanBorrowLazyFlat(*shValue);
+      }
+      const bool haveSh = allowSh && tydn::ReadFloatArray(
           rec.prim, "radiance:sphericalHarmonicsCoefficients", time, &sh);
+      if (!allowSh) {
+        LOGI("GaussianSplat '%s': skipping compressed SH decode; using DC fallback",
+             rec.path.c_str());
+      }
       const size_t n = std::min(positions.size() / 3, scales.size() / 3);
       const size_t chunkSize = opts.pointChunkSamples != 0
                                    ? opts.pointChunkSamples
