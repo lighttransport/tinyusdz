@@ -94,6 +94,9 @@ bool RunHipLightRTChunked(
     const auto flatten_t0 = std::chrono::steady_clock::now();
     if (!BuildGpuTriScene(chunk_colors, chunk_geos, opt.threads, true, &scene,
                           opt.quality)) {
+      std::cerr << "HIP mesh chunk build failed [" << global_first << ", "
+                << (global_first + chunk_tris)
+                << "]; reduce TUSDR_GPU_TRIANGLE_CHUNK or inspect source data.\n";
       lrt_hip_engine_destroy(hip);
       return false;
     }
