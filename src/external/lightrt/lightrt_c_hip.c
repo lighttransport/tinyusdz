@@ -179,7 +179,7 @@ void lrt_hip_engine_destroy(lrt_hip_engine *e) {
 }
 
 uint32_t lrt_hip_engine_caps(const lrt_hip_engine *e) {
-    return e ? LRT_HIP_CAP_COMPUTE : 0u;
+    return e ? (LRT_HIP_CAP_COMPUTE | LRT_HIP_CAP_POINTS) : 0u;
 }
 
 const char *lrt_hip_engine_device_name(const lrt_hip_engine *e) {
@@ -211,9 +211,9 @@ int lrt_hip_trace_scene(lrt_hip_engine *e, const lrt_tri_scene *s,
         return -1;
     }
     const hip_lrts_header *h = (const hip_lrts_header *)blob;
-    if (h->prim_kind != 0u /* TRI */) {
+    if (h->prim_kind != 0u /* TRI */ && h->prim_kind != 6u /* POINT */) {
         free(blob);
-        hip_set_err(e, "only triangle scenes are GPU-traceable");
+        hip_set_err(e, "only triangle and point scenes are GPU-traceable");
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return -1;
     }
@@ -259,8 +259,11 @@ int lrt_hip_trace_scene(lrt_hip_engine *e, const lrt_tri_scene *s,
         uint32_t ray_count = n;
         uint32_t kw = w;
         uint32_t kstack = stack;
+        uint32_t prim_kind = h->prim_kind;
+        uint32_t point_type = h->reserved0;
         void *params[] = {&d_nodes, &d_blocks, &d_rays, &d_hits,
-                          &root,    &ray_count, &kw,     &kstack};
+                          &root,    &ray_count, &kw,     &kstack,
+                          &prim_kind, &point_type};
         unsigned int groups = (n + 63u) / 64u;
         if (!hip_ok(hipModuleLaunchKernel(e->kernel, groups, 1, 1, 64, 1, 1, 0,
                                           NULL, params, NULL))) {

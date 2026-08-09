@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Verify that Vulkan keeps native analytic Gaussian rendering for a pure splat
-# stage, but routes Gaussian data through the bounded flat fallback when native
-# Points are present as well.
+# Verify that Vulkan and HIP keep native analytic Gaussian rendering for a pure
+# splat stage, but route Gaussian data through the bounded flat fallback when
+# native Points are present as well.
 set -uo pipefail
 
 SKIP=77
@@ -51,6 +51,27 @@ if ! grep -q "triangles: 144" "$TMP/mixed.log"; then
   cat "$TMP/mixed.log"
   echo "FAIL: mixed scene did not retain Points and Gaussian fallback geometry"
   exit 1
+fi
+
+"$TUSDRENDER" "$REPO_ROOT/tests/usda/tusdview-gaussian-splat.usda" \
+  "$TMP/pure-hip.png" -hip -w 32 -height 32 -autoframe -stats \
+  >"$TMP/pure-hip.log" 2>&1
+if [ "$?" -ne 0 ]; then
+  if grep -qiE "HIP ray tracing unavailable|no ROCm|no HIP device|requested GPU backend not built|hiprtc.*not available" \
+      "$TMP/pure-hip.log"; then
+    echo "SKIP: no usable HIP/ROCm device (Vulkan coverage passed)"
+  else
+    cat "$TMP/pure-hip.log"
+    echo "FAIL: pure Gaussian HIP render failed"
+    exit 1
+  fi
+else
+  if ! grep -q "native Gaussian ellipses: 2 in 1 HIP chunk(s)" "$TMP/pure-hip.log"; then
+    cat "$TMP/pure-hip.log"
+    echo "FAIL: pure Gaussian HIP scene did not use native ellipses"
+    exit 1
+  fi
+  echo "PASS: native Gaussian HIP dispatch verified"
 fi
 
 echo "PASS: pure native Gaussian and mixed-carrier Vulkan dispatch verified"

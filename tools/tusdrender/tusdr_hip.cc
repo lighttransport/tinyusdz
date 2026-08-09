@@ -230,5 +230,67 @@ bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   return ok;
 }
 
+bool RunHipGaussianLightRT(const Options &opt, DirectScene *direct,
+                           const CameraFrame &camera, int height) {
+  if (!direct || direct->ellipse_chunks.empty()) return false;
+  lrt_hip_engine_options hopts;
+  std::memset(&hopts, 0, sizeof(hopts));
+  hopts.device_index = -1;
+  lrt_result err = LRT_RESULT_OK;
+  lrt_hip_engine *hip = lrt_hip_engine_create(&hopts, &err);
+  if (!hip) {
+    std::cerr << "Failed to create LightRT HIP Gaussian engine (err="
+              << int(err) << "): no ROCm device or kernel compile failed.\n";
+    return false;
+  }
+  const int w = opt.width > 0 ? opt.width : 960;
+  const int h = height > 0 ? height : 540;
+  const int spp = std::max(1, opt.samples);
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "HIP Gaussian", &nrays)) {
+    lrt_hip_engine_destroy(hip);
+    return false;
+  }
+  std::vector<lrt_ray> rays;
+  GenerateCameraRays(camera, w, h, spp, &rays);
+  std::vector<lrt_hit> hits(nrays), chunk_hits(nrays);
+  InitMissHits(&hits);
+  size_t released_chunks = 0;
+  for (EllipseSceneChunk &chunk : direct->ellipse_chunks) {
+    const int traced = lrt_hip_trace_scene(
+        hip, chunk.scene.get(), rays.data(), static_cast<uint32_t>(nrays),
+        chunk_hits.data(), &err);
+    if (traced < 0) {
+      std::cerr << "HIP Gaussian chunk trace failed [" << chunk.first << ", "
+                << (chunk.first + chunk.count) << "] (err=" << int(err)
+                << "): " << lrt_hip_engine_last_error(hip) << "\n";
+      lrt_hip_engine_destroy(hip);
+      return false;
+    }
+    for (size_t i = 0; i < nrays; ++i) {
+      if (chunk_hits[i].prim_id != LRT_TRI_NO_HIT &&
+          chunk_hits[i].t < hits[i].t) {
+        hits[i] = chunk_hits[i];
+        hits[i].prim_id += static_cast<uint32_t>(chunk.first);
+      }
+    }
+    chunk.scene.reset();
+    ++released_chunks;
+  }
+  size_t total_ellipses = 0;
+  for (const EllipseSceneChunk &chunk : direct->ellipse_chunks)
+    total_ellipses += chunk.info.size();
+  const bool ok = ShadeAndWriteGaussianImage(
+      opt, direct->ellipse_chunks, rays, hits, w, h, spp);
+  if (ok) {
+    std::cerr << "native Gaussian ellipses: " << total_ellipses
+              << " in " << direct->ellipse_chunks.size() << " HIP chunk(s)\n"
+              << "released Gaussian BVH chunks: " << released_chunks << "\n"
+              << "\nbackend: LightRT HIP (native point/ellipse BVH)\n";
+  }
+  lrt_hip_engine_destroy(hip);
+  return ok;
+}
+
 }  // namespace tusdr
 #endif  // HAVE_HIP
