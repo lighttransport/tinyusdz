@@ -168,6 +168,11 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (hs.pointCount > static_cast<size_t>(std::numeric_limits<int>::max())) {
     if (err) *err = "HIP: Gaussian point count exceeds kernel limit (" +
                     std::to_string(hs.pointCount) + ")";
+    // No device arrays have been uploaded yet, but a refit build may already
+    // own a large retained HostScene. Do not leave that stale scene behind
+    // after rejecting the 32-bit kernel-limit violation.
+    freeScene();
+    retained_.reset();
     return false;
   }
   const uint64_t gaussianBytes =
