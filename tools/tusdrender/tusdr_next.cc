@@ -989,6 +989,33 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
   return id;
 }
 
+size_t TextureResidentBytes(const Texture &texture) {
+  size_t bytes = texture.pixels.capacity();
+  for (const Texture::Mip &mip : texture.mips) bytes += mip.data.capacity();
+  for (const Texture::UdimTile &tile : texture.udim_tiles) {
+    bytes += tile.pixels.capacity();
+    for (const Texture::Mip &mip : tile.mips)
+      bytes += mip.data.capacity();
+  }
+  return bytes;
+}
+
+void UpdateTextureStats(const std::vector<Texture> &textures,
+                        RTPreviewStats *stats) {
+  if (!stats) return;
+  stats->texture_count = textures.size();
+  uint64_t bytes = 0;
+  for (const Texture &texture : textures) {
+    const uint64_t current = static_cast<uint64_t>(TextureResidentBytes(texture));
+    if (current > (std::numeric_limits<uint64_t>::max)() - bytes) {
+      bytes = (std::numeric_limits<uint64_t>::max)();
+      break;
+    }
+    bytes += current;
+  }
+  stats->texture_resident_bytes = bytes;
+}
+
 // Follow a connection on `prim` (e.g. "outputs:surface",
 // "inputs:diffuseColor") to its target prim, or an invalid prim if unconnected.
 tinyusdz::next::UsdPrim ConnectedPrimNext(const tinyusdz::next::Stage &stage,
@@ -4443,6 +4470,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
         ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
       }
     }
+    UpdateTextureStats(ctx.textures, &ctx.stats);
     const bool want_uvs = !ctx.textures.empty();
     bool want_colors = false;
     for (const MeshJobNext &j : base_jobs)
@@ -4580,6 +4608,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       }
     }
   }
+  UpdateTextureStats(ctx.textures, &ctx.stats);
   const bool want_uvs = !ctx.textures.empty();
   // displayColor/Opacity is stored per-corner (48 B/tri) only for BLAS that
   // actually carry a *varying* (per-vertex/faceVarying/uniform) primvar. A BLAS
@@ -5821,6 +5850,11 @@ void PrintRTStats(const RenderContext &ctx) {
   std::cerr << "rt meshes: " << ctx.stats.meshes << "\n";
   std::cerr << "rt skipped meshes: " << ctx.stats.skipped_meshes << "\n";
   std::cerr << "rt missing textures: " << ctx.stats.missing_textures << "\n";
+  std::cerr << "rt textures: " << ctx.stats.texture_count
+            << " (resident "
+            << (double(ctx.stats.texture_resident_bytes) /
+                (1024.0 * 1024.0))
+            << " MiB)\n";
   std::cerr << "rt texture mip fallbacks: " << ctx.stats.texture_mip_fallbacks
             << "\n";
   size_t backface_materials = 0;
