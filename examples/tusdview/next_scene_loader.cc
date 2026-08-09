@@ -5568,7 +5568,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     dc.materialId = resolveMaterialPath(rec.material_path, std::string(),
                                         std::string());
     if (!rc.tessellated_points.empty()) {
-      dc.vertexCounts = rc.tessellated_vertex_counts;
+      dc.vertexCounts = std::move(rc.tessellated_vertex_counts);
       copyChunked(rc.tessellated_points, &dc.points);
       copyChunked(rc.tessellated_widths, &dc.widths);
       if (dc.widths.empty() && !rc.widths.empty()) {
@@ -5580,12 +5580,17 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         copyChunked(rc.opacities, &dc.opacities);
       }
     } else {
-      dc.vertexCounts = rc.curve_vertex_counts;
+      dc.vertexCounts = std::move(rc.curve_vertex_counts);
       copyChunked(rc.points, &dc.points);
       copyChunked(rc.widths, &dc.widths);
       copyChunked(rc.colors, &dc.colors);
       copyChunked(rc.opacities, &dc.opacities);
     }
+    // DrawCurvesCPU is the contiguous compatibility carrier consumed by the
+    // existing GL/Vulkan/RT paths. Release the converter's chunk-backed source
+    // immediately after copying so strand limiting or later carriers do not
+    // retain both representations longer than necessary.
+    rc = tydn::RenderCurves{};
     if (dc.points.empty()) {
       draw->skipped.push_back("Curves '" + rec.path + "': empty centerline");
       continue;
