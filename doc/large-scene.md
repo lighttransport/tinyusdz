@@ -1005,7 +1005,8 @@ Notes and gotchas:
   per-frame `renderViewportScene`** (`rtOwnsScreenshot_`), which would otherwise
   spend minutes culling 42.9 M instances for a frame that is immediately
   discarded. Set `TUSDVIEW_RT_TIMING=1` to print the `[rt_scene_build]` phase
-  breakdown.
+  breakdown and the retained host residency split (geometry, BVH/instances,
+  analytic points, materials, textures, and volumes).
 
 ### 2.7 RenderScene optimization for realtime viewers
 
