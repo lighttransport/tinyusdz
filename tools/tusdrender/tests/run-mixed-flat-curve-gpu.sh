@@ -24,14 +24,15 @@ if [ "$rc" -ne 0 ]; then
   echo "FAIL: mixed flat-curve render failed"
   exit 1
 fi
-if ! grep -q 'GPU curve fallback: authored flat/ribbon curves' "$TMP/mixed.log"; then
+if ! grep -q 'GPU flat/ribbon curves: camera-facing triangle carrier' "$TMP/mixed.log"; then
   cat "$TMP/mixed.log"
-  echo "FAIL: mixed flat curve did not take the explicit fallback"
+  echo "FAIL: mixed flat curve did not reach the GPU carrier"
   exit 1
 fi
-if ! grep -q 'rt native curve chunks' "$TMP/mixed.log" || [ ! -s "$TMP/mixed.png" ]; then
+if ! grep -q 'backend: LightRT VK' "$TMP/mixed.log" ||
+   ! grep -q 'triangles: 7' "$TMP/mixed.log" || [ ! -s "$TMP/mixed.png" ]; then
   cat "$TMP/mixed.log"
-  echo "FAIL: direct CPU fallback did not retain the flat curve"
+  echo "FAIL: GPU flat curve carrier did not render with the mesh"
   exit 1
 fi
-echo "PASS: mixed flat curves use an explicit complete-scene fallback"
+echo "PASS: mixed flat curves reach the bounded GPU triangle carrier"

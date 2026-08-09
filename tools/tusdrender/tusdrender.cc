@@ -1481,6 +1481,8 @@ int main(int argc, char **argv) {
 
     bool has_direct_curves = false;
     bool has_flat_curves = false;
+    RenderContext gpu_curve_ctx;
+    std::vector<CurveJobNext> gpu_curve_jobs;
     stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
       const std::string &type = prim.GetTypeName();
       if (type == "BasisCurves" || type == "HermiteCurves" ||
@@ -1499,24 +1501,20 @@ int main(int argc, char **argv) {
       // CPU path, then tessellate it once at the Vulkan upload boundary. This
       // keeps curve-only and mixed scenes on the Vulkan renderer while retaining
       // the authored/value-clip curve conversion path.
-      RenderContext curve_ctx;
-      curve_ctx.opt = opt;
-      curve_ctx.clip_stage_loader = clip_stage_loader;
-      std::vector<CurveJobNext> curve_jobs;
+      gpu_curve_ctx.opt = opt;
+      gpu_curve_ctx.clip_stage_loader = clip_stage_loader;
       for (const auto &root : stage.GetRootPrims()) {
         CollectCurvesNextRec(root, matrix4d::identity(),
                              tinyusdz::Purpose::Default, opt.timecode,
-                             &curve_jobs);
+                             &gpu_curve_jobs);
       }
-      if (!BuildNextCurves(curve_ctx, curve_jobs, opt.timecode) ||
-          !AppendGpuRoundCurves(curve_ctx.direct, &base_colors, &geos)) {
+      if (!BuildNextCurves(gpu_curve_ctx, gpu_curve_jobs, opt.timecode,
+                           /*include_flat=*/false) ||
+          !AppendGpuRoundCurves(gpu_curve_ctx.direct, &base_colors, &geos)) {
         return EXIT_FAILURE;
       }
-      if (curve_ctx.direct.has_flat_curves()) {
-        has_flat_curves = true;
-        std::cerr << "WARN: Vulkan flat/ribbon curves are not supported by "
-                     "the current upload path.\n";
-      }
+      for (const CurveJobNext &job : gpu_curve_jobs)
+        has_flat_curves |= job.prim.GetPropertyValue("normals") != nullptr;
     }
     // Vulkan uses the native analytic ellipse path for a pure splat scene.
     // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
@@ -1546,19 +1544,6 @@ int main(int argc, char **argv) {
     }
 #endif
 
-#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
-    if ((opt.vulkan || opt.use_d3d || opt.hip) && has_flat_curves) {
-      // Flat/ribbon curves are view-dependent and are not suitable for the
-      // round-curve tessellator. The old condition only fell back for a
-      // curves-only scene, silently dropping flat curves when meshes were also
-      // present. Retain the complete direct scene until a Vulkan/HIP ribbon
-      // carrier is available; correctness is more important than a partial
-      // GPU image.
-      std::cerr << "GPU curve fallback: authored flat/ribbon curves require "
-                   "the direct CPU path.\n";
-      return RunRTPreviewNext(opt);
-    }
-#endif
     if (geos.empty() && !native_gaussian) {
       std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
       return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
@@ -1622,6 +1607,19 @@ int main(int argc, char **argv) {
       if (out_height <= 0) out_height = 540;
       camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
     }
+
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
+    if ((opt.vulkan || opt.use_d3d || opt.hip) && has_flat_curves) {
+      if (!BuildNextFlatCurveMeshes(gpu_curve_jobs, opt.timecode,
+                                    clip_stage_loader, camera, &geos,
+                                    &base_colors)) {
+        std::cerr << "Failed to build GPU flat/ribbon curve carriers.\n";
+        return EXIT_FAILURE;
+      }
+      if (opt.stats)
+        std::cerr << "GPU flat/ribbon curves: camera-facing triangle carrier\n";
+    }
+#endif
 
 #if defined(HAVE_VULKAN)
     if (opt.vulkan && native_gaussian && geos.empty()) {
