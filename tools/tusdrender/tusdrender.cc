@@ -367,39 +367,48 @@ void CollectGpuPointsRec(
     CollectGpuPointsRec(child, world, time, base_colors, geos);
 }
 
-// LightRT's Vulkan C API currently accepts triangle BVHs, while its CPU/CUDA
-// curve intersectors use dedicated round-linear primitives. Keep the Vulkan
-// path on the GPU by converting the round-linear curve scene to a compact tube
-// triangle stream at the upload boundary.
+// LightRT's GPU triangle APIs currently accept triangle BVHs, while its
+// CPU/CUDA curve intersectors use dedicated round-linear primitives. Keep all
+// GPU paths on their backend by converting round-linear curves to bounded tube
+// triangle streams at the upload boundary.
 bool AppendGpuRoundCurves(
     const DirectScene &direct, std::vector<Vec3> *base_colors,
     std::vector<RTPreviewStats::MeshGeometry> *geos) {
   if (!base_colors || !geos) return false;
   constexpr uint32_t kCurveSides = 6;
+  size_t curveChunk = 262144;
+  if (const char *env = std::getenv("TUSDR_GPU_TRIANGLE_CHUNK")) {
+    char *end = nullptr;
+    const unsigned long long parsed = std::strtoull(env, &end, 10);
+    if (end != env && parsed > 0) curveChunk = static_cast<size_t>(parsed);
+  }
   auto append = [&](lrt_tri_scene *curve) -> bool {
     if (!curve) return true;
-    const size_t ntris = lrt_tri_curve_tessellate_bound(curve, kCurveSides);
-    if (ntris == 0) return true;
-    RTPreviewStats::MeshGeometry geo;
-    geo.positions.resize(ntris * 9);
-    geo.normals.resize(ntris * 9);
-    geo.uvs.resize(ntris * 6, 0.0f);
-    geo.indices.resize(ntris * 3);
-    size_t written = 0;
-    const lrt_result result = lrt_tri_curve_tessellate(
-        curve, kCurveSides, geo.positions.data(), geo.normals.data(), ntris,
-        &written);
-    if (result != LRT_RESULT_OK || written == 0) {
-      std::cerr << "WARN: Vulkan curve tessellation failed (err="
-                << int(result) << ").\n";
-      return false;
+    const size_t total = lrt_tri_curve_tessellate_bound(curve, kCurveSides);
+    for (size_t first = 0; first < total; first += curveChunk) {
+      RTPreviewStats::MeshGeometry geo;
+      geo.positions.resize(curveChunk * 9);
+      geo.normals.resize(curveChunk * 9);
+      geo.uvs.resize(curveChunk * 6, 0.0f);
+      geo.indices.resize(curveChunk * 3);
+      size_t written = 0;
+      const lrt_result result = lrt_tri_curve_tessellate_range(
+          curve, kCurveSides, first, geo.positions.data(), geo.normals.data(),
+          curveChunk, &written);
+      if (result != LRT_RESULT_OK) {
+        std::cerr << "WARN: curve tessellation failed at triangle " << first
+                  << " (err=" << int(result) << ").\n";
+        return false;
+      }
+      if (written == 0) continue;
+      geo.positions.resize(written * 9);
+      geo.normals.resize(written * 9);
+      geo.uvs.resize(written * 6);
+      geo.indices.resize(written * 3);
+      for (size_t i = 0; i < written * 3; ++i) geo.indices[i] = uint32_t(i);
+      geos->push_back(std::move(geo));
+      base_colors->push_back(kCurveColor);
     }
-    geo.positions.resize(written * 9);
-    geo.normals.resize(written * 9);
-    geo.uvs.resize(written * 6);
-    for (size_t i = 0; i < written * 3; ++i) geo.indices[i] = uint32_t(i);
-    geos->push_back(std::move(geo));
-    base_colors->push_back(kCurveColor);
     return true;
   };
   if (!append(direct.round_curves.get())) return false;
