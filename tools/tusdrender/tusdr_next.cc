@@ -2841,19 +2841,24 @@ bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim) {
   return t == "BasisCurves" || t == "NurbsCurves";
 }
 
-// Read a curve prim's `points` into a point3f vector via the lazy float accessor.
-std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
+struct CurvePointViewNext {
+  tinyusdz::tydra::next::ValueArrayRead<float> view;
+  // Value clips are materialized here because their temporary Value/ArrayScratch
+  // cannot outlive the resolver call. Authored lazy arrays remain borrowed.
+  std::vector<float> clipped;
+};
+
+bool ReadCurvePointViewNext(
     const tinyusdz::next::UsdPrim &prim, double time,
-    const tinyusdz::next::ValueClipStageLoader &clip_loader) {
-  tinyusdz::tydra::next::ValueArrayRead<float> points_view;
-  std::vector<float> clipped_floats;
-  const float *pf = nullptr;
-  size_t pn = 0;
-  if (ReadFloatArrayViewLazy(prim, "points", time, &points_view) &&
-      !points_view.empty()) {
-    pf = points_view.begin();
-    pn = points_view.size();
-  } else if (clip_loader) {
+    const tinyusdz::next::ValueClipStageLoader &clip_loader,
+    CurvePointViewNext *out) {
+  if (!out) return false;
+  *out = CurvePointViewNext{};
+  if (ReadFloatArrayViewLazy(prim, "points", time, &out->view) &&
+      !out->view.empty()) {
+    return out->view.size() >= 3;
+  }
+  if (clip_loader) {
     for (tinyusdz::next::UsdPrim owner = prim; owner.IsValid();
          owner = owner.GetParent()) {
       const tinyusdz::next::PrimSpec *spec = owner.GetPrimSpec();
@@ -2869,13 +2874,25 @@ std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
       tinyusdz::next::ArrayScratch<float> scratch;
       tinyusdz::next::ArrayView<float> view;
       if (!tinyusdz::next::GetFloatArrayView(clipped, &scratch, &view)) break;
-      clipped_floats.assign(view.begin(), view.end());
-      pf = clipped_floats.data();
-      pn = clipped_floats.size();
-      break;
+      out->clipped.assign(view.begin(), view.end());
+      out->view.view.data = out->clipped.data();
+      out->view.view.size = out->clipped.size();
+      return out->view.size() >= 3;
     }
   }
-  if (!pf || pn < 3) return {};
+  return false;
+}
+
+// Read a curve prim's `points` into a point3f vector for legacy callers that
+// need an owning representation. The main chunked path consumes the view above
+// directly and avoids this conversion copy.
+std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
+    const tinyusdz::next::UsdPrim &prim, double time,
+    const tinyusdz::next::ValueClipStageLoader &clip_loader) {
+  CurvePointViewNext source;
+  if (!ReadCurvePointViewNext(prim, time, clip_loader, &source)) return {};
+  const float *pf = source.view.begin();
+  const size_t pn = source.view.size();
   std::vector<tinyusdz::value::point3f> pts(pn / 3);
   for (size_t i = 0; i < pts.size(); ++i)
     pts[i] = {pf[3 * i + 0], pf[3 * i + 1], pf[3 * i + 2]};
@@ -2977,11 +2994,13 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
   // curve prims. Each local carrier is released after its LightRT chunks are
   // built, so peak memory is bounded by one source prim plus one chunk.
   for (const CurveJobNext &job : jobs) {
-    std::vector<tinyusdz::value::point3f> points =
-        ReadCurvePointsNext(job.prim, time, ctx.clip_stage_loader);
+    CurvePointViewNext point_source;
+    if (!ReadCurvePointViewNext(job.prim, time, ctx.clip_stage_loader,
+                                &point_source))
+      continue;
     std::vector<int32_t> counts32 =
         ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
-    if (points.empty() || counts32.empty()) continue;
+    if (counts32.empty()) continue;
     std::vector<int> counts(counts32.begin(), counts32.end());
     std::vector<float> widths = ReadFloatArrayLazy(job.prim, "widths", time);
     const bool flat = job.prim.GetPropertyValue("normals") != nullptr;
@@ -2989,9 +3008,10 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     std::vector<uint32_t> curve_first, curve_count;
     std::vector<TriInfo> *info = flat ? &ctx.direct.flat_curve_info
                                       : &ctx.direct.round_curve_info;
-    AppendLinearCurveStrands(points, counts, widths, job.world, &curve_points,
-                             &curve_radii, &curve_first, &curve_count, info,
-                             &ctx.bounds);
+    AppendLinearCurveStrands(point_source.view.begin(),
+                             point_source.view.size() / 3, counts, widths,
+                             job.world, &curve_points, &curve_radii,
+                             &curve_first, &curve_count, info, &ctx.bounds);
     if (curve_first.empty()) continue;
     if (!build_curve_chunks(
             curve_points, curve_radii, curve_first, curve_count,
@@ -3713,15 +3733,18 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
   // the camera). Conservative per sub-BLAS but correct (geometry is within).
   Bounds proto_bounds;
   for (const CurveJobNext &job : curves) {
-    std::vector<tinyusdz::value::point3f> p =
-        ReadCurvePointsNext(job.prim, time, clip_loader);
+    CurvePointViewNext point_source;
+    if (!ReadCurvePointViewNext(job.prim, time, clip_loader, &point_source))
+      continue;
     std::vector<int32_t> c32 =
         ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
-    if (p.empty() || c32.empty()) continue;
+    if (c32.empty()) continue;
     std::vector<int> c(c32.begin(), c32.end());
     std::vector<float> w = ReadFloatArrayLazy(job.prim, "widths", time);
-    AppendLinearCurveStrands(p, c, w, job.world, &pts, &radii, &first, &count,
-                             /*info=*/nullptr, &proto_bounds);
+    AppendLinearCurveStrands(point_source.view.begin(),
+                             point_source.view.size() / 3, c, w, job.world,
+                             &pts, &radii, &first, &count, /*info=*/nullptr,
+                             &proto_bounds);
   }
   if (first.empty()) return true;
   const TriMat kCurveMat = ExtractTriMat([] {
