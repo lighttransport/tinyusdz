@@ -7,6 +7,57 @@
 
 #include "exr_internal.h"
 
+/* ---- runtime zlib backend selection (ZIP/ZIPS/PXR24) ---------------------
+ * Statically initialised to the build default: libdeflate when it is compiled
+ * in and chosen as the default (DEFLATE=auto|libdeflate), otherwise the in-tree
+ * pure-C codec. exr_zlib_set_backend() overrides at runtime for tests/bench. */
+#if defined(EXR_USE_LIBDEFLATE) && EXR_ZLIB_DEFAULT_LIBDEFLATE
+_Atomic exr_zlib_inflate_fn exr_zlib_inflate = exr_ld_inflate_zlib;
+_Atomic exr_zlib_deflate_fn exr_zlib_deflate = exr_ld_deflate_zlib;
+#else
+_Atomic exr_zlib_inflate_fn exr_zlib_inflate = exr_inflate_zlib;
+_Atomic exr_zlib_deflate_fn exr_zlib_deflate = exr_deflate_zlib;
+#endif
+
+exr_result exr_zlib_set_backend(exr_zlib_backend backend) {
+#if defined(EXR_USE_LIBDEFLATE)
+    switch (backend) {
+    case EXR_ZLIB_INTREE:
+        exr_zlib_inflate = exr_inflate_zlib;
+        exr_zlib_deflate = exr_deflate_zlib;
+        return EXR_SUCCESS;
+    case EXR_ZLIB_LIBDEFLATE:
+        exr_zlib_inflate = exr_ld_inflate_zlib;
+        exr_zlib_deflate = exr_ld_deflate_zlib;
+        return EXR_SUCCESS;
+    case EXR_ZLIB_AUTO:
+    default:
+#if EXR_ZLIB_DEFAULT_LIBDEFLATE
+        exr_zlib_inflate = exr_ld_inflate_zlib;
+        exr_zlib_deflate = exr_ld_deflate_zlib;
+#else
+        exr_zlib_inflate = exr_inflate_zlib;
+        exr_zlib_deflate = exr_deflate_zlib;
+#endif
+        return EXR_SUCCESS;
+    }
+#else
+    /* Only the in-tree codec is linked; libdeflate cannot be selected. */
+    if (backend == EXR_ZLIB_LIBDEFLATE) return EXR_ERROR_UNSUPPORTED;
+    exr_zlib_inflate = exr_inflate_zlib;
+    exr_zlib_deflate = exr_deflate_zlib;
+    return EXR_SUCCESS;
+#endif
+}
+
+const char *exr_zlib_backend_name(void) {
+#if defined(EXR_USE_LIBDEFLATE)
+    return exr_zlib_inflate == exr_ld_inflate_zlib ? "libdeflate" : "in-tree";
+#else
+    return "in-tree";
+#endif
+}
+
 /*
  * Decompress one chunk's compressed payload into the canonical uncompressed
  * block layout (per scanline, then per channel: sample data).
@@ -113,12 +164,17 @@ exr_result exr_compress_block(const exr_codec_ctx *ctx, const uint8_t *block,
  *   interleave: source is the even-byte half followed by the odd-byte half.
  * ------------------------------------------------------------------------- */
 
-void exr_predictor_decode(uint8_t *p, size_t n) {
+void exr_predictor_decode_scalar(uint8_t *p, size_t n) {
     size_t i;
     for (i = 1; i < n; ++i) {
         int d = (int)p[i - 1] + (int)p[i] - 128;
         p[i] = (uint8_t)d;
     }
+}
+
+void exr_predictor_decode(uint8_t *p, size_t n) {
+    exr_simd_init();
+    exr_simd.predictor_decode(p, n);
 }
 
 void exr_interleave_decode(const uint8_t *src, uint8_t *dst, size_t n) {
@@ -139,7 +195,7 @@ void exr_interleave_encode(const uint8_t *src, uint8_t *dst, size_t n) {
 
 /* Forward delta predictor: store (cur - prev + 128) per byte. Inverse of
  * exr_predictor_decode. */
-void exr_predictor_encode(uint8_t *p, size_t n) {
+void exr_predictor_encode_scalar(uint8_t *p, size_t n) {
     size_t i;
     int prev;
     if (n == 0) return;
@@ -149,4 +205,9 @@ void exr_predictor_encode(uint8_t *p, size_t n) {
         p[i] = (uint8_t)(cur - prev + (128 + 256));
         prev = cur;
     }
+}
+
+void exr_predictor_encode(uint8_t *p, size_t n) {
+    exr_simd_init();
+    exr_simd.predictor_encode(p, n);
 }

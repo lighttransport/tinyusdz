@@ -17,13 +17,17 @@ static int level_dim_step(int s, int up) {
     return n < 1 ? 1 : n;
 }
 
-/* Box downsample of one channel from (sw,sh) to (dw,dh). Each destination
- * pixel averages the source span [x*sw/dw, (x+1)*sw/dw) x [y*sh/dh,...);
- * handles 2x2 (mipmap) and separable 2x1/1x2 (ripmap) uniformly. */
-static void downsample(const uint8_t *src, int sw, int sh, exr_pixel_type pt,
-                       uint8_t *dst, int dw, int dh) {
+/* Box downsample of one channel from (sw,sh) to (dw,dh) for the output rows
+ * [y0,y1). Each destination pixel averages the source span
+ * [x*sw/dw, (x+1)*sw/dw) x [y*sh/dh,...); handles 2x2 (mipmap) and separable
+ * 2x1/1x2 (ripmap) uniformly. Output rows are disjoint, so the row range can be
+ * split across threads. */
+static void downsample_rows(const uint8_t *src, int sw, int sh,
+                            exr_pixel_type pt, uint8_t *dst, int dw, int dh,
+                            int y0, int y1) {
     int x, y, sx, sy;
-    for (y = 0; y < dh; ++y) {
+    (void)dh;
+    for (y = y0; y < y1; ++y) {
         int sy0 = (int)((int64_t)y * sh / dh);
         int sy1 = (int)((int64_t)(y + 1) * sh / dh);
         if (sy1 <= sy0) sy1 = sy0 + 1;
@@ -66,6 +70,43 @@ static void downsample(const uint8_t *src, int sw, int sh, exr_pixel_type pt,
                 ((uint32_t *)dst)[d] = (uint32_t)((sum + count / 2) / count);
             }
         }
+    }
+}
+
+/* Row-range job for the parallel downsample. */
+typedef struct {
+    const uint8_t *src;
+    uint8_t *dst;
+    int sw, sh, dw, dh;
+    exr_pixel_type pt;
+    int chunk; /* rows per job */
+} ds_ctx;
+
+static void ds_job(void *ctx, int job) {
+    ds_ctx *d = (ds_ctx *)ctx;
+    int y0 = job * d->chunk;
+    int y1 = y0 + d->chunk;
+    if (y1 > d->dh) y1 = d->dh;
+    downsample_rows(d->src, d->sw, d->sh, d->pt, d->dst, d->dw, d->dh, y0, y1);
+}
+
+/* Box downsample one channel; rows are split across worker threads when the
+ * caller has enabled them and the output is tall enough to be worth it. */
+static void downsample(const uint8_t *src, int sw, int sh, exr_pixel_type pt,
+                       uint8_t *dst, int dw, int dh) {
+    int nt = exr_get_num_threads();
+    if (nt > 1 && dh >= 64) {
+        ds_ctx d;
+        int chunk = (dh + nt * 4 - 1) / (nt * 4); /* ~4 chunks per worker */
+        int njobs;
+        if (chunk < 1) chunk = 1;
+        njobs = (dh + chunk - 1) / chunk;
+        d.src = src; d.dst = dst; d.sw = sw; d.sh = sh; d.dw = dw; d.dh = dh;
+        d.pt = pt; d.chunk = chunk;
+        exr_simd_init();                  /* warm half<->float before threads */
+        exr_parallel_for(nt, njobs, ds_job, &d);
+    } else {
+        downsample_rows(src, sw, sh, pt, dst, dw, dh, 0, dh);
     }
 }
 
