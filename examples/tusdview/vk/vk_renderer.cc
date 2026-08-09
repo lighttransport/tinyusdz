@@ -6975,11 +6975,55 @@ void VulkanRenderer::rebuildTlas() {
   // sharing the prototype's single BLAS -- geometry stored once. instInfos[] is
   // parallel to the TLAS instances (indexed by gl_InstanceID in the shader, which is
   // full-range, unlike the 24-bit instanceCustomIndex).
+  // Decide whether analytic Gaussian records can be resident before constructing
+  // the point descriptors/BVH.  The old order built a second copy of every point,
+  // plus temporary centers/AABBs/order arrays, and only then discovered that the
+  // device budget required the raster fallback.  On a large splat this transient
+  // peak was enough to trigger an allocation failure even though the fallback
+  // itself needed no RT point buffers.
+  uint64_t forcedPointBudget = 0;
+  if (const char *value = std::getenv("TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB")) {
+    char *end = nullptr;
+    const unsigned long long mb = std::strtoull(value, &end, 10);
+    if (value[0] != '\0' && end != value && *end == '\0' && mb > 0 &&
+        mb <= (std::numeric_limits<uint64_t>::max)() / (1024ull * 1024ull))
+      forcedPointBudget = mb * 1024ull * 1024ull;
+  }
+  if (forcedPointBudget == 0) {
+    uint64_t used = 0, budget = 0;
+    constexpr uint64_t kPointHeadroom = 256ull * 1024ull * 1024ull;
+    if (memoryBudget(&used, &budget) && budget > used &&
+        budget - used > kPointHeadroom)
+      forcedPointBudget = budget - used - kPointHeadroom;
+  }
+  constexpr uint64_t kEstimatedPointBvhBytes =
+      sizeof(RtPointGPU) + sizeof(Node) + sizeof(int);
+  size_t candidatePointCount = 0;
+  for (const DrawPointsCPU& src : nativePoints_) {
+    if (!src.gaussian || src.ellipseRadii.size() < (src.points.size() / 3) * 2 ||
+        src.ellipseNormals.size() < (src.points.size() / 3) * 3 ||
+        src.ellipseMajorAxes.size() < (src.points.size() / 3) * 3)
+      continue;
+    candidatePointCount += src.points.size() / 3;
+  }
+  const uint64_t estimatedPointBytes =
+      uint64_t(candidatePointCount) * kEstimatedPointBvhBytes;
+  const bool skipAnalyticGaussian =
+      forcedPointBudget != 0 && estimatedPointBytes > forcedPointBudget;
+  if (skipAnalyticGaussian && candidatePointCount > 0) {
+    LOGW("[vk_rt] Gaussian point estimate %.1f MiB exceeds point-buffer ceiling "
+         "%.1f MiB; skipping analytic point/BVH build and using raster fallback",
+         double(estimatedPointBytes) / (1024.0 * 1024.0),
+         double(forcedPointBudget) / (1024.0 * 1024.0));
+    gaussianRtDisabled_ = true;
+  }
+
   std::vector<VkAccelerationStructureInstanceKHR> insts;
   std::vector<InstanceInfoGPU> instInfos;
   std::vector<RtPointGPU> pointDescs;
-  pointDescs.reserve(1024);
+  if (!skipAnalyticGaussian) pointDescs.reserve(1024);
   for (const DrawPointsCPU& src : nativePoints_) {
+    if (skipAnalyticGaussian) break;
     const size_t n = src.points.size() / 3;
     if (!src.gaussian || src.ellipseRadii.size() < n * 2 ||
         src.ellipseNormals.size() < n * 3 || src.ellipseMajorAxes.size() < n * 3)
@@ -7608,27 +7652,13 @@ void VulkanRenderer::rebuildTlas() {
         &rtPointChunkBuf_, &rtPointChunkMem_);
     return points && nodes && order && chunks;
   };
-  uint64_t forcedPointBudget = 0;
-  if (const char *value = std::getenv("TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB")) {
-    char *end = nullptr;
-    const unsigned long long mb = std::strtoull(value, &end, 10);
-    if (value[0] != '\0' && end != value && *end == '\0' && mb > 0 &&
-        mb <= (std::numeric_limits<uint64_t>::max)() / (1024ull * 1024ull))
-      forcedPointBudget = mb * 1024ull * 1024ull;
-  }
-  if (forcedPointBudget == 0) {
-    uint64_t used = 0, budget = 0;
-    constexpr uint64_t kPointHeadroom = 256ull * 1024ull * 1024ull;
-    if (memoryBudget(&used, &budget) && budget > used &&
-        budget - used > kPointHeadroom)
-      forcedPointBudget = budget - used - kPointHeadroom;
-  }
   const uint64_t pointBytes =
       uint64_t(pointDescs.size()) * sizeof(RtPointGPU) +
       uint64_t(pointNodes.size()) * sizeof(Node) +
       uint64_t(pointOrder.size()) * sizeof(int) +
       uint64_t(pointChunks.size()) * sizeof(RtPointChunkGPU);
-  if (forcedPointBudget != 0 && pointBytes > forcedPointBudget) {
+  if (!skipAnalyticGaussian && forcedPointBudget != 0 &&
+      pointBytes > forcedPointBudget) {
     LOGW("[vk_rt] Gaussian point buffers %.1f MiB exceed point-buffer ceiling %.1f MiB; "
          "using raster splat fallback",
          double(pointBytes) / (1024.0 * 1024.0),

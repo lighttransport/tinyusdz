@@ -136,18 +136,18 @@ displays it with an ImGui docking UI.
 - **UsdGeomPoints and curves (`--next`)** — Points plus BasisCurves,
   HermiteCurves, and NurbsCurves retain evaluated widths, displayColor,
   displayOpacity, material binding, purpose, animation time, and transforms.
-  OpenGL raster draws world-sized camera-facing point discs and tessellated
-  curve ribbons; Vulkan ray query and CUDA/HIP trace width-aware solid
-  octahedron/tube proxies. Vulkan raster drawing and viewport click-picking for
-  these carriers remain roadmap items; mesh picking is unchanged.
+  OpenGL and Vulkan raster draw world-sized camera-facing point discs and
+  tessellated curve ribbons; Vulkan ray query and CUDA/HIP trace width-aware
+  solid octahedron/tube proxies. Viewport click-picking for these carriers
+  remains a roadmap item; mesh picking is unchanged.
 - Gaussian splat point carriers use analytic ellipses on Vulkan ray query and
-  CUDA/HIP. Their BVH metadata is chunked; when CUDA/HIP point records exceed
+  CUDA/HIP. Their BVH metadata is chunked; when point records exceed
   the configured GPU budget, one point/BVH chunk is uploaded and traced at a
-  time, with nearest-depth/color reduction. The resident and paged paths are
-  pixel-identical on the regression scene, while the paged path trades GPU
-  memory for additional frame passes. `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB` can
-  rehearse a smaller device; otherwise the backend derives a ceiling from free
-  VRAM with headroom.
+  time, with nearest-depth/color reduction on CUDA/HIP. Vulkan ray query keeps
+  analytic records resident; if its point-buffer ceiling is exceeded, it skips
+  the temporary analytic descriptor/BVH build and uses the raster splat
+  fallback. `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB` can rehearse a smaller device;
+  otherwise the backend derives a ceiling from free VRAM with headroom.
 - **Surface displacement** (`UsdPreviewSurface inputs:displacement` — constant or
   a height texture, honoring the `UsdUVTexture` `scale`/`bias`). The **raster**
   paths displace in the vertex shader (coarse, no extra geometry), with an opt-in
