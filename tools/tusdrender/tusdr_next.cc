@@ -2939,6 +2939,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
                                 const std::vector<uint32_t> &strand_first,
                                 const std::vector<uint32_t> &strand_count,
                                 std::vector<TriInfo> *info,
+                                size_t *info_offset,
                                 std::vector<CurveSceneChunk> *chunks,
                                 bool flat, const char *label) -> bool {
     for (size_t s = 0; s < strand_first.size();) {
@@ -2974,15 +2975,16 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
       chunk.first = chunks->empty() ? 0 :
           chunks->back().first + chunks->back().count;
       chunk.count = segs;
-      if (!info || info->size() < segs) {
+      if (!info || !info_offset || *info_offset > info->size() ||
+          info->size() - *info_offset < segs) {
         std::cerr << "Failed to map " << label << " curve metadata at chunk ["
                   << chunk.first << ", " << (chunk.first + segs) << "].\n";
         return false;
       }
       chunk.info.reserve(segs);
       for (size_t i = 0; i < segs; ++i)
-        chunk.info.push_back(std::move((*info)[i]));
-      info->erase(info->begin(), info->begin() + segs);
+        chunk.info.push_back(std::move((*info)[*info_offset + i]));
+      *info_offset += segs;
       chunk.scene.reset(flat ? lrt_flatcurve_scene_build(&hs, &build_opts, &lrt_err)
                              : lrt_roundcurve_scene_build(&hs, &build_opts, &lrt_err));
       if (!chunk.scene) {
@@ -3042,6 +3044,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     std::vector<float> curve_points, curve_radii;
     std::vector<uint32_t> curve_first, curve_count;
     std::vector<TriInfo> curve_info;
+    size_t curve_info_offset = 0;
     AppendLinearCurveStrands(point_source.view.begin(),
                              point_source.view.size() / 3, counts, widths,
                              job.world, &curve_points, &curve_radii,
@@ -3053,7 +3056,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     }
     if (!build_curve_chunks(
             curve_points, curve_radii, curve_first, curve_count,
-            &curve_info,
+            &curve_info, &curve_info_offset,
             flat ? &ctx.direct.flat_curve_chunks
                  : &ctx.direct.round_curve_chunks,
             flat, flat ? "flat" : "round"))
