@@ -171,7 +171,8 @@ class ProgressiveSceneStream {
                   const std::atomic<bool>* cancelled = nullptr);
   bool pushCurves(DrawCurvesCPU&& curves,
                   const std::atomic<bool>* cancelled = nullptr);
-  bool pushTexture(int slot, DrawTextureCPU&& texture);
+  bool pushTexture(int slot, DrawTextureCPU&& texture,
+                   const std::atomic<bool>* cancelled = nullptr);
   void pushComplete(DrawScene&& scene);
   void pushFailed(std::string error);
   bool tryPop(ProgressiveSceneEvent* event);

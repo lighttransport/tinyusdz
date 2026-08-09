@@ -2230,6 +2230,15 @@ void App::drainProgressiveLoad() {
         event.texture.image.data.shrink_to_fit();
       }
       draw_.textures[slot] = std::move(event.texture);
+      // Progressive texture events are already GPU-resident at this point.
+      // Keep the asset identity and sampling metadata for residency eviction
+      // and re-decode, but do not pin another ordinary RGBA/compressed payload
+      // in the interactive scene. Ptex/UDIM/native streaming carriers retain
+      // their specialized source state for page updates.
+      if (!draw_.textures[slot].isUdim && !draw_.textures[slot].isPtex &&
+          !draw_.textures[slot].compressedFinal) {
+        ReleaseOrdinaryTexturePayload(&draw_.textures[slot]);
+      }
       if (loadOpts_.timing &&
           (slot < 4 || ((slot + 1) % 32) == 0)) {
         LOGI("timing: async texture %zu ready %.3f s (%dx%d, compressed=%s)",
@@ -2256,8 +2265,11 @@ void App::drainProgressiveLoad() {
       if (draw_.textures.size() < streamedTextures.size())
         draw_.textures.resize(streamedTextures.size());
       for (size_t i = 0; i < streamedTextures.size(); ++i) {
-        if (!streamedTextures[i].image.data.empty() ||
-            !streamedTextures[i].compressed.data.empty()) {
+        if (!streamedTextures[i].assetIdentifier.empty() ||
+            !streamedTextures[i].image.data.empty() ||
+            !streamedTextures[i].compressed.data.empty() ||
+            streamedTextures[i].deferredDecode ||
+            streamedTextures[i].isPtex || streamedTextures[i].isUdim) {
           draw_.textures[i] = std::move(streamedTextures[i]);
         }
       }

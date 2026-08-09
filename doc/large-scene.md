@@ -1876,6 +1876,13 @@ than a second full CPU copy. The queue's existing byte limit therefore bounds
 mesh, point, curve, and texture events together; cancellation also releases a
 carrier that cannot be queued.
 
+Decoded texture payloads use that same queue when eager texture conversion is
+selected. After upload, ordinary RGBA/compressed staging is released while the
+resolved asset identity remains available for budget eviction and re-decode;
+UDIM, Ptex, and mutable page-cache carriers keep their specialized source state.
+This prevents progressive loads from pinning a second scene-wide CPU texture
+copy after the GPU has consumed it.
+
 Non-instanced round and flat curve strands use bounded native BVHs as well.
 Curve points are read through the lazy array-view path, and complete strands are
 packed into chunks instead of duplicating the full source array for each BVH.

@@ -174,6 +174,23 @@ size_t ProgressiveCurvesBytes(const DrawCurvesCPU& c) {
          c.points.size() * sizeof(float) + c.widths.size() * sizeof(float) +
          c.colors.size() * sizeof(float) + c.opacities.size() * sizeof(float);
 }
+
+size_t ProgressiveTextureBytes(const DrawTextureCPU& t) {
+  size_t bytes = t.image.data.size();
+  for (const light3d::Image& mip : t.mipImages) bytes += mip.data.size();
+  bytes += t.compressed.data.size();
+  for (const DrawCompressedMipCPU& mip : t.compressed.mips)
+    bytes += mip.data.size();
+  for (const DrawUdimTileCPU& tile : t.udimTiles) {
+    bytes += tile.image.data.size();
+    bytes += tile.compressed.data.size();
+    for (const DrawCompressedMipCPU& mip : tile.compressed.mips)
+      bytes += mip.data.size();
+    for (const light3d::Image& mip : tile.mipImages) bytes += mip.data.size();
+  }
+  bytes += t.ptexSourceData.size();
+  return bytes;
+}
 }  // namespace
 
 ProgressiveSceneStream::ProgressiveSceneStream(size_t maxBytes)
@@ -281,13 +298,23 @@ bool ProgressiveSceneStream::pushCurves(
   return true;
 }
 
-bool ProgressiveSceneStream::pushTexture(int slot, DrawTextureCPU&& texture) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (cancelled_) return false;
+bool ProgressiveSceneStream::pushTexture(
+    int slot, DrawTextureCPU&& texture,
+    const std::atomic<bool>* externallyCancelled) {
+  const size_t bytes = ProgressiveTextureBytes(texture);
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (!cancelled_ &&
+         !(queuedBytes_ == 0 || queuedBytes_ + bytes <= maxBytes_)) {
+    if (externallyCancelled && externallyCancelled->load()) return false;
+    space_.wait_for(lock, std::chrono::milliseconds(20));
+  }
+  if (cancelled_ || (externallyCancelled && externallyCancelled->load()))
+    return false;
   QueuedEvent queued;
   queued.event.type = ProgressiveSceneEvent::Type::Texture;
   queued.event.textureSlot = slot;
   queued.event.texture = std::move(texture);
+  queued.bytes = bytes;
   queue_.push_back(std::move(queued));
   ready_.notify_one();
   return true;
@@ -5012,6 +5039,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   size_t streamedRenderCount = 0;
   size_t streamedMaterialCount = 0;
   size_t streamedTextureCount = 0;
+  size_t streamedTexturePayloadCount = 0;
   size_t streamedPointCount = 0;
   size_t streamedCurveCount = 0;
   size_t streamedPointSamples = 0;
@@ -5106,6 +5134,32 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         streamOk = false;
         return;
       }
+    }
+  };
+  auto publishAvailableTextures = [&]() {
+    if (!stream || !streamOk) return;
+    if (streamedMaterialCount != draw->materials.size() ||
+        streamedTextureCount != draw->textures.size()) {
+      streamOk = stream->pushResources(
+          draw->materials, static_cast<int>(draw->textures.size()), draw->upAxis);
+      streamedMaterialCount = draw->materials.size();
+      streamedTextureCount = draw->textures.size();
+      if (!streamOk) return;
+    }
+    for (size_t i = 0; i < draw->textures.size(); ++i) {
+      DrawTextureCPU& texture = draw->textures[i];
+      const bool hasPayload =
+          !texture.image.data.empty() || !texture.mipImages.empty() ||
+          !texture.compressed.data.empty() || !texture.compressed.mips.empty() ||
+          !texture.udimTiles.empty() || !texture.ptexSourceData.empty() ||
+          texture.streamingMutable;
+      if (texture.deferredDecode || !hasPayload) continue;
+      if (!stream->pushTexture(static_cast<int>(i), std::move(texture),
+                               ctrl ? &ctrl->cancel : nullptr)) {
+        streamOk = false;
+        return;
+      }
+      ++streamedTexturePayloadCount;
     }
   };
 
@@ -7513,6 +7567,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 static_cast<long long>(draw->textures.size()));
   }
   BakeRTDisplacement(draw);
+  publishAvailableTextures();
+  if (!streamOk) {
+    if (err) *err = "next: progressive load cancelled";
+    return false;
+  }
 
   if (texCache.decoder && !draw->textures.empty()) {
     const tydn::TextureDecoder& dec = *texCache.decoder;
@@ -7523,6 +7582,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
          dec.options().max_edge,
          double(dec.options().budget_bytes) / (1024.0 * 1024.0),
          static_cast<unsigned long long>(dec.downscaled_count()));
+  }
+  if (streamedTexturePayloadCount > 0) {
+    LOGI("next: progressively queued %zu decoded texture payload(s) under the "
+         "shared stream budget",
+         streamedTexturePayloadCount);
   }
 
   // A stage whose only renderable content lives below a deferred payload is a
@@ -7555,8 +7619,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
     if (streamedMaterialCount != draw->materials.size() ||
         streamedTextureCount != draw->textures.size()) {
-      stream->pushResources(draw->materials,
-                            static_cast<int>(draw->textures.size()), draw->upAxis);
+      streamOk = stream->pushResources(
+          draw->materials, static_cast<int>(draw->textures.size()), draw->upAxis);
+      if (!streamOk) {
+        if (err) *err = "next: progressive load cancelled";
+        return false;
+      }
     }
     stream->pushComplete(std::move(*draw));
   }
