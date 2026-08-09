@@ -15,6 +15,7 @@
 #include "../layer/layer.hh"
 #include "../pcp/layer-registry.hh"
 #include "../reader/usdc-reader.hh"
+#include "../safe-file-size.hh"
 #include "../stage/stage.hh"
 
 #include <memory>
@@ -190,8 +191,9 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes,
 uint64_t FileSizeBytes(const std::string& filename) {
   std::ifstream f(filename, std::ios::binary | std::ios::ate);
   if (!f) return 0;
-  std::streamoff end = f.tellg();
-  return end > 0 ? static_cast<uint64_t>(end) : 0;
+  size_t n = 0;
+  if (!SafeStreamSize(f, 0, &n)) return 0;
+  return static_cast<uint64_t>(n);
 }
 
 bool EndsWithNoCase(const std::string& s, const char* suffix) {

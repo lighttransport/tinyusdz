@@ -60,11 +60,17 @@ class MemBudget {
   // cap_override_gib <= 0 -> the shared 32 GiB-target host policy.
   void Init(double cap_override_gib) {
     if (cap_override_gib > 0.0) {
-      const long double requested =
-          static_cast<long double>(cap_override_gib) *
-          static_cast<long double>(size_t(1) << 30);
-      const long double max_size = static_cast<long double>(
-          (std::numeric_limits<size_t>::max)());
+      // Plain `double` here, not `long double`: MSVC's `long double` is
+      // bit-identical to `double` (no 80-bit extended precision like
+      // GCC/Clang/x86 get), and double's ~15-17 significant decimal digits
+      // are already far more than enough to place `requested` correctly on
+      // either side of `max_size` (~1.8e19, i.e. SIZE_MAX on 64-bit) -- no
+      // realistic --max-mem/--max-vram GiB value comes close to that
+      // boundary, so no compiler-specific extra precision is needed here.
+      const double requested =
+          cap_override_gib * static_cast<double>(size_t(1) << 30);
+      const double max_size =
+          static_cast<double>((std::numeric_limits<size_t>::max)());
       cap_ = requested >= max_size
                  ? (std::numeric_limits<size_t>::max)()
                  : static_cast<size_t>(requested);
