@@ -1033,7 +1033,23 @@ bool RenderSceneConverter::BuildSingleNode(
     DCOUT("prim.type_id " << prim->type_id());
     DCOUT("xform " << value::TYPE_ID_GEOM_XFORM);
 
+    // NOTE: this ~13-branch else-if chain on prim->type_id() was converted
+    // to standalone ifs -- same MSVC C1061 ("blocks nested too deeply")
+    // risk class already fixed for the same reason elsewhere in this
+    // codebase. Unlike some sibling fixes, EVERY condition here (not just
+    // the final fallback) needs an explicit `!matched &&` prefix: the range
+    // check below (prim->type_id() > TYPE_ID_MODEL_BEGIN && < GEOM_END) can
+    // structurally overlap several of the specific-type branches above it
+    // (Mesh/Volume/Camera/Xform/Scope/Model/parametric prims are all
+    // plausibly within that range), and -- unlike a loop with break/continue
+    // -- nothing else here would stop a naive flatten from double-executing
+    // node setup for a type_id() that satisfies both. The `!matched &&`
+    // guard reproduces the original chain's exact "first match wins"
+    // semantics regardless of any such overlap.
+    bool matched = false;
+
     if (prim->type_id() == value::TYPE_ID_GEOM_MESH) {
+      matched = true;
       // GeomMesh(GPrim) also has xform.
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -1048,7 +1064,9 @@ bool RenderSceneConverter::BuildSingleNode(
 
       // Note: MeshLightAPI is now handled in ConvertMesh, which sets
       // mesh.is_area_light = true and stores light properties directly in RenderMesh
-    } else if (prim->type_id() == value::TYPE_ID_VOLUME) {
+    }
+    if (!matched && prim->type_id() == value::TYPE_ID_VOLUME) {
+      matched = true;
       // UsdVol Volume: decode referenced .vdb field(s) into a RenderVolume.
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -1074,7 +1092,9 @@ bool RenderSceneConverter::BuildSingleNode(
       } else {
         rnode.id = -1;
       }
-    } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
+    }
+    if (!matched && prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
+      matched = true;
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
@@ -1141,27 +1161,36 @@ bool RenderSceneConverter::BuildSingleNode(
       } else {
         rnode.id = -1;
       }
-    } else if (prim->type_id() == value::TYPE_ID_GEOM_XFORM) {
+    }
+    if (!matched && prim->type_id() == value::TYPE_ID_GEOM_XFORM) {
+      matched = true;
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       DCOUT("rnode.local_matrix " << rnode.local_matrix);
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (prim->type_id() == value::TYPE_ID_SCOPE) {
+    }
+    if (!matched && prim->type_id() == value::TYPE_ID_SCOPE) {
+      matched = true;
       // NOTE: get_local_matrix() should return identity matrix.
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (prim->type_id() == value::TYPE_ID_MODEL) {
+    }
+    if (!matched && prim->type_id() == value::TYPE_ID_MODEL) {
+      matched = true;
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (prim->type_id() == value::TYPE_ID_GEOM_CUBE || prim->type_id() == value::TYPE_ID_GEOM_SPHERE ||
-               prim->type_id() == value::TYPE_ID_GEOM_CYLINDER || prim->type_id() == value::TYPE_ID_GEOM_CONE ||
-               prim->type_id() == value::TYPE_ID_GEOM_CAPSULE || prim->type_id() == value::TYPE_ID_GEOM_PLANE) {
+    }
+    if (!matched &&
+        (prim->type_id() == value::TYPE_ID_GEOM_CUBE || prim->type_id() == value::TYPE_ID_GEOM_SPHERE ||
+         prim->type_id() == value::TYPE_ID_GEOM_CYLINDER || prim->type_id() == value::TYPE_ID_GEOM_CONE ||
+         prim->type_id() == value::TYPE_ID_GEOM_CAPSULE || prim->type_id() == value::TYPE_ID_GEOM_PLANE)) {
+      matched = true;
       // Parametric primitives are converted to meshes
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -1173,13 +1202,17 @@ bool RenderSceneConverter::BuildSingleNode(
       } else {
         rnode.id = -1;
       }
-    } else if ((prim->type_id() > value::TYPE_ID_MODEL_BEGIN) && (prim->type_id() < value::TYPE_ID_GEOM_END)) {
+    }
+    if (!matched && (prim->type_id() > value::TYPE_ID_MODEL_BEGIN) && (prim->type_id() < value::TYPE_ID_GEOM_END)) {
+      matched = true;
       // Other Geom prims (e.g. GeomCone, GeomCylinder) - not yet converted to meshes
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (IsLightPrim(*prim)) {
+    }
+    if (!matched && IsLightPrim(*prim)) {
+      matched = true;
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
@@ -1299,7 +1332,9 @@ bool RenderSceneConverter::BuildSingleNode(
       } else {
         rnode.id = -1;
       }
-    } else if (prim->type_id() == value::TYPE_ID_SKEL_ROOT) {
+    }
+    if (!matched && prim->type_id() == value::TYPE_ID_SKEL_ROOT) {
+      matched = true;
       // UsdSkelRoot: encapsulation prim for skinned subtree.
       // SkelRoot is Xformable and its world transform (skelLocalToWorld)
       // positions the skinned result in world space.
@@ -1307,7 +1342,9 @@ bool RenderSceneConverter::BuildSingleNode(
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::SkelRoot;
-    } else if (prim->type_id() == value::TYPE_ID_SKELETON) {
+    }
+    if (!matched && prim->type_id() == value::TYPE_ID_SKELETON) {
+      matched = true;
       // UsdSkeleton: joint hierarchy with bindTransforms and restTransforms.
       // Skeleton is Xformable; its world transform contributes to
       // skelLocalToWorld for positioning skinned results.
@@ -1315,7 +1352,9 @@ bool RenderSceneConverter::BuildSingleNode(
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Skeleton;
-    } else if (prim->type_id() == value::TYPE_ID_GEOM_POINT_INSTANCER) {
+    }
+    if (!matched && prim->type_id() == value::TYPE_ID_GEOM_POINT_INSTANCER) {
+      matched = true;
       // UsdGeomPointInstancer: the instancer prim itself is an Xform node with
       // no directly-attached geometry (id == -1). Its instances are expanded
       // into RenderScene::instances (see ExpandPointInstancer); the instancer's
@@ -1324,7 +1363,8 @@ bool RenderSceneConverter::BuildSingleNode(
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else {
+    }
+    if (!matched) {
       // ignore other node types.
       DCOUT("Unknown/Unsupported prim. " << prim->type_name());
 
@@ -2606,72 +2646,57 @@ bool DefaultTextureImageLoaderFunction(
   return true;
 }
 
+// NOTE: this used to be a ~30-branch `else if` chain on tok.str(). Same
+// class of MSVC C1061 ("blocks nested too deeply") risk already hit once in
+// crate-writer-values.cc and fixed there -- an else-if chain nests one level
+// deeper per link, while a lookup table has no such growth. Every original
+// branch was a pure string->enum mapping with no side effects, so a table is
+// both safe and a cleaner fit than the standalone-if pattern used elsewhere.
 bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
   if (!cty) {
     return false;
   }
 
-  if (tok.str() == "raw") {
-    (*cty) = ColorSpace::Raw;
-  } else if (tok.str() == "Raw") {
-    (*cty) = ColorSpace::Raw;
-  } else if (tok.str() == "srgb" || tok.str() == "srgb_rec709_scene") {
-    (*cty) = ColorSpace::sRGB;
-  } else if (tok.str() == "sRGB") {
-    (*cty) = ColorSpace::sRGB;
-  } else if (tok.str() == "srgb_texture") {  // MaterialX texture colorspace
-    (*cty) = ColorSpace::sRGB_Texture;
-  } else if (tok.str() == "linear") { // guess linear_srgb
-    (*cty) = ColorSpace::Lin_sRGB;
-  } else if (tok.str() == "lin_srgb") {
-    (*cty) = ColorSpace::Lin_sRGB;
-  } else if (tok.str() == "rec709") {
-    (*cty) = ColorSpace::Rec709;
-  } else if (tok.str() == "lin_rec709" ||
-             tok.str() == "lin_rec709_scene") {  // MaterialX/OpenUSD linear Rec.709
-    (*cty) = ColorSpace::Lin_Rec709;
-  } else if (tok.str() == "g22_rec709" ||
-             tok.str() == "g22_rec709_scene") {  // MaterialX/OpenUSD gamma 2.2 Rec.709
-    (*cty) = ColorSpace::g22_Rec709;
-  } else if (tok.str() == "g18_rec709" ||
-             tok.str() == "g18_rec709_scene") {  // MaterialX/OpenUSD gamma 1.8 Rec.709
-    (*cty) = ColorSpace::g18_Rec709;
-  } else if (tok.str() == "lin_rec2020" ||
-             tok.str() == "lin_rec2020_scene") {  // Linear Rec.2020
-    (*cty) = ColorSpace::Lin_Rec2020;
-  } else if (tok.str() == "acescg") {  // Alternative ACES CG naming
-    (*cty) = ColorSpace::Lin_ACEScg;
-  } else if (tok.str() == "lin_ap1" ||
-             tok.str() == "lin_ap1_scene") {  // Linear AP1 (same as ACEScg)
-    (*cty) = ColorSpace::Lin_ACEScg;
-  } else if (tok.str() == "aces2065-1" ||
-             tok.str() == "lin_ap0_scene") {  // ACES 2065-1
-    (*cty) = ColorSpace::ACES2065_1;
-  } else if (tok.str() == "ocio") {
-    (*cty) = ColorSpace::OCIO;
-  } else if (tok.str() == "lin_displayp3" ||
-             tok.str() == "lin_p3d65_scene") {
-    (*cty) = ColorSpace::Lin_DisplayP3;
-  } else if (tok.str() == "srgb_displayp3" ||
-             tok.str() == "srgb_p3d65_scene") {
-    (*cty) = ColorSpace::sRGB_DisplayP3;
+  static const std::unordered_map<std::string, ColorSpace> kColorSpaceMap = {
+      {"raw", ColorSpace::Raw},
+      {"Raw", ColorSpace::Raw},
+      {"srgb", ColorSpace::sRGB},
+      {"srgb_rec709_scene", ColorSpace::sRGB},
+      {"sRGB", ColorSpace::sRGB},
+      {"srgb_texture", ColorSpace::sRGB_Texture},  // MaterialX texture colorspace
+      {"linear", ColorSpace::Lin_sRGB},  // guess linear_srgb
+      {"lin_srgb", ColorSpace::Lin_sRGB},
+      {"rec709", ColorSpace::Rec709},
+      {"lin_rec709", ColorSpace::Lin_Rec709},  // MaterialX/OpenUSD linear Rec.709
+      {"lin_rec709_scene", ColorSpace::Lin_Rec709},
+      {"g22_rec709", ColorSpace::g22_Rec709},  // MaterialX/OpenUSD gamma 2.2 Rec.709
+      {"g22_rec709_scene", ColorSpace::g22_Rec709},
+      {"g18_rec709", ColorSpace::g18_Rec709},  // MaterialX/OpenUSD gamma 1.8 Rec.709
+      {"g18_rec709_scene", ColorSpace::g18_Rec709},
+      {"lin_rec2020", ColorSpace::Lin_Rec2020},  // Linear Rec.2020
+      {"lin_rec2020_scene", ColorSpace::Lin_Rec2020},
+      {"acescg", ColorSpace::Lin_ACEScg},  // Alternative ACES CG naming
+      {"lin_ap1", ColorSpace::Lin_ACEScg},  // Linear AP1 (same as ACEScg)
+      {"lin_ap1_scene", ColorSpace::Lin_ACEScg},
+      {"aces2065-1", ColorSpace::ACES2065_1},  // ACES 2065-1
+      {"lin_ap0_scene", ColorSpace::ACES2065_1},
+      {"ocio", ColorSpace::OCIO},
+      {"lin_displayp3", ColorSpace::Lin_DisplayP3},
+      {"lin_p3d65_scene", ColorSpace::Lin_DisplayP3},
+      {"srgb_displayp3", ColorSpace::sRGB_DisplayP3},
+      {"srgb_p3d65_scene", ColorSpace::sRGB_DisplayP3},
+      // seen in Apple's USDZ model (or OCIO?)
+      {"ACES - ACEScg", ColorSpace::Lin_ACEScg},
+      {"Input - Texture - sRGB - Display P3", ColorSpace::sRGB_DisplayP3},
+      {"Input - Texture - sRGB - sRGB", ColorSpace::sRGB},
+      {"custom", ColorSpace::Custom},
+  };
 
-    //
-    // seen in Apple's USDZ model(or OCIO?)
-    //
-
-  } else if (tok.str() == "ACES - ACEScg") {
-    (*cty) = ColorSpace::Lin_ACEScg;
-  } else if (tok.str() == "Input - Texture - sRGB - Display P3") {
-    (*cty) = ColorSpace::sRGB_DisplayP3;
-  } else if (tok.str() == "Input - Texture - sRGB - sRGB") {
-    (*cty) = ColorSpace::sRGB;
-  } else if (tok.str() == "custom") {
-    (*cty) = ColorSpace::Custom;
-  } else {
+  const auto it = kColorSpaceMap.find(tok.str());
+  if (it == kColorSpaceMap.end()) {
     return false;
   }
-
+  (*cty) = it->second;
   return true;
 }
 

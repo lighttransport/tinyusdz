@@ -35,6 +35,6 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     set(TUSDDIFF_CXX_FLAGS "${TUSDDIFF_CXX_FLAGS} -Werror")
   endif()
 endif()
-set_source_files_properties(tusddiff.cc PROPERTIES COMPILE_FLAGS ${TUSDDIFF_CXX_FLAGS})
+set_source_files_properties(tusddiff.cc PROPERTIES COMPILE_FLAGS "${TUSDDIFF_CXX_FLAGS}")
 
 set_target_properties(${TUSDDIFF_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
