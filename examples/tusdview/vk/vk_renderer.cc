@@ -1328,6 +1328,14 @@ void VulkanRenderer::drawLineSet(VkCommandBuffer cb,
   if (copy.empty() || !pipeline) return;
   constexpr size_t kVerticesPerUpload = size_t(262144);
   if (chunkUploads && copy.size() > kVerticesPerUpload) {
+    // The reusable monolithic buffer is not needed while this carrier uses
+    // transient ranges. Drop it before allocating the per-range buffers so a
+    // previous small/medium frame cannot remain resident alongside them.
+    if (*buf) vkDestroyBuffer(device_, *buf, nullptr);
+    if (*mem) vkFreeMemory(device_, *mem, nullptr);
+    *buf = VK_NULL_HANDLE;
+    *mem = VK_NULL_HANDLE;
+    *cap = 0;
     for (size_t first = 0; first < copy.size(); first += kVerticesPerUpload) {
       const size_t count = std::min(kVerticesPerUpload, copy.size() - first);
       NonMeshChunkUpload upload;
