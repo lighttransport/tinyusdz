@@ -6235,7 +6235,9 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
   for (int32_t c : counts) {
     out->curve_vertex_counts.push_back(static_cast<uint32_t>(c));
   }
-  out->points.append(points.view.data, points.view.size);
+  if (config_.curves.retain_control_points) {
+    out->points.append(points.view.data, points.view.size);
+  }
 
   // type / basis / wrap tokens (BasisCurves; NurbsCurves have order/knots).
   if (out->is_nurbs) {

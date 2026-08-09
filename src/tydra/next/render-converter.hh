@@ -119,6 +119,10 @@ struct CurvesConfig {
   // Polyline samples per cubic/NURBS span when tessellating BasisCurves /
   // NurbsCurves (linear curves pass through unchanged). Clamped to >= 1.
   uint32_t tessellation_segments = 8;
+  // Keep the authored control-point stream in RenderCurves. Consumers that
+  // only need render-ready tessellated polylines can disable this to avoid a
+  // second full control-point allocation for large curve fields.
+  bool retain_control_points = true;
 };
 
 struct PointInstancerConfig {

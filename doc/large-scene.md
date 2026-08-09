@@ -1855,7 +1855,9 @@ large non-Gaussian particle fields no longer materialize a complete
 `RenderPoints` object before being copied into the viewer scene. Constant or
 per-point widths, normals, display color, and display opacity are sliced with
 each chunk; authored normals continue to select the analytic disk/oval RT
-carrier.
+carrier. Curve conversion similarly skips retaining authored control points in
+the viewer-only `RenderCurves` result after tessellation, removing another full
+control-point allocation while preserving the default library API behavior.
 
 Non-instanced round and flat curve strands use bounded native BVHs as well.
 Curve points are read through the lazy array-view path, and complete strands are
