@@ -1886,6 +1886,9 @@ are still waiting for assembly.
 Points and curve CPU fallback proxies are also split at
 `TUSDVIEW_RT_PROXY_CHUNK_TRIS=N` (default 262,144), so a large non-analytic
 field cannot create one monolithic proxy before RT batching begins.
+After a static HIP RT build, tusdview also releases the uploaded CPU carriers
+for Points, Curves, and decoded/compressed texture payloads; deformable scenes
+retain the arrays required for pose/refit updates.
 
 The native RT texture table is usage-driven. It marks material texture slots
 and environment-light maps before decoding/packing, then leaves unreferenced
