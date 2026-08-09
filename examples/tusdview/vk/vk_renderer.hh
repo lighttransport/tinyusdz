@@ -810,6 +810,7 @@ class VulkanRenderer final : public Renderer {
   // texels and semantic material slots from storage buffers.
   std::vector<DrawMaterialCPU> rtMaterialsCpu_;
   std::vector<DrawTextureCPU> rtTexturesCpu_;
+  std::vector<DrawLightCPU> rtLightsCpu_;
 
   // Last frame parameters (copied; caller's pointers are transient)
   bool hasParams_{false};
@@ -920,8 +921,11 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory rtPointNodeMem_{VK_NULL_HANDLE};
   VkBuffer rtPointOrderBuf_{VK_NULL_HANDLE};
   VkDeviceMemory rtPointOrderMem_{VK_NULL_HANDLE};
+  VkBuffer rtPointChunkBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory rtPointChunkMem_{VK_NULL_HANDLE};
   uint32_t rtPointCount_{0};
   uint32_t rtPointNodeCount_{0};
+  uint32_t rtPointChunkCount_{0};
 
   VkImage rtImage_{VK_NULL_HANDLE};
   VkDeviceMemory rtImageMem_{VK_NULL_HANDLE};

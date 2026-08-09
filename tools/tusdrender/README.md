@@ -30,6 +30,34 @@ Common flags:
 | `-maxMem <GiB>` | memory cap override (automatic policy reserves 2 GiB on the 32 GiB target) |
 | `-stats` | print mesh/triangle/memory/timing stats |
 
+Large `ParticleField3DGaussianSplat` fields are built as bounded native ellipse
+BVH chunks instead of one GPU allocation. The default chunk size is 262,144
+splats; `TUSDR_GAUSSIAN_CHUNK=N` tunes it for a smaller VRAM budget. CPU RT
+tests all chunks directly, while the Vulkan path uploads/traces them
+sequentially and keeps the closest hit per ray. Statistics report the retained
+sample count and chunk count; a failed chunk reports its range and the tuning
+knob to reduce it.
+The transformed ellipse streams are flushed into LightRT as each chunk fills,
+so the loader does not accumulate a second full-size geometry copy before BVH
+construction.
+
+The flat next-loader mesh path also splits its native LightRT triangle BVH when
+needed. `TUSDR_TRIANGLE_CHUNK=N` sets the triangle limit (default 262,144);
+the integrator preserves global material/UV indices while checking every chunk,
+and `-stats` reports aggregate chunk node/memory totals.
+The Vulkan flat GPU path uses the same sequential strategy for oversized uploads;
+`TUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144) bounds each GPU BLAS/AS and
+reduces the nearest hit across chunks before shading. This avoids requiring the
+whole flat scene to fit in an 8-GiB device allocation.
+
+Curve point arrays use the same lazy view reader before conversion to the
+native LightRT strand representation, so ordinary uncompressed USDC curves do
+not hold both a source float array and a second temporary float copy.
+Non-instanced round/flat curve strands are also split into bounded native BVHs;
+`TUSDR_CURVE_CHUNK=N` sets the segment limit (default 262,144). The CPU
+integrator checks every chunk, and Vulkan tessellates each chunk independently
+when it needs its triangle upload fallback.
+
 ## Composition, instancing, memory
 
 * **Direct composition** — reference/payload/sublayer/variant/instancing arcs are

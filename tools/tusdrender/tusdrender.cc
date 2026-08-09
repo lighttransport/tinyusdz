@@ -222,7 +222,7 @@ void AppendGpuPointDisc(const Vec3 &center, const Vec3 &normal, float radius,
   geos->push_back(std::move(geo));
 }
 
-void CollectVulkanPointsRec(
+void CollectGpuPointsRec(
     const tinyusdz::next::UsdPrim &prim, const matrix4d &parent_world,
     double time, std::vector<Vec3> *base_colors,
     std::vector<RTPreviewStats::MeshGeometry> *geos) {
@@ -232,15 +232,27 @@ void CollectVulkanPointsRec(
   const matrix4d local = Mat4FromArray(dmat);
   const matrix4d world = local * parent_world;
   if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
-    const std::vector<float> points = ReadFloatArrayLazy(prim, "positions", time);
-    const std::vector<float> scales = ReadFloatArrayLazy(prim, "scales", time);
-    const std::vector<float> orientations =
-        ReadFloatArrayLazy(prim, "orientations", time);
-    const std::vector<float> opacities =
-        ReadFloatArrayLazy(prim, "opacities", time);
-    const std::vector<float> sh = ReadFloatArrayLazy(
-        prim, "radiance:sphericalHarmonicsCoefficients", time);
-    const size_t count = points.size() / 3;
+    tinyusdz::tydra::next::ValueArrayRead<float> points;
+    tinyusdz::tydra::next::ValueArrayRead<float> scales;
+    tinyusdz::tydra::next::ValueArrayRead<float> orientations;
+    tinyusdz::tydra::next::ValueArrayRead<float> opacities;
+    tinyusdz::tydra::next::ValueArrayRead<float> sh;
+    const bool have_points =
+        ReadFloatArrayViewLazy(prim, "positions", time, &points);
+    const bool have_scales =
+        ReadFloatArrayViewLazy(prim, "scales", time, &scales);
+    const bool have_orientations =
+        ReadFloatArrayViewLazy(prim, "orientations", time, &orientations);
+    const bool have_opacities =
+        ReadFloatArrayViewLazy(prim, "opacities", time, &opacities);
+    const bool have_sh = ReadFloatArrayViewLazy(
+        prim, "radiance:sphericalHarmonicsCoefficients", time, &sh);
+    const size_t count = have_points ? points.size() / 3 : 0;
+    if (!have_points || !have_scales || count == 0 || scales.size() < 3) {
+      for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+        CollectGpuPointsRec(child, world, time, base_colors, geos);
+      return;
+    }
     size_t limit = count;
     if (const char *limit_text = std::getenv("TUSDR_GAUSSIAN_MAX")) {
       char *end = nullptr;
@@ -248,18 +260,25 @@ void CollectVulkanPointsRec(
       if (end != limit_text && parsed > 0)
         limit = std::min(count, static_cast<size_t>(parsed));
     }
-    const size_t sh_stride = count ? (sh.size() / 3) / count : 0;
+    const size_t sh_stride = (have_sh && count) ? (sh.size() / 3) / count : 0;
     std::array<RTPreviewStats::MeshGeometry, 64> batches;
     const float wx = Length(TransformVector(world, Vec3{1.0f, 0.0f, 0.0f}));
     const float wy = Length(TransformVector(world, Vec3{0.0f, 1.0f, 0.0f}));
     for (size_t i = 0; i < limit && i * 3 + 2 < scales.size(); ++i) {
-      if (i < opacities.size() && opacities[i] < 0.01f) continue;
+      float opacity = 1.0f;
+      if (have_opacities && !opacities.empty()) {
+        opacity = opacities.size() == 1
+                      ? opacities[0]
+                      : (i < opacities.size() ? opacities[i] : 1.0f);
+      }
+      if (!std::isfinite(opacity) || opacity < 0.01f)
+        continue;
       const Vec3 p = TransformPoint(world, Vec3{points[i * 3 + 0],
                                                   points[i * 3 + 1],
                                                   points[i * 3 + 2]});
       Vec3 normal{0.0f, 1.0f, 0.0f};
       Vec3 major_axis{1.0f, 0.0f, 0.0f};
-      if (i * 4 + 3 < orientations.size()) {
+      if (have_orientations && i * 4 + 3 < orientations.size()) {
         tinyusdz::value::quatf q;
         q.real = orientations[i * 4 + 0];
         q.imag[0] = orientations[i * 4 + 1];
@@ -276,7 +295,7 @@ void CollectVulkanPointsRec(
       const float rx = std::max(1.0e-6f, 2.0f * std::fabs(scales[i * 3 + 0]) * wx);
       const float ry = std::max(1.0e-6f, 2.0f * std::fabs(scales[i * 3 + 1]) * wy);
       Vec3 color{0.72f, 0.72f, 0.72f};
-      if (sh_stride > 0 && i * sh_stride * 3 + 2 < sh.size()) {
+      if (have_sh && sh_stride > 0 && i * sh_stride * 3 + 2 < sh.size()) {
         const size_t j = i * sh_stride * 3;
         color = Vec3{0.5f + 0.2820948f * sh[j + 0],
                      0.5f + 0.2820948f * sh[j + 1],
@@ -285,6 +304,7 @@ void CollectVulkanPointsRec(
         color.y = std::max(0.0f, std::min(1.0f, color.y));
         color.z = std::max(0.0f, std::min(1.0f, color.z));
       }
+      color = Mul(color, std::max(0.0f, std::min(1.0f, opacity)));
       const int cr = std::min(3, std::max(0, int(color.x * 4.0f)));
       const int cg = std::min(3, std::max(0, int(color.y * 4.0f)));
       const int cb = std::min(3, std::max(0, int(color.z * 4.0f)));
@@ -331,7 +351,7 @@ void CollectVulkanPointsRec(
     }
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
-    CollectVulkanPointsRec(child, world, time, base_colors, geos);
+    CollectGpuPointsRec(child, world, time, base_colors, geos);
 }
 
 // LightRT's Vulkan C API currently accepts triangle BVHs, while its CPU/CUDA
@@ -341,32 +361,37 @@ void CollectVulkanPointsRec(
 bool AppendGpuRoundCurves(
     const DirectScene &direct, std::vector<Vec3> *base_colors,
     std::vector<RTPreviewStats::MeshGeometry> *geos) {
-  if (!direct.round_curves || !base_colors || !geos) return true;
+  if (!base_colors || !geos) return false;
   constexpr uint32_t kCurveSides = 6;
-  const size_t ntris = lrt_tri_curve_tessellate_bound(
-      direct.round_curves.get(), kCurveSides);
-  if (ntris == 0) return true;
-
-  RTPreviewStats::MeshGeometry geo;
-  geo.positions.resize(ntris * 9);
-  geo.normals.resize(ntris * 9);
-  geo.uvs.resize(ntris * 6, 0.0f);
-  geo.indices.resize(ntris * 3);
-  size_t written = 0;
-  const lrt_result result = lrt_tri_curve_tessellate(
-      direct.round_curves.get(), kCurveSides, geo.positions.data(),
-      geo.normals.data(), ntris, &written);
-  if (result != LRT_RESULT_OK || written == 0) {
-    std::cerr << "WARN: Vulkan curve tessellation failed (err="
-              << int(result) << ").\n";
-    return false;
-  }
-  geo.positions.resize(written * 9);
-  geo.normals.resize(written * 9);
-  geo.uvs.resize(written * 6);
-  for (size_t i = 0; i < written * 3; ++i) geo.indices[i] = uint32_t(i);
-  geos->push_back(std::move(geo));
-  base_colors->push_back(kCurveColor);
+  auto append = [&](lrt_tri_scene *curve) -> bool {
+    if (!curve) return true;
+    const size_t ntris = lrt_tri_curve_tessellate_bound(curve, kCurveSides);
+    if (ntris == 0) return true;
+    RTPreviewStats::MeshGeometry geo;
+    geo.positions.resize(ntris * 9);
+    geo.normals.resize(ntris * 9);
+    geo.uvs.resize(ntris * 6, 0.0f);
+    geo.indices.resize(ntris * 3);
+    size_t written = 0;
+    const lrt_result result = lrt_tri_curve_tessellate(
+        curve, kCurveSides, geo.positions.data(), geo.normals.data(), ntris,
+        &written);
+    if (result != LRT_RESULT_OK || written == 0) {
+      std::cerr << "WARN: Vulkan curve tessellation failed (err="
+                << int(result) << ").\n";
+      return false;
+    }
+    geo.positions.resize(written * 9);
+    geo.normals.resize(written * 9);
+    geo.uvs.resize(written * 6);
+    for (size_t i = 0; i < written * 3; ++i) geo.indices[i] = uint32_t(i);
+    geos->push_back(std::move(geo));
+    base_colors->push_back(kCurveColor);
+    return true;
+  };
+  if (!append(direct.round_curves.get())) return false;
+  for (const CurveSceneChunk &chunk : direct.round_curve_chunks)
+    if (!append(chunk.scene.get())) return false;
   return true;
 }
 #endif
@@ -1148,8 +1173,14 @@ int main(int argc, char **argv) {
     RenderContext gaussian_ctx;
     gaussian_ctx.opt = opt;
     gaussian_ctx.clip_stage_loader = clip_stage_loader;
-    const bool native_gaussian = BuildNextGaussianEllipses(
-        stage, gaussian_ctx, opt.timecode) && gaussian_ctx.direct.ellipses;
+    // Only Vulkan consumes the native analytic ellipse scene. HIP/ROCm and
+    // D3D11 use the bounded tessellation fallback below; building the full
+    // native arrays first would duplicate every Gaussian's residency before
+    // the fallback rereads the authored arrays.
+    const bool native_gaussian =
+        opt.vulkan && BuildNextGaussianEllipses(
+                          stage, gaussian_ctx, opt.timecode) &&
+        gaussian_ctx.direct.has_ellipses();
 
     {
       // Collect meshes WITH their world transforms, purpose, and -mask, exactly
@@ -1379,16 +1410,19 @@ int main(int argc, char **argv) {
           !AppendGpuRoundCurves(curve_ctx.direct, &base_colors, &geos)) {
         return EXIT_FAILURE;
       }
-      if (curve_ctx.direct.flat_curves) {
+      if (curve_ctx.direct.has_flat_curves()) {
         has_flat_curves = true;
         std::cerr << "WARN: Vulkan flat/ribbon curves are not supported by "
                      "the current upload path.\n";
       }
     }
-    if (gpu_backend && !native_gaussian) {
+    // Vulkan uses the native analytic ellipse path. HIP/ROCm and D3D11 do not
+    // expose that primitive, so feed them the bounded oriented-ellipse mesh
+    // fallback even when the scene also has native Gaussian data.
+    if (gpu_backend && (!native_gaussian || !opt.vulkan)) {
       for (const auto &root : stage.GetRootPrims()) {
-        CollectVulkanPointsRec(root, matrix4d::identity(), opt.timecode,
-                               &base_colors, &geos);
+        CollectGpuPointsRec(root, matrix4d::identity(), opt.timecode,
+                            &base_colors, &geos);
       }
     }
 #endif
@@ -1475,17 +1509,8 @@ int main(int argc, char **argv) {
 
 #if defined(HAVE_VULKAN)
     if (opt.vulkan && native_gaussian && geos.empty()) {
-      std::vector<Vec3> gaussian_colors;
-      std::vector<Vec3> gaussian_normals;
-      gaussian_colors.reserve(gaussian_ctx.direct.ellipse_info.size());
-      gaussian_normals.reserve(gaussian_ctx.direct.ellipse_info.size());
-      for (const TriInfo &ti : gaussian_ctx.direct.ellipse_info) {
-        gaussian_colors.push_back(ti.base_color);
-        gaussian_normals.push_back(ti.p1);
-      }
-      return RunVulkanGaussianLightRT(
-          opt, gaussian_ctx.direct.ellipses.get(), gaussian_colors,
-          gaussian_normals, camera, out_height)
+      return RunVulkanGaussianLightRT(opt, &gaussian_ctx.direct, camera,
+                                      out_height)
                  ? EXIT_SUCCESS
                  : EXIT_FAILURE;
     }
@@ -1847,9 +1872,10 @@ int main(int argc, char **argv) {
                      opt.direct_prims ? &direct_scene.direct_paths : nullptr,
                      &light_cache, want_uvs ? &tri_uvs : nullptr,
                      want_uvs ? &legacy_mat_tex : nullptr, &purpose_vis);
-    const bool has_direct = direct_scene.spheres || direct_scene.round_curves ||
-                          direct_scene.flat_curves || direct_scene.points ||
-                          direct_scene.bez_curves || direct_scene.ellipses ||
+    const bool has_direct = direct_scene.spheres ||
+                          direct_scene.has_round_curves() ||
+                          direct_scene.has_flat_curves() || direct_scene.points ||
+                          direct_scene.bez_curves || direct_scene.has_ellipses() ||
                           direct_scene.tets ||
                           !direct_scene.shapes.empty();
 

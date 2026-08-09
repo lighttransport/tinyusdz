@@ -929,6 +929,19 @@ int main() {
     std::fprintf(stderr, "shared RT mip-chain packing is incorrect\n");
     return 1;
   }
+  tusdview::DrawTextureCPU unusedTexture = mipTexture;
+  unusedTexture.image.data.assign(4 * 4 * 4, 17);
+  tusdview::HostTextureTable compactTable;
+  tusdview::BuildHostTextureTable({mipTexture, unusedTexture}, {mipMaterial},
+                                  &compactTable);
+  if (compactTable.textures.size() != 3 || compactTable.texels.size() != 84 ||
+      compactTable.sourceToTable.size() != 2 ||
+      compactTable.sourceToTable[0] != 0 ||
+      compactTable.sourceToTable[1] != -1 || compactTable.matTex.empty() ||
+      compactTable.matTex[0] != 0) {
+    std::fprintf(stderr, "shared RT unused-texture compaction is incorrect\n");
+    return 1;
+  }
   tusdview::DrawTextureCPU udimTexture;
   udimTexture.isUdim = true;
   tusdview::DrawUdimTileCPU tile;

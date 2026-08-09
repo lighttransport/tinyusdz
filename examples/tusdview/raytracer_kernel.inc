@@ -6,6 +6,7 @@
 // Included inside an anonymous namespace by each backend .cc.
 const char* kKernelSrc = R"CUDA(
 struct Node { float bmin[3]; float bmax[3]; int left; int right; int count; };
+struct PointBvhChunk { int first; int count; int orderFirst; int bvhFirst; int bvhCount; };
 struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; float sceneMin[4]; float sceneExtent[4]; float vp[16]; float lens[4]; };
 // Per-instance placement for 2-level traversal. w2o transforms a world ray into
 // the prototype's object space (kept un-normalized so object t == world t). o2w
@@ -556,10 +557,14 @@ __device__ float traverseCutout(
 __device__ float pointHitBvh(const Node* bvh, const int* order,
                              const float* centers, const float* major,
                              const float* normals, const float* radii,
-                             F3 o, F3 d, int count, int* hit) {
-  if (!bvh || !order || count <= 0) { *hit = -1; return 1e30f; }
+                             F3 o, F3 d, int count, int* hit,
+                             float* gaussianWeight) {
+  if (!bvh || !order || count <= 0) {
+    *hit = -1; *gaussianWeight = 0.f; return 1e30f;
+  }
   float inv[3] = {1.f/d.x, 1.f/d.y, 1.f/d.z};
   int stack[64], sp = 0; stack[sp++] = 0; float best = 1e30f; *hit = -1;
+  *gaussianWeight = 0.f;
   while (sp > 0) {
     const Node* nd = &bvh[stack[--sp]];
     if (!hitAabb(nd, o, mk(inv[0], inv[1], inv[2]), best)) continue;
@@ -577,10 +582,40 @@ __device__ float pointHitBvh(const Node* bvh, const int* order,
         F3 q = sub(add(o, scale(d, t)), c);
         float u = dot3(q, a) / radii[p*2];
         float v = dot3(q, b) / radii[p*2+1];
-        if (u*u + v*v < 1.f) { best = t; *hit = p; }
+        const float r2 = u*u + v*v;
+        if (r2 < 1.f) {
+          best = t; *hit = p;
+          // The carrier radii are 2 sigma. Keep the analytic support bounded
+          // at 2 sigma while retaining the Gaussian density in the interior.
+          *gaussianWeight = expf(-2.f * r2);
+        }
       }
     } else {
       if (sp + 2 <= 64) { stack[sp++] = nd->left; stack[sp++] = nd->right; }
+    }
+  }
+  return best;
+}
+__device__ float pointHitChunks(const Node* bvh, const int* order,
+                                const PointBvhChunk* chunks, int chunkCount,
+                                const float* centers, const float* major,
+                                const float* normals, const float* radii,
+                                F3 o, F3 d, int* hit, float* gaussianWeight) {
+  float best = 1e30f;
+  *hit = -1;
+  *gaussianWeight = 0.f;
+  if (!chunks || chunkCount <= 0) return best;
+  for (int c = 0; c < chunkCount; ++c) {
+    int localHit = -1;
+    float localWeight = 0.f;
+    const PointBvhChunk pc = chunks[c];
+    const float t = pointHitBvh(
+        bvh + pc.bvhFirst, order + pc.orderFirst, centers, major, normals,
+        radii, o, d, pc.count, &localHit, &localWeight);
+    if (localHit >= 0 && t < best) {
+      best = t;
+      *hit = localHit;
+      *gaussianWeight = localWeight;
     }
   }
   return best;
@@ -608,6 +643,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* pointNormals, const float* pointRadii,
                                  const float* pointColors, const int* pointOrder,
                                  const Node* pointBvh, int pointCount,
+                                 const PointBvhChunk* pointChunks,
+                                 int pointChunkCount,
                                  float* accum, int sampleIdx, int numSamples){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
@@ -647,9 +684,26 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                      matTexParam,texels,textures,numTextures,uvs,uvs1,-1,false);
   } else { ht=-1; hitInst=-1; }
   int pointHit = -1;
-  float pointT = pointHitBvh(pointBvh, pointOrder, pointCenters, pointMajor,
-                             pointNormals, pointRadii, o, d, pointCount, &pointHit);
-  if (pointHit >= 0 && pointT < t) { t = pointT; ht = -1; }
+  float pointWeight = 0.f;
+  float pointT = pointHitChunks(pointBvh, pointOrder, pointChunks,
+                                pointChunkCount, pointCenters, pointMajor,
+                                pointNormals, pointRadii, o, d, &pointHit,
+                                &pointWeight);
+  if (pointChunkCount <= 0) {
+    pointT = pointHitBvh(pointBvh, pointOrder, pointCenters, pointMajor,
+                         pointNormals, pointRadii, o, d, pointCount,
+                         &pointHit, &pointWeight);
+  }
+  if (pointHit >= 0 && pointT < t) {
+    t = pointT;
+    ht = -1;
+  } else {
+    // The point BVH is queried independently of the triangle BVH. A Gaussian
+    // behind an opaque triangle must not overwrite the already selected
+    // surface during the later analytic-point shading pass.
+    pointHit = -1;
+    pointWeight = 0.f;
+  }
   int rmodePre=(int)(cam.clear[3]+0.5f);
   // Dome env background on miss (shaded mode only): sample the dome's latlong
   // envmap scaled by its effectiveColor. Packed light record: [0]=type,
@@ -1281,7 +1335,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     if (dot3(N, d) > 0.f) N = scale(N, -1.f);
     F3 C = mk(pointColors[pointHit*4], pointColors[pointHit*4+1],
               pointColors[pointHit*4+2]);
-    float alpha = fminf(fmaxf(pointColors[pointHit*4+3], 0.f), 1.f);
+    float alpha = fminf(fmaxf(pointColors[pointHit*4+3] * pointWeight, 0.f), 1.f);
     if (rmodePre == 2 || rmodePre == 4) outc = scale(add(N, mk(1.f,1.f,1.f)), 0.5f);
     else if (rmodePre == 6) outc = mk(fminf(t / fmaxf(cam.lightDir[3], 1e-6f), 1.f), 0.f, 0.f);
     else if (rmodePre == 0) {

@@ -5,6 +5,9 @@
 // build a CPU BVH, upload it, trace every primary ray in one GPU dispatch, then
 // shade on the CPU.
 #ifdef HAVE_HIP
+#include <algorithm>
+#include <cstring>
+#include <limits>
 #include <vector>
 
 #include "lightrt_c_hip.h"
@@ -13,13 +16,141 @@
 
 namespace tusdr {
 
+namespace {
+
+size_t HipGpuChunkLimit() {
+  size_t limit = size_t(262144);
+  if (const char *s = std::getenv("TUSDR_GPU_TRIANGLE_CHUNK")) {
+    char *end = nullptr;
+    const unsigned long long n = std::strtoull(s, &end, 10);
+    if (end != s && n > 0) limit = static_cast<size_t>(n);
+  }
+  return limit;
+}
+
+size_t GpuTriangleCount(
+    const std::vector<RTPreviewStats::MeshGeometry> &geos) {
+  size_t n = 0;
+  for (const auto &geo : geos) n += geo.indices.size() / 3u;
+  return n;
+}
+
+void InitMissHits(std::vector<lrt_hit> *hits) {
+  for (lrt_hit &hit : *hits) {
+    hit.t = std::numeric_limits<float>::max();
+    hit.u = hit.v = 0.0f;
+    hit.prim_id = LRT_TRI_NO_HIT;
+  }
+}
+
+bool RunHipLightRTChunked(
+    const Options &opt, const std::vector<Vec3> &base_colors,
+    std::vector<RTPreviewStats::MeshGeometry> &geos,
+    const CameraFrame &camera, int height, size_t chunk_limit) {
+  lrt_hip_engine_options hopts;
+  std::memset(&hopts, 0, sizeof(hopts));
+  hopts.device_index = -1;
+  lrt_result hiperr = LRT_RESULT_OK;
+  lrt_hip_engine *hip = lrt_hip_engine_create(&hopts, &hiperr);
+  if (!hip) {
+    std::cerr << "HIP ray tracing unavailable (rc=" << hiperr
+              << "); no ROCm device or kernel compile failed.\n";
+    return false;
+  }
+  std::cerr << "HIP device: " << lrt_hip_engine_device_name(hip)
+            << ", mesh chunks=" << chunk_limit << " tris\n";
+  const int w = opt.width > 0 ? opt.width : 960;
+  const int h = height > 0 ? height : 540;
+  const int spp = std::max(1, opt.samples);
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "HIP", &nrays)) {
+    lrt_hip_engine_destroy(hip);
+    return false;
+  }
+  std::vector<lrt_ray> rays;
+  GenerateCameraRays(camera, w, h, spp, &rays);
+  std::vector<lrt_hit> hits(nrays), chunk_hits(nrays);
+  InitMissHits(&hits);
+  GpuTriScene shade;
+  shade.ntris = static_cast<uint32_t>(GpuTriangleCount(geos));
+  size_t mesh = 0, tri = 0, global_first = 0, chunk_count = 0;
+  while (mesh < geos.size()) {
+    std::vector<Vec3> chunk_colors;
+    std::vector<RTPreviewStats::MeshGeometry> chunk_geos;
+    size_t chunk_tris = 0;
+    if (!BuildGpuTriChunk(base_colors, geos, chunk_limit, &mesh, &tri,
+                          &chunk_colors, &chunk_geos, &chunk_tris)) {
+      lrt_hip_engine_destroy(hip);
+      return false;
+    }
+    GpuTriScene scene;
+    if (!BuildGpuTriScene(chunk_colors, chunk_geos, opt.threads, true, &scene,
+                          opt.quality)) {
+      lrt_hip_engine_destroy(hip);
+      return false;
+    }
+    shade.base_colors.insert(shade.base_colors.end(), scene.base_colors.begin(),
+                             scene.base_colors.end());
+    shade.normals.insert(shade.normals.end(), scene.normals.begin(),
+                         scene.normals.end());
+    shade.vn0.insert(shade.vn0.end(), scene.vn0.begin(), scene.vn0.end());
+    shade.vn1.insert(shade.vn1.end(), scene.vn1.begin(), scene.vn1.end());
+    shade.vn2.insert(shade.vn2.end(), scene.vn2.begin(), scene.vn2.end());
+    InitMissHits(&chunk_hits);
+    lrt_result trace_err = LRT_RESULT_OK;
+    const int traced = lrt_hip_trace_scene(
+        hip, scene.scene, rays.data(), static_cast<uint32_t>(nrays),
+        chunk_hits.data(), &trace_err);
+    if (traced < 0) {
+      std::cerr << "HIP mesh chunk trace failed [" << global_first << ", "
+                << (global_first + chunk_tris) << "] (rc=" << trace_err
+                << "): " << lrt_hip_engine_last_error(hip) << "\n";
+      if (scene.scene) lrt_tri_scene_free(scene.scene);
+      lrt_hip_engine_destroy(hip);
+      return false;
+    }
+    for (size_t i = 0; i < nrays; ++i) {
+      if (chunk_hits[i].prim_id != LRT_TRI_NO_HIT &&
+          chunk_hits[i].t < hits[i].t) {
+        hits[i] = chunk_hits[i];
+        hits[i].prim_id += static_cast<uint32_t>(global_first);
+      }
+    }
+    if (scene.scene) lrt_tri_scene_free(scene.scene);
+    global_first += chunk_tris;
+    ++chunk_count;
+  }
+  const bool ok = ShadeAndWriteImage(opt, shade, rays, hits, w, h, spp);
+  if (opt.stats)
+    std::cerr << "[gpu-stats] HIP mesh chunks " << chunk_count << "\n";
+  if (ok) {
+    std::cerr << "triangles: " << shade.ntris << " (" << geos.size()
+              << " meshes, " << chunk_count << " GPU chunks)\n";
+    std::cerr << "backend: LightRT HIP (compute trace)\n";
+  }
+  lrt_hip_engine_destroy(hip);
+  return ok;
+}
+
+}  // namespace
+
 bool RunHipLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
-                   const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                   std::vector<RTPreviewStats::MeshGeometry> &geos,
                    const CameraFrame &camera, int height) {
+  if (GpuTriangleCount(geos) > HipGpuChunkLimit()) {
+    return RunHipLightRTChunked(opt, base_colors, geos, camera, height,
+                                HipGpuChunkLimit());
+  }
   GpuTriScene s;
   if (!BuildGpuTriScene(base_colors, geos, opt.threads, true, &s,
                         opt.quality)) {
     return false;
+  }
+  for (RTPreviewStats::MeshGeometry &geo : geos) {
+    std::vector<float>().swap(geo.positions);
+    std::vector<float>().swap(geo.normals);
+    std::vector<float>().swap(geo.uvs);
+    std::vector<uint32_t>().swap(geo.indices);
   }
 
   // Create the HIP engine (compiles the trace kernel via hiprtc).

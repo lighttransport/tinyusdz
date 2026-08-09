@@ -39,6 +39,16 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
                       int threads, bool build_cpu_scene, GpuTriScene *out,
                       lrt_tri_quality quality = LRT_TRI_BUILD_DEFAULT);
 
+// Build one bounded, locally-indexed geometry batch. Fully consumed source
+// meshes are released in-place, so Vulkan/HIP chunk callers do not retain the
+// original position/index arrays alongside the accumulated shading data.
+bool BuildGpuTriChunk(const std::vector<Vec3> &base_colors,
+                      std::vector<RTPreviewStats::MeshGeometry> &geos,
+                      size_t limit, size_t *mesh_index, size_t *tri_index,
+                      std::vector<Vec3> *chunk_colors,
+                      std::vector<RTPreviewStats::MeshGeometry> *chunk_geos,
+                      size_t *chunk_triangles);
+
 // Build the CPU LightRT BVH for an already-flattened GpuTriScene. Used by the
 // compute backends and as a fallback when Vulkan ray query is unavailable/fails.
 bool BuildGpuCpuScene(int threads, GpuTriScene *out,

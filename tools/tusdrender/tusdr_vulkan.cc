@@ -20,11 +20,178 @@ double SecsSince(std::chrono::steady_clock::time_point t0) {
       .count();
 }
 
+size_t GpuTriangleCount(
+    const std::vector<RTPreviewStats::MeshGeometry> &geos) {
+  size_t n = 0;
+  for (const auto &geo : geos) n += geo.indices.size() / 3u;
+  return n;
+}
+
+size_t GpuChunkLimit() {
+  size_t limit = size_t(262144);
+  if (const char *s = std::getenv("TUSDR_GPU_TRIANGLE_CHUNK")) {
+    char *end = nullptr;
+    const unsigned long long n = std::strtoull(s, &end, 10);
+    if (end != s && n > 0) limit = static_cast<size_t>(n);
+  }
+  return limit;
+}
+
+bool RunVulkanLightRTChunked(
+    const Options &opt, const std::vector<Vec3> &base_colors,
+    std::vector<RTPreviewStats::MeshGeometry> &geos,
+    const CameraFrame &camera, int height, size_t chunk_limit) {
+  lrt_vk_engine_options vopts;
+  std::memset(&vopts, 0, sizeof(vopts));
+  vopts.device_index = -1;
+  vopts.prefer_discrete = 1;
+  vopts.want_ray_tracing = opt.vulkan_rt;
+  lrt_result vkerr = LRT_RESULT_OK;
+  lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &vkerr);
+  if (!vk) {
+    std::cerr << "Failed to create LightRT Vulkan engine for mesh chunks (err="
+              << int(vkerr) << ").\n";
+    return false;
+  }
+  const uint32_t caps = lrt_vk_engine_caps(vk);
+  bool use_hw_rt = (caps & LRT_VK_CAP_RAY_QUERY) != 0 && opt.vulkan_rt;
+  std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << " ("
+            << (lrt_vk_device_local_bytes(1) >> 20)
+            << " MiB device-local), mesh chunks=" << chunk_limit << " tris\n";
+  const int w = opt.width > 0 ? opt.width : 960;
+  const int h = height > 0 ? height : 540;
+  const int spp = std::max(1, opt.samples);
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "Vulkan", &nrays)) {
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  std::vector<lrt_ray> rays;
+  GenerateCameraRays(camera, w, h, spp, &rays);
+  std::vector<lrt_hit> hits(nrays), chunk_hits(nrays);
+  for (lrt_hit &hit : hits) {
+    hit.t = std::numeric_limits<float>::max();
+    hit.u = hit.v = 0.0f;
+    hit.prim_id = LRT_TRI_NO_HIT;
+  }
+  GpuTriScene shade;
+  shade.ntris = static_cast<uint32_t>(GpuTriangleCount(geos));
+  size_t mesh = 0, tri = 0, global_first = 0, chunk_count = 0;
+  double flatten_s = 0.0, trace_s = 0.0, as_s = 0.0;
+  bool used_hw_rt = false, fell_back = false;
+  const bool force_vkr_fallback = std::getenv("TUSDR_FORCE_VKR_FALLBACK") != nullptr;
+  while (mesh < geos.size()) {
+    std::vector<Vec3> chunk_colors;
+    std::vector<RTPreviewStats::MeshGeometry> chunk_geos;
+    size_t chunk_tris = 0;
+    if (!BuildGpuTriChunk(base_colors, geos, chunk_limit, &mesh, &tri,
+                           &chunk_colors, &chunk_geos, &chunk_tris)) {
+      lrt_vk_engine_destroy(vk);
+      return false;
+    }
+    GpuTriScene scene;
+    auto t0 = std::chrono::steady_clock::now();
+    if (!BuildGpuTriScene(chunk_colors, chunk_geos, opt.threads,
+                          !use_hw_rt, &scene, opt.quality)) {
+      lrt_vk_engine_destroy(vk);
+      return false;
+    }
+    flatten_s += SecsSince(t0);
+    shade.base_colors.insert(shade.base_colors.end(), scene.base_colors.begin(),
+                             scene.base_colors.end());
+    shade.normals.insert(shade.normals.end(), scene.normals.begin(),
+                         scene.normals.end());
+    shade.vn0.insert(shade.vn0.end(), scene.vn0.begin(), scene.vn0.end());
+    shade.vn1.insert(shade.vn1.end(), scene.vn1.begin(), scene.vn1.end());
+    shade.vn2.insert(shade.vn2.end(), scene.vn2.begin(), scene.vn2.end());
+    std::fill(chunk_hits.begin(), chunk_hits.end(), lrt_hit{});
+    for (lrt_hit &hit : chunk_hits) {
+      hit.t = std::numeric_limits<float>::max();
+      hit.prim_id = LRT_TRI_NO_HIT;
+    }
+    lrt_result trace_err = LRT_RESULT_OK;
+    int traced = -1;
+    if (use_hw_rt) {
+      auto as_t0 = std::chrono::steady_clock::now();
+      lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_indexed(
+          vk, scene.flat_verts.data(), uint32_t(scene.flat_verts.size() / 3u),
+          scene.flat_idx.data(), scene.ntris, &trace_err);
+      as_s += SecsSince(as_t0);
+      if (rtx) {
+        auto trace_t0 = std::chrono::steady_clock::now();
+        if (!force_vkr_fallback)
+          traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), uint32_t(nrays),
+                                          chunk_hits.data(), &trace_err);
+        lrt_vk_rtx_scene_free(vk, rtx);
+        trace_s += SecsSince(trace_t0);
+      }
+      if (traced < 0) {
+        std::cerr << "Vulkan mesh chunk ray-query failed at [" << global_first
+                  << ", " << (global_first + chunk_tris)
+                  << "]; switching remaining chunks to compute trace.\n";
+        use_hw_rt = false;
+        fell_back = true;
+        if (!BuildGpuCpuScene(opt.threads, &scene, opt.quality)) {
+          lrt_vk_engine_destroy(vk);
+          return false;
+        }
+      } else {
+        used_hw_rt = true;
+      }
+    }
+    if (!use_hw_rt) {
+      auto trace_t0 = std::chrono::steady_clock::now();
+      traced = lrt_vk_trace_scene(vk, scene.scene, rays.data(), uint32_t(nrays),
+                                  chunk_hits.data(), &trace_err);
+      trace_s += SecsSince(trace_t0);
+    }
+    if (traced < 0) {
+      std::cerr << "Vulkan mesh chunk trace failed [" << global_first << ", "
+                << (global_first + chunk_tris) << "] (err=" << int(trace_err)
+                << "): " << lrt_vk_engine_last_error(vk) << "\n";
+      if (scene.scene) lrt_tri_scene_free(scene.scene);
+      lrt_vk_engine_destroy(vk);
+      return false;
+    }
+    for (size_t i = 0; i < nrays; ++i) {
+      if (chunk_hits[i].prim_id != LRT_TRI_NO_HIT &&
+          chunk_hits[i].t < hits[i].t) {
+        hits[i] = chunk_hits[i];
+        hits[i].prim_id += static_cast<uint32_t>(global_first);
+      }
+    }
+    if (scene.scene) lrt_tri_scene_free(scene.scene);
+    global_first += chunk_tris;
+    ++chunk_count;
+  }
+  const bool ok = ShadeAndWriteImage(opt, shade, rays, hits, w, h, spp);
+  if (opt.stats) {
+    std::cerr << "[gpu-stats] mesh chunks " << chunk_count
+              << ", flatten+bvh " << flatten_s << " s, as-build " << as_s
+              << " s, trace " << trace_s << " s\n";
+  }
+  if (ok) {
+    std::cerr << "triangles: " << shade.ntris << " (" << geos.size()
+              << " meshes, " << chunk_count << " GPU chunks)\n";
+    std::cerr << "backend: LightRT VK ("
+              << (used_hw_rt ? "ray_query" : "compute trace")
+              << (fell_back ? ", ray-query fallback" : "") << ")\n";
+  }
+  lrt_vk_engine_destroy(vk);
+  return ok;
+}
+
 }  // namespace
 
 bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
-                      const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                      std::vector<RTPreviewStats::MeshGeometry> &geos,
                       const CameraFrame &camera, int height) {
+  const size_t total_triangles = GpuTriangleCount(geos);
+  const size_t chunk_limit = GpuChunkLimit();
+  if (total_triangles > chunk_limit) {
+    return RunVulkanLightRTChunked(opt, base_colors, geos, camera, height,
+                                   chunk_limit);
+  }
   // Create the Vulkan engine first: whether the device traces via hardware ray
   // query decides if the CPU BVH is needed at all (the -vkr AS is GPU-built
   // from the indexed mesh, so the CPU build would be pure waste there).
@@ -59,6 +226,12 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     return false;
   }
   const double flatten_s = SecsSince(t0);
+  for (RTPreviewStats::MeshGeometry &geo : geos) {
+    std::vector<float>().swap(geo.positions);
+    std::vector<float>().swap(geo.normals);
+    std::vector<float>().swap(geo.uvs);
+    std::vector<uint32_t>().swap(geo.indices);
+  }
 
   // Generate every primary ray and trace the whole frame in ONE batched GPU
   // dispatch (the -vkr ray-query AS is built once, not per pixel).
@@ -157,11 +330,9 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   return ok;
 }
 
-bool RunVulkanGaussianLightRT(const Options &opt, lrt_tri_scene *scene,
-                              const std::vector<Vec3> &base_colors,
-                              const std::vector<Vec3> &normals,
+bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
                               const CameraFrame &camera, int height) {
-  if (!scene || base_colors.empty() || base_colors.size() != normals.size())
+  if (!direct || direct->ellipse_info.empty() || direct->ellipse_chunks.empty())
     return false;
   lrt_vk_engine_options vopts;
   std::memset(&vopts, 0, sizeof(vopts));
@@ -185,27 +356,48 @@ bool RunVulkanGaussianLightRT(const Options &opt, lrt_tri_scene *scene,
   std::vector<lrt_ray> rays;
   GenerateCameraRays(camera, w, h, spp, &rays);
   std::vector<lrt_hit> hits(nrays);
-  int traced = lrt_vk_trace_scene(vk, scene, rays.data(), uint32_t(nrays),
-                                  hits.data(), &err);
-  if (traced < 0) {
-    std::cerr << "Vulkan Gaussian trace failed (err=" << int(err) << "): "
-              << lrt_vk_engine_last_error(vk) << "\n";
-    lrt_vk_engine_destroy(vk);
-    return false;
+  for (lrt_hit &h : hits) {
+    h.t = std::numeric_limits<float>::max();
+    h.u = h.v = 0.0f;
+    h.prim_id = LRT_TRI_NO_HIT;
+  }
+  std::vector<lrt_hit> chunk_hits(nrays);
+  for (const EllipseSceneChunk &chunk : direct->ellipse_chunks) {
+    int traced = lrt_vk_trace_scene(vk, chunk.scene.get(), rays.data(),
+                                    uint32_t(nrays), chunk_hits.data(), &err);
+    if (traced < 0) {
+      std::cerr << "Vulkan Gaussian chunk trace failed [" << chunk.first
+                << ", " << (chunk.first + chunk.count) << "] (err=" << int(err)
+                << "): " << lrt_vk_engine_last_error(vk) << "\n";
+      lrt_vk_engine_destroy(vk);
+      return false;
+    }
+    for (size_t i = 0; i < nrays; ++i) {
+      if (chunk_hits[i].prim_id != LRT_TRI_NO_HIT &&
+          chunk_hits[i].t < hits[i].t) {
+        hits[i] = chunk_hits[i];
+        hits[i].prim_id += static_cast<uint32_t>(chunk.first);
+      }
+    }
   }
   // Reuse the established preview shader with analytic hit metadata. The
   // shim has one logical primitive per splat; no triangle vertices are
   // allocated or uploaded.
   GpuTriScene shim;
-  shim.ntris = uint32_t(base_colors.size());
-  shim.base_colors = base_colors;
-  shim.normals = normals;
-  shim.vn0 = normals;
-  shim.vn1 = normals;
-  shim.vn2 = normals;
+  shim.ntris = uint32_t(direct->ellipse_info.size());
+  shim.base_colors.reserve(shim.ntris);
+  shim.normals.reserve(shim.ntris);
+  for (const TriInfo &ti : direct->ellipse_info) {
+    shim.base_colors.push_back(ti.base_color);
+    shim.normals.push_back(ti.p1);
+  }
+  shim.vn0 = shim.normals;
+  shim.vn1 = shim.normals;
+  shim.vn2 = shim.normals;
   const bool ok = ShadeAndWriteImage(opt, shim, rays, hits, w, h, spp);
   if (ok) {
-    std::cerr << "native Gaussian ellipses: " << base_colors.size()
+    std::cerr << "native Gaussian ellipses: " << direct->ellipse_info.size()
+              << " in " << direct->ellipse_chunks.size() << " Vulkan chunk(s)\n"
               << "\nbackend: LightRT VK (native point/ellipse BVH)\n";
   }
   lrt_vk_engine_destroy(vk);

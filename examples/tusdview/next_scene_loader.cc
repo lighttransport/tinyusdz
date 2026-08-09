@@ -5263,6 +5263,116 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   for (const tydn::RenderPrimRecord& rec : extracted.records) {
     const bool gaussian = rec.type_name == "ParticleField3DGaussianSplat";
     if (rec.type_name != "Points" && !gaussian) continue;
+
+    // Gaussian fields are commonly millions of records. Read their numeric
+    // arrays as borrowed/lazy views and emit bounded DrawPointsCPU chunks
+    // directly. The old ConvertPoints path first copied positions/scales into
+    // RenderPoints and then copied them again into the carrier, creating a
+    // large transient peak and one monolithic record.
+    if (gaussian) {
+      tydn::ValueArrayRead<float> positions;
+      tydn::ValueArrayRead<float> scales;
+      if (!tydn::ReadFloatArray(rec.prim, "positions", time, &positions) ||
+          !tydn::ReadFloatArray(rec.prim, "scales", time, &scales) ||
+          positions.size() < 3 || scales.size() < 3) {
+        draw->skipped.push_back("GaussianSplat '" + rec.path +
+                                "': missing/invalid positions or scales");
+        continue;
+      }
+      tydn::ValueArrayRead<float> orientations;
+      tydn::ValueArrayRead<float> opacities;
+      tydn::ValueArrayRead<float> sh;
+      const bool haveOrientations =
+          tydn::ReadFloatArray(rec.prim, "orientations", time, &orientations);
+      const bool haveOpacities =
+          tydn::ReadFloatArray(rec.prim, "opacities", time, &opacities);
+      const bool haveSh = tydn::ReadFloatArray(
+          rec.prim, "radiance:sphericalHarmonicsCoefficients", time, &sh);
+      const size_t n = std::min(positions.size() / 3, scales.size() / 3);
+      const size_t chunkSize = opts.pointChunkSamples != 0
+                                   ? opts.pointChunkSamples
+                                   : size_t(64) * 1024;
+      const size_t shStride = (haveSh && sh.size() >= n * 3) ? sh.size() / n : 0;
+      const bool haveQ = haveOrientations && orientations.size() >= n * 4;
+      double world[16];
+      if (!tydn::ComputeWorldTransform(stage, rec.prim, world, time)) {
+        std::memcpy(world, rec.world, sizeof(world));
+      }
+      size_t emitted = 0;
+      for (size_t first = 0; first < n; first += chunkSize) {
+        const size_t last = std::min(n, first + chunkSize);
+        DrawPointsCPU dp;
+        dp.name = rec.prim.GetName();
+        dp.absPath = rec.path;
+        dp.purpose = rec.purpose;
+        dp.materialId = resolveMaterialPath(rec.material_path, std::string(),
+                                            std::string());
+        dp.gaussian = true;
+        dp.colorsInterpolation = 1;   // vertex/per-point
+        dp.opacitiesInterpolation = 1;
+        dp.points.reserve((last - first) * 3);
+        dp.widths.reserve(last - first);
+        dp.colors.reserve((last - first) * 3);
+        dp.opacities.reserve(last - first);
+        dp.ellipseRadii.reserve((last - first) * 2);
+        dp.ellipseNormals.reserve((last - first) * 3);
+        dp.ellipseMajorAxes.reserve((last - first) * 3);
+        for (size_t i = first; i < last; ++i) {
+          const float opacity =
+              (haveOpacities && opacities.size() > 1 && i < opacities.size())
+                  ? opacities.begin()[i]
+                  : (haveOpacities && opacities.size() == 1
+                         ? opacities.begin()[0]
+                         : 1.0f);
+          const float sx = std::fabs(scales.begin()[i * 3]);
+          const float sy = std::fabs(scales.begin()[i * 3 + 1]);
+          const float sz = std::fabs(scales.begin()[i * 3 + 2]);
+          const float px = positions.begin()[i * 3];
+          const float py = positions.begin()[i * 3 + 1];
+          const float pz = positions.begin()[i * 3 + 2];
+          if (!std::isfinite(opacity) || opacity < 0.01f ||
+              !std::isfinite(sx) || !std::isfinite(sy) ||
+              !std::isfinite(sz) || sx <= 1.0e-8f || sy <= 1.0e-8f ||
+              !std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz))
+            continue;
+          tinyusdz::value::quatf q;
+          q.real = haveQ ? orientations.begin()[i * 4] : 1.0f;
+          q.imag[0] = haveQ ? orientations.begin()[i * 4 + 1] : 0.0f;
+          q.imag[1] = haveQ ? orientations.begin()[i * 4 + 2] : 0.0f;
+          q.imag[2] = haveQ ? orientations.begin()[i * 4 + 3] : 0.0f;
+          const auto r = tinyusdz::to_matrix3x3(q);
+          dp.points.insert(dp.points.end(), {px, py, pz});
+          dp.widths.push_back(2.0f * std::max(sx, std::max(sy, sz)));
+          dp.ellipseRadii.insert(dp.ellipseRadii.end(), {2.0f * sx, 2.0f * sy});
+          dp.ellipseMajorAxes.insert(
+              dp.ellipseMajorAxes.end(),
+              {float(r.m[0][0]), float(r.m[0][1]), float(r.m[0][2])});
+          dp.ellipseNormals.insert(
+              dp.ellipseNormals.end(),
+              {float(r.m[2][0]), float(r.m[2][1]), float(r.m[2][2])});
+          if (shStride != 0 && i * shStride + 2 < sh.size()) {
+            const float* c = sh.begin() + i * shStride;
+            dp.colors.insert(dp.colors.end(), {
+                std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * c[0])),
+                std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * c[1])),
+                std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * c[2]))});
+          } else {
+            dp.colors.insert(dp.colors.end(), {0.72f, 0.72f, 0.72f});
+          }
+          dp.opacities.push_back(opacity);
+        }
+        if (dp.points.empty()) continue;
+        RowMatrixToColumnMajor(world, dp.world);
+        addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin, dp.aabbMax);
+        emitted += dp.points.size() / 3;
+        draw->points.push_back(std::move(dp));
+      }
+      if (emitted == 0)
+        draw->skipped.push_back("GaussianSplat '" + rec.path +
+                                "': no finite visible samples");
+      continue;
+    }
+
     tydn::RenderPoints rp;
     if (!conv.ConvertPoints(rec.prim, &rp) || rp.point_count() == 0) {
       draw->skipped.push_back("Points '" + rec.path + "': conversion failed/empty");
@@ -5280,59 +5390,6 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     copyChunked(rp.widths, &dp.widths);
     copyChunked(rp.colors, &dp.colors);
     copyChunked(rp.opacities, &dp.opacities);
-    if (gaussian) {
-      // Gaussian splat files commonly carry RGB in the DC spherical-harmonic
-      // coefficient (rather than displayColor) and opacity in a schema-local
-      // array. Keep the carrier compact: only the DC coefficient is needed by
-      // the raster billboard; RT/GPU paths retain the full orientation/scales
-      // from the source stage when they build their analytic representation.
-      tydn::ValueArrayRead<float> sh;
-      if (tydn::ReadFloatArray(rec.prim,
-                               "radiance:sphericalHarmonicsCoefficients",
-                               time, &sh) && sh.size() >= rp.point_count() * 3) {
-        dp.colors.reserve(rp.point_count() * 3);
-        for (size_t i = 0; i < rp.point_count(); ++i) {
-          const float* c = sh.begin() + i * 3;
-          dp.colors.push_back(std::max(0.0f, std::min(1.0f,
-              0.5f + 0.2820948f * c[0])));
-          dp.colors.push_back(std::max(0.0f, std::min(1.0f,
-              0.5f + 0.2820948f * c[1])));
-          dp.colors.push_back(std::max(0.0f, std::min(1.0f,
-              0.5f + 0.2820948f * c[2])));
-        }
-      }
-      tydn::ValueArrayRead<float> opacity;
-      if (tydn::ReadFloatArray(rec.prim, "opacities", time, &opacity) &&
-          (opacity.size() == 1 || opacity.size() == rp.point_count())) {
-        dp.opacities.assign(opacity.begin(), opacity.end());
-      }
-      tydn::ValueArrayRead<float> scales;
-      tydn::ValueArrayRead<float> orientations;
-      if (tydn::ReadFloatArray(rec.prim, "scales", time, &scales) &&
-          scales.size() >= rp.point_count() * 3) {
-        dp.gaussian = true;
-        dp.ellipseRadii.reserve(rp.point_count() * 2);
-        dp.ellipseNormals.reserve(rp.point_count() * 3);
-        dp.ellipseMajorAxes.reserve(rp.point_count() * 3);
-        const bool have_q = tydn::ReadFloatArray(rec.prim, "orientations", time,
-                                                   &orientations) &&
-                            orientations.size() >= rp.point_count() * 4;
-        for (size_t i = 0; i < rp.point_count(); ++i) {
-          dp.ellipseRadii.push_back(2.0f * std::fabs(scales[i * 3]));
-          dp.ellipseRadii.push_back(2.0f * std::fabs(scales[i * 3 + 1]));
-          tinyusdz::value::quatf q;
-          q.real = have_q ? orientations[i * 4] : 1.0f;
-          q.imag[0] = have_q ? orientations[i * 4 + 1] : 0.0f;
-          q.imag[1] = have_q ? orientations[i * 4 + 2] : 0.0f;
-          q.imag[2] = have_q ? orientations[i * 4 + 3] : 0.0f;
-          const auto r = tinyusdz::to_matrix3x3(q);
-          dp.ellipseMajorAxes.insert(dp.ellipseMajorAxes.end(),
-                                     {float(r.m[0][0]), float(r.m[0][1]), float(r.m[0][2])});
-          dp.ellipseNormals.insert(dp.ellipseNormals.end(),
-                                   {float(r.m[2][0]), float(r.m[2][1]), float(r.m[2][2])});
-        }
-      }
-    }
     RowMatrixToColumnMajor(rec.world, dp.world);
     addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin, dp.aabbMax);
     draw->points.push_back(std::move(dp));
@@ -7076,10 +7133,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
        draw->upAxis.c_str(), draw->truncated ? " (truncated)" : "");
   if (!draw->points.empty() || !draw->curves.empty()) {
     size_t pointSamples = 0, curveSamples = 0, opacityPrims = 0;
+    size_t gaussianChunks = 0, gaussianSamples = 0;
     size_t constantWidthCurves = 0;
     for (const DrawPointsCPU& p : draw->points) {
       pointSamples += p.points.size() / 3;
       opacityPrims += p.opacities.empty() ? 0 : 1;
+      if (p.gaussian) {
+        ++gaussianChunks;
+        gaussianSamples += p.points.size() / 3;
+      }
     }
     for (const DrawCurvesCPU& c : draw->curves) {
       curveSamples += c.points.size() / 3;
@@ -7096,6 +7158,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     if (constantWidthCurves > 0) {
       LOGI("next: retained authored constant width for %zu Curves prim(s)",
            constantWidthCurves);
+    }
+    if (gaussianChunks > 0) {
+      LOGI("next: Gaussian carriers %zu chunk(s), %zu visible samples",
+           gaussianChunks, gaussianSamples);
     }
   }
   if (sourcePoints > 0) {
