@@ -344,7 +344,7 @@ bool RunVulkanLightRT(const Options &opt,
                               const std::vector<Vec3> &base_colors,
                               std::vector<RTPreviewStats::MeshGeometry> &geos,
                               const CameraFrame &camera, int height);
-bool RunVulkanGaussianLightRT(const Options &opt, const DirectScene *direct,
+bool RunVulkanGaussianLightRT(const Options &opt, DirectScene *direct,
                               const CameraFrame &camera, int height);
 #endif
 
