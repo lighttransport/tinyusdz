@@ -499,7 +499,9 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
                         const tinyusdz::next::UsdPrim &prim,
                         const matrix4d &parent_world, double time,
                         const std::string &baseDir,
-                        std::vector<VolumeData> *out);
+                        std::vector<VolumeData> *out,
+                        size_t max_density_bytes = 0,
+                        size_t *density_bytes_used = nullptr);
 
 float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
                        float fallback);
