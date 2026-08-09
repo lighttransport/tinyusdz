@@ -122,6 +122,16 @@ tinyusdz::Image MakeBlankImage(const Options &opt, int height) {
 // GPU triangle backends share the CPU LightRT curve tessellator. This must not
 // be Vulkan-only: HIP/ROCm and D3D11 use the same bounded triangle fallback for
 // round curves when no analytic curve primitive is exposed by their API.
+size_t GpuTriangleChunkLimit() {
+  size_t limit = 262144;
+  if (const char *env = std::getenv("TUSDR_GPU_TRIANGLE_CHUNK")) {
+    char *end = nullptr;
+    const unsigned long long parsed = std::strtoull(env, &end, 10);
+    if (end != env && parsed > 0) limit = static_cast<size_t>(parsed);
+  }
+  return limit;
+}
+
 void AppendGpuPointSphere(const Vec3 &center, float radius,
                           RTPreviewStats::MeshGeometry *geo) {
   if (!geo) return;
@@ -258,9 +268,15 @@ void CollectGpuPointsRec(
     }
     const size_t sh_stride = (have_sh && count) ? (sh.size() / 3) / count : 0;
     std::array<RTPreviewStats::MeshGeometry, 64> batches;
+    std::array<size_t, 64> batch_triangles{};
+    const size_t batch_limit = GpuTriangleChunkLimit();
+    const size_t gaussian_geo_first = geos->size();
+    size_t gaussian_triangles = 0;
     const float wx = Length(TransformVector(world, Vec3{1.0f, 0.0f, 0.0f}));
     const float wy = Length(TransformVector(world, Vec3{0.0f, 1.0f, 0.0f}));
-    for (size_t i = 0; i < limit && i * 3 + 2 < scales.size(); ++i) {
+    for (size_t i = 0; i < limit; ++i) {
+      const size_t scale_index = scales.size() == 3 ? 0 : i * 3;
+      if (scale_index + 2 >= scales.size()) break;
       float opacity = 1.0f;
       if (have_opacities && !opacities.empty()) {
         opacity = opacities.size() == 1
@@ -288,8 +304,10 @@ void CollectGpuPointsRec(
         major_axis = TransformVector(world, TransformVector(
             r4, Vec3{1.0f, 0.0f, 0.0f}));
       }
-      const float rx = std::max(1.0e-6f, 2.0f * std::fabs(scales[i * 3 + 0]) * wx);
-      const float ry = std::max(1.0e-6f, 2.0f * std::fabs(scales[i * 3 + 1]) * wy);
+      const float rx = std::max(
+          1.0e-6f, 2.0f * std::fabs(scales[scale_index + 0]) * wx);
+      const float ry = std::max(
+          1.0e-6f, 2.0f * std::fabs(scales[scale_index + 1]) * wy);
       Vec3 color{0.72f, 0.72f, 0.72f};
       if (have_sh && sh_stride > 0 && i * sh_stride * 3 + 2 < sh.size()) {
         const size_t j = i * sh_stride * 3;
@@ -305,16 +323,27 @@ void CollectGpuPointsRec(
       const int cg = std::min(3, std::max(0, int(color.y * 4.0f)));
       const int cb = std::min(3, std::max(0, int(color.z * 4.0f)));
       const int bucket = (cr << 4) | (cg << 2) | cb;
-      // Four segments per side keeps the 2.27 M-splat ALab payload within the
-      // Vulkan upload budget; the Gaussian itself remains an oriented ellipse.
+      // Four segments per side keeps each splat inexpensive; flush the bucket
+      // before it can grow beyond the same bounded upload budget used by the
+      // ordinary point and curve fallbacks.
+      constexpr size_t kSplatTriangles = 8;
+      if (batch_triangles[size_t(bucket)] != 0 &&
+          batch_triangles[size_t(bucket)] + kSplatTriangles > batch_limit) {
+        base_colors->push_back(Vec3{(float(cr) + 0.5f) * 0.25f,
+                                    (float(cg) + 0.5f) * 0.25f,
+                                    (float(cb) + 0.5f) * 0.25f});
+        geos->push_back(std::move(batches[size_t(bucket)]));
+        batches[size_t(bucket)] = RTPreviewStats::MeshGeometry{};
+        batch_triangles[size_t(bucket)] = 0;
+      }
       AppendGpuEllipseToGeometry(p, normal, rx, ry, &major_axis, 4,
                                  &batches[size_t(bucket)]);
+      batch_triangles[size_t(bucket)] += kSplatTriangles;
+      gaussian_triangles += kSplatTriangles;
     }
-    size_t gaussian_triangles = 0;
-    for (const auto &batch : batches)
-      gaussian_triangles += batch.indices.size() / 3;
     for (size_t i = 0; i < batches.size(); ++i) {
-      if (batches[i].indices.empty()) continue;
+      const auto &batch = batches[i];
+      if (batch.indices.empty()) continue;
       const int cr = int((i >> 4) & 3), cg = int((i >> 2) & 3), cb = int(i & 3);
       base_colors->push_back(Vec3{(float(cr) + 0.5f) * 0.25f,
                                   (float(cg) + 0.5f) * 0.25f,
@@ -323,17 +352,14 @@ void CollectGpuPointsRec(
     }
     std::cerr << "[gpu] gaussian splats: " << limit;
     if (limit != count) std::cerr << " / " << count << " (budgeted)";
-    std::cerr << ", tessellated triangles: " << gaussian_triangles << "\n";
+    std::cerr << ", tessellated triangles: " << gaussian_triangles
+              << ", GPU chunks: " << (geos->size() - gaussian_geo_first)
+              << ", limit: " << batch_limit << " tris\n";
   } else if (prim.GetTypeName() == "Points") {
     const std::vector<float> points = ReadFloatArrayLazy(prim, "points", time);
     const std::vector<float> widths = ReadFloatArrayLazy(prim, "widths", time);
     const std::vector<float> normals = ReadFloatArrayLazy(prim, "normals", time);
-    size_t batchLimit = 262144;
-    if (const char *env = std::getenv("TUSDR_GPU_TRIANGLE_CHUNK")) {
-      char *end = nullptr;
-      const unsigned long long parsed = std::strtoull(env, &end, 10);
-      if (end != env && parsed > 0) batchLimit = static_cast<size_t>(parsed);
-    }
+    const size_t batchLimit = GpuTriangleChunkLimit();
     RTPreviewStats::MeshGeometry batch;
     size_t emitted = 0;
     auto flush = [&]() {
@@ -388,12 +414,7 @@ bool AppendGpuRoundCurves(
     std::vector<RTPreviewStats::MeshGeometry> *geos) {
   if (!base_colors || !geos) return false;
   constexpr uint32_t kCurveSides = 6;
-  size_t curveChunk = 262144;
-  if (const char *env = std::getenv("TUSDR_GPU_TRIANGLE_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long parsed = std::strtoull(env, &end, 10);
-    if (end != env && parsed > 0) curveChunk = static_cast<size_t>(parsed);
-  }
+  const size_t curveChunk = GpuTriangleChunkLimit();
   auto append = [&](lrt_tri_scene *curve) -> bool {
     if (!curve) return true;
     const size_t total = lrt_tri_curve_tessellate_bound(curve, kCurveSides);
