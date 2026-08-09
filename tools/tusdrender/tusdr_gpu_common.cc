@@ -47,6 +47,25 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
                       int threads, bool build_cpu_scene, GpuTriScene *out,
                       lrt_tri_quality quality) {
   if (!out) return false;
+  auto discard = [&]() {
+    if (out->scene) {
+      lrt_tri_scene_free(out->scene);
+      out->scene = nullptr;
+    }
+    std::vector<float>().swap(out->flat_verts);
+    std::vector<uint32_t>().swap(out->flat_idx);
+    std::vector<Vec3>().swap(out->base_colors);
+    std::vector<Vec3>().swap(out->normals);
+    std::vector<Vec3>().swap(out->vn0);
+    std::vector<Vec3>().swap(out->vn1);
+    std::vector<Vec3>().swap(out->vn2);
+    out->ntris = 0;
+    out->has_vertex_normals = false;
+  };
+  // This function is also used after backend retries. Do not append to a
+  // previous failed/consumed result, and release its capacity before rebuilding
+  // so a smaller chunk can actually reduce the process peak.
+  discard();
   out->has_vertex_normals = false;
   // Flatten all meshes into one indexed vertex/index array LightRT can build:
   // flat_verts = unique positions, flat_idx = 3*ntris vertex ids.
@@ -57,15 +76,18 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   for (const auto &g : geos) {
     if ((g.positions.size() % 3u) != 0u) {
       std::cerr << "Invalid mesh positions: component count is not a multiple of 3.\n";
+      discard();
       return false;
     }
     if ((g.indices.size() % 3u) != 0u) {
       std::cerr << "Invalid mesh indices: index count is not a multiple of 3.\n";
+      discard();
       return false;
     }
     const size_t nv = g.positions.size() / 3u;
     if (nv > max_u32 || total_vertices > max_u32 - nv) {
       std::cerr << "Too many flattened vertices for 32-bit GPU indices.\n";
+      discard();
       return false;
     }
     total_pos += g.positions.size();
@@ -75,6 +97,7 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   const size_t total_tris = total_idx / 3;
   if (total_tris > max_u32) {
     std::cerr << "Too many triangles for 32-bit GPU tracing.\n";
+    discard();
     return false;
   }
   out->flat_verts.reserve(total_pos);
@@ -106,6 +129,7 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
       if (g.indices[j] >= nv) {
         std::cerr << "Invalid mesh index " << g.indices[j] << " for "
                   << nv << " vertices.\n";
+        discard();
         return false;
       }
       out->flat_idx.push_back(base_idx + g.indices[j]);
@@ -145,10 +169,15 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   out->ntris = uint32_t(out->flat_idx.size() / 3);
   if (out->ntris == 0) {
     std::cerr << "No triangles to render.\n";
+    discard();
     return false;
   }
   if (!build_cpu_scene) return true;
-  return BuildGpuCpuScene(threads, out, quality);
+  if (!BuildGpuCpuScene(threads, out, quality)) {
+    discard();
+    return false;
+  }
+  return true;
 }
 
 void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst) {
