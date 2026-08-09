@@ -1653,7 +1653,16 @@ bool ResolveNextSkinBinding(const tnext::Stage& stage,
 
   // Remap mesh-authored joint order into skeleton order (when authored).
   std::vector<int> idx(ji.begin(), ji.end());
-  std::vector<std::string> meshJoints = ReadTokens(meshPrim, "primvars:skel:joints", time);
+  // UsdSkel stores the mesh-local joint order in `skel:joints` (the
+  // `primvars:` namespace is used for jointIndices/jointWeights).  Some
+  // exporters have emitted the names under the latter spelling, so retain a
+  // fallback for those files, but prefer the standard property.  Without
+  // this remap, a mesh whose joint order differs from Skeleton.joints assigns
+  // unrelated bones to parts such as the trunk and feet.
+  std::vector<std::string> meshJoints = ReadTokens(meshPrim, "skel:joints", time);
+  if (meshJoints.empty()) {
+    meshJoints = ReadTokens(meshPrim, "primvars:skel:joints", time);
+  }
   if (!meshJoints.empty()) {
     std::unordered_map<std::string, int> skelIdx;
     for (size_t j = 0; j < nj; ++j) skelIdx[skel.joints[j]] = static_cast<int>(j);
