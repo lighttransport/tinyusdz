@@ -55,7 +55,7 @@ exr_result exr_pxr24_decompress(const exr_codec_ctx *ctx, const uint8_t *src,
         memcpy(buf, src, inter);
     } else {
         size_t got = 0;
-        rc = exr_inflate_zlib(src, src_size, buf, inter, &got);
+        rc = exr_zlib_inflate(src, src_size, buf, inter, &got);
         if (EXR_OK(rc) && got != inter) rc = EXR_ERROR_CORRUPT;
         if (!EXR_OK(rc)) {
             exr_free(a, buf);
@@ -240,7 +240,7 @@ exr_result exr_pxr24_compress(const exr_codec_ctx *ctx, const uint8_t *block,
         }
     }
 
-    rc = exr_deflate_zlib(a, buf, inter, &comp, &clen);
+    rc = exr_zlib_deflate(a, buf, inter, &comp, &clen);
     exr_free(a, buf);
     if (!EXR_OK(rc) || clen >= n) { /* store the canonical block raw */
         exr_free(a, comp);

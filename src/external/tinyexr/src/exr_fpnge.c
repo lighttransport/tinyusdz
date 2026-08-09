@@ -310,6 +310,7 @@ exr_result exr_fpnge_deflate(const exr_allocator *a, const uint8_t *src,
     }
 #else
     (void)use_simd;
+    (void)simd; /* non-x86: the scalar path is taken unconditionally below */
 #endif
 
     for (off = 0; off < n; off += CH) {

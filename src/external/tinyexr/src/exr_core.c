@@ -241,6 +241,105 @@ void exr_header_free(const exr_allocator *a, exr_header *hdr) {
 }
 
 /* ============================================================================
+ * Public custom-attribute access
+ * ========================================================================== */
+
+static void attr_view(const exr_attr *a, exr_attribute *out) {
+    out->name = a->name;
+    out->type_name = a->type_name;
+    out->data = a->data;
+    out->size = a->size;
+}
+
+int32_t exr_header_num_attributes(const exr_header *hdr) {
+    if (!hdr || !hdr->attrs) return 0;
+    return (int32_t)hdr->attrs->count;
+}
+
+exr_result exr_header_get_attribute(const exr_header *hdr, int32_t index,
+                                    exr_attribute *out) {
+    if (!hdr || !out || !hdr->attrs) return EXR_ERROR_INVALID_ARGUMENT;
+    if (index < 0 || (uint32_t)index >= hdr->attrs->count)
+        return EXR_ERROR_INVALID_ARGUMENT;
+    attr_view(&hdr->attrs->items[index], out);
+    return EXR_SUCCESS;
+}
+
+exr_result exr_header_find_attribute(const exr_header *hdr, const char *name,
+                                     exr_attribute *out) {
+    const exr_attr *a;
+    if (!hdr || !name || !out) return EXR_ERROR_INVALID_ARGUMENT;
+    a = exr_attr_find(hdr->attrs, name);
+    if (!a) return EXR_ERROR_INVALID_ARGUMENT;
+    attr_view(a, out);
+    return EXR_SUCCESS;
+}
+
+exr_result exr_header_get_string_attribute(const exr_header *hdr,
+                                           const char *name, char *buf,
+                                           size_t buf_size, size_t *out_len) {
+    const exr_attr *a;
+    if (!hdr || !name) return EXR_ERROR_INVALID_ARGUMENT;
+    a = exr_attr_find(hdr->attrs, name);
+    if (!a) return EXR_ERROR_INVALID_ARGUMENT;
+    if (out_len) *out_len = a->size;
+    if (buf && buf_size > 0) {
+        size_t n = (a->size < buf_size - 1) ? a->size : buf_size - 1;
+        if (n) memcpy(buf, a->data, n);
+        buf[n] = '\0';
+    }
+    return EXR_SUCCESS;
+}
+
+exr_result exr_header_set_attribute(const exr_allocator *alloc, exr_header *hdr,
+                                    const char *name, const char *type_name,
+                                    const void *data, uint32_t size) {
+    const exr_allocator *a = alloc ? alloc : exr_default_allocator();
+    exr_attr_list *list;
+    uint32_t i;
+    if (!hdr || !name || !type_name || (size && !data))
+        return EXR_ERROR_INVALID_ARGUMENT;
+
+    if (!hdr->attrs) {
+        hdr->attrs = (exr_attr_list *)exr_calloc(a, 1, sizeof(*hdr->attrs));
+        if (!hdr->attrs) return EXR_ERROR_OUT_OF_MEMORY;
+    }
+    list = hdr->attrs;
+
+    /* Replace in place if an attribute of this name already exists. */
+    for (i = 0; i < list->count; ++i) {
+        if (strcmp(list->items[i].name, name) == 0) {
+            size_t tn = strlen(type_name);
+            char *nt = (char *)exr_malloc(a, tn + 1);
+            uint8_t *nd = (uint8_t *)exr_malloc(a, size ? size : 1);
+            if (!nt || !nd) {
+                exr_free(a, nt);
+                exr_free(a, nd);
+                return EXR_ERROR_OUT_OF_MEMORY;
+            }
+            memcpy(nt, type_name, tn + 1);
+            if (size) memcpy(nd, data, size);
+            exr_free(a, list->items[i].type_name);
+            exr_free(a, list->items[i].data);
+            list->items[i].type_name = nt;
+            list->items[i].data = nd;
+            list->items[i].size = size;
+            return EXR_SUCCESS;
+        }
+    }
+    return exr_attr_list_append(a, list, name, strlen(name), type_name,
+                                strlen(type_name), (const uint8_t *)data, size);
+}
+
+exr_result exr_header_set_string_attribute(const exr_allocator *alloc,
+                                           exr_header *hdr, const char *name,
+                                           const char *value) {
+    if (!value) return EXR_ERROR_INVALID_ARGUMENT;
+    return exr_header_set_attribute(alloc, hdr, name, "string", value,
+                                    (uint32_t)strlen(value));
+}
+
+/* ============================================================================
  * Image lifetime
  * ========================================================================== */
 
@@ -307,21 +406,27 @@ static exr_result load_all_parts(exr_reader *r, const exr_allocator *a,
     return EXR_SUCCESS;
 }
 
-exr_result exr_load_from_memory(const void *data, size_t size,
-                                const exr_allocator *alloc, exr_image *out) {
+exr_result exr_load_from_memory_ctx(exr_context *context, const void *data,
+                                    size_t size, const exr_allocator *alloc,
+                                    exr_image *out) {
     exr_reader *r = NULL;
     exr_result rc;
     if (!data || !out) return EXR_ERROR_INVALID_ARGUMENT;
     if (!alloc) alloc = exr_default_allocator();
     memset(out, 0, sizeof(*out));
 
-    rc = exr_reader_open_memory(data, size, alloc, &r);
+    rc = exr_reader_open_memory_ctx(context, data, size, alloc, &r);
     if (!EXR_OK(rc)) return rc;
 
     rc = load_all_parts(r, alloc, out);
     if (!EXR_OK(rc)) exr_image_free(out);
     exr_reader_close(r);
     return rc;
+}
+
+exr_result exr_load_from_memory(const void *data, size_t size,
+                                const exr_allocator *alloc, exr_image *out) {
+    return exr_load_from_memory_ctx(NULL, data, size, alloc, out);
 }
 
 /* exr_load_from_file lives in src/exr_stdio.c (the only stdio translation unit). */

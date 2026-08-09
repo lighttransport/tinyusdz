@@ -39,6 +39,64 @@ void exr_interleave_sse2(const uint8_t *src, uint8_t *dst, size_t n) {
     if (n & 1) dst[n - 1] = t1[n2];
 }
 
+/* Predictor decode: byte prefix-sum mod 256 with a -128 bias per step,
+ * bit-identical to exr_predictor_decode_scalar. Within each 16-byte chunk the
+ * prefix sum is built by log2(16) lane shifts; `running` carries the cumulative
+ * total across chunks. */
+EXR_TARGET("sse2")
+void exr_predictor_decode_sse2(uint8_t *p, size_t n) {
+    const __m128i bias = _mm_set1_epi8((char)128);
+    uint8_t running;
+    size_t i;
+    if (n == 0) return;
+    running = p[0];
+    i = 1;
+    for (; i + 16 <= n; i += 16) {
+        __m128i x = _mm_loadu_si128((const __m128i *)(p + i));
+        x = _mm_sub_epi8(x, bias);                  /* b = p - 128 */
+        x = _mm_add_epi8(x, _mm_slli_si128(x, 1));
+        x = _mm_add_epi8(x, _mm_slli_si128(x, 2));
+        x = _mm_add_epi8(x, _mm_slli_si128(x, 4));
+        x = _mm_add_epi8(x, _mm_slli_si128(x, 8));  /* full 16-lane prefix sum */
+        x = _mm_add_epi8(x, _mm_set1_epi8((char)running));
+        _mm_storeu_si128((__m128i *)(p + i), x);
+        running = p[i + 15];
+    }
+    for (; i < n; ++i) {
+        int d = (int)running + (int)p[i] - 128;
+        p[i] = (uint8_t)d;
+        running = p[i];
+    }
+}
+
+/* Predictor encode: per-byte delta (cur - prev + 128) mod 256, in place,
+ * bit-identical to exr_predictor_encode_scalar. `prev` is the original previous
+ * byte, saved before the store overwrites it. */
+EXR_TARGET("sse2")
+void exr_predictor_encode_sse2(uint8_t *p, size_t n) {
+    const __m128i bias = _mm_set1_epi8((char)128);
+    uint8_t prev;
+    size_t i;
+    if (n == 0) return;
+    prev = p[0];
+    i = 1;
+    for (; i + 16 <= n; i += 16) {
+        __m128i cur = _mm_loadu_si128((const __m128i *)(p + i)); /* original */
+        uint8_t nextprev = p[i + 15]; /* save before overwrite */
+        __m128i sh = _mm_slli_si128(cur, 1); /* lane0=0, lanes1..15=p[i..i+14] */
+        __m128i out;
+        sh = _mm_or_si128(sh, _mm_cvtsi32_si128((int)prev)); /* lane0 = prev */
+        out = _mm_add_epi8(_mm_sub_epi8(cur, sh), bias);
+        _mm_storeu_si128((__m128i *)(p + i), out);
+        prev = nextprev;
+    }
+    for (; i < n; ++i) {
+        int cur = p[i];
+        p[i] = (uint8_t)(cur - prev + (128 + 256));
+        prev = cur;
+    }
+}
+
 /* fpnge-style PSHUFB Huffman-table lookup: for each byte, gather (nbits, code)
  * where the 16-bit code is split into blo (low 8) + bhi (high). Symbols 0-15
  * and 240-255 are looked up by low nibble; 16-239 share length 12 (mid_nbits),

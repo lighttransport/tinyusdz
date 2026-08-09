@@ -12,53 +12,50 @@
 
 #include "exr_internal.h"
 
-exr_result exr_rle_decompress(const exr_allocator *a, const uint8_t *src,
-                              size_t src_size, uint8_t *dst, size_t dst_size) {
-    uint8_t *tmp;
+/* RLE-expand into dst (the pre-reconstruction buffer); no predictor/interleave. */
+exr_result exr_rle_expand_only(const uint8_t *src, size_t src_size,
+                               uint8_t *dst, size_t dst_size) {
     const signed char *in = (const signed char *)src;
     const signed char *in_end = in + src_size;
-    uint8_t *out, *out_end;
-    size_t uncomp;
-    exr_result rc = EXR_SUCCESS;
-
-    tmp = (uint8_t *)exr_malloc(a, dst_size ? dst_size : 1);
-    if (!tmp) return EXR_ERROR_OUT_OF_MEMORY;
-    out = tmp;
-    out_end = tmp + dst_size;
+    uint8_t *out = dst;
+    uint8_t *out_end = dst + dst_size;
 
     while (in < in_end && out < out_end) {
         int count = *in++;
         if (count < 0) {
             size_t len = (size_t)(-count);
-            if ((size_t)(in_end - in) < len || (size_t)(out_end - out) < len) {
-                rc = EXR_ERROR_CORRUPT;
-                goto done;
-            }
+            if ((size_t)(in_end - in) < len || (size_t)(out_end - out) < len)
+                return EXR_ERROR_CORRUPT;
             memcpy(out, in, len);
             out += len;
             in += len;
         } else {
             size_t len = (size_t)count + 1;
             uint8_t val;
-            if (in >= in_end || (size_t)(out_end - out) < len) {
-                rc = EXR_ERROR_CORRUPT;
-                goto done;
-            }
+            if (in >= in_end || (size_t)(out_end - out) < len)
+                return EXR_ERROR_CORRUPT;
             val = (uint8_t)*in++;
             memset(out, val, len);
             out += len;
         }
     }
+    if ((size_t)(out - dst) != dst_size) return EXR_ERROR_CORRUPT;
+    return EXR_SUCCESS;
+}
 
-    uncomp = (size_t)(out - tmp);
-    if (uncomp != dst_size) {
-        rc = EXR_ERROR_CORRUPT;
-        goto done;
+exr_result exr_rle_decompress(const exr_allocator *a, const uint8_t *src,
+                              size_t src_size, uint8_t *dst, size_t dst_size) {
+    uint8_t *tmp;
+    exr_result rc;
+
+    tmp = (uint8_t *)exr_malloc(a, dst_size ? dst_size : 1);
+    if (!tmp) return EXR_ERROR_OUT_OF_MEMORY;
+
+    rc = exr_rle_expand_only(src, src_size, tmp, dst_size);
+    if (EXR_OK(rc)) {
+        exr_predictor_decode(tmp, dst_size);
+        exr_interleave_decode(tmp, dst, dst_size);
     }
-    exr_predictor_decode(tmp, uncomp);
-    exr_interleave_decode(tmp, dst, uncomp);
-
-done:
     exr_free(a, tmp);
     return rc;
 }
@@ -68,9 +65,10 @@ done:
 #define RLE_MAX_RUN 127
 static size_t rle_encode(const uint8_t *in, size_t n, uint8_t *out) {
     const uint8_t *in_end = in + n;
-    const uint8_t *run_start = in, *run_end = in + 1;
+    const uint8_t *run_start = in;
     uint8_t *w = out;
     while (run_start < in_end) {
+        const uint8_t *run_end = run_start + 1;
         while (run_end < in_end && *run_start == *run_end &&
                (size_t)(run_end - run_start) - 1 < RLE_MAX_RUN)
             ++run_end;
@@ -79,15 +77,20 @@ static size_t rle_encode(const uint8_t *in, size_t n, uint8_t *out) {
             *w++ = *run_start;
             run_start = run_end;
         } else {
+            const uint8_t *literal_start = run_start;
+            /* Stop before a compressible run; leave it for the next loop. */
+            run_end = run_start;
             while (run_end < in_end &&
-                   ((run_end + 1 >= in_end || *run_end != *(run_end + 1)) ||
-                    (run_end + 2 >= in_end || *(run_end + 1) != *(run_end + 2))) &&
-                   (size_t)(run_end - run_start) < RLE_MAX_RUN)
+                   (size_t)(run_end - literal_start) < RLE_MAX_RUN) {
+                if (run_end + 2 < in_end && run_end[0] == run_end[1] &&
+                    run_end[1] == run_end[2])
+                    break;
                 ++run_end;
-            *w++ = (uint8_t)(signed char)(run_start - run_end);
-            while (run_start < run_end) *w++ = *run_start++;
+            }
+            *w++ = (uint8_t)(signed char)(literal_start - run_end);
+            while (literal_start < run_end) *w++ = *literal_start++;
+            run_start = run_end;
         }
-        ++run_end;
     }
     return (size_t)(w - out);
 }
