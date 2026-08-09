@@ -50,6 +50,8 @@ class VulkanRenderer final : public Renderer {
   void appendMesh(const DrawMeshCPU& mesh) override;
   void appendPoints(const DrawPointsCPU& points) override;
   void appendCurves(const DrawCurvesCPU& curves) override;
+  void appendPoints(DrawPointsCPU&& points) override;
+  void appendCurves(DrawCurvesCPU&& curves) override;
   void appendVolume(const DrawVolumeCPU& vol) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
   void evictTexture(int slot) override;
