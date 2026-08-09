@@ -1270,10 +1270,12 @@ int main(int argc, char **argv) {
     RenderContext gaussian_ctx;
     gaussian_ctx.opt = opt;
     gaussian_ctx.clip_stage_loader = clip_stage_loader;
-    // Only Vulkan consumes the native analytic ellipse scene. HIP/ROCm and
-    // D3D11 use the bounded tessellation fallback below; building the full
-    // native arrays first would duplicate every Gaussian's residency before
-    // the fallback rereads the authored arrays.
+    // Vulkan consumes the native analytic ellipse scene for a pure Gaussian
+    // stage. A flat GPU trace cannot combine that DirectScene with mesh BLASes,
+    // however: mixed mesh+splat stages must use the bounded tessellation fallback
+    // below or the splats would silently disappear. HIP/ROCm and D3D11 always use
+    // that fallback; building the native arrays for those backends would only
+    // duplicate every Gaussian's residency before rereading the authored arrays.
     const bool native_gaussian =
         opt.vulkan && BuildNextGaussianEllipses(
                           stage, gaussian_ctx, opt.timecode) &&
@@ -1516,10 +1518,14 @@ int main(int argc, char **argv) {
                      "the current upload path.\n";
       }
     }
-    // Vulkan uses the native analytic ellipse path. HIP/ROCm and D3D11 do not
-    // expose that primitive, so feed them the bounded oriented-ellipse mesh
-    // fallback even when the scene also has native Gaussian data.
-    if (gpu_backend && (!native_gaussian || !opt.vulkan)) {
+    // Vulkan uses the native analytic ellipse path for a pure splat scene.
+    // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
+    // fallback as HIP/ROCm and D3D11 so all geometry reaches one flat trace.
+    if (gpu_backend && (!native_gaussian || !opt.vulkan || !geos.empty())) {
+      if (native_gaussian && opt.vulkan && !geos.empty()) {
+        std::cerr << "[gpu] mixed mesh/Gaussian scene: using bounded tessellated "
+                     "Gaussian fallback with the mesh trace.\n";
+      }
       for (const auto &root : stage.GetRootPrims()) {
         CollectGpuPointsRec(root, matrix4d::identity(), opt.timecode,
                             &base_colors, &geos);
