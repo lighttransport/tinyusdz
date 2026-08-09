@@ -136,8 +136,8 @@ struct LoadOptions {
 // resources; streamed meshes have already been removed from its DrawScene.
 struct ProgressiveSceneEvent {
   enum class Type {
-    PreviewScene, Reset, Resources, Mesh, Points, Curves, Texture, Complete,
-    Failed
+    PreviewScene, Reset, Resources, Mesh, Points, Curves, Volume, Texture,
+    Complete, Failed
   };
   Type type{Type::Failed};
   std::vector<DrawMaterialCPU> materials;
@@ -146,6 +146,7 @@ struct ProgressiveSceneEvent {
   DrawMeshCPU mesh;
   DrawPointsCPU points;
   DrawCurvesCPU curves;
+  DrawVolumeCPU volume;
   DrawTextureCPU texture;
   int textureSlot{-1};
   DrawScene scene;
@@ -170,6 +171,8 @@ class ProgressiveSceneStream {
   bool pushPoints(DrawPointsCPU&& points,
                   const std::atomic<bool>* cancelled = nullptr);
   bool pushCurves(DrawCurvesCPU&& curves,
+                  const std::atomic<bool>* cancelled = nullptr);
+  bool pushVolume(DrawVolumeCPU&& volume,
                   const std::atomic<bool>* cancelled = nullptr);
   bool pushTexture(int slot, DrawTextureCPU&& texture,
                    const std::atomic<bool>* cancelled = nullptr);
