@@ -232,6 +232,7 @@ __device__ F3 unproject(const float* m, float nx, float ny, float z){
 
 // Project a world point to pixel coords (column-major vp = proj*view). Returns
 // (pixelX, pixelY, clipW); clipW<=0 means behind the eye. Pixel origin top-left,
+)CUDA" R"CUDA(
 // matching the primary-ray generation (ndcy -> (1-ndcy)/2 * H).
 __device__ F3 projPix(const float* m, F3 p, float W, float H){
   float x = m[0]*p.x + m[4]*p.y + m[8]*p.z + m[12];
@@ -744,6 +745,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       xformUv(tp,84,(uvbits2&4)?uu1:uu,(uvbits2&4)?vv21:vv2,&ccuu,&ccvv);
       xformUv(tp,90,(uvbits2&8)?uu1:uu,(uvbits2&8)?vv21:vv2,&cruu,&crvv);
     }
+)CUDA" R"CUDA(
     float fd=(fmaxf(specIor,1.f)-1.f)/(fmaxf(specIor,1.f)+1.f);
     F3 materialF0=mk(fd*fd+(base.x-fd*fd)*metallic,
                      fd*fd+(base.y-fd*fd)*metallic,
@@ -1124,6 +1126,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       outc=mk(metallic,metallic,metallic);
     } else if (rmode==11){  // emissive
       outc=em;
+)CUDA" R"CUDA(
     } else if (rmode==12){  // opacity
       outc=mk(materialOpacity,materialOpacity,materialOpacity);
     } else if (rmode==13){  // world position
