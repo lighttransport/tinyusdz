@@ -1940,6 +1940,9 @@ field cannot create one monolithic proxy before RT batching begins.
 After a static HIP RT build, tusdview also releases the uploaded CPU carriers
 for Points, Curves, and decoded/compressed texture payloads; deformable scenes
 retain the arrays required for pose/refit updates.
+When a HIP build does retain triangle refit state, the uploaded Gaussian point
+arrays and point-BVH metadata are still released because refit only updates
+triangle topology/poses.
 
 The native RT texture table is usage-driven. It marks material texture slots
 and environment-light maps before decoding/packing, then leaves unreferenced

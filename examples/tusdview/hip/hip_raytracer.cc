@@ -310,6 +310,14 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
     drop(r.matTexParam);
     drop(r.texels); drop(r.textures); drop(r.lightParams);
     drop(r.volDens); drop(r.volParams);
+    // Gaussian/analytic-point arrays are device-resident after the upload and
+    // are not part of triangle refit. Keeping their centers, axes, ordering,
+    // and BVH in the retained host scene needlessly duplicates large splat
+    // fields on AMD systems.
+    drop(r.pointCenters); drop(r.pointMajorAxes); drop(r.pointNormals);
+    drop(r.pointRadii); drop(r.pointColors); drop(r.pointOrder);
+    drop(r.pointBvh); drop(r.pointChunks);
+    r.pointCount = 0;
   }
   return true;
 }
