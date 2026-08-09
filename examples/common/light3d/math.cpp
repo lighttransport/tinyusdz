@@ -198,25 +198,25 @@ Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up) {
     return r;
 }
 
-Mat4 perspective(float fovYRadians, float aspect, float near, float far) {
+Mat4 perspective(float fovYRadians, float aspect, float zNear, float zFar) {
     float tanHalf = std::tan(fovYRadians * 0.5f);
     Mat4 r;
     r.m[0]  = 1.0f / (aspect * tanHalf);
     r.m[5]  = 1.0f / tanHalf;
-    r.m[10] = -(far + near) / (far - near);
+    r.m[10] = -(zFar + zNear) / (zFar - zNear);
     r.m[11] = -1.0f;
-    r.m[14] = -(2.0f * far * near) / (far - near);
+    r.m[14] = -(2.0f * zFar * zNear) / (zFar - zNear);
     return r;
 }
 
-Mat4 perspectiveZeroOne(float fovYRadians, float aspect, float near, float far) {
+Mat4 perspectiveZeroOne(float fovYRadians, float aspect, float zNear, float zFar) {
     float tanHalf = std::tan(fovYRadians * 0.5f);
     Mat4 r;
     r.m[0]  = 1.0f / (aspect * tanHalf);
     r.m[5]  = 1.0f / tanHalf;
-    r.m[10] = far / (near - far);
+    r.m[10] = zFar / (zNear - zFar);
     r.m[11] = -1.0f;
-    r.m[14] = (far * near) / (near - far);
+    r.m[14] = (zFar * zNear) / (zNear - zFar);
     return r;
 }
 
