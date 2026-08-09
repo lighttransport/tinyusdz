@@ -170,6 +170,47 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
                     std::to_string(hs.pointCount) + ")";
     return false;
   }
+  const uint64_t gaussianBytes =
+      uint64_t(hs.pointCenters.size()) * sizeof(float) +
+      uint64_t(hs.pointMajorAxes.size()) * sizeof(float) +
+      uint64_t(hs.pointNormals.size()) * sizeof(float) +
+      uint64_t(hs.pointRadii.size()) * sizeof(float) +
+      uint64_t(hs.pointColors.size()) * sizeof(float) +
+      uint64_t(hs.pointOrder.size()) * sizeof(int) +
+      uint64_t(hs.pointBvh.size()) * sizeof(Node) +
+      uint64_t(hs.pointChunks.size()) * sizeof(PointBvhChunk);
+  uint64_t gaussianBudget = 0;
+  if (const char* value = std::getenv("TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB")) {
+    char* end = nullptr;
+    const unsigned long long mb = std::strtoull(value, &end, 10);
+    if (value[0] != '\0' && end != value && *end == '\0' && mb > 0 &&
+        mb <= (std::numeric_limits<uint64_t>::max)() / (1024ull * 1024ull))
+      gaussianBudget = mb * 1024ull * 1024ull;
+  }
+  if (gaussianBudget == 0 && hipMemGetInfo) {
+    size_t freeBytes = 0, totalBytes = 0;
+    if (hipMemGetInfo(&freeBytes, &totalBytes) == hipSuccess) {
+      constexpr uint64_t kHeadroom = 256ull * 1024ull * 1024ull;
+      if (freeBytes > kHeadroom) gaussianBudget = freeBytes - kHeadroom;
+    }
+  }
+  if (gaussianBudget != 0 && gaussianBytes > gaussianBudget) {
+    if (err) {
+      *err = "HIP: Gaussian point buffers require " +
+             std::to_string(gaussianBytes) + " bytes, exceeding the available " +
+             std::to_string(gaussianBudget) +
+             " byte GPU budget; lower splat count/chunking or raise "
+             "TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB";
+    }
+    freeScene();
+    retained_.reset();
+    return false;
+  }
+  if (gaussianBytes > 0) {
+    std::fprintf(stderr, "HIP Gaussian buffers: %.1f MiB%s\n",
+                 double(gaussianBytes) / (1024.0 * 1024.0),
+                 gaussianBudget ? " (within GPU budget)" : "");
+  }
   pointCount_ = static_cast<int>(hs.pointCount);
 
   if (progress) { progress->phase = 3; progress->done = 0; progress->total = 0; }  // upload

@@ -2016,6 +2016,10 @@ is flushed at `TUSDR_GPU_TRIANGLE_CHUNK`, preventing HIP/ROCm and D3D11 from
 retaining a single multi-million-triangle proxy for a large field. Gaussian
 fallback chunks omit redundant per-vertex normals and dummy UVs; the GPU
 flattener recomputes geometric normals from the retained positions.
+The native HIP/AMD path also preflights the complete Gaussian buffer footprint
+against `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB` or live `hipMemGetInfo` free memory
+(with 256 MiB headroom), reporting a bounded error before partial device upload
+when the field cannot fit.
 
 Chunk vertex remapping is sparse and chunk-local rather than an array indexed by
 the source mesh's full vertex count. A small GPU chunk therefore no longer
