@@ -942,6 +942,20 @@ int main() {
     std::fprintf(stderr, "shared RT unused-texture compaction is incorrect\n");
     return 1;
   }
+  tusdview::DrawMaterialCPU duplicateMaterial = mipMaterial;
+  duplicateMaterial.baseColorTex = 1;
+  tusdview::HostTextureTable dedupTable;
+  tusdview::BuildHostTextureTable({mipTexture, mipTexture},
+                                  {mipMaterial, duplicateMaterial},
+                                  &dedupTable);
+  if (dedupTable.textures.size() != 3 || dedupTable.texels.size() != 84 ||
+      dedupTable.sourceToTable.size() != 2 ||
+      dedupTable.sourceToTable[0] != 0 || dedupTable.sourceToTable[1] != 0 ||
+      dedupTable.matTex.size() < 2 * tusdview::kRtMaterialTexSlots ||
+      dedupTable.matTex[tusdview::kRtMaterialTexSlots] != 0) {
+    std::fprintf(stderr, "shared RT identical-texture deduplication is incorrect\n");
+    return 1;
+  }
   tusdview::DrawTextureCPU udimTexture;
   udimTexture.isUdim = true;
   tusdview::DrawUdimTileCPU tile;
