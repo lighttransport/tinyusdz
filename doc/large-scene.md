@@ -1888,6 +1888,12 @@ individually, while the progressive scene retains only dimensions, transforms,
 and bounds. The queue byte limit includes the float density payload, and a
 cancelled volume event aborts conversion without leaving later grids resident.
 
+DomeLight HDR conversion is also capped by the texture max-edge policy (or a
+4K preview fallback when no edge is configured). Source pixels are sampled into
+the bounded RGB staging image and released before cube/prefilter allocation, so
+an oversized HDR does not create a full-resolution float-RGB duplicate beside
+the IBL baker's working buffers.
+
 Non-instanced round and flat curve strands use bounded native BVHs as well.
 Curve points are read through the lazy array-view path, and complete strands are
 packed into chunks instead of duplicating the full source array for each BVH.

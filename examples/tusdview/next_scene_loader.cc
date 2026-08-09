@@ -4477,47 +4477,87 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
           auto res = tinyusdz::image::LoadImageFromFile(tpath);
           if (res) {
             const tinyusdz::Image& img = res.value().image;
-            const size_t npix =
-                static_cast<size_t>(img.width) * static_cast<size_t>(img.height);
             const int ch = img.channels;
             if (img.width > 0 && img.height > 0 && ch >= 1) {
-              rgb.resize(npix * 3);
-              bool decoded = true;
-              if (img.format == tinyusdz::Image::PixelFormat::Float &&
-                  img.bpp == 32) {
-                const float* px = reinterpret_cast<const float*>(img.data.data());
-                for (size_t i = 0; i < npix; ++i) {
-                  const float c0 = px[i * ch + 0];
-                  rgb[i * 3 + 0] = c0;
-                  rgb[i * 3 + 1] = ch > 1 ? px[i * ch + 1] : c0;
-                  rgb[i * 3 + 2] = ch > 2 ? px[i * ch + 2] : c0;
+              // Do not expand a very large HDR source into a same-resolution
+              // float-RGB staging buffer. The image loader has already decoded
+              // the source bytes, but this resampling keeps the additional
+              // conversion allocation bounded by the texture policy (and a
+              // conservative preview cap when no policy was supplied).
+              const int envMaxEdge = texOpts.maxTextureSize > 0
+                                         ? texOpts.maxTextureSize
+                                         : 4096;
+              const float envScale =
+                  std::min(1.0f, static_cast<float>(envMaxEdge) /
+                                     static_cast<float>(std::max(img.width,
+                                                                  img.height)));
+              const int sampleW = std::max(
+                  1, static_cast<int>(std::floor(img.width * envScale)));
+              const int sampleH = std::max(
+                  1, static_cast<int>(std::floor(img.height * envScale)));
+              const size_t srcPixels = static_cast<size_t>(img.width) *
+                                       static_cast<size_t>(img.height);
+              const size_t bytesPerChannel = img.bpp == 32 ? 4u :
+                                             img.bpp == 16 ? 2u :
+                                             img.bpp == 8 ? 1u : 0u;
+              const bool supported = bytesPerChannel != 0 &&
+                  srcPixels <= (std::numeric_limits<size_t>::max)() /
+                                  (static_cast<size_t>(ch) * bytesPerChannel) &&
+                  img.data.size() >= srcPixels * static_cast<size_t>(ch) *
+                                      bytesPerChannel;
+              rgb.resize(static_cast<size_t>(sampleW) *
+                         static_cast<size_t>(sampleH) * 3u);
+              auto readChannel = [&](int x, int y, int c) -> float {
+                const size_t index =
+                    (static_cast<size_t>(y) * static_cast<size_t>(img.width) +
+                     static_cast<size_t>(x)) * static_cast<size_t>(ch) +
+                    static_cast<size_t>(std::min(c, ch - 1));
+                if (img.bpp == 32) {
+                  const float* px =
+                      reinterpret_cast<const float*>(img.data.data());
+                  return px[index];
                 }
-              } else if (img.format == tinyusdz::Image::PixelFormat::Float &&
-                         img.bpp == 16) {
-                const uint16_t* px =
-                    reinterpret_cast<const uint16_t*>(img.data.data());
-                for (size_t i = 0; i < npix; ++i) {
-                  const float c0 = NextHalfToFloat(px[i * ch + 0]);
-                  rgb[i * 3 + 0] = c0;
-                  rgb[i * 3 + 1] = ch > 1 ? NextHalfToFloat(px[i * ch + 1]) : c0;
-                  rgb[i * 3 + 2] = ch > 2 ? NextHalfToFloat(px[i * ch + 2]) : c0;
+                if (img.bpp == 16) {
+                  const uint16_t* px =
+                      reinterpret_cast<const uint16_t*>(img.data.data());
+                  return NextHalfToFloat(px[index]);
                 }
-              } else if (img.bpp == 8) {
-                const uint8_t* px = img.data.data();
-                for (size_t i = 0; i < npix; ++i) {
-                  const float c0 = static_cast<float>(px[i * ch + 0]) / 255.0f;
-                  rgb[i * 3 + 0] = c0;
-                  rgb[i * 3 + 1] =
-                      ch > 1 ? static_cast<float>(px[i * ch + 1]) / 255.0f : c0;
-                  rgb[i * 3 + 2] =
-                      ch > 2 ? static_cast<float>(px[i * ch + 2]) / 255.0f : c0;
-                }
-              } else {
-                decoded = false;
-              }
+                return static_cast<float>(img.data[index]) / 255.0f;
+              };
+              bool decoded = supported;
               if (decoded) {
-                ew = img.width;
-                eh = img.height;
+                for (int y = 0; y < sampleH; ++y) {
+                  const int sy = std::min(
+                      img.height - 1,
+                      static_cast<int>((static_cast<int64_t>(y) * img.height) /
+                                       sampleH));
+                  for (int x = 0; x < sampleW; ++x) {
+                    const int sx = std::min(
+                        img.width - 1,
+                        static_cast<int>((static_cast<int64_t>(x) * img.width) /
+                                         sampleW));
+                    const size_t dst =
+                        (static_cast<size_t>(y) * static_cast<size_t>(sampleW) +
+                         static_cast<size_t>(x)) * 3u;
+                    const float c0 = readChannel(sx, sy, 0);
+                    rgb[dst + 0] = c0;
+                    rgb[dst + 1] = ch > 1 ? readChannel(sx, sy, 1) : c0;
+                    rgb[dst + 2] = ch > 2 ? readChannel(sx, sy, 2) : c0;
+                  }
+                }
+              }
+              if (sampleW != img.width || sampleH != img.height) {
+                fprintf(stderr,
+                        "[tusdview] dome envmap downsampled (next): %dx%d -> %dx%d\n",
+                        img.width, img.height, sampleW, sampleH);
+              }
+              // Release the decoder's large source allocation before the IBL
+              // baker creates its cube/prefilter staging buffers.
+              res.value().image.data.clear();
+              res.value().image.data.shrink_to_fit();
+              ew = sampleW;
+              eh = sampleH;
+              if (decoded) {
                 if (light.domeTextureFormat ==
                         DrawLightCPU::DomeTextureFormat::MirroredBall ||
                     light.domeTextureFormat ==
