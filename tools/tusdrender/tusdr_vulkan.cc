@@ -367,6 +367,10 @@ bool RunVulkanGaussianLightRT(const Options &opt, DirectScene *direct,
   std::vector<lrt_hit> chunk_hits(nrays);
   size_t released_chunks = 0;
   for (EllipseSceneChunk &chunk : direct->ellipse_chunks) {
+    if (!BuildDeferredGaussianChunk(opt, &chunk)) {
+      lrt_vk_engine_destroy(vk);
+      return false;
+    }
     int traced = lrt_vk_trace_scene(vk, chunk.scene.get(), rays.data(),
                                     uint32_t(nrays), chunk_hits.data(), &err);
     if (traced < 0) {

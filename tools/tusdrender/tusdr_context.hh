@@ -323,7 +323,13 @@ bool LoadProgress(float progress, void *);
 bool BuildRenderContext(const Options &opt, RenderContext &ctx);
 bool ExtractAndBuildBVH(RenderContext &ctx, double time);
 bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
-                               RenderContext &ctx, double time);
+                               RenderContext &ctx, double time,
+                               bool defer_gpu_bvh = false);
+
+// Materialize one deferred Gaussian chunk immediately before a GPU trace.
+// The input arrays are released after the LightRT scene builds its acceleration
+// data, keeping only one CPU BVH and one input chunk live.
+bool BuildDeferredGaussianChunk(const Options &opt, EllipseSceneChunk *chunk);
 void PrintRTStats(const RenderContext &ctx);
 double RenderFrameTo(RenderContext &ctx, const std::string &path);
 void ResolveCameraNext(RenderContext &ctx);

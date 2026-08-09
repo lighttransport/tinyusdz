@@ -1540,7 +1540,8 @@ int main(int argc, char **argv) {
     if (gpu_backend && (opt.vulkan || opt.hip) && geos.empty() &&
         !has_other_native_carrier) {
       native_gaussian =
-          BuildNextGaussianEllipses(stage, gaussian_ctx, opt.timecode) &&
+          BuildNextGaussianEllipses(stage, gaussian_ctx, opt.timecode,
+                                    /*defer_gpu_bvh=*/true) &&
           gaussian_ctx.direct.has_ellipses();
     }
     if (gpu_backend && !native_gaussian) {

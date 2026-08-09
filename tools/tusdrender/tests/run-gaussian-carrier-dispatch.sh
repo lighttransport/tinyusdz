@@ -18,7 +18,9 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 run() {
-  "$TUSDRENDER" "$1" "$2" -vkr -w 32 -height 32 -autoframe -stats \
+  # Force one splat per chunk so the regression covers deferred GPU BVH
+  # materialization and release, rather than only the single-chunk fast path.
+  TUSDR_GAUSSIAN_CHUNK=1 "$TUSDRENDER" "$1" "$2" -vkr -w 32 -height 32 -autoframe -stats \
     >"$3" 2>&1
 }
 
@@ -34,7 +36,7 @@ if [ "$?" -ne 0 ]; then
   echo "FAIL: pure Gaussian Vulkan render failed"
   exit 1
 fi
-if ! grep -q "native Gaussian ellipses: 2 in 1 Vulkan chunk(s)" "$TMP/pure.log"; then
+if ! grep -q "native Gaussian ellipses: 2 in 2 Vulkan chunk(s)" "$TMP/pure.log"; then
   cat "$TMP/pure.log"
   echo "FAIL: pure Gaussian scene did not use native Vulkan ellipses"
   exit 1
@@ -53,7 +55,7 @@ if ! grep -q "triangles: 144" "$TMP/mixed.log"; then
   exit 1
 fi
 
-"$TUSDRENDER" "$REPO_ROOT/tests/usda/tusdview-gaussian-splat.usda" \
+TUSDR_GAUSSIAN_CHUNK=1 "$TUSDRENDER" "$REPO_ROOT/tests/usda/tusdview-gaussian-splat.usda" \
   "$TMP/pure-hip.png" -hip -w 32 -height 32 -autoframe -stats \
   >"$TMP/pure-hip.log" 2>&1
 if [ "$?" -ne 0 ]; then
@@ -71,7 +73,7 @@ if [ "$?" -ne 0 ]; then
     exit 1
   fi
 else
-  if ! grep -q "native Gaussian ellipses: 2 in 1 HIP chunk(s)" "$TMP/pure-hip.log"; then
+  if ! grep -q "native Gaussian ellipses: 2 in 2 HIP chunk(s)" "$TMP/pure-hip.log"; then
     cat "$TMP/pure-hip.log"
     echo "FAIL: pure Gaussian HIP scene did not use native ellipses"
     exit 1

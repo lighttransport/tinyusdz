@@ -3410,7 +3410,8 @@ bool BuildNextFlatCurveBounds(
 // albedo; opacity is folded into it until the integrator grows true
 // front-to-back splat compositing.
 bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
-                               RenderContext &ctx, double time) {
+                               RenderContext &ctx, double time,
+                               bool defer_gpu_bvh) {
   std::vector<float> centers;
   std::vector<float> radii;
   std::vector<float> normals;
@@ -3439,20 +3440,27 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
   auto flush_chunk = [&]() -> bool {
     const size_t count = centers.size() / 3;
     if (count == 0) return true;
-    lrt_result e = LRT_RESULT_OK;
     EllipseSceneChunk chunk;
     chunk.first = total_count;
     chunk.count = count;
     chunk.info = std::move(chunk_info);
-    chunk.scene.reset(lrt_ellipse_scene_build_oriented(
-        centers.data(), radii.data(), normals.data(), major_axes.data(), count,
-        &opts, &e));
-    if (!chunk.scene) {
-      std::cerr << "Failed to build LightRT Gaussian ellipse chunk ["
-                << chunk.first << ", " << (chunk.first + count)
-                << "] (err=" << int(e)
-                << "). Try -maxMem, -mask, or TUSDR_GAUSSIAN_CHUNK.\n";
-      return false;
+    if (defer_gpu_bvh) {
+      chunk.centers = std::move(centers);
+      chunk.radii = std::move(radii);
+      chunk.normals = std::move(normals);
+      chunk.major_axes = std::move(major_axes);
+    } else {
+      lrt_result e = LRT_RESULT_OK;
+      chunk.scene.reset(lrt_ellipse_scene_build_oriented(
+          centers.data(), radii.data(), normals.data(), major_axes.data(), count,
+          &opts, &e));
+      if (!chunk.scene) {
+        std::cerr << "Failed to build LightRT Gaussian ellipse chunk ["
+                  << chunk.first << ", " << (chunk.first + count)
+                  << "] (err=" << int(e)
+                  << "). Try -maxMem, -mask, or TUSDR_GAUSSIAN_CHUNK.\n";
+        return false;
+      }
     }
     ctx.direct.ellipse_chunks.push_back(std::move(chunk));
     centers.clear();
@@ -3573,6 +3581,44 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
             << " in " << ctx.direct.ellipse_chunks.size() << " chunk(s)";
   if (budget != 0) std::cerr << " / " << count_seen << " budgeted";
   std::cerr << "\n";
+  return true;
+}
+
+bool BuildDeferredGaussianChunk(const Options &opt, EllipseSceneChunk *chunk) {
+  if (!chunk || chunk->scene || chunk->count == 0 ||
+      chunk->centers.size() != chunk->count * 3u ||
+      chunk->radii.size() != chunk->count * 2u ||
+      chunk->normals.size() != chunk->count * 3u ||
+      chunk->major_axes.size() != chunk->count * 3u) {
+    if (chunk && chunk->scene) return true;
+    std::cerr << "Invalid deferred Gaussian ellipse chunk";
+    if (chunk) {
+      std::cerr << " [" << chunk->first << ", "
+                << (chunk->first + chunk->count) << "]";
+    }
+    std::cerr << ".\n";
+    return false;
+  }
+  lrt_tri_build_options opts;
+  std::memset(&opts, 0, sizeof(opts));
+  opts.quality = opt.quality;
+  opts.layout = LRT_TRI_LAYOUT_AUTO;
+  opts.num_threads = WorkerThreadCount(opt.threads);
+  lrt_result e = LRT_RESULT_OK;
+  chunk->scene.reset(lrt_ellipse_scene_build_oriented(
+      chunk->centers.data(), chunk->radii.data(), chunk->normals.data(),
+      chunk->major_axes.data(), chunk->count, &opts, &e));
+  if (!chunk->scene) {
+    std::cerr << "Failed to build LightRT deferred Gaussian ellipse chunk ["
+              << chunk->first << ", " << (chunk->first + chunk->count)
+              << "] (err=" << int(e)
+              << "). Try -maxMem, -mask, or TUSDR_GAUSSIAN_CHUNK.\n";
+    return false;
+  }
+  std::vector<float>().swap(chunk->centers);
+  std::vector<float>().swap(chunk->radii);
+  std::vector<float>().swap(chunk->normals);
+  std::vector<float>().swap(chunk->major_axes);
   return true;
 }
 

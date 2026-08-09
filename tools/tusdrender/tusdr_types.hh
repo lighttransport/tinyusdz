@@ -660,6 +660,13 @@ struct TetPrim {
 struct EllipseSceneChunk {
   std::unique_ptr<lrt_tri_scene, void (*)(lrt_tri_scene *)> scene{nullptr,
                                                                   lrt_tri_scene_free};
+  // Deferred GPU path input. Vulkan/HIP only need one ellipse BVH resident at a
+  // time; retaining these compact arrays lets those backends build and release
+  // each chunk during tracing instead of retaining every CPU BVH from load.
+  std::vector<float> centers;
+  std::vector<float> radii;
+  std::vector<float> normals;
+  std::vector<float> major_axes;
   // Hit metadata is local to this scene: LightRT primitive ids are chunk-local.
   // Keeping it here avoids retaining a second scene-wide metadata stream.
   std::vector<TriInfo> info;
