@@ -1599,6 +1599,84 @@ void AppendLinearCurveStrands(const float *points, size_t point_count,
   }
 }
 
+void AppendHermiteCurveStrands(const float *points, const float *tangents,
+                               size_t point_count,
+                               const std::vector<int> &counts,
+                               const std::vector<float> &widths,
+                               unsigned tessellation_segments,
+                               const matrix4d &world,
+                               std::vector<float> *curve_points,
+                               std::vector<float> *curve_radii,
+                               std::vector<uint32_t> *first,
+                               std::vector<uint32_t> *count,
+                               std::vector<TriInfo> *info,
+                               Bounds *bounds) {
+  if (!points || !tangents || point_count == 0 || !curve_points ||
+      !curve_radii || !first || !count) {
+    return;
+  }
+  const unsigned samples = std::max(1u, tessellation_segments);
+  size_t cursor = 0;
+  auto width_at = [&](size_t index) {
+    return index < widths.size() ? widths[index] : 0.01f;
+  };
+  auto append_sample = [&](const float p[3], float width) {
+    const Vec3 world_p = TransformPoint(world, Vec3{p[0], p[1], p[2]});
+    curve_points->insert(curve_points->end(), {world_p.x, world_p.y, world_p.z});
+    curve_radii->push_back(std::max(1.0e-5f,
+                                    0.5f * width * ApproxScale(world)));
+    Expand(bounds, world_p);
+  };
+  for (int c : counts) {
+    if (c < 2 || cursor + size_t(c) > point_count) {
+      cursor += size_t(std::max(0, c));
+      continue;
+    }
+    first->push_back(uint32_t(curve_points->size() / 3));
+    count->push_back(uint32_t((size_t(c) - 1) * samples + 1));
+    for (int span = 0; span + 1 < c; ++span) {
+      const size_t i0 = cursor + size_t(span);
+      const size_t i1 = i0 + 1;
+      const float *p0 = points + i0 * 3;
+      const float *p1 = points + i1 * 3;
+      const float *m0 = tangents + i0 * 3;
+      const float *m1 = tangents + i1 * 3;
+      for (unsigned sample = 0; sample < samples; ++sample) {
+        const float t = float(sample) / float(samples);
+        const float t2 = t * t;
+        const float t3 = t2 * t;
+        const float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+        const float h10 = t3 - 2.0f * t2 + t;
+        const float h01 = -2.0f * t3 + 3.0f * t2;
+        const float h11 = t3 - t2;
+        float p[3];
+        for (int k = 0; k < 3; ++k)
+          p[k] = h00 * p0[k] + h10 * m0[k] + h01 * p1[k] + h11 * m1[k];
+        append_sample(p, width_at(i0) +
+                             (width_at(i1) - width_at(i0)) * t);
+      }
+    }
+    const size_t last = cursor + size_t(c) - 1;
+    append_sample(points + last * 3, width_at(last));
+    if (info) {
+      const size_t base = size_t(first->back());
+      for (size_t i = 0; i + 1 < size_t(count->back()); ++i) {
+        TriInfo ti;
+        ti.p0 = Vec3{(*curve_points)[(base + i) * 3 + 0],
+                     (*curve_points)[(base + i) * 3 + 1],
+                     (*curve_points)[(base + i) * 3 + 2]};
+        ti.p1 = Vec3{(*curve_points)[(base + i + 1) * 3 + 0],
+                     (*curve_points)[(base + i + 1) * 3 + 1],
+                     (*curve_points)[(base + i + 1) * 3 + 2]};
+        ti.p2 = Add(ti.p0, Vec3{0.0f, 1.0f, 0.0f});
+        ti.base_color = kCurveColor;
+        info->push_back(ti);
+      }
+    }
+    cursor += size_t(c);
+  }
+}
+
 void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
                          const std::unordered_map<std::string, matrix4d> &matrices,
                          double time, DirectScene *direct,

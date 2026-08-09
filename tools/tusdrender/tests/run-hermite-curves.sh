@@ -16,7 +16,15 @@ fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-"$TUSDRENDER" "$ASSET" "$TMP/curves.png" -vkr -w 32 -height 32 \
+TUSDR_HERMITE_SEGMENTS=8 "$TUSDRENDER" "$ASSET" "$TMP/curves-cpu.png" \
+  -rtPreview -w 32 -height 32 -autoframe -stats >"$TMP/curves-cpu.log" 2>&1
+if [ "$?" -ne 0 ] || ! grep -q "rt native curve chunks: round 3 (22 segments)" \
+    "$TMP/curves-cpu.log"; then
+  cat "$TMP/curves-cpu.log"
+  echo "FAIL: Hermite tangents were not tessellated in the CPU next path"
+  exit 1
+fi
+TUSDR_HERMITE_SEGMENTS=8 "$TUSDRENDER" "$ASSET" "$TMP/curves.png" -vkr -w 32 -height 32 \
   -autoframe -stats >"$TMP/curves.log" 2>&1
 rc=$?
 if [ "$rc" -ne 0 ]; then
@@ -30,7 +38,7 @@ if [ "$rc" -ne 0 ]; then
   exit 1
 fi
 if ! grep -q "native curves: round 3 chunk(s)" "$TMP/curves.log" ||
-   ! grep -q "triangles: 192" "$TMP/curves.log"; then
+   ! grep -q "triangles: 360" "$TMP/curves.log"; then
   cat "$TMP/curves.log"
   echo "FAIL: HermiteCurves were not retained in the Vulkan curve path"
   exit 1
