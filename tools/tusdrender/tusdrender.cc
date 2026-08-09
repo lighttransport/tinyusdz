@@ -277,10 +277,23 @@ void CollectGpuPointsRec(
     }
     const size_t sh_stride = (have_sh && count) ? (sh.size() / 3) / count : 0;
     std::array<RTPreviewStats::MeshGeometry, 64> batches;
-    std::array<size_t, 64> batch_triangles{};
     const size_t batch_limit = GpuTriangleChunkLimit();
     const size_t gaussian_geo_first = geos->size();
     size_t gaussian_triangles = 0;
+    size_t pending_triangles = 0;
+    auto flush_splat_batches = [&]() {
+      for (size_t bi = 0; bi < batches.size(); ++bi) {
+        if (batches[bi].indices.empty()) continue;
+        const int br = int((bi >> 4) & 3), bg = int((bi >> 2) & 3),
+                  bb = int(bi & 3);
+        base_colors->push_back(Vec3{(float(br) + 0.5f) * 0.25f,
+                                    (float(bg) + 0.5f) * 0.25f,
+                                    (float(bb) + 0.5f) * 0.25f});
+        geos->push_back(std::move(batches[bi]));
+        batches[bi] = RTPreviewStats::MeshGeometry{};
+      }
+      pending_triangles = 0;
+    };
     const float wx = Length(TransformVector(world, Vec3{1.0f, 0.0f, 0.0f}));
     const float wy = Length(TransformVector(world, Vec3{0.0f, 1.0f, 0.0f}));
     for (size_t i = 0; i < limit; ++i) {
@@ -334,33 +347,25 @@ void CollectGpuPointsRec(
       const int cb = std::min(3, std::max(0, int(color.z * 4.0f)));
       const int bucket = (cr << 4) | (cg << 2) | cb;
       // Four segments per side keeps each splat inexpensive; flush the bucket
-      // before it can grow beyond the same bounded upload budget used by the
-      // ordinary point and curve fallbacks.
+      // set when the GLOBAL pending budget is full.  A per-bucket cap would
+      // allow 64 buckets to retain 64 upload batches simultaneously.
       constexpr size_t kSplatTriangles = 8;
-      if (batch_triangles[size_t(bucket)] != 0 &&
-          batch_triangles[size_t(bucket)] + kSplatTriangles > batch_limit) {
-        base_colors->push_back(Vec3{(float(cr) + 0.5f) * 0.25f,
-                                    (float(cg) + 0.5f) * 0.25f,
-                                    (float(cb) + 0.5f) * 0.25f});
-        geos->push_back(std::move(batches[size_t(bucket)]));
-        batches[size_t(bucket)] = RTPreviewStats::MeshGeometry{};
-        batch_triangles[size_t(bucket)] = 0;
+      if (pending_triangles != 0 &&
+          pending_triangles + kSplatTriangles > batch_limit)
+        flush_splat_batches();
+      // A limit below one splat still has to admit the indivisible carrier.
+      // The downstream chunker will split the resulting mesh if necessary.
+      if (batch_limit == 0) {
+        std::cerr << "Invalid zero GPU triangle chunk limit.\n";
+        break;
       }
       AppendGpuEllipseToGeometry(p, normal, rx, ry, &major_axis, 4,
                                  &batches[size_t(bucket)],
                                  /*emit_attributes=*/false);
-      batch_triangles[size_t(bucket)] += kSplatTriangles;
+      pending_triangles += kSplatTriangles;
       gaussian_triangles += kSplatTriangles;
     }
-    for (size_t i = 0; i < batches.size(); ++i) {
-      const auto &batch = batches[i];
-      if (batch.indices.empty()) continue;
-      const int cr = int((i >> 4) & 3), cg = int((i >> 2) & 3), cb = int(i & 3);
-      base_colors->push_back(Vec3{(float(cr) + 0.5f) * 0.25f,
-                                  (float(cg) + 0.5f) * 0.25f,
-                                  (float(cb) + 0.5f) * 0.25f});
-      geos->push_back(std::move(batches[i]));
-    }
+    flush_splat_batches();
     std::cerr << "[gpu] gaussian splats: " << limit;
     if (limit != count) std::cerr << " / " << count << " (budgeted)";
     std::cerr << ", tessellated triangles: " << gaussian_triangles

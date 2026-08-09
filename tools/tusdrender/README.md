@@ -64,8 +64,9 @@ retaining a CPU BVH for every chunk during load and bounds the acceleration
 structure working set to one chunk. The CPU path still builds its chunks during
 extraction. Pure Gaussian scenes use the native ellipse path on HIP/ROCm as
 well; mixed mesh+splat scenes (and D3D11) use the bounded tessellated fallback,
-with each SH/color bucket flushed at `TUSDR_GPU_TRIANGLE_CHUNK` rather than
-becoming one multi-million-triangle allocation.
+with SH/color buckets sharing one global `TUSDR_GPU_TRIANGLE_CHUNK` pending
+budget rather than each of the 64 quantized buckets becoming a separate
+multi-million-triangle allocation.
 
 For GPU mesh previews, next-loader traversal records are also collected and
 converted one stage root at a time. This keeps large instancer/job lists from
