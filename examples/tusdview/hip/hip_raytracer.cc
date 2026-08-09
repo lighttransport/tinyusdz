@@ -176,8 +176,31 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   // Upload every array to the device.
   auto up = [&](const void* host, size_t bytes, uintptr_t* dptr) -> bool {
     void* p = nullptr;
-    CU_OK(hipMalloc(&p, bytes ? bytes : 1), "hipMalloc");
-    if (bytes) CU_OK(hipMemcpyHtoD(p, host, bytes), "hipMemcpyHtoD");
+    const hipError_t alloc = hipMalloc(&p, bytes ? bytes : 1);
+    if (alloc != hipSuccess) {
+      const char* s = hipGetErrorString ? hipGetErrorString(alloc) : nullptr;
+      if (err) {
+        *err = "HIP scene upload allocation failed (" +
+               std::to_string(bytes) + " bytes): " + (s ? s : "error");
+      }
+      freeScene();
+      retained_.reset();
+      return false;
+    }
+    if (bytes) {
+      const hipError_t copy = hipMemcpyHtoD(p, host, bytes);
+      if (copy != hipSuccess) {
+        const char* s = hipGetErrorString ? hipGetErrorString(copy) : nullptr;
+        hipFree(p);
+        if (err) {
+          *err = "HIP scene upload copy failed (" + std::to_string(bytes) +
+                 " bytes): " + (s ? s : "error");
+        }
+        freeScene();
+        retained_.reset();
+        return false;
+      }
+    }
     *dptr = reinterpret_cast<uintptr_t>(p);
     return true;
   };
