@@ -642,6 +642,16 @@ void AppendLinearCurveStrands(const std::vector<tinyusdz::value::point3f> &point
                               std::vector<uint32_t> *count,
                               std::vector<TriInfo> *info,
                               Bounds *bounds);
+void AppendLinearCurveStrands(const float *points, size_t point_count,
+                              const std::vector<int> &counts,
+                              const std::vector<float> &widths,
+                              const matrix4d &world,
+                              std::vector<float> *curve_points,
+                              std::vector<float> *curve_radii,
+                              std::vector<uint32_t> *first,
+                              std::vector<uint32_t> *count,
+                              std::vector<TriInfo> *info,
+                              Bounds *bounds);
 void MergeStats(RTPreviewStats *dst, const RTPreviewStats &src);
 void MergeBounds(Bounds *dst, const Bounds &src);
 inline const Vec3 kCurveColor{0.62f, 0.50f, 0.34f};

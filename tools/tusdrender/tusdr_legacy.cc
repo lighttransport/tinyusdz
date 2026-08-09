@@ -1516,8 +1516,59 @@ void AppendLinearCurveStrands(const std::vector<tinyusdz::value::point3f> &point
     first->push_back(uint32_t(curve_points->size() / 3));
     count->push_back(uint32_t(c));
     for (int i = 0; i < c; i++) {
-      size_t idx = cursor + size_t(i);
+      const size_t idx = cursor + size_t(i);
       Vec3 p = TransformPoint(world, FromPoint3(points[idx]));
+      const float radius =
+          0.5f * ((idx < widths.size()) ? widths[idx] : 0.01f);
+      curve_points->insert(curve_points->end(), {p.x, p.y, p.z});
+      curve_radii->push_back(std::max(1.0e-5f, radius * ApproxScale(world)));
+      Expand(bounds, p);
+    }
+    if (info) {
+      for (int i = 0; i + 1 < c; i++) {
+        TriInfo ti;
+        const size_t point_base = size_t(first->back()) + size_t(i);
+        Vec3 p0{(*curve_points)[point_base * 3 + 0],
+                (*curve_points)[point_base * 3 + 1],
+                (*curve_points)[point_base * 3 + 2]};
+        Vec3 p1{(*curve_points)[(point_base + 1) * 3 + 0],
+                (*curve_points)[(point_base + 1) * 3 + 1],
+                (*curve_points)[(point_base + 1) * 3 + 2]};
+        ti.p0 = p0;
+        ti.p1 = p1;
+        ti.p2 = Add(p0, Vec3{0.0f, 1.0f, 0.0f});
+        ti.base_color = kCurveColor;
+        info->push_back(ti);
+      }
+    }
+    cursor += size_t(c);
+  }
+}
+
+void AppendLinearCurveStrands(const float *points, size_t point_count,
+                              const std::vector<int> &counts,
+                              const std::vector<float> &widths,
+                              const matrix4d &world,
+                              std::vector<float> *curve_points,
+                              std::vector<float> *curve_radii,
+                              std::vector<uint32_t> *first,
+                              std::vector<uint32_t> *count,
+                              std::vector<TriInfo> *info,
+                              Bounds *bounds) {
+  if (!points || point_count == 0) return;
+  size_t cursor = 0;
+  for (int c : counts) {
+    if (c < 2 || cursor + size_t(c) > point_count) {
+      cursor += size_t(std::max(0, c));
+      continue;
+    }
+    first->push_back(uint32_t(curve_points->size() / 3));
+    count->push_back(uint32_t(c));
+    for (int i = 0; i < c; i++) {
+      size_t idx = cursor + size_t(i);
+      Vec3 p = TransformPoint(
+          world, Vec3{points[idx * 3 + 0], points[idx * 3 + 1],
+                      points[idx * 3 + 2]});
       float radius = 0.5f * ((idx < widths.size()) ? widths[idx] : 0.01f);
       curve_points->insert(curve_points->end(), {p.x, p.y, p.z});
       curve_radii->push_back(std::max(1.0e-5f, radius * ApproxScale(world)));
