@@ -39,7 +39,10 @@ sample count and chunk count; a failed chunk reports its range and the tuning
 knob to reduce it.
 The transformed ellipse streams are flushed into LightRT as each chunk fills,
 so the loader does not accumulate a second full-size geometry copy before BVH
-construction.
+construction. On HIP/ROCm and D3D11, where the fallback is tessellated into
+triangles, each SH/color bucket is likewise flushed at
+`TUSDR_GPU_TRIANGLE_CHUNK` rather than becoming one multi-million-triangle
+allocation.
 
 The flat next-loader mesh path also splits its native LightRT triangle BVH when
 needed. `TUSDR_TRIANGLE_CHUNK=N` sets the triangle limit (default 262,144);
