@@ -822,7 +822,7 @@ tinyusdz::tydra::next::TextureDecoder &DecoderFor(TextureCache &tc) {
 // return the path untouched, preserving the previous behavior.
 std::string AnchorAssetNext(const tinyusdz::next::UsdPrim &prim,
                             const std::string &path) {
-  if (path.empty() || path[0] == '/' ||
+  if (path.empty() || tinyusdz::next::AssetResolver::IsAbsolutePath(path) ||
       path.find("://") != std::string::npos) {
     return path;
   }
@@ -2525,7 +2525,9 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
         if (const std::string *tk = fn->as_token()) fieldName = *tk;
       }
       std::string vpath = *ap;
-      if (!vpath.empty() && vpath[0] != '/' && !baseDir.empty()) {
+      if (!vpath.empty() &&
+          !tinyusdz::next::AssetResolver::IsAbsolutePath(vpath) &&
+          !baseDir.empty()) {
         vpath = baseDir + "/" + vpath;
       }
       std::vector<tinyusdz::usdVol::VDBGrid> grids;
@@ -4990,7 +4992,10 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
     env.pixels.assign(size_t(env.width) * size_t(env.height), scale);
   } else {
     std::string path = env_path;
-    if (path[0] != '/' && !base_dir.empty()) path = base_dir + "/" + path;
+    if (!tinyusdz::next::AssetResolver::IsAbsolutePath(path) &&
+        !base_dir.empty()) {
+      path = base_dir + "/" + path;
+    }
     if (!LoadEnvImageFromFile(path, scale, &env)) return false;
     env = RemapProbeToLatlong(std::move(env), probe_format);
   }

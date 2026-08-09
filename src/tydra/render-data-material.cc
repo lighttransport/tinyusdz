@@ -2641,8 +2641,18 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         };
 
         if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
+          // NOTE: this ~8-branch else-if chain on texImage.usdColorSpace was
+          // converted to standalone ifs -- same MSVC C1061 ("blocks nested
+          // too deeply") risk class already fixed for the same reason
+          // elsewhere in this codebase. colorspace_matched reproduces the
+          // original chain's "only report Unsupported when nothing matched"
+          // fallback semantics (the trailing PUSH_ERROR here does not
+          // return, unlike PUSH_ERROR_AND_RETURN inside the branches).
+          bool colorspace_matched = false;
+
           if (texImage.usdColorSpace == tydra::ColorSpace::sRGB ||
               texImage.usdColorSpace == tydra::ColorSpace::sRGB_Texture) {
+            colorspace_matched = true;
             if (env.material_config.preserve_texel_bitdepth) {
               imageBuffer.componentType = tydra::ComponentType::UInt8;
               bool ret = srgb_8bit_to_linear_8bit(
@@ -2662,9 +2672,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
               store_f32_buf(buf);
             }
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB ||
-                     texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec709) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB ||
+              texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec709) {
+            colorspace_matched = true;
             if (env.material_config.preserve_texel_bitdepth) {
               imageBuffer = std::move(assetImageBuffer);
             } else {
@@ -2673,8 +2684,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
               store_f32_buf(buf);
             }
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
+            colorspace_matched = true;
             // Raw data — no color conversion, just optional bit depth change
             if (env.material_config.preserve_texel_bitdepth) {
               imageBuffer = std::move(assetImageBuffer);
@@ -2684,9 +2696,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
               store_f32_buf(buf);
             }
             texImage.colorSpace = tydra::ColorSpace::Raw;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Custom &&
-                     texImage.colorTransformValid) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::Custom &&
+              texImage.colorTransformValid) {
+            colorspace_matched = true;
             std::vector<float> buf;
             if (!u8_data_to_f32_buf(buf)) return false;
             if (channels < 3) {
@@ -2711,8 +2724,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::g22_Rec709) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::g22_Rec709) {
+            colorspace_matched = true;
             // Gamma 2.2 u8 -> linear f32 (via gamma removal)
             std::vector<float> buf;
             if (!u8_data_to_f32_buf(buf)) return false;
@@ -2722,8 +2736,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::g18_Rec709) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::g18_Rec709) {
+            colorspace_matched = true;
             std::vector<float> buf;
             if (!u8_data_to_f32_buf(buf)) return false;
             std::vector<float> out_buf;
@@ -2732,8 +2747,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else {
+          }
+          if (!colorspace_matched) {
             PUSH_ERROR(fmt::format("Unsupported color space for u8 textures: {}",
                                    to_string(texImage.usdColorSpace)));
           }
@@ -2742,8 +2757,13 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           std::vector<float> in_buf;
           asset_data_to_f32_buf(in_buf);
 
+          // NOTE: same standalone-if / colorspace_matched conversion as the
+          // UInt8 branch above (MSVC C1061 risk); see the comment there.
+          bool colorspace_matched = false;
+
           if (texImage.usdColorSpace == tydra::ColorSpace::sRGB ||
               texImage.usdColorSpace == tydra::ColorSpace::sRGB_Texture) {
+            colorspace_matched = true;
             std::vector<float> out_buf(in_buf.size());
             float scale_factor = 1.0f, bias = 0.0f;
             float alpha_scale_factor = 1.0f, alpha_bias = 0.0f;
@@ -2754,18 +2774,21 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB ||
-                     texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec709) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB ||
+              texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec709) {
+            colorspace_matched = true;
             imageBuffer = std::move(assetImageBuffer);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
+            colorspace_matched = true;
             imageBuffer = std::move(assetImageBuffer);
             texImage.colorSpace = tydra::ColorSpace::Raw;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Custom &&
-                     texImage.colorTransformValid) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::Custom &&
+              texImage.colorTransformValid) {
+            colorspace_matched = true;
             if (channels < 3) {
               PUSH_ERROR_AND_RETURN(
                   "Custom color-space texture requires at least 3 channels.");
@@ -2788,8 +2811,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(in_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_ACEScg) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::Lin_ACEScg) {
+            colorspace_matched = true;
             // ACEScg (AP1 linear) -> linear sRGB
             std::vector<float> out_buf;
             if (!ACEScg_to_linear_sRGB(in_buf, width, height, channels,
@@ -2798,8 +2822,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::ACES2065_1) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::ACES2065_1) {
+            colorspace_matched = true;
             // ACES 2065-1 (AP0 linear) -> linear sRGB
             std::vector<float> out_buf;
             if (!ACES2065_1_to_linear_sRGB(in_buf, width, height, channels,
@@ -2808,8 +2833,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_DisplayP3) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::Lin_DisplayP3) {
+            colorspace_matched = true;
             // Linear Display P3 -> linear sRGB
             std::vector<float> out_buf;
             if (!linear_displayp3_to_linear_sRGB(in_buf, width, height, channels,
@@ -2818,8 +2844,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::sRGB_DisplayP3) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::sRGB_DisplayP3) {
+            colorspace_matched = true;
             // sRGB DisplayP3: first sRGB EOTF, then DisplayP3 -> sRGB gamut
             std::vector<float> linear_p3(in_buf.size());
             float sf = 1.0f, b = 0.0f, asf = 1.0f, ab = 0.0f;
@@ -2834,8 +2861,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec2020) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec2020) {
+            colorspace_matched = true;
             std::vector<float> out_buf;
             if (!linear_rec2020_to_linear_sRGB(in_buf, width, height, channels,
                                                &out_buf, &_err)) {
@@ -2843,8 +2871,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::g22_Rec709) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::g22_Rec709) {
+            colorspace_matched = true;
             std::vector<float> out_buf;
             if (!gamma22_f32_to_linear_f32(in_buf, width, height, channels, channels,
                                            &out_buf, &_err)) {
@@ -2852,8 +2881,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::g18_Rec709) {
+          }
+          if (texImage.usdColorSpace == tydra::ColorSpace::g18_Rec709) {
+            colorspace_matched = true;
             std::vector<float> out_buf;
             if (!gamma18_f32_to_linear_f32(in_buf, width, height, channels, channels,
                                            &out_buf, &_err)) {
@@ -2861,8 +2891,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
-
-          } else {
+          }
+          if (!colorspace_matched) {
             PUSH_ERROR(fmt::format("Unsupported color space for f32 textures: {}",
                                    to_string(texImage.usdColorSpace)));
           }

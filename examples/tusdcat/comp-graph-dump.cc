@@ -28,7 +28,7 @@ static std::string JoinPath(const std::string &base_dir, const std::string &rel)
 static std::string ResolveAssetPath(const std::string &source_file,
                                      const std::string &asset_path) {
   if (asset_path.empty()) return asset_path;
-  if (asset_path[0] == '/' || asset_path[0] == '~') return asset_path;
+  if (tinyusdz::io::IsAbsPath(asset_path) || asset_path[0] == '~') return asset_path;
   std::string base = tinyusdz::io::GetBaseDir(source_file);
   return JoinPath(base, asset_path);
 }
