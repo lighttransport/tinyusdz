@@ -3933,7 +3933,17 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
     t.base_color = kCurveColor;
     return t;
   }());
-  const size_t split_segments = extra_blas ? (size_t(1) << 20) : SIZE_MAX;
+  size_t split_segments = SIZE_MAX;
+  if (extra_blas) {
+    // Keep the larger historical prototype default, but let the same knob used
+    // by direct curves tighten prototype BLAS residency for constrained hosts.
+    split_segments = size_t(1) << 20;
+    if (const char *s = std::getenv("TUSDR_CURVE_CHUNK")) {
+      char *end = nullptr;
+      const unsigned long long n = std::strtoull(s, &end, 10);
+      if (end != s && n > 0) split_segments = static_cast<size_t>(n);
+    }
+  }
   std::vector<float> batch_points, batch_radii;
   std::vector<uint32_t> batch_first, batch_count;
   size_t batch_segments = 0;
