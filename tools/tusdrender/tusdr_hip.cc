@@ -78,7 +78,12 @@ bool RunHipLightRTChunked(
   std::vector<lrt_hit> hits(nrays), chunk_hits(nrays);
   InitMissHits(&hits);
   GpuTriScene shade;
-  shade.ntris = static_cast<uint32_t>(GpuTriangleCount(geos));
+  const size_t total_triangles = GpuTriangleCount(geos);
+  if (!ValidateGpuTriangleCount(total_triangles, "HIP")) {
+    lrt_hip_engine_destroy(hip);
+    return false;
+  }
+  shade.ntris = static_cast<uint32_t>(total_triangles);
   size_t mesh = 0, tri = 0, global_first = 0, chunk_count = 0;
   double flatten_s = 0.0, trace_s = 0.0;
   while (mesh < geos.size()) {

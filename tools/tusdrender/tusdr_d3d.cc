@@ -87,6 +87,20 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   std::vector<Vec3> tri_base_colors;
   std::vector<Vec3> tri_normals;
   size_t total_tris = 0;
+  size_t source_tris = 0;
+  for (const RTPreviewStats::MeshGeometry &geo : geos) {
+    const size_t n = geo.indices.size() / 3u;
+    if (source_tris > (std::numeric_limits<size_t>::max)() - n) {
+      std::cerr << "Direct3D 11 triangle count overflow while preparing chunks.\n";
+      lrt_d3d11_engine_destroy(dev);
+      return false;
+    }
+    source_tris += n;
+  }
+  if (!ValidateGpuTriangleCount(source_tris, "Direct3D 11")) {
+    lrt_d3d11_engine_destroy(dev);
+    return false;
+  }
   while (true) {
     size_t chunk_tris = 0;
     if (!BuildGpuTriChunk(base_colors, geos, chunk_limit, &mesh_index,

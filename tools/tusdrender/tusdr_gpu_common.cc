@@ -171,6 +171,14 @@ void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst) {
   }
 }
 
+bool ValidateGpuTriangleCount(size_t ntris, const char *backend) {
+  if (ntris <= size_t(std::numeric_limits<uint32_t>::max())) return true;
+  std::cerr << (backend ? backend : "GPU")
+            << " scene has " << ntris
+            << " triangles; 32-bit GPU hit IDs cannot represent this scene.\n";
+  return false;
+}
+
 bool BuildGpuTriChunk(
     const std::vector<Vec3> &base_colors,
     std::vector<RTPreviewStats::MeshGeometry> &geos, size_t limit,

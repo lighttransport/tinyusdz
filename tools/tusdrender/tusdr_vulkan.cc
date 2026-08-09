@@ -75,7 +75,12 @@ bool RunVulkanLightRTChunked(
     hit.prim_id = LRT_TRI_NO_HIT;
   }
   GpuTriScene shade;
-  shade.ntris = static_cast<uint32_t>(GpuTriangleCount(geos));
+  const size_t total_triangles = GpuTriangleCount(geos);
+  if (!ValidateGpuTriangleCount(total_triangles, "Vulkan")) {
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  shade.ntris = static_cast<uint32_t>(total_triangles);
   size_t mesh = 0, tri = 0, global_first = 0, chunk_count = 0;
   double flatten_s = 0.0, trace_s = 0.0, as_s = 0.0;
   bool used_hw_rt = false, fell_back = false;

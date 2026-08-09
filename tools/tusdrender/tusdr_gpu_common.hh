@@ -64,6 +64,10 @@ void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst);
 bool ValidateGpuFrameSize(int w, int h, int spp, const char *backend,
                           size_t *nrays);
 
+// GPU hit/material IDs are 32-bit. Reject an aggregate scene that would make
+// chunk hit offsets wrap before any backend allocation or trace dispatch.
+bool ValidateGpuTriangleCount(size_t ntris, const char *backend);
+
 // --- True two-level (instanced) GPU scene -----------------------------------
 //
 // For the -vkr two-level path: prototype geometry stored ONCE (object/prototype

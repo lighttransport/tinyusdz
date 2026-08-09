@@ -1900,6 +1900,9 @@ The Vulkan flat upload path independently bounds device residency with
 `TUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144). It uploads/traces one BLAS/AS
 at a time and reduces nearest hits before shading, so a large non-instanced
 scene does not require one monolithic 8-GiB GPU allocation.
+All GPU backends reject aggregate triangle counts above the 32-bit hit-ID
+limit before allocation, with an explicit diagnostic instead of truncating
+chunk offsets.
 
 For tusdview CUDA/HIP scene builds, `TUSDVIEW_RT_BUILD_THREADS=N` bounds
 geometry extraction concurrency (default `min(host_threads, 8)`). Assembly now
