@@ -1402,6 +1402,49 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   }
   out->numVols = static_cast<int>(out->volParams.size());
 
+  if (std::getenv("TUSDVIEW_RT_TIMING")) {
+    const auto bytes = [](size_t n, size_t element) { return n * element; };
+    const size_t geometryBytes =
+        bytes(out->tris.size() + out->nrms.size() + out->cols.size() +
+                  out->uv.size() + out->uv1.size() + out->infl.size() +
+                  out->domw.size(), sizeof(float)) +
+        bytes(out->geo.size(), sizeof(uint8_t));
+    const size_t bvhBytes =
+        bytes(out->blas.size() + out->tlas.size(), sizeof(Node)) +
+        bytes(out->instances.size(), sizeof(Inst));
+    const size_t pointBytes =
+        bytes(out->pointCenters.size() + out->pointMajorAxes.size() +
+                  out->pointNormals.size() + out->pointRadii.size() +
+                  out->pointColors.size(), sizeof(float)) +
+        bytes(out->pointOrder.size(), sizeof(int)) +
+        bytes(out->pointBvh.size(), sizeof(Node)) +
+        bytes(out->pointChunks.size(), sizeof(PointBvhChunk));
+    const size_t materialBytes =
+        bytes(out->mat.size() + out->backMat.size() + out->face.size() +
+                  out->domj.size() + out->matTex.size(), sizeof(int)) +
+        bytes(out->matTexParam.size() + out->matPbr.size() + out->matBase.size() +
+                  out->matLightRt.size() + out->lightParams.size(), sizeof(float));
+    const size_t textureBytes =
+        bytes(out->texels.size(), sizeof(uint8_t)) +
+        bytes(out->textures.size(), sizeof(HostTextureDesc));
+    const size_t volumeBytes =
+        bytes(out->volDens.size(), sizeof(float)) +
+        bytes(out->volParams.size(), sizeof(HostVolParam));
+    const size_t totalBytes = geometryBytes + bvhBytes + pointBytes +
+                              materialBytes + textureBytes + volumeBytes;
+    const auto mib = [](size_t n) {
+      return static_cast<double>(n) / (1024.0 * 1024.0);
+    };
+    std::fprintf(stderr,
+                 "[rt_scene_build] host residency: geometry %.1f MiB, "
+                 "bvh/instances %.1f MiB, analytic points %.1f MiB, "
+                 "materials %.1f MiB, textures %.1f MiB, volumes %.1f MiB, "
+                 "total %.1f MiB\n",
+                 mib(geometryBytes), mib(bvhBytes), mib(pointBytes),
+                 mib(materialBytes), mib(textureBytes), mib(volumeBytes),
+                 mib(totalBytes));
+  }
+
   // Per-material PBR scalars.
   auto tB = Clock::now();
   if (std::getenv("TUSDVIEW_RT_TIMING"))
