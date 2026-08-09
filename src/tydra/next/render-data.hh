@@ -396,6 +396,7 @@ struct RenderPoints {
   std::string prim_path;
 
   FloatChunked points;  // xyz interleaved, size = point_count * 3
+  FloatChunked normals; // optional per-point disk/oval normals
   FloatChunked widths;  // optional per-point or constant authored width
   FloatChunked colors;  // optional rgb displayColor data
   Interpolation colors_interp = Interpolation::Vertex;

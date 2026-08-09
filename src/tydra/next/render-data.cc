@@ -144,13 +144,14 @@ size_t RenderMesh::memory_usage() const {
 
 void RenderPoints::compact() {
   points.shrink_to_fit();
+  normals.shrink_to_fit();
   widths.shrink_to_fit();
   colors.shrink_to_fit();
   opacities.shrink_to_fit();
 }
 
 bool RenderPoints::has_alloc_failure() const {
-  return points.alloc_failed() || widths.alloc_failed() ||
+  return points.alloc_failed() || normals.alloc_failed() || widths.alloc_failed() ||
          colors.alloc_failed() || opacities.alloc_failed();
 }
 
@@ -159,6 +160,7 @@ size_t RenderPoints::memory_usage() const {
   total += name.capacity();
   total += prim_path.capacity();
   total += points.memory_usage();
+  total += normals.memory_usage();
   total += widths.memory_usage();
   total += colors.memory_usage();
   total += opacities.memory_usage();

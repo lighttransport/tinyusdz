@@ -5876,6 +5876,17 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
   out->prim_path = prim.GetPath().str();
   out->points.append(points.view.data, points.view.size);
 
+  if (!gaussian) {
+    ValueArrayRead<float> normals;
+    if (ReadFloatArray(prim, "normals", config_.time_code, &normals) &&
+        normals.view.size == out->point_count() * 3) {
+      out->normals.append(normals.view.data, normals.view.size);
+    } else if (normals.view.size != 0) {
+      warnings_.push_back("Points '" + out->prim_path +
+                          "': ignoring normals with mismatched element count");
+    }
+  }
+
   ValueArrayRead<float> widths;
   const bool have_widths = gaussian
       ? ReadFloatArray(prim, "scales", config_.time_code, &widths)
