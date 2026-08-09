@@ -746,6 +746,8 @@ struct RTPreviewStats {
   size_t nested_instances{0};  // extra placements from flattening nested instancing
   size_t curve_strands{0};     // top-level BasisCurves/NurbsCurves prims
   size_t curve_instances{0};   // instanced curve-prototype placements (TLAS)
+  size_t skipped_curves{0};    // curve prims rejected before LightRT build
+  size_t invalid_curve_data{0};  // point/count validation failures
   double build_seconds{0.0};
 };
 

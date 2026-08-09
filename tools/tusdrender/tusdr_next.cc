@@ -2996,11 +2996,34 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
   for (const CurveJobNext &job : jobs) {
     CurvePointViewNext point_source;
     if (!ReadCurvePointViewNext(job.prim, time, ctx.clip_stage_loader,
-                                &point_source))
+                                &point_source)) {
+      ++ctx.stats.skipped_curves;
+      ++ctx.stats.invalid_curve_data;
       continue;
+    }
     std::vector<int32_t> counts32 =
         ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
-    if (counts32.empty()) continue;
+    if (counts32.empty()) {
+      ++ctx.stats.skipped_curves;
+      ++ctx.stats.invalid_curve_data;
+      continue;
+    }
+    size_t total_points = 0;
+    bool counts_valid = true;
+    for (int32_t value : counts32) {
+      if (value < 2 || total_points >
+                           std::numeric_limits<size_t>::max() -
+                               static_cast<size_t>(value)) {
+        counts_valid = false;
+        break;
+      }
+      total_points += static_cast<size_t>(value);
+    }
+    if (!counts_valid || total_points != point_source.view.size() / 3) {
+      ++ctx.stats.skipped_curves;
+      ++ctx.stats.invalid_curve_data;
+      continue;
+    }
     std::vector<int> counts(counts32.begin(), counts32.end());
     std::vector<float> widths = ReadFloatArrayLazy(job.prim, "widths", time);
     const bool flat = job.prim.GetPropertyValue("normals") != nullptr;
@@ -3012,7 +3035,10 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
                              point_source.view.size() / 3, counts, widths,
                              job.world, &curve_points, &curve_radii,
                              &curve_first, &curve_count, info, &ctx.bounds);
-    if (curve_first.empty()) continue;
+    if (curve_first.empty()) {
+      ++ctx.stats.skipped_curves;
+      continue;
+    }
     if (!build_curve_chunks(
             curve_points, curve_radii, curve_first, curve_count,
             flat ? &ctx.direct.flat_curve_chunks
@@ -3024,6 +3050,9 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
     std::cerr << "native curves: round " << ctx.direct.round_curve_chunks.size()
               << " chunk(s), flat " << ctx.direct.flat_curve_chunks.size()
               << " chunk(s), segment limit " << chunk_segments << "\n";
+    if (ctx.stats.skipped_curves != 0)
+      std::cerr << "native curves skipped: " << ctx.stats.skipped_curves
+                << " (invalid data: " << ctx.stats.invalid_curve_data << ")\n";
   }
   return true;
 }
@@ -5548,6 +5577,9 @@ void PrintRTStats(const RenderContext &ctx) {
     std::cerr << "rt curve strands: " << ctx.stats.curve_strands << "\n";
   if (ctx.stats.curve_instances > 0)
     std::cerr << "rt curve instances: " << ctx.stats.curve_instances << "\n";
+  if (ctx.stats.skipped_curves > 0)
+    std::cerr << "rt skipped curves: " << ctx.stats.skipped_curves
+              << " (invalid data: " << ctx.stats.invalid_curve_data << ")\n";
   if (!ctx.direct.ellipse_info.empty())
     std::cerr << "rt native Gaussian ellipses: " << ctx.direct.ellipse_info.size()
               << "\n";
