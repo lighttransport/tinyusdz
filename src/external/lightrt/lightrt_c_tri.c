@@ -13229,10 +13229,11 @@ size_t lrt_tri_curve_tessellate_bound(const lrt_tri_scene *s, uint32_t nsides) {
     return (size_t)s->shade_nprims * nsides * 2u;
 }
 
-lrt_result lrt_tri_curve_tessellate(const lrt_tri_scene *s, uint32_t nsides,
-                                    float *pos, float *nrm, size_t cap,
-                                    size_t *ntris_out) {
-    if (ntris_out) *ntris_out = 0;
+static lrt_result lrt_tri_curve_tessellate_range_impl(
+    const lrt_tri_scene *s, uint32_t nsides, size_t first, float *pos,
+    float *nrm, size_t cap, size_t *total_out, size_t *written_out) {
+    if (total_out) *total_out = 0;
+    if (written_out) *written_out = 0;
     if (!s || nsides < 3) return LRT_RESULT_INVALID_ARGUMENT;
     /* Round-linear only: each segment is a well-defined tapered tube. Flat
      * curves are view-dependent ribbons (no static mesh) and the Bezier hit u is
@@ -13289,7 +13290,7 @@ lrt_result lrt_tri_curve_tessellate(const lrt_tri_scene *s, uint32_t nsides,
             /* quad (end0_k, end0_k+1, end1_k+1, end1_k) -> 2 tris, CCW outward */
             static const int idx[2][3] = {{0, 1, 2}, {0, 2, 3}};
             for (int t = 0; t < 2; t++) {
-                if (written < cap) {
+                if (total >= first && written < cap) {
                     for (int c = 0; c < 3; c++) {
                         int w = idx[t][c];
                         size_t vert = written * 3 + (size_t)c;
@@ -13310,8 +13311,30 @@ lrt_result lrt_tri_curve_tessellate(const lrt_tri_scene *s, uint32_t nsides,
             }
         }
     }
-    if (ntris_out) *ntris_out = total;
+    if (total_out) *total_out = total;
+    if (written_out) *written_out = written;
     return LRT_RESULT_OK;
+}
+
+lrt_result lrt_tri_curve_tessellate(const lrt_tri_scene *s, uint32_t nsides,
+                                    float *pos, float *nrm, size_t cap,
+                                    size_t *ntris_out) {
+    size_t total = 0;
+    lrt_result result = lrt_tri_curve_tessellate_range_impl(
+        s, nsides, 0, pos, nrm, cap, &total, NULL);
+    if (ntris_out) *ntris_out = total;
+    return result;
+}
+
+lrt_result lrt_tri_curve_tessellate_range(const lrt_tri_scene *s,
+                                          uint32_t nsides, size_t first,
+                                          float *pos, float *nrm, size_t cap,
+                                          size_t *ntris_out) {
+    size_t written = 0;
+    lrt_result result = lrt_tri_curve_tessellate_range_impl(
+        s, nsides, first, pos, nrm, cap, NULL, &written);
+    if (ntris_out) *ntris_out = written;
+    return result;
 }
 
 lrt_tri_scene *lrt_sdfprim_scene_build(const uint32_t *types,

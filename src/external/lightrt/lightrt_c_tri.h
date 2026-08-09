@@ -639,6 +639,14 @@ size_t lrt_tri_curve_tessellate_bound(const lrt_tri_scene *s, uint32_t nsides);
 lrt_result lrt_tri_curve_tessellate(const lrt_tri_scene *s, uint32_t nsides,
                                     float *pos, float *nrm, size_t cap,
                                     size_t *ntris_out);
+/* Range form of the tessellator. Skips the first `first` output triangles and
+ * writes at most `cap` subsequent triangles. `ntris_out` receives the number
+ * actually written. This lets GPU callers page very large curve scenes without
+ * retaining one monolithic tessellated mesh. */
+lrt_result lrt_tri_curve_tessellate_range(const lrt_tri_scene *s,
+                                          uint32_t nsides, size_t first,
+                                          float *pos, float *nrm, size_t cap,
+                                          size_t *ntris_out);
 
 /* Direct access to a scene's resident node/block buffers + metadata, for GPU
  * backends that upload in-memory scenes without the LRTS serialization round
