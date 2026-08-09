@@ -125,4 +125,12 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                         const std::vector<lrt_ray> &rays,
                         const std::vector<lrt_hit> &hits, int w, int h, int spp);
 
+// Shade native Gaussian ellipse hits directly from chunk-local metadata. This
+// avoids flattening all splat colors/normals into a second scene-wide
+// GpuTriScene after the chunked Vulkan trace.
+bool ShadeAndWriteGaussianImage(
+    const Options &opt, const std::vector<EllipseSceneChunk> &chunks,
+    const std::vector<lrt_ray> &rays, const std::vector<lrt_hit> &hits, int w,
+    int h, int spp);
+
 }  // namespace tusdr
