@@ -257,6 +257,10 @@ bool RunHipGaussianLightRT(const Options &opt, DirectScene *direct,
   InitMissHits(&hits);
   size_t released_chunks = 0;
   for (EllipseSceneChunk &chunk : direct->ellipse_chunks) {
+    if (!BuildDeferredGaussianChunk(opt, &chunk)) {
+      lrt_hip_engine_destroy(hip);
+      return false;
+    }
     const int traced = lrt_hip_trace_scene(
         hip, chunk.scene.get(), rays.data(), static_cast<uint32_t>(nrays),
         chunk_hits.data(), &err);

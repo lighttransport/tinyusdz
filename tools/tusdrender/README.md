@@ -57,9 +57,12 @@ sequentially, keeps the closest hit per ray, and releases each LightRT BVH as
 soon as that reduction completes; only compact per-splat shading metadata stays
 resident until image output. Statistics report the retained sample count and
 chunk count; a failed chunk reports its range and the tuning knob to reduce it.
-The transformed ellipse streams are flushed into LightRT as each chunk fills,
-so the loader does not accumulate a second full-size geometry copy before BVH
-construction. Pure Gaussian scenes use the native ellipse path on HIP/ROCm as
+For Vulkan/HIP, transformed ellipse inputs are retained as compact per-chunk
+arrays and each LightRT BVH is materialized only immediately before its trace;
+the input arrays and BVH are then released before the next chunk. This avoids
+retaining a CPU BVH for every chunk during load and bounds the acceleration
+structure working set to one chunk. The CPU path still builds its chunks during
+extraction. Pure Gaussian scenes use the native ellipse path on HIP/ROCm as
 well; mixed mesh+splat scenes (and D3D11) use the bounded tessellated fallback,
 with each SH/color bucket flushed at `TUSDR_GPU_TRIANGLE_CHUNK` rather than
 becoming one multi-million-triangle allocation.
