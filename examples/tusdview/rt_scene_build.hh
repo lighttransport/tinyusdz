@@ -199,7 +199,8 @@ struct RefitMap {
 // textures per pose).
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     float displacementScale, HostScene* out, std::string* err,
-                    BuildProgress* progress = nullptr, RefitMap* refitOut = nullptr);
+                    BuildProgress* progress = nullptr, RefitMap* refitOut = nullptr,
+                    size_t textureBudgetBytes = 0);
 
 // Re-pose `hs` in place from `scene`'s CURRENT vertex data: rewrite tris/nrms
 // in the recorded leaf order, then refit every BLAS/TLAS node bound over the

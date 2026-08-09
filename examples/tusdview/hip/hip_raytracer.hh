@@ -35,6 +35,7 @@ class HipRayTracer {
   // once; subsequent calls are no-ops returning the cached result.
   bool init(std::string* err);
   bool initialized() const { return ready_; }
+  void setTextureBudgetBytes(size_t bytes) { textureBudgetBytes_ = bytes; }
 
   // Flatten `scene` into world-space triangles, build a BVH, and upload to the
   // device. See CudaRayTracer::build for the full contract. `retainForRefit`
@@ -132,6 +133,7 @@ class HipRayTracer {
   // so refit() can rewrite tris/nrms + node bounds in place and re-upload them.
   std::unique_ptr<HostScene> retained_;
   RefitMap refitMap_;
+  size_t textureBudgetBytes_{0};
 };
 
 }  // namespace tusdview

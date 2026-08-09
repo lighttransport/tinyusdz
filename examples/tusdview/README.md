@@ -210,7 +210,8 @@ displays it with an ImGui docking UI.
     Native RT texture tables apply the same decoded-byte budget (normally 25%
     of probed device VRAM), deduplicate identical used images, and leave
     over-budget textures on the backend fallback image instead of risking an
-    unbounded RT staging allocation.
+    unbounded RT staging allocation. CUDA and HIP receive the same cap when
+    building their host-side RT scene tables.
 - **Interruptible / budgeted loading** so huge scenes can't freeze the app or
   thrash VRAM:
   - **Cancel** button in the loading modal (and an automatic conversion
