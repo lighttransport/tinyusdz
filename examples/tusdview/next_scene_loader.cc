@@ -1527,6 +1527,15 @@ tnext::UsdPrim FindSkeletonInSubtree(const tnext::UsdPrim& root) {
   return tnext::UsdPrim();
 }
 
+tnext::UsdPrim FindAnimationInSubtree(const tnext::UsdPrim& root) {
+  if (tinyusdz::next::IsSkelAnimation(root)) return root;
+  for (const tnext::UsdPrim& c : root.GetChildren()) {
+    tnext::UsdPrim r = FindAnimationInSubtree(c);
+    if (r.IsValid()) return r;
+  }
+  return tnext::UsdPrim();
+}
+
 // Find the Skeleton bound to a skinned mesh: explicit skel:skeleton rel, else
 // the Skeleton under the enclosing SkelRoot ancestor.
 tnext::UsdPrim FindBoundSkeletonNext(const tnext::Stage& stage,
@@ -1570,6 +1579,18 @@ tnext::UsdPrim FindSkelAnimationNext(const tnext::Stage& stage,
         tnext::UsdPrim a = stage.GetPrimAtPath((*rel)[0]);
         if (a.IsValid() && tinyusdz::next::IsSkelAnimation(a)) return a;
       }
+    }
+    p = p.GetParent();
+  }
+  // Some USDA/USDC relationship paths are not exposed by the lightweight
+  // next-stage relationship view after composition, even though the bound
+  // animation is present under the enclosing SkelRoot. The UsdSkel binding
+  // model permits that placement, so retain a deterministic subtree fallback.
+  p = meshPrim.GetParent();
+  while (p.IsValid()) {
+    if (p.GetTypeName() == "SkelRoot") {
+      tnext::UsdPrim found = FindAnimationInSubtree(p);
+      if (found.IsValid()) return found;
     }
     p = p.GetParent();
   }
@@ -1933,11 +1954,12 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
                               numPoints, &bind)) {
     return false;
   }
-  // The extended GPU influence path is intended for dense point-joint rigs.
-  // Conventional skeletons use authored local joint offsets that the next
-  // raster skinning path cannot reproduce reliably yet; returning false here
-  // selects the CPU bake, which is also the reference deformation path.
-  if (bind.numJoints < 512) return false;
+  // Keep conventional skeletons on the same GPU path as dense point-joint
+  // rigs. PoseNextSkeleton selects the appropriate interpretation of the
+  // animation (local TRS for ordinary rigs, translation samples for dense
+  // point-joint exports); rejecting small rigs here made the next loader bake
+  // them on the CPU and, more importantly, left boneMatrixCount at zero so
+  // the viewer incorrectly reported that the scene was unskinned.
   const int nj = static_cast<int>(bind.numJoints);
   if (nj <= 0) return false;
   // Guard the bone-texture row space (int rows, absolute indices).
