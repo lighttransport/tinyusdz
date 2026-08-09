@@ -1007,6 +1007,24 @@ int main(int argc, char** argv) {
       double(targetBudget.vram_limit) / double(tinyusdz::tydra::next::GiB(1));
   const double targetHostGiB =
       double(targetBudget.host_limit) / double(tinyusdz::tydra::next::GiB(1));
+
+  // Bound texture residency for ordinary --next loads as well as named
+  // large-scene profiles. The decoder applies these limits while reading, so
+  // this also prevents a large source image set from peaking before the
+  // draw-side residency pass runs. Explicit command-line values win,
+  // including an explicit zero.
+  {
+    const tinyusdz::tydra::next::TextureBudget textureBudget =
+        tinyusdz::tydra::next::DeriveTextureBudget(targetBudget);
+    if (!maxTextureSizeExplicit && textureBudget.max_edge > 0) {
+      textureOptions.maxTextureSize =
+          static_cast<int>(textureBudget.max_edge);
+    }
+    if (!textureBudgetExplicit && textureBudget.budget_bytes > 0) {
+      textureOptions.textureBudgetMB = static_cast<int>(
+          textureBudget.budget_bytes / (1024ull * 1024ull));
+    }
+  }
   if (effectiveProfile != LargeSceneProfile::Off) {
     if (!useNextExplicit) useNextLoader = true;
     if (!backendExplicit) {
@@ -1020,20 +1038,6 @@ int main(int argc, char** argv) {
     if (!rtLodBandExplicit) rtLodBand = 0.25f;
     if (!maxAssetBytesExplicit) maxAssetReadBytes = 2ull * 1024ull * 1024ull * 1024ull;
     if (!domeIblExplicit) textureOptions.domeIbl = 0;
-    // Bound texture residency the same way geometry already is. The --next
-    // loader applies these while decoding, so peak RAM is bounded too.
-    {
-      const tinyusdz::tydra::next::TextureBudget textureBudget =
-          tinyusdz::tydra::next::DeriveTextureBudget(targetBudget);
-      if (!maxTextureSizeExplicit && textureBudget.max_edge > 0) {
-        textureOptions.maxTextureSize = static_cast<int>(textureBudget.max_edge);
-      }
-      if (!textureBudgetExplicit && textureBudget.budget_bytes > 0) {
-        textureOptions.textureBudgetMB =
-            static_cast<int>(textureBudget.budget_bytes / (1024ull * 1024ull));
-      }
-    }
-
     if (effectiveProfile == LargeSceneProfile::Caldera) {
       if (!maxTrisExplicit) maxTris = 40000000;
       if (!maxGpuMemExplicit) maxGpuMemGiB = targetVramGiB;
