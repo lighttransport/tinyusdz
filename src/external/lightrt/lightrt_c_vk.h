@@ -77,10 +77,10 @@ const char *lrt_vk_engine_last_error(const lrt_vk_engine *e);
  *
  * Uploads s (via its position-independent LRTS serialization) and traverses n
  * rays with a compute shader. Writes n hits to out. Returns the number of rays
- * that hit geometry, or -1 on error (err set). Only plain triangle scenes with
- * BVH4/BVH8 layout are supported (quantized/curve/user scenes are rejected, as
- * they are by lrt_tri_scene_save_to_memory). Results match lrt_tri_intersect1
- * within fp tolerance. */
+ * that hit geometry, or -1 on error (err set). Plain triangle and serialized
+ * point/ellipse scenes with BVH4/BVH8 layout are supported; quantized/curve/
+ * user scenes are rejected. Results match lrt_tri_intersect1 within fp
+ * tolerance. */
 int lrt_vk_trace_scene(lrt_vk_engine *e, const lrt_tri_scene *s,
                        const lrt_ray *rays, uint32_t n, lrt_hit *out,
                        lrt_result *err);

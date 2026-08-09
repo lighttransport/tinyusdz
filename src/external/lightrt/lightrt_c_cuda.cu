@@ -126,6 +126,7 @@ struct lrt_cuda_scene {
 #define HIP_POINT_SPHERE 0u
 #define HIP_POINT_DISC 1u
 #define HIP_POINT_ORIENTED_DISC 2u
+#define HIP_POINT_ELLIPSE 3u
 
 /* cudaFree is [[nodiscard]]; this swallows the result at teardown/cleanup sites
  * where there is nothing useful to do with a free error. */
@@ -1259,6 +1260,44 @@ __device__ __forceinline__ void hp_leaf(const uint32_t *__restrict__ blocks,
             float dOdO = dx * dx + dy * dy + dz * dz;
             if (dOdO <= 0.0f) continue;
             float c0x = cx - ox, c0y = cy - oy, c0z = cz - oz;
+            if (point_type == HIP_POINT_ELLIPSE) {
+                float nx = fu(blocks[blk + 16u + l]),
+                      ny = fu(blocks[blk + 20u + l]),
+                      nz = fu(blocks[blk + 24u + l]);
+                float nl = sqrtf(nx * nx + ny * ny + nz * nz);
+                float ry = fu(blocks[blk + 36u + l]);
+                if (nl <= 1e-20f || r <= 0.0f || ry <= 0.0f) continue;
+                nx /= nl; ny /= nl; nz /= nl;
+                float ax = fabsf(ny) < 0.9f ? 0.0f : 1.0f;
+                float ay = fabsf(ny) < 0.9f ? 1.0f : 0.0f;
+                float ux = ay * nz, uy = -ax * nz, uz = ax * ny - ay * nx;
+                float ul = sqrtf(ux * ux + uy * uy + uz * uz);
+                if (ul <= 1e-20f) continue;
+                ux /= ul; uy /= ul; uz /= ul;
+                float vx = ny * uz - nz * uy, vy = nz * ux - nx * uz,
+                      vz = nx * uy - ny * ux;
+                float angle = fu(blocks[blk + 36u + l]);
+                if (angle != 0.0f) {
+                    float ca = cosf(angle), sa = sinf(angle);
+                    float tx = ux * ca + vx * sa, ty = uy * ca + vy * sa,
+                          tz = uz * ca + vz * sa;
+                    vx = -ux * sa + vx * ca; vy = -uy * sa + vy * ca;
+                    vz = -uz * sa + vz * ca;
+                    ux = tx; uy = ty; uz = tz;
+                }
+                float div = dx * nx + dy * ny + dz * nz;
+                if (fabsf(div) <= 1e-20f) continue;
+                float t = (c0x * nx + c0y * ny + c0z * nz) / div;
+                if (t < tmin || t >= *best_t) continue;
+                float hx = ox + t * dx - cx, hy = oy + t * dy - cy,
+                      hz = oz + t * dz - cz;
+                float pu = (hx * ux + hy * uy + hz * uz) / r;
+                float pv = (hx * vx + hy * vy + hz * vz) / ry;
+                if (pu * pu + pv * pv >= 1.0f) continue;
+                *best_t = t; *best_u = 0.5f + 0.5f * pu; *best_v = 0.5f + 0.5f * pv;
+                *best_prim = prim;
+                continue;
+            }
             if (point_type == HIP_POINT_ORIENTED_DISC) {
                 float nx = fu(blocks[blk + 16u + l]),
                       ny = fu(blocks[blk + 20u + l]),

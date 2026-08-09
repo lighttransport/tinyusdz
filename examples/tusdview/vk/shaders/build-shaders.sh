@@ -76,10 +76,23 @@ if [ "$RAYTRACE_VALID" -eq 1 ] &&
       -o "$OUT/raytrace_comp.spv.h" "$HERE/raytrace.comp" 2>/dev/null; then
   echo "==> raytrace.comp -> embedded/raytrace_comp.spv.h (ray query ENABLED)"
 else
-  rm -f "$OUT/raytrace_comp.spv.h"
-  echo "==> WARNING: '$GLSLANG' cannot produce valid GL_EXT_ray_query SPIR-V"
-  echo "    (compile or spirv-val failed) — RT shader omitted. Use a newer"
-  echo "    glslang (examples/common/build-glslang.sh) to enable Vulkan RT."
+  # glslc can support ray-query even when the installed glslangValidator is
+  # too old. Emit a byte header and let createShader consume its byte size;
+  # Vulkan requires pCode to be 4-byte aligned, which SPIR-V already is.
+  GLSLC="${GLSLC:-$(command -v glslc || true)}"
+  if [ -n "$GLSLC" ] && [ -x "$GLSLC" ] &&
+     "$GLSLC" --target-env=vulkan1.2 -o "$RAYTRACE_TMP" "$HERE/raytrace.comp"; then
+    xxd -i -c 12 "$RAYTRACE_TMP" "$OUT/raytrace_comp.spv.h"
+    sed -i 's/unsigned char _tmp_.*_spv\[\]/const unsigned char raytrace_comp_spv[]/' "$OUT/raytrace_comp.spv.h"
+    sed -i 's/unsigned int _tmp_.*_spv_len/const unsigned int raytrace_comp_spv_len/' "$OUT/raytrace_comp.spv.h"
+    sed -i '1i#pragma once' "$OUT/raytrace_comp.spv.h"
+    echo "==> raytrace.comp -> embedded/raytrace_comp.spv.h (ray query ENABLED via glslc)"
+  else
+    rm -f "$OUT/raytrace_comp.spv.h"
+    echo "==> WARNING: '$GLSLANG' cannot produce valid GL_EXT_ray_query SPIR-V"
+    echo "    (compile or spirv-val failed) — RT shader omitted. Use a newer"
+    echo "    glslang or glslc to enable Vulkan RT."
+  fi
 fi
 cleanup_raytrace_tmp
 trap - EXIT

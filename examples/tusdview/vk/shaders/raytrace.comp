@@ -101,6 +101,11 @@ layout(set = 0, binding = 13, scalar) readonly buffer RtMatTexIds {
 layout(set = 0, binding = 14, scalar) readonly buffer RtMatTexParams {
   float matTexParams[];
 };
+struct RtPoint { vec4 center; vec4 major; vec4 normal; vec4 radii; vec4 color; };
+struct RtPointNode { vec3 bmin; vec3 bmax; int left; int right; int count; };
+layout(set = 0, binding = 15, scalar) readonly buffer RtPoints { RtPoint points[]; };
+layout(set = 0, binding = 16, scalar) readonly buffer RtPointNodes { RtPointNode pointNodes[]; };
+layout(set = 0, binding = 17, scalar) readonly buffer RtPointOrder { int pointOrder[]; };
 
 layout(push_constant) uniform PC {
   mat4 invViewProj;  // inverse(proj * view)
@@ -110,6 +115,7 @@ layout(push_constant) uniform PC {
   vec4 sceneMin;     // xyz = position AOV bbox min, w = accumulated sample index
   vec4 sceneExtent;  // xyz bbox; abs(w)=TLAS chunks, positive=accumulation enabled
   vec4 lens;         // focus distance, aperture radius, enabled, TLAS chunk stride
+  vec4 pointParams;  // native Gaussian point count, point BVH node count
 } pc;
 
 uint globalInstanceId(uint chunk, int localId) {
@@ -446,6 +452,47 @@ bool materialAllowsHit(uint iid, int prim, vec2 bc, bool frontFace) {
   return alpha >= mat(mid, 1u).w;
 }
 
+bool pointBoxHit(RtPointNode n, vec3 o, vec3 inv, float best) {
+  vec3 a = (n.bmin - o) * inv;
+  vec3 b = (n.bmax - o) * inv;
+  vec3 lo = min(a, b), hi = max(a, b);
+  return max(max(lo.x, lo.y), max(lo.z, 0.0)) <=
+         min(min(hi.x, hi.y), min(hi.z, best));
+}
+
+float tracePointEllipses(vec3 o, vec3 d, out int hit) {
+  hit = -1;
+  int count = int(pc.pointParams.x + 0.5);
+  if (count <= 0) return 1e30;
+  vec3 inv = 1.0 / d;
+  int stack[64]; int sp = 0; stack[sp++] = 0;
+  float best = 1e30;
+  while (sp > 0) {
+    RtPointNode n = pointNodes[stack[--sp]];
+    if (!pointBoxHit(n, o, inv, best)) continue;
+    if (n.count > 0) {
+      for (int j = 0; j < n.count; ++j) {
+        int id = pointOrder[n.left + j];
+        RtPoint p = points[id];
+        vec3 N = normalize(p.normal.xyz);
+        vec3 A = normalize(p.major.xyz);
+        vec3 B = normalize(cross(N, A));
+        float den = dot(d, N);
+        if (abs(den) < 1e-7) continue;
+        float t = dot(p.center.xyz - o, N) / den;
+        if (t <= 0.0 || t >= best) continue;
+        vec3 q = o + d * t - p.center.xyz;
+        float u = dot(q, A) / max(p.radii.x, 1e-8);
+        float v = dot(q, B) / max(p.radii.y, 1e-8);
+        if (u*u + v*v < 1.0) { best = t; hit = id; }
+      }
+    } else if (sp + 2 <= 64) {
+      stack[sp++] = n.left; stack[sp++] = n.right;
+    }
+  }
+  return best;
+}
+
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy);
   ivec2 size = imageSize(outImg);
@@ -516,6 +563,10 @@ void main() {
   bool primaryFront = true;
   float primaryT = 1e30;
   mat4x3 primaryO2w;
+  bool primaryPoint = false;
+  int pointId = -1;
+  float pointT = tracePointEllipses(origin, dir, pointId);
+  if (pointId >= 0) { primaryHit = true; primaryPoint = true; primaryT = pointT; }
   for (uint ti = 0u; ti < tlasChunkCount(); ++ti) {
     rayQueryEXT rq;
     rayQueryInitializeEXT(rq, TLAS[ti], 0u, 0xFF, origin, 1e-3, dir,
@@ -536,6 +587,7 @@ void main() {
       float candidateT = rayQueryGetIntersectionTEXT(rq, true);
       if (candidateT < primaryT) {
         primaryHit = true;
+        primaryPoint = false;
         primaryT = candidateT;
         primaryIid = globalInstanceId(
             ti, rayQueryGetIntersectionInstanceIdEXT(rq, true));
@@ -567,7 +619,20 @@ void main() {
     }
   }
 
-  if (primaryHit) {
+  if (primaryPoint) {
+    RtPoint p = points[pointId];
+    vec3 N = normalize(p.normal.xyz);
+    if (dot(N, dir) > 0.0) N = -N;
+    vec3 C = p.color.rgb;
+    float alpha = clamp(p.color.a, 0.0, 1.0);
+    int rmode = int(pc.camPos.w + 0.5);
+    if (rmode == 2 || rmode == 4) outc = 0.5 * (N + vec3(1.0));
+    else if (rmode == 6) outc = vec3(clamp(primaryT / max(pc.lightDir.w, 1e-6), 0.0, 1.0), 0.0, 0.0);
+    else if (rmode == 0) {
+      float lam = max(dot(N, normalize(pc.lightDir.xyz)), 0.0);
+      outc = C * (0.18 + 0.82 * lam) + bgc * (1.0 - alpha);
+    } else outc = C;
+  } else if (primaryHit) {
     uint iid = primaryIid;
     int prim = primaryPrim;
     vec2 bc = primaryBc;

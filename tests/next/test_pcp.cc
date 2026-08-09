@@ -466,6 +466,59 @@ static void test_variant_option_payload_arc() {
   std::cout << "  OK" << std::endl;
 }
 
+// A payload authored by a prim inside variant content is anchored to the
+// layer that authored the variant, not to the stronger layer that selected it.
+// Keep this fixture generic: the real regression is the sublayer directory
+// boundary, not an asset-specific prim or property name.
+static void test_variant_content_payload_anchor() {
+  std::cout << "test_variant_content_payload_anchor..." << std::endl;
+  ::system("mkdir -p /tmp/next_variant_anchor/sub");
+  const std::string root = "/tmp/next_variant_anchor/root.usda";
+  const std::string variants = "/tmp/next_variant_anchor/sub/variants.usda";
+  const std::string payload = "/tmp/next_variant_anchor/sub/payload.usda";
+  {
+    std::ofstream o(payload);
+    o << "#usda 1.0\n"
+         "def \"Payload\"\n"
+         "{\n"
+         "    def Mesh \"Shape\"\n"
+         "    {\n"
+         "        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]\n"
+         "    }\n"
+         "}\n";
+  }
+  {
+    std::ofstream o(variants);
+    o << "#usda 1.0\n"
+         "over \"Asset\" {\n"
+         "    variantSet \"model\" = {\n"
+         "        \"render\" {\n"
+         "            def \"Payload\" ( prepend payload = "
+         "@./payload.usda@</Payload> ) {}\n"
+         "        }\n"
+         "    }\n"
+         "}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "( subLayers = [@./sub/variants.usda@] )\n"
+         "over \"Asset\" ( variants = { string model = \"render\" } ) {}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp/next_variant_anchor");
+  Stage stage;
+  std::string warn, err;
+  PCP_CHECK(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err),
+            "variant-content relative payload composition failed: " + err);
+  PCP_CHECK(stage.GetPrimAtPath("/Asset/Payload/Shape").IsValid(),
+            "variant-content payload did not resolve from its authoring layer");
+  std::remove(root.c_str());
+  std::remove(variants.c_str());
+  std::remove(payload.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 // Parallel composition (CompositionOptions::num_threads > 1 -> the BuildStage
 // sources pre-warm) must be BYTE-IDENTICAL to a serial build. Use several sibling
 // prims referencing a shared asset so the warming's subtree frontier actually
@@ -4468,6 +4521,7 @@ int main() {
   test_crate_style_variant_holder();
   test_usda_connection_and_custom_rel();
   test_variant_option_payload_arc();
+  test_variant_content_payload_anchor();
   test_active_survives_weaker_arc();
   test_out_of_scope_targets_dropped();
   test_deferred_payload_marker_order();

@@ -245,10 +245,14 @@ void CudaRayTracer::freeScene() {
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_); F(dAccum_);
   F(dVolDens_); F(dVolParams_);
+  F(dPointCenters_); F(dPointMajorAxes_); F(dPointNormals_);
+  F(dPointRadii_); F(dPointColors_);
+  F(dPointOrder_); F(dPointBvh_);
   numVols_ = 0;
   numMats_ = 0;
   numLights_ = 0;
   numTextures_ = 0;
+  pointCount_ = 0;
   outCap_ = 0; accumCap_ = 0; triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
 }
@@ -421,6 +425,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   numLights_ = hs.numLights;
   numTextures_ = hs.numTextures;
   numVols_ = hs.numVols;
+  pointCount_ = static_cast<int>(hs.pointCount);
 
   if (progress) { progress->phase = 3; progress->done = 0; progress->total = 0; }  // upload
   // Upload every array to the device.
@@ -459,6 +464,13 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
     if (!up(hs.volParams.data(), hs.volParams.size() * sizeof(HostVolParam), &dVolParams_))
       return false;
   }
+  if (!up(hs.pointCenters.data(), hs.pointCenters.size() * sizeof(float), &dPointCenters_)) return false;
+  if (!up(hs.pointMajorAxes.data(), hs.pointMajorAxes.size() * sizeof(float), &dPointMajorAxes_)) return false;
+  if (!up(hs.pointNormals.data(), hs.pointNormals.size() * sizeof(float), &dPointNormals_)) return false;
+  if (!up(hs.pointRadii.data(), hs.pointRadii.size() * sizeof(float), &dPointRadii_)) return false;
+  if (!up(hs.pointColors.data(), hs.pointColors.size() * sizeof(float), &dPointColors_)) return false;
+  if (!up(hs.pointOrder.data(), hs.pointOrder.size() * sizeof(int), &dPointOrder_)) return false;
+  if (!up(hs.pointBvh.data(), hs.pointBvh.size() * sizeof(Node), &dPointBvh_)) return false;
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
   if (!up(hs.matBase.data(), hs.matBase.size() * sizeof(float), &dMatBase_)) return false;
   if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
@@ -477,7 +489,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           const float sceneExtent[3], int w, int h,
                           std::vector<uint8_t>* rgba, std::string* err, int spp,
                           const RtCameraLens* lens) {
-  if (!ctx_ || !dTris_) { if (err) *err = "CUDA scene not built"; return false; }
+  if (!ctx_ || (!dTris_ && pointCount_ == 0)) { if (err) *err = "CUDA scene not built"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   const size_t bytes = size_t(w) * h * 4;
   if (outCap_ < bytes) {
@@ -513,16 +525,21 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     cam.lens[1] = lens->apertureRadius;
     cam.lens[2] = 1.0f;
   }
-  CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
+  CUdeviceptr dT = triCount_ ? dTris_ : 0,
+              dN = triCount_ ? dNrms_ : 0, dC = triCount_ ? dCols_ : 0,
+              dG = triCount_ ? dGeo_ : 0, dM = triCount_ ? dMat_ : 0,
               dBM = dBackMat_,
               dMP = dMatPbr_, dMB = dMatBase_, dML = dMatLightRt_, dMT = dMatTex_,
               dTx = dTexels_, dTD = dTextures_,
               dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
               dDw = dDomW_, dDj = dDomJoint_, dBl = dBlasNodes_, dTl = dTlasNodes_,
-              dI = dInstances_, dO = dOut_;
+              dI = instCount_ ? dInstances_ : 0, dO = dOut_;
   CUdeviceptr dMTP = dMatTexParam_;
   CUdeviceptr dLP = dLightParams_;
   CUdeviceptr dVD = dVolDens_, dVP = dVolParams_, dEm = dEmask_;
+  CUdeviceptr dPC = dPointCenters_, dPA = dPointMajorAxes_, dPN = dPointNormals_,
+              dPR = dPointRadii_, dPCol = dPointColors_, dPO = dPointOrder_,
+              dPB = dPointBvh_;
   int numMats = numMats_;
   int numLights = numLights_;
   int numTextures = numTextures_;
@@ -539,7 +556,8 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                   &numLights, &dMT, &dMTP, &dTx, &dTD, &numTextures, &dU, &dU1,
                   &dIn, &dF,  &dDw,
                   &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
-                  &dVD, &dVP, &numVols, &dEm, &dAcc, &sampleIdx, &numSamples};
+                  &dVD, &dVP, &numVols, &dEm, &dPC, &dPA, &dPN, &dPR, &dPCol,
+                  &dPO, &dPB, &pointCount_, &dAcc, &sampleIdx, &numSamples};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   rgba->resize(bytes);
   // Launch one kernel per Halton-jittered sample; the kernel accumulates on the

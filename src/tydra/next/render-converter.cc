@@ -5857,13 +5857,16 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
 
 bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
                                          RenderPoints* out) {
-  if (!out || !prim.IsValid() || prim.GetTypeName() != "Points") {
+  const bool gaussian = prim.GetTypeName() == "ParticleField3DGaussianSplat";
+  if (!out || !prim.IsValid() ||
+      (prim.GetTypeName() != "Points" && !gaussian)) {
     last_error_ = "Invalid Points prim";
     return false;
   }
 
   ValueArrayRead<float> points;
-  if (!ReadFloatArray(prim, kIdPoints(), config_.time_code, &points) ||
+  const char* point_property = gaussian ? "positions" : "points";
+  if (!ReadFloatArray(prim, point_property, config_.time_code, &points) ||
       points.empty() || (points.view.size % 3) != 0) {
     last_error_ = "Invalid Points.points data";
     return false;
@@ -5874,10 +5877,24 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
   out->points.append(points.view.data, points.view.size);
 
   ValueArrayRead<float> widths;
-  if (ReadFloatArray(prim, kIdWidths(), config_.time_code, &widths) &&
+  const bool have_widths = gaussian
+      ? ReadFloatArray(prim, "scales", config_.time_code, &widths)
+      : ReadFloatArray(prim, kIdWidths(), config_.time_code, &widths);
+  if (have_widths &&
       !widths.empty()) {
     const size_t n = out->point_count();
-    if (widths.view.size == 1 || widths.view.size == n) {
+    if (gaussian && widths.view.size == n * 3) {
+      // Gaussian scales are one standard deviation per local axis. The
+      // raster carrier is isotropic, so retain a conservative diameter using
+      // the largest authored axis; RT backends consume the full ellipse data.
+      out->widths.reserve(n);
+      for (size_t i = 0; i < n; ++i) {
+        const float* s = widths.view.data + i * 3;
+        out->widths.push_back(2.0f * std::max(std::fabs(s[0]),
+                                               std::max(std::fabs(s[1]),
+                                                        std::fabs(s[2]))));
+      }
+    } else if (!gaussian && (widths.view.size == 1 || widths.view.size == n)) {
       out->widths.append(widths.view.data, widths.view.size);
     } else {
       warnings_.push_back("Points '" + out->prim_path +
@@ -6129,8 +6146,63 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     return false;
   }
   ValueArrayRead<float> points;
-  if (!ReadFloatArray(prim, kIdPoints(), config_.time_code, &points) ||
-      points.empty() || (points.view.size % 3) != 0) {
+  bool have_points = ReadFloatArray(prim, kIdPoints(), config_.time_code,
+                                    &points);
+  if (!have_points) {
+    // Baked procedural curves commonly put clips metadata on their GEO
+    // container while the sampled points live on descendant curves.
+    for (UsdPrim owner = prim; owner.IsValid(); owner = owner.GetParent()) {
+      const ::tinyusdz::next::PrimSpec* spec = owner.GetPrimSpec();
+      if (!spec || !spec->meta().clips().is_dictionary()) continue;
+      std::vector<::tinyusdz::next::ValueClipSet> sets;
+      if (!::tinyusdz::next::ParseValueClipSets(owner, &sets, nullptr))
+        break;
+      for (auto& set : sets) set.prim_path = prim.GetPath().str();
+      Value clipped;
+      if (!config_.animation.clip_stage_loader ||
+          !::tinyusdz::next::ResolveValueClipFromSets(
+              sets, prim, "points", config_.time_code,
+              config_.animation.clip_stage_loader, &clipped))
+        break;
+      points.scratch.materialized = std::move(clipped);
+      have_points = ::tinyusdz::next::GetFloatArrayView(
+          points.scratch.materialized, &points.scratch, &points.view);
+      break;
+    }
+    // Some composed variant paths do not retain parent links in the compact
+    // stage index. Walk the path index directly as a fallback.
+    if (!have_points && prim.GetLayer()) {
+      const ::tinyusdz::next::Layer* layer = prim.GetLayer();
+      std::string parent_path = prim.GetPath().str();
+      while (!have_points) {
+        const size_t slash = parent_path.rfind('/');
+        if (slash == std::string::npos || slash == 0) break;
+        parent_path.resize(slash);
+        const uint32_t index = layer->index_at_path(parent_path);
+        if (index == UINT32_MAX) continue;
+        const ::tinyusdz::next::PrimSpec* parent_spec =
+            layer->prim_at_path(::tinyusdz::next::Path(parent_path));
+        if (!parent_spec || !parent_spec->meta().clips().is_dictionary())
+          continue;
+        std::vector<::tinyusdz::next::ValueClipSet> sets;
+        if (!::tinyusdz::next::ParseValueClipSets(
+                ::tinyusdz::next::UsdPrim(parent_spec, layer, index), &sets,
+                nullptr))
+          break;
+        for (auto& set : sets) set.prim_path = prim.GetPath().str();
+        Value clipped;
+        if (!config_.animation.clip_stage_loader ||
+            !::tinyusdz::next::ResolveValueClipFromSets(
+                sets, prim, "points", config_.time_code,
+                config_.animation.clip_stage_loader, &clipped))
+          break;
+        points.scratch.materialized = std::move(clipped);
+        have_points = ::tinyusdz::next::GetFloatArrayView(
+            points.scratch.materialized, &points.scratch, &points.view);
+      }
+    }
+  }
+  if (!have_points || points.empty() || (points.view.size % 3) != 0) {
     last_error_ = "Invalid curves.points data";
     return false;
   }

@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Points "Spheres"
+    {
+        point3f[] points = [(-0.75, 0, 0), (0.75, 0, 0)]
+        float[] widths = [0.24, 0.36]
+    }
+    def Points "Discs"
+    {
+        point3f[] points = [(0, 0.65, 0)]
+        normal3f[] normals = [(0, 1, 0)]
+        float[] widths = [0.7]
+    }
+}

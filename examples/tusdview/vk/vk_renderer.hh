@@ -411,7 +411,7 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSet allocInfluenceDescriptor(VkBuffer buffer, VkDeviceSize size);
   VkCommandBuffer beginOneShot();
   void endOneShot(VkCommandBuffer cb);
-  VkShaderModule createShader(const uint32_t* code, size_t bytes);
+  VkShaderModule createShader(const void* code, size_t bytes);
 
   GLFWwindow* window_{nullptr};
   // Window framebuffer size carried in from the main thread by presentThreaded()
@@ -914,6 +914,14 @@ class VulkanRenderer final : public Renderer {
   VkDeviceSize rtMatCap_{0};
   VkBuffer instInfoBuf_{VK_NULL_HANDLE};    // per-TLAS-instance {meshId, tint} (binding 4)
   VkDeviceMemory instInfoMem_{VK_NULL_HANDLE};
+  VkBuffer rtPointBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory rtPointMem_{VK_NULL_HANDLE};
+  VkBuffer rtPointNodeBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory rtPointNodeMem_{VK_NULL_HANDLE};
+  VkBuffer rtPointOrderBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory rtPointOrderMem_{VK_NULL_HANDLE};
+  uint32_t rtPointCount_{0};
+  uint32_t rtPointNodeCount_{0};
 
   VkImage rtImage_{VK_NULL_HANDLE};
   VkDeviceMemory rtImageMem_{VK_NULL_HANDLE};

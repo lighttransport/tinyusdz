@@ -15,6 +15,7 @@
 #include "image-loader.hh"
 #include "image-writer.hh"
 #include "next/layer/asset-anchor.hh"   // AssetAnchorPath
+#include "next/eval/value-clip.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/schema/usd-shade.hh"  // GetInheritedBoundMaterialPath
 #include "next/schema/usd-skel.hh"
@@ -2811,8 +2812,29 @@ bool IsCurvePrimNext(const tinyusdz::next::UsdPrim &prim) {
 
 // Read a curve prim's `points` into a point3f vector via the lazy float accessor.
 std::vector<tinyusdz::value::point3f> ReadCurvePointsNext(
-    const tinyusdz::next::UsdPrim &prim, double time) {
-  const std::vector<float> pf = ReadFloatArrayLazy(prim, "points", time);
+    const tinyusdz::next::UsdPrim &prim, double time,
+    const tinyusdz::next::ValueClipStageLoader &clip_loader) {
+  std::vector<float> pf = ReadFloatArrayLazy(prim, "points", time);
+  if (pf.empty() && clip_loader) {
+    for (tinyusdz::next::UsdPrim owner = prim; owner.IsValid();
+         owner = owner.GetParent()) {
+      const tinyusdz::next::PrimSpec *spec = owner.GetPrimSpec();
+      if (!spec || !spec->meta().clips().is_dictionary()) continue;
+      std::vector<tinyusdz::next::ValueClipSet> sets;
+      if (!tinyusdz::next::ParseValueClipSets(owner, &sets, nullptr)) break;
+      for (auto &set : sets) set.prim_path = prim.GetPath().str();
+      tinyusdz::next::Value clipped;
+      if (!tinyusdz::next::ResolveValueClipFromSets(
+              sets, prim, "points", time, clip_loader, &clipped)) {
+        break;
+      }
+      tinyusdz::next::ArrayScratch<float> scratch;
+      tinyusdz::next::ArrayView<float> view;
+      if (!tinyusdz::next::GetFloatArrayView(clipped, &scratch, &view)) break;
+      pf.assign(view.begin(), view.end());
+      break;
+    }
+  }
   std::vector<tinyusdz::value::point3f> pts(pf.size() / 3);
   for (size_t i = 0; i < pts.size(); ++i)
     pts[i] = {pf[3 * i + 0], pf[3 * i + 1], pf[3 * i + 2]};
@@ -2832,7 +2854,7 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
   std::vector<uint32_t> round_first, round_count, flat_first, flat_count;
   for (const CurveJobNext &job : jobs) {
     std::vector<tinyusdz::value::point3f> points =
-        ReadCurvePointsNext(job.prim, time);
+        ReadCurvePointsNext(job.prim, time, ctx.clip_stage_loader);
     std::vector<int32_t> counts32 =
         ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
     if (points.empty() || counts32.empty()) continue;
@@ -2890,6 +2912,111 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
       return false;
     }
   }
+  return true;
+}
+
+// Gaussian splats are not Mesh prims and must not be forced through the
+// triangle stream. Build one native LightRT ellipse scene from the composed
+// point field instead. The DC SH coefficient is used as the direct primitive's
+// albedo; opacity is folded into it until the integrator grows true
+// front-to-back splat compositing.
+bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
+                               RenderContext &ctx, double time) {
+  std::vector<float> centers;
+  std::vector<float> radii;
+  std::vector<float> normals;
+  std::vector<float> major_axes;
+  std::vector<TriInfo> info;
+  size_t budget = 0;
+  if (const char *s = std::getenv("TUSDR_GAUSSIAN_MAX")) {
+    char *end = nullptr;
+    const unsigned long long n = std::strtoull(s, &end, 10);
+    if (end != s && n > 0) budget = static_cast<size_t>(n);
+  }
+  size_t count_seen = 0;
+  auto visit = [&](const auto &self, const tinyusdz::next::UsdPrim &prim,
+                   const matrix4d &parent) -> void {
+    if (!prim.IsActive()) return;
+    double dmat[16];
+    tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
+    const matrix4d local = Mat4FromArray(dmat);
+    const matrix4d world = local * parent;
+    if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
+      const std::vector<float> p = ReadFloatArrayLazy(prim, "positions", time);
+      const std::vector<float> s = ReadFloatArrayLazy(prim, "scales", time);
+      const std::vector<float> qv = ReadFloatArrayLazy(prim, "orientations", time);
+      const std::vector<float> op = ReadFloatArrayLazy(prim, "opacities", time);
+      const std::vector<float> sh = ReadFloatArrayLazy(
+          prim, "radiance:sphericalHarmonicsCoefficients", time);
+      const size_t n = std::min(p.size() / 3, s.size() / 3);
+      const size_t sh_stride = n ? (sh.size() / 3) / n : 0;
+      for (size_t i = 0; i < n && (budget == 0 || info.size() < budget); ++i) {
+        ++count_seen;
+        if (i < op.size() && op[i] < 0.01f) continue;
+        const Vec3 c = TransformPoint(world, Vec3{p[i * 3], p[i * 3 + 1],
+                                                   p[i * 3 + 2]});
+        tinyusdz::value::quatf q;
+        q.real = 1.0f;
+        q.imag[0] = q.imag[1] = q.imag[2] = 0.0f;
+        if (qv.size() >= (i + 1) * 4) {
+          q.real = qv[i * 4]; q.imag[0] = qv[i * 4 + 1];
+          q.imag[1] = qv[i * 4 + 2]; q.imag[2] = qv[i * 4 + 3];
+        }
+        const tinyusdz::value::matrix3d r = tinyusdz::to_matrix3x3(q);
+        const tinyusdz::value::matrix4d r4 = tinyusdz::to_matrix(
+            r, tinyusdz::value::double3{0.0, 0.0, 0.0});
+        const Vec3 nx = TransformVector(world, TransformVector(r4, Vec3{1, 0, 0}));
+        const Vec3 ny = TransformVector(world, TransformVector(r4, Vec3{0, 1, 0}));
+        const Vec3 nz = Normalize(TransformVector(world, TransformVector(r4, Vec3{0, 0, 1})));
+        const float rx = std::max(1.0e-6f, 2.0f * std::fabs(s[i * 3]) * Length(nx));
+        const float ry = std::max(1.0e-6f, 2.0f * std::fabs(s[i * 3 + 1]) * Length(ny));
+        centers.insert(centers.end(), {c.x, c.y, c.z});
+        radii.insert(radii.end(), {rx, ry});
+        normals.insert(normals.end(), {nz.x, nz.y, nz.z});
+        const Vec3 major = Normalize(nx);
+        major_axes.insert(major_axes.end(), {major.x, major.y, major.z});
+        TriInfo ti;
+        ti.p0 = c;
+        ti.p1 = nz;
+        const float opacity = i < op.size() ? std::max(0.0f, std::min(1.0f, op[i])) : 1.0f;
+        ti.base_color = Vec3{0.72f, 0.72f, 0.72f};
+        if (sh_stride >= 1 && i * sh_stride * 3 + 2 < sh.size()) {
+          const size_t j = i * sh_stride * 3;
+          ti.base_color = Vec3{
+              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * sh[j])),
+              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * sh[j + 1])),
+              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * sh[j + 2]))};
+        }
+        ti.base_color = Mul(ti.base_color, opacity);
+        info.push_back(ti);
+        Expand(&ctx.bounds, Vec3{c.x - std::max(rx, ry), c.y - std::max(rx, ry), c.z - std::max(rx, ry)});
+        Expand(&ctx.bounds, Vec3{c.x + std::max(rx, ry), c.y + std::max(rx, ry), c.z + std::max(rx, ry)});
+      }
+    }
+    for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+      self(self, child, world);
+  };
+  for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims())
+    visit(visit, root, matrix4d::identity());
+  if (info.empty()) return true;
+  lrt_tri_build_options opts;
+  std::memset(&opts, 0, sizeof(opts));
+  opts.quality = ctx.opt.quality;
+  opts.layout = LRT_TRI_LAYOUT_AUTO;
+  opts.num_threads = WorkerThreadCount(ctx.opt.threads);
+  lrt_result e = LRT_RESULT_OK;
+  ctx.direct.ellipses.reset(lrt_ellipse_scene_build_oriented(
+      centers.data(), radii.data(), normals.data(), major_axes.data(),
+      info.size(), &opts, &e));
+  if (!ctx.direct.ellipses) {
+    std::cerr << "Failed to build LightRT Gaussian ellipse scene (err="
+              << int(e) << ").\n";
+    return false;
+  }
+  ctx.direct.ellipse_info = std::move(info);
+  std::cerr << "native Gaussian ellipses: " << ctx.direct.ellipse_info.size();
+  if (budget != 0) std::cerr << " / " << count_seen << " budgeted";
+  std::cerr << "\n";
   return true;
 }
 
@@ -3407,6 +3534,7 @@ void CollectProtoJobs(const tinyusdz::next::Stage &stage,
 bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
                     const std::string &proto_path, tinyusdz::Purpose purpose,
                     double time, const lrt_tri_build_options &build_opts,
+                    const tinyusdz::next::ValueClipStageLoader &clip_loader,
                     Blas *out, Bounds *local,
                     // Sub-BLAS split: a large curve prototype is split into
                     // several disjoint sub-BLAS so their (serial) LBVH collapses
@@ -3433,7 +3561,8 @@ bool BuildCurveBlas(const tinyusdz::next::Stage &stage,
   // the camera). Conservative per sub-BLAS but correct (geometry is within).
   Bounds proto_bounds;
   for (const CurveJobNext &job : curves) {
-    std::vector<tinyusdz::value::point3f> p = ReadCurvePointsNext(job.prim, time);
+    std::vector<tinyusdz::value::point3f> p =
+        ReadCurvePointsNext(job.prim, time, clip_loader);
     std::vector<int32_t> c32 =
         ReadIntArrayLazy(job.prim, "curveVertexCounts", time);
     if (p.empty() || c32.empty()) continue;
@@ -3829,6 +3958,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.use_tlas = false;
   ctx.bounds = Bounds();
   ctx.stats = RTPreviewStats();
+  ctx.direct.ellipses.reset();
+  ctx.direct.ellipse_info.clear();
   const bool want_openpbr =
       opt.material_shading == Options::MaterialShading::LightRtBsdf;
 
@@ -3849,6 +3980,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                       &instances, &proto_ids, &protos, &curve_jobs, &curve_inst,
                       &ctx.stats, &proto_holders);
   }
+  if (!BuildNextGaussianEllipses(ctx.stage, ctx, time)) return false;
   // Curves (BasisCurves/NurbsCurves, plus any baked from curve-prototype
   // instancers) build into ctx.direct as LightRT hair scenes; RenderImage traces
   // them via the DirectScene path in both the flat and TLAS render modes.
@@ -3928,7 +4060,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     ctx.stats.packed_triangle_bytes =
         uint64_t(ctx.vertices.size()) * sizeof(float);
     const bool have_curves = ctx.direct.round_curves || ctx.direct.flat_curves ||
-                             ctx.direct.bez_curves;
+                             ctx.direct.bez_curves || ctx.direct.ellipses;
     if (ctx.tris.empty()) {
       if (have_curves) return true;  // curves-only scene: traced via DirectScene
       std::cerr << "RT preview (next) found no renderable Mesh triangles.\n";
@@ -4141,6 +4273,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     std::vector<Bounds> extra_b;
     if (!BuildCurveBlas(ctx.stage, curve_inst.protos[i].path,
                         curve_inst.protos[i].purpose, time, build_opts,
+                        ctx.clip_stage_loader,
                         &ctx.blas[b], &local_bounds[b], &extra, &extra_b)) {
       return false;
     }
@@ -5003,7 +5136,8 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
 }
 
 bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
-                           std::string *warn, std::string *err) {
+                           std::string *warn, std::string *err,
+                           tinyusdz::next::ValueClipStageLoader *clip_loader) {
   if (!stage) {
     if (err) *err = "null Stage output";
     return false;
@@ -5018,6 +5152,52 @@ bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
     if (warn) *warn = session.GetWarning();
     if (err) *err = session.GetError();
     return false;
+  }
+  if (clip_loader) {
+    const std::vector<std::string> dependencies = session.GetLayerDependencies();
+    const tinyusdz::next::ResolverConfig resolver_config = session_options.resolver;
+    const std::string input = opt.input;
+    *clip_loader = [resolver_config, dependencies, input](
+        const std::string &asset, tinyusdz::next::Stage *clip_stage,
+        std::string *clip_warn, std::string *clip_err) {
+      if (!clip_stage) return false;
+      auto base_dir = [](const std::string &file) {
+        const size_t slash = file.find_last_of("/\\");
+        return slash == std::string::npos ? std::string(".")
+                                          : file.substr(0, slash);
+      };
+      tinyusdz::next::AssetResolver resolver(resolver_config);
+      std::vector<std::string> candidates;
+      candidates.push_back(resolver.ResolvePath(
+          asset, base_dir(input), resolver_config.enable_suffix_fallback));
+      for (const std::string &dependency : dependencies) {
+        candidates.push_back(resolver.ResolvePath(
+            asset, base_dir(dependency),
+            resolver_config.enable_suffix_fallback));
+      }
+      std::string resolved;
+      for (const std::string &candidate : candidates) {
+        if (!candidate.empty() && resolver.Exists(candidate)) {
+          resolved = candidate;
+          break;
+        }
+      }
+      if (resolved.empty()) {
+        if (clip_err) *clip_err = "asset not found: " + asset;
+        return false;
+      }
+      tinyusdz::next::StageSessionOptions clip_options;
+      clip_options.resolver = resolver_config;
+      clip_options.composition.load_payloads = true;
+      tinyusdz::next::StageSession clip_session;
+      if (!clip_session.OpenFile(resolved, clip_options)) {
+        if (clip_warn) *clip_warn = clip_session.GetWarning();
+        if (clip_err) *clip_err = clip_session.GetError();
+        return false;
+      }
+      *clip_stage = clip_session.TakeStage();
+      return true;
+    };
   }
   *stage = session.TakeStage();
   if (warn) *warn = session.GetWarning();
@@ -5035,7 +5215,8 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   // the input dir), so tusdrender consumes raw reference-composed scenes (e.g.
   // Caldera prefab stubs) directly — no external usdcat --flatten step. Self-
   // contained / pre-flattened inputs skip composition (identical to LoadUSD).
-  if (!LoadNextStageBudgeted(opt, &ctx.stage, &warn, &err)) {
+  if (!LoadNextStageBudgeted(opt, &ctx.stage, &warn, &err,
+                             &ctx.clip_stage_loader)) {
     if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
     std::cerr << "Failed to load USD (next): " << err << "\n";
     return false;
@@ -5158,6 +5339,9 @@ void PrintRTStats(const RenderContext &ctx) {
     std::cerr << "rt curve strands: " << ctx.stats.curve_strands << "\n";
   if (ctx.stats.curve_instances > 0)
     std::cerr << "rt curve instances: " << ctx.stats.curve_instances << "\n";
+  if (!ctx.direct.ellipse_info.empty())
+    std::cerr << "rt native Gaussian ellipses: " << ctx.direct.ellipse_info.size()
+              << "\n";
   std::cerr << "load seconds: " << ctx.load_seconds << "\n";
   std::cerr << "rt triangle stream seconds: " << ctx.stream_seconds << "\n";
   std::cerr << "rt bvh build seconds: " << ctx.bvh_seconds << "\n";

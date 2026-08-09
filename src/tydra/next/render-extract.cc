@@ -89,7 +89,8 @@ std::string PurposeForPrim(const ::tinyusdz::next::UsdPrim& prim,
 void PushRecord(RenderPrimRecord&& rec, bool collect_records,
                 RenderExtractResult* out) {
   if (collect_records) out->records.push_back(rec);
-  if (rec.type_name == "Points") {
+  if (rec.type_name == "Points" ||
+      rec.type_name == "ParticleField3DGaussianSplat") {
     out->points.push_back(std::move(rec));
     return;
   }
@@ -260,7 +261,9 @@ bool IsMeshRenderableTypeName(const std::string& type_name) {
 }
 
 bool IsUnsupportedRenderableTypeName(const std::string& type_name) {
-  return type_name == "Points" || type_name == "Volume" ||
+  return type_name == "Points" ||
+         type_name == "ParticleField3DGaussianSplat" ||
+         type_name == "Volume" ||
          type_name == "NurbsPatch";
 }
 

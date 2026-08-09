@@ -353,15 +353,15 @@ typedef struct lrt_rlc4 {
 } lrt_rlc4;
 _Static_assert(sizeof(lrt_rlc4) == 272, "lrt_rlc4");
 
-/* Point leaf block (sphere/disc/oriented-disc): center + radius + normal (only
- * used by ORIENTED_DISC) per lane. 160 bytes = tri_block_size(4), so it reuses
- * the default leaf allocator + tri_block_floats addressing. Padding lanes: r=0,
- * prim = LRT_TRI_NO_HIT (never hit). */
+/* Point leaf block (sphere/disc/oriented-disc/ellipse): center + radii + normal
+ * per lane. 160 bytes = tri_block_size(4), so it reuses the default leaf
+ * allocator + tri_block_floats addressing. */
 typedef struct lrt_point4 {
     float cx[4], cy[4], cz[4], r[4];
     float nx[4], ny[4], nz[4];
     uint32_t prim[4];
-    uint32_t _pad[8];
+    float ry[4];
+    float angle[4];
 } lrt_point4;
 _Static_assert(sizeof(lrt_point4) == 160, "lrt_point4 must equal tri_block_size(4)");
 
@@ -511,7 +511,8 @@ enum {
 enum {
     TRI_POINT_SPHERE = 0,       /* analytic sphere (RTC_GEOMETRY_TYPE_SPHERE_POINT) */
     TRI_POINT_DISC = 1,         /* ray-facing disc (RTC_GEOMETRY_TYPE_DISC_POINT) */
-    TRI_POINT_ORIENTED_DISC = 2 /* fixed-normal disc (ORIENTED_DISC_POINT) */
+    TRI_POINT_ORIENTED_DISC = 2, /* fixed-normal disc (ORIENTED_DISC_POINT) */
+    TRI_POINT_ELLIPSE = 3      /* fixed-normal elliptical disc */
 };
 
 /* Build-time sub-segment (after hair subdivision). */
@@ -712,6 +713,8 @@ typedef struct tri_build_ctx {
     const float *spheres;    /* 4*nprims: cx cy cz r     (TRI_PRIM_SPHERE) */
     const float *points_xyz; /* 3*nprims centers (TRI_PRIM_POINT) */
     const float *points_r;   /* nprims radii    (TRI_PRIM_POINT) */
+    const float *points_ry;  /* nprims minor radii (TRI_POINT_ELLIPSE) */
+    const float *points_angle; /* tangent-frame roll (TRI_POINT_ELLIPSE) */
     const float *points_n;   /* 3*nprims normals or NULL (TRI_PRIM_POINT) */
     const float *bez_cps;    /* 16*nseg ORIGINAL Bezier CPs (TRI_PRIM_BEZCURVE) */
     uint32_t bez_split;      /* build-time de Casteljau pieces per cubic (>=1) */
@@ -2711,6 +2714,10 @@ static uint32_t tri_emit_leaf(tri_collapse_ctx *cc, const tri_bnode *bn) {
                     blk->cy[lane] = bc->points_xyz[(size_t)prim * 3 + 1];
                     blk->cz[lane] = bc->points_xyz[(size_t)prim * 3 + 2];
                     blk->r[lane] = bc->points_r[prim];
+                    blk->ry[lane] = bc->points_ry ? bc->points_ry[prim]
+                                                   : blk->r[lane];
+                    blk->angle[lane] = bc->points_angle ? bc->points_angle[prim]
+                                                         : 0.0f;
                     if (bc->points_n) {
                         blk->nx[lane] = bc->points_n[(size_t)prim * 3 + 0];
                         blk->ny[lane] = bc->points_n[(size_t)prim * 3 + 1];
@@ -2723,6 +2730,8 @@ static uint32_t tri_emit_leaf(tri_collapse_ctx *cc, const tri_bnode *bn) {
                 } else {
                     blk->cx[lane] = blk->cy[lane] = blk->cz[lane] = 0.0f;
                     blk->r[lane] = 0.0f;
+                    blk->ry[lane] = 0.0f;
+                    blk->angle[lane] = 0.0f;
                     blk->nx[lane] = blk->ny[lane] = 0.0f;
                     blk->nz[lane] = 1.0f;
                     blk->prim[lane] = LRT_TRI_NO_HIT;
@@ -3700,7 +3709,8 @@ static inline void tri_rlc4_isect(const lrt_rlc4 *blk, const tri_ray_ctx *rc,
  * Direct port of embree's sphere_intersector.h + disc_intersector.h. */
 static int tri_point_isect_one(const tri_ray_ctx *rc, float best_t, float cx,
                                float cy, float cz, float r, float nx, float ny,
-                               float nz, int point_type, float *t_out,
+                               float nz, float ry, float angle, int point_type,
+                               float *t_out,
                                float *u_out) {
     float dx = rc->dir[0], dy = rc->dir[1], dz = rc->dir[2];
     float dOdO = dx * dx + dy * dy + dz * dz;
@@ -3708,6 +3718,41 @@ static int tri_point_isect_one(const tri_ray_ctx *rc, float best_t, float cx,
     float c0x = cx - rc->org[0], c0y = cy - rc->org[1], c0z = cz - rc->org[2];
     float tmin = rc->tmin;
 
+    if (point_type == TRI_POINT_ELLIPSE) {
+        float nl = sqrtf(nx * nx + ny * ny + nz * nz);
+        if (nl <= 1.0e-20f || r <= 0.0f || ry <= 0.0f) return 0;
+        nx /= nl; ny /= nl; nz /= nl;
+        float ax = fabsf(ny) < 0.9f ? 0.0f : 1.0f;
+        float ay = fabsf(ny) < 0.9f ? 1.0f : 0.0f;
+        float az = 0.0f;
+        float ux = ay * nz - az * ny, uy = az * nx - ax * nz,
+              uz = ax * ny - ay * nx;
+        float ul = sqrtf(ux * ux + uy * uy + uz * uz);
+        if (ul <= 1.0e-20f) return 0;
+        ux /= ul; uy /= ul; uz /= ul;
+        float vx = ny * uz - nz * uy, vy = nz * ux - nx * uz,
+              vz = nx * uy - ny * ux;
+        if (angle != 0.0f) {
+            float ca = cosf(angle), sa = sinf(angle);
+            float tx = ux * ca + vx * sa, ty = uy * ca + vy * sa,
+                  tz = uz * ca + vz * sa;
+            vx = -ux * sa + vx * ca; vy = -uy * sa + vy * ca;
+            vz = -uz * sa + vz * ca;
+            ux = tx; uy = ty; uz = tz;
+        }
+        float divisor = dx * nx + dy * ny + dz * nz;
+        if (fabsf(divisor) <= 1.0e-20f) return 0;
+        float t = (c0x * nx + c0y * ny + c0z * nz) / divisor;
+        if (t < tmin || t >= best_t) return 0;
+        float hx = rc->org[0] + t * dx - cx, hy = rc->org[1] + t * dy - cy,
+              hz = rc->org[2] + t * dz - cz;
+        float pu = (hx * ux + hy * uy + hz * uz) / r;
+        float pv = (hx * vx + hy * vy + hz * vz) / ry;
+        if (pu * pu + pv * pv >= 1.0f) return 0;
+        *t_out = t;
+        *u_out = 0.5f + 0.5f * pu;
+        return 1;
+    }
     if (point_type == TRI_POINT_ORIENTED_DISC) {
         float divisor = dx * nx + dy * ny + dz * nz;
         if (divisor == 0.0f) return 0; /* ray parallel to disc plane */
@@ -3761,8 +3806,9 @@ static inline void tri_point4_isect(const lrt_point4 *blk, const tri_ray_ctx *rc
         float t, u;
         if (tri_point_isect_one(rc, *best_t, blk->cx[lane], blk->cy[lane],
                                 blk->cz[lane], blk->r[lane], blk->nx[lane],
-                                blk->ny[lane], blk->nz[lane], point_type, &t,
-                                &u)) {
+                                blk->ny[lane], blk->nz[lane], blk->ry[lane],
+                                blk->angle[lane],
+                                point_type, &t, &u)) {
             *best_t = t;
             *best_u = u;
             *best_prim = blk->prim[lane];
@@ -6747,9 +6793,26 @@ static int tri_point_intersect_bvh4(const lrt_tri_scene *s, const lrt_ray *ray,
         if (TRI_REF_IS_LEAF(e.ref)) {
             uint32_t blk0 = TRI_REF_BLOCK(e.ref), nblk = TRI_REF_NBLOCKS(e.ref);
             const lrt_point4 *blocks = (const lrt_point4 *)s->blocks;
-            for (uint32_t b = 0; b < nblk; b++)
-                tri_point4_isect_sse(&blocks[blk0 + b], &sc, ptype, &best_t,
-                                     &best_u, &best_prim);
+            for (uint32_t b = 0; b < nblk; b++) {
+                if (ptype == TRI_POINT_ELLIPSE) {
+                    const lrt_point4 *blk = &blocks[blk0 + b];
+                    for (int lane = 0; lane < 4; ++lane) {
+                        if (blk->prim[lane] == LRT_TRI_NO_HIT) continue;
+                        float t = best_t, u = 0.0f;
+                        if (tri_point_isect_one(&rc, best_t, blk->cx[lane],
+                                                blk->cy[lane], blk->cz[lane],
+                                                blk->r[lane], blk->nx[lane],
+                                                blk->ny[lane], blk->nz[lane],
+                                                blk->ry[lane], blk->angle[lane],
+                                                ptype, &t, &u)) {
+                            best_t = t; best_u = u; best_prim = blk->prim[lane];
+                        }
+                    }
+                } else {
+                    tri_point4_isect_sse(&blocks[blk0 + b], &sc, ptype,
+                                         &best_t, &best_u, &best_prim);
+                }
+            }
             continue;
         }
         const lrt_bvh4_node *n = &s->nodes4[TRI_REF_NODE(e.ref)];
@@ -6792,6 +6855,21 @@ static int tri_point_occluded_bvh4(const lrt_tri_scene *s, const lrt_ray *ray) {
             uint32_t blk0 = TRI_REF_BLOCK(ref), nblk = TRI_REF_NBLOCKS(ref);
             const lrt_point4 *blocks = (const lrt_point4 *)s->blocks;
             for (uint32_t b = 0; b < nblk; b++) {
+                if (ptype == TRI_POINT_ELLIPSE) {
+                    const lrt_point4 *blk = &blocks[blk0 + b];
+                    for (int lane = 0; lane < 4; ++lane) {
+                        if (blk->prim[lane] == LRT_TRI_NO_HIT) continue;
+                        float t = t_max, u = 0.0f;
+                        if (tri_point_isect_one(&rc, t_max, blk->cx[lane],
+                                                blk->cy[lane], blk->cz[lane],
+                                                blk->r[lane], blk->nx[lane],
+                                                blk->ny[lane], blk->nz[lane],
+                                                blk->ry[lane], blk->angle[lane],
+                                                ptype, &t, &u))
+                            return 1;
+                    }
+                    continue;
+                }
                 float t = t_max, u = 0.0f;
                 uint32_t prim = LRT_TRI_NO_HIT;
                 tri_point4_isect_sse(&blocks[blk0 + b], &sc, ptype, &t, &u, &prim);
@@ -13330,8 +13408,9 @@ lrt_tri_scene *lrt_points_scene_build(const float *centers, const float *radii,
                                       lrt_result *err) {
     tri_set_err(err, LRT_RESULT_OK);
     if (!centers || !radii || nprims == 0 || nprims > 0x07FFFFFFu ||
-        point_type < TRI_POINT_SPHERE || point_type > TRI_POINT_ORIENTED_DISC ||
-        (point_type == TRI_POINT_ORIENTED_DISC && !normals)) {
+        point_type < TRI_POINT_SPHERE || point_type > TRI_POINT_ELLIPSE ||
+        ((point_type == TRI_POINT_ORIENTED_DISC ||
+          point_type == TRI_POINT_ELLIPSE) && !normals)) {
         tri_set_err(err, LRT_RESULT_INVALID_ARGUMENT);
         return NULL;
     }
@@ -13390,6 +13469,124 @@ lrt_tri_scene *lrt_points_scene_build(const float *centers, const float *radii,
     }
     tri_free_aabb_scratch(&bc);
     return s;
+}
+
+static lrt_tri_scene *lrt_ellipse_scene_build_impl(
+    const float *centers, const float *radii_xy, const float *normals,
+    const float *major_axes, size_t nprims,
+    const lrt_tri_build_options *opts, lrt_result *err) {
+    tri_set_err(err, LRT_RESULT_OK);
+    if (!centers || !radii_xy || !normals || nprims == 0 ||
+        nprims > 0x07FFFFFFu) {
+        tri_set_err(err, LRT_RESULT_INVALID_ARGUMENT);
+        return NULL;
+    }
+    lrt_tri_build_options o;
+    if (opts) o = *opts;
+    else memset(&o, 0, sizeof(o));
+    unsigned num_threads = o.num_threads ? o.num_threads : 1u;
+    uint32_t max_leaf = o.max_leaf_size ? o.max_leaf_size : TRI_DEFAULT_LEAF;
+    if (max_leaf > TRI_MAX_LEAF) max_leaf = TRI_MAX_LEAF;
+
+    tri_build_ctx bc;
+    memset(&bc, 0, sizeof(bc));
+    bc.ntris = nprims;
+    bc.max_leaf = max_leaf;
+    bc.block_shift = 2u;
+    bc.quality = LRT_TRI_BUILD_DEFAULT;
+    bc.points_xyz = centers;
+    bc.points_n = normals;
+    bc.emit_kind = TRI_PRIM_POINT;
+    if (tri_alloc_aabb_scratch(&bc, nprims)) {
+        tri_set_err(err, LRT_RESULT_OUT_OF_MEMORY);
+        return NULL;
+    }
+    float *major = (float *)malloc(nprims * sizeof(float));
+    float *minor = (float *)malloc(nprims * sizeof(float));
+    float *angles = (float *)calloc(nprims, sizeof(float));
+    if (!major || !minor || !angles) {
+        free(major); free(minor); free(angles); tri_free_aabb_scratch(&bc);
+        tri_set_err(err, LRT_RESULT_OUT_OF_MEMORY);
+        return NULL;
+    }
+    int bad = 0;
+    for (size_t i = 0; i < nprims; i++) {
+        const float *c = &centers[i * 3];
+        const float rx = radii_xy[i * 2 + 0], ry = radii_xy[i * 2 + 1];
+        major[i] = rx; minor[i] = ry;
+        if (!isfinite(c[0]) || !isfinite(c[1]) || !isfinite(c[2]) ||
+            !isfinite(rx) || !isfinite(ry) || rx <= 0.0f || ry <= 0.0f)
+            bad = 1;
+        const float r = fmaxf(rx, ry);
+        for (int a = 0; a < 3; a++) {
+            bc.plo[i * 3 + a] = c[a] - r;
+            bc.phi[i * 3 + a] = c[a] + r;
+            bc.cen[i * 3 + a] = c[a];
+        }
+        if (major_axes) {
+            float nx = normals[i * 3 + 0], ny = normals[i * 3 + 1],
+                  nz = normals[i * 3 + 2];
+            float nl = sqrtf(nx * nx + ny * ny + nz * nz);
+            if (nl > 1.0e-20f) {
+                nx /= nl; ny /= nl; nz /= nl;
+                float ax = fabsf(ny) < 0.9f ? 0.0f : 1.0f;
+                float ay = fabsf(ny) < 0.9f ? 1.0f : 0.0f;
+                float ux = ay * nz, uy = -ax * nz, uz = ax * ny - ay * nx;
+                float ul = sqrtf(ux * ux + uy * uy + uz * uz);
+                if (ul > 1.0e-20f) {
+                    ux /= ul; uy /= ul; uz /= ul;
+                    float vx = ny * uz - nz * uy, vy = nz * ux - nx * uz,
+                          vz = nx * uy - ny * ux;
+                    const float *m = &major_axes[i * 3];
+                    float dotn = m[0] * nx + m[1] * ny + m[2] * nz;
+                    float mx = m[0] - dotn * nx, my = m[1] - dotn * ny,
+                          mz = m[2] - dotn * nz;
+                    float ml = sqrtf(mx * mx + my * my + mz * mz);
+                    if (ml > 1.0e-20f)
+                        angles[i] = atan2f(mx * vx + my * vy + mz * vz,
+                                           mx * ux + my * uy + mz * uz);
+                }
+            }
+        }
+        bc.indices[i] = (uint32_t)i;
+    }
+    if (bad) {
+        free(major); free(minor); tri_free_aabb_scratch(&bc);
+        tri_set_err(err, LRT_RESULT_INVALID_BOUNDS);
+        return NULL;
+    }
+    bc.points_r = major;
+    bc.points_ry = minor;
+    bc.points_angle = angles;
+    lrt_tri_scene *s =
+        tri_finish_aabb_build(&bc, nprims, TRI_PRIM_POINT, num_threads, err);
+    if (s) {
+        s->point_type = TRI_POINT_ELLIPSE;
+        s->kernel_name = "point-ellipse-bvh4/scalar";
+    }
+    free(major); free(minor); free(angles); tri_free_aabb_scratch(&bc);
+    return s;
+}
+
+lrt_tri_scene *lrt_ellipse_scene_build(const float *centers,
+                                       const float *radii_xy,
+                                       const float *normals, size_t nprims,
+                                       const lrt_tri_build_options *opts,
+                                       lrt_result *err) {
+    return lrt_ellipse_scene_build_impl(centers, radii_xy, normals, NULL,
+                                         nprims, opts, err);
+}
+
+lrt_tri_scene *lrt_ellipse_scene_build_oriented(
+    const float *centers, const float *radii_xy, const float *normals,
+    const float *major_axes, size_t nprims, const lrt_tri_build_options *opts,
+    lrt_result *err) {
+    if (!major_axes) {
+        tri_set_err(err, LRT_RESULT_INVALID_ARGUMENT);
+        return NULL;
+    }
+    return lrt_ellipse_scene_build_impl(centers, radii_xy, normals, major_axes,
+                                         nprims, opts, err);
 }
 
 /* --------------------------------------------------------------------------

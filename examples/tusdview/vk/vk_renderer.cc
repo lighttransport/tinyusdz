@@ -348,6 +348,7 @@ struct RtPushC {
   float sceneMin[4];    // position AOV bbox
   float sceneExtent[4];
   float lens[4];        // focus distance, aperture radius, enabled, reserved
+  float pointParams[4]; // native Gaussian point count, node count, reserved
 };
 
 // Per-mesh descriptor for the RT shader (scalar layout, must match raytrace.comp).
@@ -391,6 +392,15 @@ struct InstanceInfoGPU {
   float tint[4];         // per-instance color/opacity or flatColor/flatOpacity
 };
 static_assert(sizeof(InstanceInfoGPU) == 32, "InstanceInfoGPU scalar layout");
+
+struct RtPointGPU {
+  float center[4];
+  float major[4];
+  float normal[4];
+  float radii[4];
+  float color[4];
+};
+static_assert(sizeof(RtPointGPU) == 80, "RtPointGPU scalar layout");
 
 }  // namespace
 
@@ -1331,11 +1341,11 @@ void VulkanRenderer::drawLineSet(VkCommandBuffer cb,
   }
 }
 
-VkShaderModule VulkanRenderer::createShader(const uint32_t* code, size_t bytes) {
+VkShaderModule VulkanRenderer::createShader(const void* code, size_t bytes) {
   VkShaderModuleCreateInfo ci{};
   ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   ci.codeSize = bytes;
-  ci.pCode = code;
+  ci.pCode = reinterpret_cast<const uint32_t*>(code);
   VkShaderModule m = VK_NULL_HANDLE;
   vkCreateShaderModule(device_, &ci, nullptr, &m);
   return m;
@@ -4674,6 +4684,20 @@ void VulkanRenderer::destroyScene() {
   if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
+  if (rtPointBuf_) { vkDestroyBuffer(device_, rtPointBuf_, nullptr); rtPointBuf_ = VK_NULL_HANDLE; }
+  if (rtPointMem_) { vkFreeMemory(device_, rtPointMem_, nullptr); rtPointMem_ = VK_NULL_HANDLE; }
+  if (rtPointNodeBuf_) { vkDestroyBuffer(device_, rtPointNodeBuf_, nullptr); rtPointNodeBuf_ = VK_NULL_HANDLE; }
+  if (rtPointNodeMem_) { vkFreeMemory(device_, rtPointNodeMem_, nullptr); rtPointNodeMem_ = VK_NULL_HANDLE; }
+  if (rtPointOrderBuf_) { vkDestroyBuffer(device_, rtPointOrderBuf_, nullptr); rtPointOrderBuf_ = VK_NULL_HANDLE; }
+  if (rtPointOrderMem_) { vkFreeMemory(device_, rtPointOrderMem_, nullptr); rtPointOrderMem_ = VK_NULL_HANDLE; }
+  rtPointCount_ = rtPointNodeCount_ = 0;
+  if (rtPointBuf_) { vkDestroyBuffer(device_, rtPointBuf_, nullptr); rtPointBuf_ = VK_NULL_HANDLE; }
+  if (rtPointMem_) { vkFreeMemory(device_, rtPointMem_, nullptr); rtPointMem_ = VK_NULL_HANDLE; }
+  if (rtPointNodeBuf_) { vkDestroyBuffer(device_, rtPointNodeBuf_, nullptr); rtPointNodeBuf_ = VK_NULL_HANDLE; }
+  if (rtPointNodeMem_) { vkFreeMemory(device_, rtPointNodeMem_, nullptr); rtPointNodeMem_ = VK_NULL_HANDLE; }
+  if (rtPointOrderBuf_) { vkDestroyBuffer(device_, rtPointOrderBuf_, nullptr); rtPointOrderBuf_ = VK_NULL_HANDLE; }
+  if (rtPointOrderMem_) { vkFreeMemory(device_, rtPointOrderMem_, nullptr); rtPointOrderMem_ = VK_NULL_HANDLE; }
+  rtPointCount_ = rtPointNodeCount_ = 0;
   tlasDirty_ = true;
 
   for (auto v : texSlotViews_) {
@@ -6811,7 +6835,7 @@ void VulkanRenderer::destroyTlasChunks() {
 }
 
 void VulkanRenderer::rebuildTlas() {
-  if (!rtSupported_ || meshes_.empty() || !rtSet_) return;
+  if (!rtSupported_ || (meshes_.empty() && nativePoints_.empty()) || !rtSet_) return;
   // No vkDeviceWaitIdle: the caller (presentImpl) has already waited the in-flight
   // fence, so the previous frame -- the only consumer of the resources dropped
   // below and of rtSet_ (one frame in flight) -- has completed. The per-mesh /
@@ -6841,6 +6865,13 @@ void VulkanRenderer::rebuildTlas() {
   if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
+  if (rtPointBuf_) { vkDestroyBuffer(device_, rtPointBuf_, nullptr); rtPointBuf_ = VK_NULL_HANDLE; }
+  if (rtPointMem_) { vkFreeMemory(device_, rtPointMem_, nullptr); rtPointMem_ = VK_NULL_HANDLE; }
+  if (rtPointNodeBuf_) { vkDestroyBuffer(device_, rtPointNodeBuf_, nullptr); rtPointNodeBuf_ = VK_NULL_HANDLE; }
+  if (rtPointNodeMem_) { vkFreeMemory(device_, rtPointNodeMem_, nullptr); rtPointNodeMem_ = VK_NULL_HANDLE; }
+  if (rtPointOrderBuf_) { vkDestroyBuffer(device_, rtPointOrderBuf_, nullptr); rtPointOrderBuf_ = VK_NULL_HANDLE; }
+  if (rtPointOrderMem_) { vkFreeMemory(device_, rtPointOrderMem_, nullptr); rtPointOrderMem_ = VK_NULL_HANDLE; }
+  rtPointCount_ = rtPointNodeCount_ = 0;
 
   // Ensure every mesh has a BLAS, and build the instance + descriptor arrays. A
   // non-instanced mesh contributes ONE TLAS instance at its world transform; an
@@ -6850,6 +6881,51 @@ void VulkanRenderer::rebuildTlas() {
   // full-range, unlike the 24-bit instanceCustomIndex).
   std::vector<VkAccelerationStructureInstanceKHR> insts;
   std::vector<InstanceInfoGPU> instInfos;
+  std::vector<RtPointGPU> pointDescs;
+  pointDescs.reserve(1024);
+  for (const DrawPointsCPU& src : nativePoints_) {
+    const size_t n = src.points.size() / 3;
+    if (!src.gaussian || src.ellipseRadii.size() < n * 2 ||
+        src.ellipseNormals.size() < n * 3 || src.ellipseMajorAxes.size() < n * 3)
+      continue;
+    for (size_t i = 0; i < n; ++i) {
+      RtPointGPU p{};
+      p.center[0] = src.world[0] * src.points[i*3] + src.world[4] * src.points[i*3+1] + src.world[8] * src.points[i*3+2] + src.world[12];
+      p.center[1] = src.world[1] * src.points[i*3] + src.world[5] * src.points[i*3+1] + src.world[9] * src.points[i*3+2] + src.world[13];
+      p.center[2] = src.world[2] * src.points[i*3] + src.world[6] * src.points[i*3+1] + src.world[10] * src.points[i*3+2] + src.world[14];
+      float major[3], normal[3];
+      for (int k = 0; k < 3; ++k) {
+        major[k] = src.world[k] * src.ellipseMajorAxes[i*3] + src.world[4+k] * src.ellipseMajorAxes[i*3+1] + src.world[8+k] * src.ellipseMajorAxes[i*3+2];
+        normal[k] = src.world[k] * src.ellipseNormals[i*3] + src.world[4+k] * src.ellipseNormals[i*3+1] + src.world[8+k] * src.ellipseNormals[i*3+2];
+      }
+      float ml = std::sqrt(major[0]*major[0]+major[1]*major[1]+major[2]*major[2]);
+      float nl = std::sqrt(normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]);
+      if (ml <= 1e-8f || nl <= 1e-8f) continue;
+      for (int k = 0; k < 3; ++k) { p.major[k] = major[k] / ml; p.normal[k] = normal[k] / nl; }
+      p.radii[0] = src.ellipseRadii[i*2] * ml;
+      p.radii[1] = src.ellipseRadii[i*2+1] * ml;
+      const size_t ci = src.colors.size() >= (i+1)*3 ? i*3 : 0;
+      p.color[0] = src.colors.size() >= 3 ? src.colors[ci] : 1.0f;
+      p.color[1] = src.colors.size() >= 3 ? src.colors[ci+1] : 1.0f;
+      p.color[2] = src.colors.size() >= 3 ? src.colors[ci+2] : 1.0f;
+      p.color[3] = src.opacities.empty() ? 1.0f : src.opacities[src.opacities.size() > i ? i : 0];
+      pointDescs.push_back(p);
+    }
+  }
+  std::vector<Node> pointNodes;
+  std::vector<int> pointOrder;
+  if (!pointDescs.empty()) {
+    std::vector<float> centers(pointDescs.size()*3), aabb(pointDescs.size()*6);
+    for (size_t i = 0; i < pointDescs.size(); ++i) {
+      for (int k = 0; k < 3; ++k) centers[i*3+k] = pointDescs[i].center[k];
+      const float r = std::max(pointDescs[i].radii[0], pointDescs[i].radii[1]);
+      for (int k = 0; k < 3; ++k) { aabb[i*6+k] = centers[i*3+k]-r; aabb[i*6+3+k] = centers[i*3+k]+r; }
+      pointOrder.push_back(static_cast<int>(i));
+    }
+    pointNodes = BuildTlas(pointOrder, static_cast<int>(pointDescs.size()), centers, aabb);
+  }
+  rtPointCount_ = static_cast<uint32_t>(pointDescs.size());
+  rtPointNodeCount_ = static_cast<uint32_t>(pointNodes.size());
   // One descriptor per mesh + one trailing slot for the shared box proxy
   // (boxMeshId == meshes_.size()).
   const uint32_t boxMeshId = static_cast<uint32_t>(meshes_.size());
@@ -7046,6 +7122,22 @@ void VulkanRenderer::rebuildTlas() {
     info.tint[1] = s.tint[1];
     info.tint[2] = s.tint[2];
     info.tint[3] = s.opacity;
+    instInfos.push_back(info);
+  }
+  if (insts.empty() && !pointDescs.empty() && boxMesh_.blasAddr != 0) {
+    VkAccelerationStructureInstanceKHR inst{};
+    inst.instanceCustomIndex = boxMeshId & 0xFFFFFFu;
+    inst.mask = 0;
+    inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    inst.accelerationStructureReference = boxMesh_.blasAddr;
+    inst.transform.matrix[0][0] = 1.0f;
+    inst.transform.matrix[1][1] = 1.0f;
+    inst.transform.matrix[2][2] = 1.0f;
+    insts.push_back(inst);
+    InstanceInfoGPU info{};
+    info.meshId = boxMeshId;
+    info.tint[0] = info.tint[1] = info.tint[2] = 1.0f;
+    info.tint[3] = 0.0f;
     instInfos.push_back(info);
   }
   if (insts.empty()) return;
@@ -7307,6 +7399,21 @@ void VulkanRenderer::rebuildTlas() {
   createHostBuffer(instInfos.size() * sizeof(InstanceInfoGPU),
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, instInfos.data(),
                    &instInfoBuf_, &instInfoMem_);
+  RtPointGPU dummyPoint{};
+  Node dummyNode{};
+  int dummyOrder = 0;
+  createHostBuffer(pointDescs.empty() ? sizeof(dummyPoint) : pointDescs.size() * sizeof(RtPointGPU),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   pointDescs.empty() ? static_cast<const void*>(&dummyPoint) : static_cast<const void*>(pointDescs.data()),
+                   &rtPointBuf_, &rtPointMem_);
+  createHostBuffer(pointNodes.empty() ? sizeof(dummyNode) : pointNodes.size() * sizeof(Node),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   pointNodes.empty() ? static_cast<const void*>(&dummyNode) : static_cast<const void*>(pointNodes.data()),
+                   &rtPointNodeBuf_, &rtPointNodeMem_);
+  createHostBuffer(pointOrder.empty() ? sizeof(dummyOrder) : pointOrder.size() * sizeof(int),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   pointOrder.empty() ? static_cast<const void*>(&dummyOrder) : static_cast<const void*>(pointOrder.data()),
+                   &rtPointOrderBuf_, &rtPointOrderMem_);
 
   // Update descriptors: TLAS(0), meshDesc(2), material(3), instInfo(4),
   // LightRT material block(6), packed lights(7). Image(1) and accumulation image(5)
@@ -7328,7 +7435,10 @@ void VulkanRenderer::rebuildTlas() {
   VkDescriptorBufferInfo texDescInfo{rtTexDescBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo matTexInfo{rtMatTexBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo matTexParamInfo{rtMatTexParamBuf_, 0, VK_WHOLE_SIZE};
-  VkWriteDescriptorSet w[13]{};
+  VkDescriptorBufferInfo pointInfo{rtPointBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo pointNodeInfo{rtPointNodeBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo pointOrderInfo{rtPointOrderBuf_, 0, VK_WHOLE_SIZE};
+  VkWriteDescriptorSet w[16]{};
   w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   w[0].pNext = &asInfo;
   w[0].dstSet = rtSet_;
@@ -7415,7 +7525,16 @@ void VulkanRenderer::rebuildTlas() {
     w[9 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     w[9 + i].pBufferInfo = rtTextureInfos[i];
   }
-  vkUpdateDescriptorSets(device_, 13, w, 0, nullptr);
+  const VkDescriptorBufferInfo* pointInfos[3] = {&pointInfo, &pointNodeInfo, &pointOrderInfo};
+  for (uint32_t i = 0; i < 3; ++i) {
+    w[13 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w[13 + i].dstSet = rtSet_;
+    w[13 + i].dstBinding = 15 + i;
+    w[13 + i].descriptorCount = 1;
+    w[13 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    w[13 + i].pBufferInfo = pointInfos[i];
+  }
+  vkUpdateDescriptorSets(device_, 16, w, 0, nullptr);
 
   tlasDirty_ = false;
   rtTextureTableDirty_ = false;
@@ -7425,7 +7544,7 @@ void VulkanRenderer::rebuildTlas() {
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
   constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
-  VkDescriptorSetLayoutBinding b[15]{};
+  VkDescriptorSetLayoutBinding b[18]{};
   b[0].binding = 0;
   b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   b[0].descriptorCount = kMaxTlasChunks;
@@ -7455,13 +7574,13 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   b[9].binding = 9;  // GGX-prefiltered cube (surface specular IBL)
   b[10] = b[8];
   b[10].binding = 10;  // split-sum BRDF LUT (RG16F 2D)
-  for (uint32_t i = 11; i < 15; ++i) {
+  for (uint32_t i = 11; i < 18; ++i) {
     b[i] = b[2];
     b[i].binding = i;  // raw texels, descriptors, semantic ids, sample params
   }
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 15;
+  lci.bindingCount = 18;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &rtSetLayout_),
            "rt descriptor set layout");
@@ -7469,7 +7588,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   VkDescriptorPoolSize ps[4]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxTlasChunks};
   ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
-  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9};
+  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 12};
   ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
   VkDescriptorPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -7758,6 +7877,8 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lens[1] = cameraLens_.apertureRadius;
   pc.lens[2] = cameraLens_.enabled() ? 1.0f : 0.0f;
   pc.lens[3] = static_cast<float>(rtTlasChunkStride_);
+  pc.pointParams[0] = static_cast<float>(rtPointCount_);
+  pc.pointParams[1] = static_cast<float>(rtPointNodeCount_);
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
@@ -7863,6 +7984,13 @@ void VulkanRenderer::destroyRt() {
   if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
+  if (rtPointBuf_) { vkDestroyBuffer(device_, rtPointBuf_, nullptr); rtPointBuf_ = VK_NULL_HANDLE; }
+  if (rtPointMem_) { vkFreeMemory(device_, rtPointMem_, nullptr); rtPointMem_ = VK_NULL_HANDLE; }
+  if (rtPointNodeBuf_) { vkDestroyBuffer(device_, rtPointNodeBuf_, nullptr); rtPointNodeBuf_ = VK_NULL_HANDLE; }
+  if (rtPointNodeMem_) { vkFreeMemory(device_, rtPointNodeMem_, nullptr); rtPointNodeMem_ = VK_NULL_HANDLE; }
+  if (rtPointOrderBuf_) { vkDestroyBuffer(device_, rtPointOrderBuf_, nullptr); rtPointOrderBuf_ = VK_NULL_HANDLE; }
+  if (rtPointOrderMem_) { vkFreeMemory(device_, rtPointOrderMem_, nullptr); rtPointOrderMem_ = VK_NULL_HANDLE; }
+  rtPointCount_ = rtPointNodeCount_ = 0;
   if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
   if (rtImage_) { vkDestroyImage(device_, rtImage_, nullptr); rtImage_ = VK_NULL_HANDLE; }
   if (rtImageMem_) { vkFreeMemory(device_, rtImageMem_, nullptr); rtImageMem_ = VK_NULL_HANDLE; }
@@ -8768,7 +8896,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   if (fbW > 0 && fbH > 0) { winFbW_ = fbW; winFbH_ = fbH; }
 
   const bool rtFrame = rtActive_ && rtSupported_ && hasParams_ && offscreenFb_ &&
-                       rtImage_ && !meshes_.empty();
+                       rtImage_ && (!meshes_.empty() || !nativePoints_.empty());
 
   // Split-timer (TUSDVIEW_TIME_PRESENT): the previous frame's GPU cost surfaces as
   // the fence wait here (1 frame in flight); everything after is CPU record + submit.
