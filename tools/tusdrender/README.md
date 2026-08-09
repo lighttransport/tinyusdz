@@ -44,7 +44,10 @@ the texture cache releases decoded pixels after upload; explicit texture flags
 remain authoritative, including an explicit zero.
 
 Large `ParticleField3DGaussianSplat` fields are built as bounded native ellipse
-BVH chunks instead of one GPU allocation. The default chunk size is 262,144
+BVH chunks instead of one GPU allocation. Pure Gaussian scenes use the native
+Vulkan ellipse path; mixed mesh+splat Vulkan scenes use the bounded tessellated
+fallback so the splats are not lost when all geometry shares one flat trace. The
+default chunk size is 262,144
 splats; `TUSDR_GAUSSIAN_CHUNK=N` tunes it for a smaller VRAM budget. CPU RT
 tests all chunks directly, while the Vulkan path uploads/traces them
 sequentially, keeps the closest hit per ray, and releases each LightRT BVH as
