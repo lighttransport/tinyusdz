@@ -1481,6 +1481,7 @@ int main(int argc, char **argv) {
 
     bool has_direct_curves = false;
     bool has_flat_curves = false;
+    Bounds gpu_flat_bounds;
     RenderContext gpu_curve_ctx;
     std::vector<CurveJobNext> gpu_curve_jobs;
     stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
@@ -1515,6 +1516,12 @@ int main(int argc, char **argv) {
       }
       for (const CurveJobNext &job : gpu_curve_jobs)
         has_flat_curves |= job.prim.GetPropertyValue("normals") != nullptr;
+      if (has_flat_curves &&
+          !BuildNextFlatCurveBounds(gpu_curve_jobs, opt.timecode,
+                                    clip_stage_loader, &gpu_flat_bounds)) {
+        std::cerr << "Failed to read GPU flat/ribbon curve bounds.\n";
+        return EXIT_FAILURE;
+      }
     }
     // Vulkan uses the native analytic ellipse path for a pure splat scene.
     // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
@@ -1544,7 +1551,7 @@ int main(int argc, char **argv) {
     }
 #endif
 
-    if (geos.empty() && !native_gaussian) {
+    if (geos.empty() && !native_gaussian && !gpu_flat_bounds.valid) {
       std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
       return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
                  ? EXIT_SUCCESS
@@ -1563,7 +1570,7 @@ int main(int argc, char **argv) {
                            : (up_axis == 0.0) ? tinyusdz::Axis::X
                            : tinyusdz::Axis::Y;
 
-    Bounds bounds;
+    Bounds bounds = gpu_flat_bounds;
     for (const auto &g : geos) {
       for (size_t j = 0; j < g.positions.size() / 3; ++j) {
         bounds.lo.x = std::min(bounds.lo.x, g.positions[j * 3 + 0]);

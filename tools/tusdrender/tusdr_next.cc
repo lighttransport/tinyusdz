@@ -3384,6 +3384,26 @@ bool BuildNextFlatCurveMeshes(
   return true;
 }
 
+bool BuildNextFlatCurveBounds(
+    const std::vector<CurveJobNext> &jobs, double time,
+    const tinyusdz::next::ValueClipStageLoader &clip_loader, Bounds *bounds) {
+  if (!bounds) return false;
+  for (const CurveJobNext &job : jobs) {
+    if (job.prim.GetPropertyValue("normals") == nullptr) continue;
+    CurvePointViewNext point_source;
+    if (!ReadCurvePointViewNext(job.prim, time, clip_loader, &point_source))
+      continue;
+    for (size_t i = 0; i + 2 < point_source.view.size(); i += 3) {
+      const Vec3 p = TransformPoint(
+          job.world, Vec3{point_source.view[i], point_source.view[i + 1],
+                          point_source.view[i + 2]});
+      if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z))
+        Expand(bounds, p);
+    }
+  }
+  return true;
+}
+
 // Gaussian splats are not Mesh prims and must not be forced through the
 // triangle stream. Build one native LightRT ellipse scene from the composed
 // point field instead. The DC SH coefficient is used as the direct primitive's
