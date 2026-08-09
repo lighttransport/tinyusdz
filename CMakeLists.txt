@@ -2394,6 +2394,7 @@ if(TINYUSDZ_BUILD_TESTS)
         transparency
         usdz-texture-equivalence
         uv-set-routing
+        gaussian-carrier-dispatch
         vk-ray-tiling)
     foreach(t ${TUSDR_SHELL_TESTS})
       add_test(
