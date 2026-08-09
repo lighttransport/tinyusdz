@@ -344,7 +344,16 @@ bool BuildGpuCpuScene(int threads, GpuTriScene *out, lrt_tri_quality quality) {
                                            out->flat_idx.data(), out->ntris,
                                            &bopts, &lrterr);
   if (!out->scene || lrterr != LRT_RESULT_OK) {
-    std::cerr << "Failed to build LightRT scene.\n";
+    // Some backends can return a handle together with a non-OK diagnostic.
+    // Never leave that partial BVH attached to the scene: callers may retry
+    // with a smaller chunk and would otherwise retain the failed allocation.
+    if (out->scene) {
+      lrt_tri_scene_free(out->scene);
+      out->scene = nullptr;
+    }
+    std::cerr << "Failed to build LightRT scene (err=" << int(lrterr)
+              << ", vertices=" << (out->flat_verts.size() / 3)
+              << ", triangles=" << out->ntris << ").\n";
     return false;
   }
   return true;
