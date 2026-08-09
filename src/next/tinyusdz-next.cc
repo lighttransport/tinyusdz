@@ -397,6 +397,10 @@ StageChangeSet BuildStageChangeSet(const Stage* previous, const Stage& next,
 struct StageSession::Impl {
   StageSessionOptions options;
   std::string root_identifier;
+  // For packaged files this includes the selected root entry, e.g.
+  // `scene.usdz[root.usda]`.  Keep it separate from the public filename so a
+  // released composition cache can be restored against the same package root.
+  std::string composition_identifier;
   AssetResolver resolver;
   std::unique_ptr<pcp::Cache> cache;
   std::shared_ptr<Stage> stage{new Stage()};
@@ -553,8 +557,11 @@ struct StageSession::Impl {
         MinNonZero(composition.max_layer_memory, options.load.max_memory);
     composition.usda_parse_options = options.load.usda_options.parse_options;
     std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
+    const std::string &identifier = composition_identifier.empty()
+                                        ? root_identifier
+                                        : composition_identifier;
     auto restored = pcp::Cache::Open(resolver, std::move(root_layer),
-                                     root_identifier, composition);
+                                     identifier, composition);
     if (!restored) {
       error = restored.error();
       RecordMessages(DiagnosticDomain::Compose);
@@ -687,6 +694,7 @@ bool StageSession::OpenFile(const std::string& filename,
       }
     }
   }
+  next->composition_identifier = composition_identifier;
   if (!next->Progress(ProgressPhase::RootLoad, 1.0f, "root layer loaded")) {
     impl_ = std::move(next);
     return false;

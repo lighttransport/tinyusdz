@@ -1,0 +1,89 @@
+#usda 1.0
+(
+    defaultPrim = "Scene"
+    endTimeCode = 20
+    startTimeCode = 1
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def Camera "Cam"
+    {
+        float focalLength = 35
+        float horizontalAperture = 36
+        float verticalAperture = 20.25
+        float2 clippingRange = (0.1, 1000)
+        double3 xformOp:translate = (0, 1.5, 12)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def SkelRoot "Rig"
+    {
+        # This xform is intentionally animated as well as the skeleton.  The
+        # skinning path must keep the mesh and its skeleton in the same space.
+        double3 xformOp:translate.timeSamples = {
+            1: (0, 0, 0),
+            20: (0, 0, 0)
+        }
+        double3 xformOp:rotateXYZ.timeSamples = {
+            1: (0, 0, 0),
+            20: (0, 0, 25)
+        }
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+
+        def Mesh "Mesh" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 4, 6, 7, 5, 0, 4, 5, 1, 2, 3, 7, 6, 0, 2, 6, 4, 1, 5, 7, 3]
+            point3f[] points = [(-1, 0, 1), (1, 0, 1), (-1, 0, -1), (1, 0, -1), (-1, 3, 1), (1, 3, 1), (-1, 3, -1), (1, 3, -1)]
+            color3f[] primvars:displayColor = [(0.8, 0.8, 0.8)]
+            int[] primvars:skel:jointIndices = [0, 0, 0, 0, 1, 1, 1, 1] (
+                elementSize = 1
+                interpolation = "vertex"
+            )
+            float[] primvars:skel:jointWeights = [1, 1, 1, 1, 1, 1, 1, 1] (
+                elementSize = 1
+                interpolation = "vertex"
+            )
+            prepend rel skel:skeleton = </Scene/Rig/Skeleton>
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Skeleton "Skeleton" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform matrix4d[] bindTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)),
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 2, 0, 1))
+            ]
+            uniform token[] joints = ["root", "root/child"]
+            uniform matrix4d[] restTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)),
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 2, 0, 1))
+            ]
+            prepend rel skel:animationSource = </Scene/Rig/Animation>
+
+            def SkelAnimation "Animation"
+            {
+                uniform token[] joints = ["root", "root/child"]
+                quatf[] rotations.timeSamples = {
+                    1: [(1, 0, 0, 0), (1, 0, 0, 0)],
+                    20: [(1, 0, 0, 0), (0.8660254, 0, 0, 0.5)]
+                }
+                # The child values are deliberately not local offsets.  They
+                # model the exporter pattern that caused the private asset to
+                # explode; ordinary rigs must retain their rest translations.
+                float3[] translations.timeSamples = {
+                    1: [(0, 0, 0), (0, 2, 0)],
+                    20: [(0, 0, 0), (0, 20, 0)]
+                }
+                half3[] scales = [(1, 1, 1), (1, 1, 1)]
+            }
+        }
+    }
+}

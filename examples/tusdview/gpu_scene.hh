@@ -837,7 +837,6 @@ struct DrawScene {
     std::string meshPath;  // the skinned mesh (diagnostics)
     int numJoints{0};
     int matrixBase{0};
-    bool worldBeforeSkin{false};
     double geomBind[16];  // primvars:skel:geomBindTransform (row-vector)
     double world[16];     // mesh world transform baked into the vertices
   };

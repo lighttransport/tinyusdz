@@ -1946,7 +1946,6 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
                       double time, DrawMeshCPU* dm,
                       const std::vector<uint32_t>& vertexToPoint,
                       size_t numPoints, const double worldM[16],
-                      bool worldBeforeSkin,
                       DrawScene* draw) {
   if (!dm || dm->vertices.empty() || !draw) return false;
   const size_t nv = dm->vertices.size();
@@ -2047,7 +2046,6 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   nb.meshPath = meshPrim.GetPath().str();
   nb.numJoints = nj;
   nb.matrixBase = base;
-  nb.worldBeforeSkin = worldBeforeSkin;
   for (int r = 0; r < 4; ++r)
     for (int c = 0; c < 4; ++c) nb.geomBind[r * 4 + c] = bind.geomBind.m[r][c];
   for (int k = 0; k < 16; ++k) nb.world[k] = worldM[k];
@@ -2373,7 +2371,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
     if (gpuSkinning) {
       double identW[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
       gpuSkinned = SetupGpuSkinNext(stage, mp, time, &dm, vertexToPoint,
-                                    numPoints, identW, false, draw);
+                                    numPoints, identW, draw);
     }
     if (!gpuSkinned) BakeSkinning(stage, mp, time, &dm, vertexToPoint, numPoints);
 
@@ -3928,12 +3926,8 @@ static bool ComputeNextBoneRows(const tnext::Stage& stage, const DrawScene& draw
     for (size_t j = 0; j < nj; ++j) {
       const size_t row = static_cast<size_t>(nb.matrixBase) + j;
       if (row >= rows) break;
-      const matrix4d S = G * sm[j] * invG;
-      // Static batches contain p*W, so conjugate the skin matrix back through
-      // that bake. Animated-world batches retain W as a separate draw matrix,
-      // but legacy composition skins the world-baked point; express that order
-      // as W*S*invW so the final draw is p*W*S.
-      bones[row] = nb.worldBeforeSkin ? (W * S * invW) : (invW * S * W);
+      // Row-vector: undo the world bake, LBS in bind space, re-apply the world.
+      bones[row] = invW * (G * sm[j] * invG) * W;
     }
   }
 
@@ -7061,8 +7055,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                                m.point_count());
       }
     }
-    const bool hasAnimatedWorld = HasAnimatedNextWorld(mp);
-    bool animatedWorld = hasAnimatedWorld;
+    const bool animatedWorld = HasAnimatedNextWorld(mp);
     // Skeletal skinning, before the vertices are world-baked into the batch.
     // GPU: keep the (morphed) bind pose and emit per-vertex joint attributes (the
     // shader poses every frame). CPU: bake the static pose at `time` into the
@@ -7070,20 +7063,19 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     bool cpuSkinned = false;
     if (m.has_skin()) {
       if (opts.gpuSkinning) {
-        SetupGpuSkinNext(stage, mp, time, &loc, vertexToPoint, m.point_count(),
-                         mw16, hasAnimatedWorld, draw);
-      } else {
-        // Match the legacy loader's order for an animated parent: its mesh
-        // vertices are world-baked first and the skeleton then skins those
-        // world-space points. CPU mode owns the sampled pose, so make the
-        // batch static after this bake and leave its draw-world as identity.
-        if (hasAnimatedWorld) {
-          TransformDrawVertices(mw16, &loc);
-          worldBaked = true;
+        double skinWorld[16];
+        if (animatedWorld) {
+          const double ident[16] = {1, 0, 0, 0, 0, 1, 0, 0,
+                                    0, 0, 1, 0, 0, 0, 0, 1};
+          std::memcpy(skinWorld, ident, sizeof(skinWorld));
+        } else {
+          std::memcpy(skinWorld, mw16, sizeof(skinWorld));
         }
+        SetupGpuSkinNext(stage, mp, time, &loc, vertexToPoint, m.point_count(),
+                         skinWorld, draw);
+      } else {
         cpuSkinned =
             BakeSkinning(stage, mp, time, &loc, vertexToPoint, m.point_count());
-        animatedWorld = false;
       }
     }
     // A morphed mesh must not share a batch with anything else: its channel ids

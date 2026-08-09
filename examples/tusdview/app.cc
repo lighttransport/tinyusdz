@@ -3165,8 +3165,6 @@ void App::updateGpuSkinningFrameIfNeeded() {
   // Manual blendshape weights (Maya-like editor) force a re-pose even at the same
   // time code, since the weights changed rather than the animation clock.
   const bool blendDirty = hasMorph && gui_.consumeBlendDirty();
-  if (skinFrameTime_ == animTime_ && !blendDirty) return;  // already posed
-
   // Per-mesh vertex/world updates index the renderer by DrawScene mesh order;
   // that only holds when the renderer uploaded exactly these meshes. Guard it so
   // a future divergence degrades gracefully (rest pose) instead of posing the
@@ -3186,7 +3184,10 @@ void App::updateGpuSkinningFrameIfNeeded() {
   // owns the GL context (the main thread has released it), so a direct GL call
   // from this main-thread function would hit no current context / race the
   // render thread. postGpu runs inline when single-threaded (no behavior change).
-  if (idxOk && mixed && UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_)) {
+  // Xform samples under a SkelRoot are not represented as non-skeletal
+  // AnimationClip channels. Re-evaluate worlds unconditionally so a skinned
+  // mesh with an animated parent is not left at the load-time identity world.
+  if (idxOk && UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_)) {
     std::vector<std::pair<int, std::array<float, 16>>> worldUploads;
     worldUploads.reserve(draw_.meshes.size());
     for (size_t i = 0; i < draw_.meshes.size(); ++i) {
@@ -3198,6 +3199,7 @@ void App::updateGpuSkinningFrameIfNeeded() {
       for (const auto& u : ups) renderer_->updateMeshWorld(u.first, u.second.data());
     });
   }
+  if (skinFrameTime_ == animTime_ && !blendDirty) return;  // already posed
 
   if (renderer_->rayTracingActive()) {
     if (!idxOk) return;
