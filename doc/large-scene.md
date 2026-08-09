@@ -1973,6 +1973,10 @@ tessellation.
 The fallback collector now reads Gaussian attributes through lazy array views,
 so positions, scales, orientations, opacity, and SH data are not copied into
 five full temporary vectors before tessellation.
+Both tusdview and tusdrender avoid decoding an oversized compressed SH array
+when only its DC color is needed for preview; they report the skipped optional
+payload and use the neutral fallback color instead. Small and zero-copy SH
+arrays retain their authored color.
 It also applies opacity to the fallback color buckets and rejects non-finite or
 near-zero opacity samples, matching native ellipse filtering. Each color bucket
 is flushed at `TUSDR_GPU_TRIANGLE_CHUNK`, preventing HIP/ROCm and D3D11 from

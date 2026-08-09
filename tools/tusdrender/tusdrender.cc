@@ -256,8 +256,12 @@ void CollectGpuPointsRec(
         ReadFloatArrayViewLazy(prim, "orientations", time, &orientations);
     const bool have_opacities =
         ReadFloatArrayViewLazy(prim, "opacities", time, &opacities);
-    const bool have_sh = ReadFloatArrayViewLazy(
+    const bool allow_sh = AllowGaussianSHDecode(prim);
+    const bool have_sh = allow_sh && ReadFloatArrayViewLazy(
         prim, "radiance:sphericalHarmonicsCoefficients", time, &sh);
+    if (!allow_sh)
+      std::cerr << "Gaussian fallback: skipping oversized compressed SH payload at "
+                << prim.GetPath().str() << "; using fallback color.\n";
     const size_t count = have_points ? points.size() / 3 : 0;
     if (!have_points || !have_scales || count == 0 || scales.size() < 3) {
       for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
