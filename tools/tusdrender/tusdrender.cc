@@ -356,9 +356,12 @@ void CollectGpuPointsRec(
               << ", GPU chunks: " << (geos->size() - gaussian_geo_first)
               << ", limit: " << batch_limit << " tris\n";
   } else if (prim.GetTypeName() == "Points") {
-    const std::vector<float> points = ReadFloatArrayLazy(prim, "points", time);
-    const std::vector<float> widths = ReadFloatArrayLazy(prim, "widths", time);
-    const std::vector<float> normals = ReadFloatArrayLazy(prim, "normals", time);
+    tinyusdz::tydra::next::ValueArrayRead<float> points;
+    tinyusdz::tydra::next::ValueArrayRead<float> widths;
+    tinyusdz::tydra::next::ValueArrayRead<float> normals;
+    const bool have_points = ReadFloatArrayViewLazy(prim, "points", time, &points);
+    ReadFloatArrayViewLazy(prim, "widths", time, &widths);
+    ReadFloatArrayViewLazy(prim, "normals", time, &normals);
     const size_t batchLimit = GpuTriangleChunkLimit();
     RTPreviewStats::MeshGeometry batch;
     size_t emitted = 0;
@@ -369,6 +372,11 @@ void CollectGpuPointsRec(
       batch = RTPreviewStats::MeshGeometry{};
       emitted = 0;
     };
+    if (!have_points) {
+      for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+        CollectGpuPointsRec(child, world, time, base_colors, geos);
+      return;
+    }
     for (size_t i = 0; i + 2 < points.size(); i += 3) {
       const Vec3 p = TransformPoint(world, Vec3{points[i], points[i + 1],
                                                 points[i + 2]});
@@ -379,7 +387,7 @@ void CollectGpuPointsRec(
               : (widths.size() == 1
                      ? widths[0]
                      : (pointIndex < widths.size() ? widths[pointIndex]
-                                                    : widths.back()));
+                                                    : widths[widths.size() - 1]));
       const float w = std::isfinite(authoredWidth)
                           ? std::max(0.0f, authoredWidth)
                           : 0.0f;
