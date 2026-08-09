@@ -67,7 +67,7 @@ void PackLightRtOpenPBR(const DrawMaterialCPU& mat, float* dst);
 
 // Pack material texture transforms, channel selectors, and scale/bias values
 // into the RT kernel layout. `dst` must hold kRtMaterialTextureParamFloats
-// floats. The order must match raytracer_kernel.inc.
+// floats. The order must match raytracer_kernel_src.txt.
 void PackRtMaterialTextureParams(const DrawMaterialCPU& mat, float* dst);
 
 // Pack the Vulkan raster/tessellation material texture SSBO layout. `dst` must
