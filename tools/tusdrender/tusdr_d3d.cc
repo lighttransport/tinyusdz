@@ -3,11 +3,12 @@
 // lightrt_c_d3d11). Compiles to nothing unless HAVE_D3D11 is defined.
 //
 // Unlike tusdr_vulkan.cc (one GPU trace call per pixel), this batches every
-// primary ray into a single lrt_d3d11_trace_scene() dispatch, so a full frame
-// is one GPU round-trip.
+// primary ray into one lrt_d3d11_trace_scene() dispatch per bounded geometry
+// chunk, keeping device and BVH residency bounded for large scenes.
 #ifdef HAVE_D3D11
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -21,102 +22,12 @@
 namespace tusdr {
 
 bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
-                     const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                     std::vector<RTPreviewStats::MeshGeometry> &geos,
                      const CameraFrame &camera, int height) {
-  // Flatten all meshes into one indexed vertex/index array + per-triangle
-  // shading data (matches tusdr_vulkan.cc).
-  std::vector<float> flat_verts;
-  std::vector<uint32_t> flat_idx;
-  std::vector<Vec3> tri_base_colors;
-  std::vector<Vec3> tri_normals;
-  size_t total_pos = 0;
-  size_t total_idx = 0;
-  size_t total_vertices = 0;
-  const size_t max_u32 = size_t(std::numeric_limits<uint32_t>::max());
-  for (const auto &g : geos) {
-    if ((g.positions.size() % 3u) != 0u) {
-      std::cerr << "Invalid mesh positions: component count is not a multiple of 3.\n";
-      return false;
-    }
-    if ((g.indices.size() % 3u) != 0u) {
-      std::cerr << "Invalid mesh indices: index count is not a multiple of 3.\n";
-      return false;
-    }
-    const size_t nv = g.positions.size() / 3u;
-    if (nv > max_u32 || total_vertices > max_u32 - nv) {
-      std::cerr << "Too many flattened vertices for 32-bit GPU indices.\n";
-      return false;
-    }
-    total_pos += g.positions.size();
-    total_idx += g.indices.size();
-    total_vertices += nv;
-  }
-  const size_t total_tris = total_idx / 3;
-  if (total_tris > max_u32) {
-    std::cerr << "Too many triangles for 32-bit GPU tracing.\n";
-    return false;
-  }
-  flat_verts.reserve(total_pos);
-  flat_idx.reserve(total_idx);
-  tri_base_colors.reserve(total_tris);
-  tri_normals.reserve(total_tris);
-  uint32_t base_idx = 0;
-  for (size_t mesh_idx = 0; mesh_idx < geos.size(); ++mesh_idx) {
-    const auto &g = geos[mesh_idx];
-    uint32_t nv = uint32_t(g.positions.size() / 3);
-    for (uint32_t j = 0; j < nv; ++j) {
-      flat_verts.push_back(g.positions[j * 3 + 0]);
-      flat_verts.push_back(g.positions[j * 3 + 1]);
-      flat_verts.push_back(g.positions[j * 3 + 2]);
-    }
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()); ++j) {
-      if (g.indices[j] >= nv) {
-        std::cerr << "Invalid mesh index " << g.indices[j] << " for "
-                  << nv << " vertices.\n";
-        return false;
-      }
-      flat_idx.push_back(base_idx + g.indices[j]);
-    }
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j) {
-      uint32_t i0 = g.indices[j * 3 + 0], i1 = g.indices[j * 3 + 1],
-               i2 = g.indices[j * 3 + 2];
-      Vec3 p0{g.positions[i0 * 3 + 0], g.positions[i0 * 3 + 1], g.positions[i0 * 3 + 2]};
-      Vec3 p1{g.positions[i1 * 3 + 0], g.positions[i1 * 3 + 1], g.positions[i1 * 3 + 2]};
-      Vec3 p2{g.positions[i2 * 3 + 0], g.positions[i2 * 3 + 1], g.positions[i2 * 3 + 2]};
-      tri_normals.push_back(Normalize(Cross(Sub(p1, p0), Sub(p2, p0))));
-    }
-    size_t nm = std::min(base_colors.size(), geos.size());
-    Vec3 bc = (mesh_idx < nm) ? base_colors[mesh_idx] : Vec3{0.5f, 0.5f, 0.5f};
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j)
-      tri_base_colors.push_back(bc);
-    base_idx += nv;
-  }
-
-  uint32_t ntris = uint32_t(flat_idx.size() / 3);
-  if (ntris == 0) {
-    std::cerr << "No triangles to render.\n";
-    return false;
-  }
-
-  lrt_tri_build_options bopts;
-  std::memset(&bopts, 0, sizeof(bopts));
-  bopts.quality = LRT_TRI_BUILD_DEFAULT;
-  bopts.layout = LRT_TRI_LAYOUT_BVH4;
-  bopts.num_threads = WorkerThreadCount(opt.threads);
-  lrt_result lrterr = LRT_RESULT_OK;
-  lrt_tri_scene *scene = lrt_tri_scene_build_indexed(
-      flat_verts.data(), flat_verts.size() / 3, flat_idx.data(), ntris, &bopts,
-      &lrterr);
-  if (!scene || lrterr != LRT_RESULT_OK) {
-    std::cerr << "Failed to build LightRT scene.\n";
-    return false;
-  }
-
   lrt_result d3derr = LRT_RESULT_OK;
   lrt_d3d11_engine *dev = lrt_d3d11_engine_create(/*prefer_discrete=*/1, &d3derr);
   if (!dev) {
     std::cerr << "Failed to create LightRT Direct3D 11 engine.\n";
-    lrt_tri_scene_free(scene);
     return false;
   }
   std::cerr << "Direct3D 11 device: " << lrt_d3d11_engine_device_name(dev) << "\n";
@@ -127,7 +38,6 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   size_t nrays = 0;
   if (!ValidateGpuFrameSize(w, h, spp, "Direct3D 11", &nrays)) {
     lrt_d3d11_engine_destroy(dev);
-    lrt_tri_scene_free(scene);
     return false;
   }
   const uint32_t ray_count = uint32_t(nrays);
@@ -159,14 +69,73 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   }
 
   std::vector<lrt_hit> hits(nrays);
-  lrt_result trerr = LRT_RESULT_OK;
-  int traced = lrt_d3d11_trace_scene(dev, scene, rays.data(),
-                                     ray_count, hits.data(), &trerr);
-  if (traced < 0) {
-    std::cerr << "Direct3D 11 trace failed: "
-              << lrt_d3d11_engine_last_error(dev) << "\n";
+  for (lrt_hit &hit : hits) {
+    hit.prim_id = LRT_TRI_NO_HIT;
+    hit.t = std::numeric_limits<float>::infinity();
+  }
+
+  size_t chunk_limit = 262144;
+  if (const char *env = std::getenv("TUSDR_GPU_TRIANGLE_CHUNK")) {
+    char *end = nullptr;
+    const unsigned long long parsed = std::strtoull(env, &end, 10);
+    if (end != env && parsed > 0) chunk_limit = size_t(parsed);
+  }
+  size_t mesh_index = 0, tri_index = 0, global_first = 0, chunk_count = 0;
+  std::vector<Vec3> chunk_colors;
+  std::vector<RTPreviewStats::MeshGeometry> chunk_geos;
+  std::vector<lrt_hit> chunk_hits(nrays);
+  std::vector<Vec3> tri_base_colors;
+  std::vector<Vec3> tri_normals;
+  size_t total_tris = 0;
+  while (true) {
+    size_t chunk_tris = 0;
+    if (!BuildGpuTriChunk(base_colors, geos, chunk_limit, &mesh_index,
+                          &tri_index, &chunk_colors, &chunk_geos,
+                          &chunk_tris))
+      break;
+    GpuTriScene chunk;
+    if (!BuildGpuTriScene(chunk_colors, chunk_geos, opt.threads,
+                          /*build_cpu_scene=*/false, &chunk)) {
+      lrt_d3d11_engine_destroy(dev);
+      return false;
+    }
+    if (!BuildGpuCpuScene(opt.threads, &chunk)) {
+      if (chunk.scene) lrt_tri_scene_free(chunk.scene);
+      lrt_d3d11_engine_destroy(dev);
+      return false;
+    }
+    chunk_hits.assign(nrays, lrt_hit{});
+    lrt_result trerr = LRT_RESULT_OK;
+    int traced = lrt_d3d11_trace_scene(dev, chunk.scene, rays.data(),
+                                       ray_count, chunk_hits.data(), &trerr);
+    if (traced < 0) {
+      std::cerr << "Direct3D 11 trace failed for chunk [" << global_first
+                << ", " << (global_first + chunk_tris) << "]: "
+                << lrt_d3d11_engine_last_error(dev) << "\n";
+      lrt_tri_scene_free(chunk.scene);
+      lrt_d3d11_engine_destroy(dev);
+      return false;
+    }
+    for (size_t i = 0; i < nrays; ++i) {
+      if (chunk_hits[i].prim_id != LRT_TRI_NO_HIT &&
+          chunk_hits[i].t < hits[i].t) {
+        hits[i] = chunk_hits[i];
+        hits[i].prim_id += static_cast<uint32_t>(global_first);
+      }
+    }
+    tri_base_colors.insert(tri_base_colors.end(), chunk.base_colors.begin(),
+                           chunk.base_colors.end());
+    tri_normals.insert(tri_normals.end(), chunk.normals.begin(),
+                       chunk.normals.end());
+    lrt_tri_scene_free(chunk.scene);
+    global_first += chunk_tris;
+    total_tris += chunk_tris;
+    ++chunk_count;
+  }
+  if (total_tris == 0 ||
+      total_tris > size_t(std::numeric_limits<uint32_t>::max())) {
+    std::cerr << "No triangles to render.\n";
     lrt_d3d11_engine_destroy(dev);
-    lrt_tri_scene_free(scene);
     return false;
   }
 
@@ -181,7 +150,7 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
       Vec3 color{0, 0, 0};
       for (int s = 0; s < spp; ++s) {
         const lrt_hit &hit = hits[(size_t(y) * w + x) * spp + s];
-        if (hit.prim_id != LRT_TRI_NO_HIT && hit.prim_id < ntris) {
+        if (hit.prim_id != LRT_TRI_NO_HIT && hit.prim_id < total_tris) {
           Vec3 bc = hit.prim_id < tri_base_colors.size()
                         ? tri_base_colors[hit.prim_id] : Vec3{0.5f, 0.5f, 0.5f};
           Vec3 N = hit.prim_id < tri_normals.size()
@@ -205,15 +174,14 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   if (!ret) {
     std::cerr << "Failed to write PNG: " << ret.error() << "\n";
     lrt_d3d11_engine_destroy(dev);
-    lrt_tri_scene_free(scene);
     return false;
   }
 
-  std::cerr << "triangles: " << ntris << " (" << geos.size() << " meshes)\n";
+  std::cerr << "triangles: " << total_tris << " (" << geos.size()
+            << " source meshes, " << chunk_count << " GPU chunks)\n";
   std::cerr << "backend: LightRT D3D11 (compute trace, " << nrays
-            << " rays in 1 dispatch)\n";
+            << " rays per chunk)\n";
   lrt_d3d11_engine_destroy(dev);
-  lrt_tri_scene_free(scene);
   return true;
 }
 

@@ -11,8 +11,9 @@
  * ubiquitous on Windows and needs no SDK to build (d3d11 + d3dcompiler ship with
  * the OS). Windows-only; on other platforms this header compiles to nothing.
  *
- * Unlike the Vulkan helper this batches a whole ray array into ONE dispatch, so
- * a full-frame trace is a single GPU round-trip rather than one per pixel.
+ * Unlike the Vulkan helper this batches a whole ray array into one dispatch per
+ * bounded geometry chunk, rather than one per pixel. The caller reduces the
+ * nearest hit across chunks when a scene exceeds its upload budget.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

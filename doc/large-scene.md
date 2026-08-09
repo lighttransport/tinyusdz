@@ -1904,6 +1904,9 @@ The same shared bounded chunk builder is used by the HIP/ROCm backend. When
 reduces nearest hits before CPU shading, releasing consumed source geometry in
 the same way. If ROCm is unavailable, the backend reports the runtime error
 and exits cleanly rather than silently producing an incomplete image.
+The Direct3D 11 backend now follows the same bounded upload and nearest-hit
+reduction policy, so its single-dispatch implementation no longer requires a
+monolithic scene/BVH allocation.
 
 Gaussian splats follow the same backend policy: Vulkan ray query keeps the
 native analytic ellipse BVH, while HIP/ROCm and D3D11 use the bounded oriented

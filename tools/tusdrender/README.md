@@ -49,6 +49,9 @@ The Vulkan flat GPU path uses the same sequential strategy for oversized uploads
 `TUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144) bounds each GPU BLAS/AS and
 reduces the nearest hit across chunks before shading. This avoids requiring the
 whole flat scene to fit in an 8-GiB device allocation.
+The Direct3D 11 path uses the same chunk limit and nearest-hit reduction, rather
+than flattening all source meshes into one long-lived BVH. Consumed source
+geometry is released after each chunk is built.
 
 Curve point arrays use the same lazy view reader before conversion to the
 native LightRT strand representation, so ordinary uncompressed USDC curves do
