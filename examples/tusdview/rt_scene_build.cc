@@ -12,6 +12,7 @@
 #include <iterator>
 #include <limits>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "displacement_bake.hh"  // SampleTextureRed
@@ -519,6 +520,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
     for (const DrawLightCPU& light : *lights) markTexture(light.envmapTexture);
   }
   size_t skippedUnused = 0;
+  std::unordered_map<uint64_t, std::vector<int>> packedTextureCandidates;
+  size_t deduplicated = 0;
 
   auto decodeImage = [](const light3d::Image& src,
                         const DrawCompressedImageCPU& compressed,
@@ -554,6 +557,52 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       decoded->push_back(std::move(levelImage));
     }
     return decoded;
+  };
+  auto hashBytes = [](uint64_t h, const uint8_t* data, size_t size) {
+    constexpr uint64_t kFnvOffset = 1469598103934665603ull;
+    if (h == 0) h = kFnvOffset;
+    for (size_t i = 0; i < size; ++i) {
+      h ^= static_cast<uint64_t>(data[i]);
+      h *= 1099511628211ull;
+    }
+    return h;
+  };
+  auto imageHash = [&](uint64_t h, const light3d::Image& image) {
+    h = hashBytes(h, reinterpret_cast<const uint8_t*>(&image.width),
+                  sizeof(image.width));
+    h = hashBytes(h, reinterpret_cast<const uint8_t*>(&image.height),
+                  sizeof(image.height));
+    h = hashBytes(h, reinterpret_cast<const uint8_t*>(&image.channels),
+                  sizeof(image.channels));
+    return hashBytes(h, image.data.data(), image.data.size());
+  };
+  auto samePackedTexture = [&](int baseId, const light3d::Image& image,
+                               const std::vector<light3d::Image>& mips,
+                               const DrawTextureCPU& tex) {
+    if (baseId < 0 || static_cast<size_t>(baseId) >= out->textures.size())
+      return false;
+    const HostTextureDesc* desc = &out->textures[static_cast<size_t>(baseId)];
+    if (desc->width != image.width || desc->height != image.height ||
+        desc->srgb != (tex.srgb ? 1 : 0) || desc->wrapS != tex.wrapS ||
+        desc->wrapT != tex.wrapT || desc->mipCount != int(mips.size() + 1))
+      return false;
+    const light3d::Image* level = &image;
+    for (size_t i = 0; i <= mips.size(); ++i) {
+      if (desc->width != level->width || desc->height != level->height ||
+          desc->offset < 0 ||
+          static_cast<size_t>(desc->offset) + level->data.size() >
+              out->texels.size() ||
+          std::memcmp(out->texels.data() + desc->offset, level->data.data(),
+                      level->data.size()) != 0)
+        return false;
+      if (i == mips.size()) break;
+      if (desc->firstMip < 0 ||
+          static_cast<size_t>(desc->firstMip) >= out->textures.size())
+        return false;
+      desc = &out->textures[static_cast<size_t>(desc->firstMip)];
+      level = &mips[i];
+    }
+    return true;
   };
   auto appendImage = [&](const light3d::Image& image,
                          const std::vector<light3d::Image>& sourceMips,
@@ -631,8 +680,34 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
           decodeImage(tex.image, tex.compressed, &decoded);
       const std::vector<light3d::Image>* mips =
           decodeMips(tex.mipImages, tex.compressed, &decodedMipsStorage);
-      out->sourceToTable[ti] =
-          image ? appendImage(*image, *mips, tex) : -1;
+      if (!image) {
+        out->sourceToTable[ti] = -1;
+        continue;
+      }
+      uint64_t hash = imageHash(0, *image);
+      for (const light3d::Image& mip : *mips) hash = imageHash(hash, mip);
+      hash = hashBytes(hash, reinterpret_cast<const uint8_t*>(&tex.wrapS),
+                       sizeof(tex.wrapS));
+      hash = hashBytes(hash, reinterpret_cast<const uint8_t*>(&tex.wrapT),
+                       sizeof(tex.wrapT));
+      hash = hashBytes(hash, reinterpret_cast<const uint8_t*>(&tex.srgb),
+                       sizeof(tex.srgb));
+      int tableId = -1;
+      auto candidates = packedTextureCandidates.find(hash);
+      if (candidates != packedTextureCandidates.end()) {
+        for (int candidate : candidates->second) {
+          if (samePackedTexture(candidate, *image, *mips, tex)) {
+            tableId = candidate;
+            ++deduplicated;
+            break;
+          }
+        }
+      }
+      if (tableId < 0) {
+        tableId = appendImage(*image, *mips, tex);
+        if (tableId >= 0) packedTextureCandidates[hash].push_back(tableId);
+      }
+      out->sourceToTable[ti] = tableId;
     }
   }
   auto mapTex = [&](int t) -> int {
@@ -658,10 +733,10 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
         dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
   }
   LOGI("RT texture table: %zu source texture(s), %zu descriptor(s), %.2f MiB "
-       "packed, skipped %zu unused source texture(s)",
+       "packed, skipped %zu unused source texture(s), deduplicated %zu",
        sourceTextures.size(), out->textures.size(),
        static_cast<double>(out->texels.size()) / (1024.0 * 1024.0),
-       skippedUnused);
+       skippedUnused, deduplicated);
 }
 
 namespace {
