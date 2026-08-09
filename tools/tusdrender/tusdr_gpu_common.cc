@@ -46,6 +46,8 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
                       int threads, bool build_cpu_scene, GpuTriScene *out,
                       lrt_tri_quality quality) {
+  if (!out) return false;
+  out->has_vertex_normals = false;
   // Flatten all meshes into one indexed vertex/index array LightRT can build:
   // flat_verts = unique positions, flat_idx = 3*ntris vertex ids.
   size_t total_pos = 0;
@@ -78,9 +80,18 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   out->flat_verts.reserve(total_pos);
   out->flat_idx.reserve(total_idx);
   out->normals.reserve(total_tris);
-  out->vn0.reserve(total_tris);
-  out->vn1.reserve(total_tris);
-  out->vn2.reserve(total_tris);
+  for (const auto &g : geos) {
+    const size_t nv = g.positions.size() / 3u;
+    if (g.normals.size() == nv * 3u) {
+      out->has_vertex_normals = true;
+      break;
+    }
+  }
+  if (out->has_vertex_normals) {
+    out->vn0.reserve(total_tris);
+    out->vn1.reserve(total_tris);
+    out->vn2.reserve(total_tris);
+  }
   out->base_colors.reserve(total_tris);
   uint32_t base_idx = 0;
   for (size_t mesh_idx = 0; mesh_idx < geos.size(); ++mesh_idx) {
@@ -117,9 +128,11 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
       Vec3 p2{g.positions[i2 * 3 + 0], g.positions[i2 * 3 + 1], g.positions[i2 * 3 + 2]};
       Vec3 e1 = Sub(p1, p0), e2 = Sub(p2, p0);
       out->normals.push_back(Normalize(Cross(e1, e2)));
-      out->vn0.push_back(vnorm(i0));
-      out->vn1.push_back(vnorm(i1));
-      out->vn2.push_back(vnorm(i2));
+      if (out->has_vertex_normals) {
+        out->vn0.push_back(vnorm(i0));
+        out->vn1.push_back(vnorm(i1));
+        out->vn2.push_back(vnorm(i2));
+      }
     }
     size_t nm = (base_colors.size() > geos.size()) ? geos.size() : base_colors.size();
     Vec3 bc = mesh_idx < nm ? base_colors[mesh_idx] : Vec3{0.5f, 0.5f, 0.5f};
@@ -136,6 +149,26 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   }
   if (!build_cpu_scene) return true;
   return BuildGpuCpuScene(threads, out, quality);
+}
+
+void AppendGpuSmoothNormals(const GpuTriScene &src, GpuTriScene *dst) {
+  if (!dst || (!src.has_vertex_normals && !dst->has_vertex_normals)) return;
+  const size_t prior = dst->base_colors.size();
+  if (!dst->has_vertex_normals) {
+    dst->vn0.assign(prior, Vec3{0.0f, 0.0f, 0.0f});
+    dst->vn1.assign(prior, Vec3{0.0f, 0.0f, 0.0f});
+    dst->vn2.assign(prior, Vec3{0.0f, 0.0f, 0.0f});
+    dst->has_vertex_normals = true;
+  }
+  if (src.has_vertex_normals) {
+    dst->vn0.insert(dst->vn0.end(), src.vn0.begin(), src.vn0.end());
+    dst->vn1.insert(dst->vn1.end(), src.vn1.begin(), src.vn1.end());
+    dst->vn2.insert(dst->vn2.end(), src.vn2.begin(), src.vn2.end());
+  } else {
+    dst->vn0.insert(dst->vn0.end(), src.ntris, Vec3{0.0f, 0.0f, 0.0f});
+    dst->vn1.insert(dst->vn1.end(), src.ntris, Vec3{0.0f, 0.0f, 0.0f});
+    dst->vn2.insert(dst->vn2.end(), src.ntris, Vec3{0.0f, 0.0f, 0.0f});
+  }
 }
 
 bool BuildGpuTriChunk(
@@ -417,12 +450,17 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
             // Smooth normal: barycentric-interpolate the triangle's vertex normals
             // (hit.u, hit.v are the v1/v2 weights). Fall back to the flat face
             // normal when vertex normals are absent/degenerate.
-            Vec3 N = s.normals[hit.prim_id];
-            const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
-            Vec3 sn = Add(Add(Mul(s.vn0[hit.prim_id], w0),
-                              Mul(s.vn1[hit.prim_id], w1)),
-                          Mul(s.vn2[hit.prim_id], w2));
-            if (Length(sn) > 1.0e-8f) N = Normalize(sn);
+            Vec3 N = hit.prim_id < s.normals.size()
+                         ? s.normals[hit.prim_id]
+                         : Vec3{0.0f, 1.0f, 0.0f};
+            if (s.has_vertex_normals && hit.prim_id < s.vn0.size() &&
+                hit.prim_id < s.vn1.size() && hit.prim_id < s.vn2.size()) {
+              const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
+              Vec3 sn = Add(Add(Mul(s.vn0[hit.prim_id], w0),
+                                Mul(s.vn1[hit.prim_id], w1)),
+                            Mul(s.vn2[hit.prim_id], w2));
+              if (Length(sn) > 1.0e-8f) N = Normalize(sn);
+            }
             // Orient the normal toward the camera so a surface visible to the eye
             // is never left unlit by a back-facing normal (USD winding/normals are
             // not guaranteed consistent for a quick preview).
