@@ -97,6 +97,22 @@ fi
 cleanup_raytrace_tmp
 trap - EXIT
 
+# --- compute-BVH ray-tracing fallback (optional, no hardware RT needed) ----
+# Milestone-1 debug shader (see raytrace_swbvh.comp): needs only baseline
+# Vulkan compute + storage buffers, no GL_EXT_ray_query/SPIR-V 1.4, so this
+# should compile with essentially any glslang -- absent only if glslang
+# itself is missing or broken. Absent -> compute-BVH fallback compiled out
+# (TUSDVIEW_HAVE_SWRT_SHADER=0); --rt then falls back to plain rasterization
+# on GPUs without hardware ray query, same as before this fallback existed.
+if "$GLSLANG" -V --target-env vulkan1.1 --vn raytrace_swbvh_comp_spv \
+      -o "$OUT/raytrace_swbvh_comp.spv.h" "$HERE/raytrace_swbvh.comp" 2>/dev/null; then
+  echo "==> raytrace_swbvh.comp -> embedded/raytrace_swbvh_comp.spv.h (compute-BVH RT fallback ENABLED)"
+else
+  rm -f "$OUT/raytrace_swbvh_comp.spv.h"
+  echo "==> WARNING: '$GLSLANG' cannot produce valid raytrace_swbvh.comp SPIR-V"
+  echo "    (compile failed) — compute-BVH RT fallback omitted."
+fi
+
 # --- RT GPU-skinning compute shader (optional) ------------------------------
 # Skins the BLAS vertex stream on the GPU for the ray-query path (same
 # vulkan1.2 / buffer_reference needs as raytrace.comp). Absent -> per-frame

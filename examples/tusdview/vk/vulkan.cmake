@@ -44,6 +44,19 @@ else()
   message(STATUS "tusdview: Vulkan backend ENABLED (runtime-loaded via volk; embedded SPIR-V, rasterization only — no raytrace_comp.spv.h)")
 endif()
 
+# Compute-BVH ray-tracing fallback (raytrace_swbvh.comp): used on GPUs without
+# hardware ray-query/acceleration-structure support so --rt still ray traces
+# instead of dropping straight to rasterization. Independent of _have_rt_shader
+# above -- needs no GL_EXT_ray_query, so it can be present even when the
+# hardware shader isn't (e.g. an older glslang), or vice versa.
+if(EXISTS ${TUSDVIEW_SHADER_EMBED_DIR}/raytrace_swbvh_comp.spv.h)
+  set(_have_swrt_shader 1)
+  message(STATUS "tusdview: Vulkan compute-BVH ray-tracing fallback ENABLED")
+else()
+  set(_have_swrt_shader 0)
+  message(STATUS "tusdview: Vulkan compute-BVH ray-tracing fallback DISABLED — no raytrace_swbvh_comp.spv.h (regenerate with build-shaders.sh)")
+endif()
+
 # GPU compute skinning for the RT vertex stream (skin.comp): optional like the
 # ray-query shader. Absent -> per-frame RT skinning falls back to the CPU path.
 if(EXISTS ${TUSDVIEW_SHADER_EMBED_DIR}/skin_comp.spv.h)
@@ -67,6 +80,7 @@ target_sources(${EXAMPLE_TARGET} PRIVATE
 target_compile_definitions(${EXAMPLE_TARGET} PRIVATE HAVE_VULKAN=1
     VK_NO_PROTOTYPES IMGUI_IMPL_VULKAN_USE_VOLK
     TUSDVIEW_HAVE_RT_SHADER=${_have_rt_shader}
+    TUSDVIEW_HAVE_SWRT_SHADER=${_have_swrt_shader}
     TUSDVIEW_HAVE_SKIN_SHADER=${_have_skin_shader})
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${TUSDVIEW_SHADER_EMBED_DIR}

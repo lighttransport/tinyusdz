@@ -24,9 +24,11 @@ JOBS="$(nproc 2>/dev/null || echo 4)"
 
 case "$(uname -s)" in
   Linux) ;;
-  *) echo "build-glslang.sh: Linux only for now (saw $(uname -s)). Install a"
-     echo "  glslangValidator with GL_EXT_ray_query support manually and pass"
-     echo "  -DTUSDVIEW_GLSLANG=/path to CMake."; exit 1 ;;
+  *) echo "build-glslang.sh: Linux only for now (saw $(uname -s))."
+     echo "  On Windows, use build-glslang.ps1 (or the build-glslang.bat wrapper)"
+     echo "  in this same directory instead. Otherwise, install a glslangValidator"
+     echo "  with GL_EXT_ray_query support manually and pass -DTUSDVIEW_GLSLANG=/path"
+     echo "  to CMake."; exit 1 ;;
 esac
 
 bin="$PREFIX/bin/glslangValidator"

@@ -259,6 +259,14 @@ class Renderer {
   // Bound the raw texture table used by native RT backends. Textures beyond
   // the cap remain valid material slots but use the backend's fallback image.
   virtual void setRtTextureBudgetBytes(size_t /*bytes*/) {}
+  // Backend-agnostic scene source for host-side BVH builders (rt_scene_build.cc's
+  // BuildHostScene(), already used by the CUDA/HIP screenshot tracers). `scene`
+  // must outlive the renderer or be re-set/cleared before it doesn't (the App's
+  // `draw_` member is stable for the app's lifetime, so callers typically set
+  // this once, early, and rely on the renderer re-reading it lazily). Renderers
+  // that don't need a host-built BVH (e.g. GL raster, hardware Vulkan RT) can
+  // ignore this; the Vulkan compute-BVH fallback path uses it.
+  virtual void setHostSceneSource(const DrawScene* /*scene*/) {}
   // Replace an RGBA8 rectangle in an already-uploaded ordinary 2D texture.
   // Used by bounded Ptex page streaming; compressed and array textures reject
   // updates. `rowBytes` permits uploading a sub-rectangle from a larger CPU
@@ -468,6 +476,11 @@ class Renderer {
   virtual double rayTracingInitializationMs() const { return 0.0; }
   virtual uint64_t rayTracingInputInstances() const { return 0; }
   virtual bool rayTracingBuildIncomplete() const { return false; }
+  // True when the active/available RT technique is hardware ray-query rather
+  // than a software fallback (e.g. Vulkan's compute-BVH path). Meaningless
+  // when rayTracingAvailable() is false. Defaults to true: only backends that
+  // actually have a non-hardware RT technique need to override this.
+  virtual bool rayTracingIsHardware() const { return true; }
   // Switch the active technique between rasterization (false) and ray tracing
   // (true). No-op / ignored when ray tracing is unavailable. Both techniques
   // consume the same uploaded scene, so toggling needs no reload.

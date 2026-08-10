@@ -1694,7 +1694,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     // One-shot upload (headless / threaded / failure). draw_ is empty when !ok.
     // Threaded: post upload + the CPU-geometry free together so they run, in order,
     // on the render thread (the free must not precede the upload it feeds).
-    const bool freeCpu = ok && useNextLoader_ && !cudaRt_ && !hipRt_;
+    const bool freeCpu = ok && useNextLoader_ && !needsMeshCpuGeometryForRT();
     if (ok && rtOwnsScreenshot_) {
       for (const DrawMeshCPU& mesh : draw_.meshes) collectPtexRequests(mesh);
     }
@@ -2034,7 +2034,7 @@ void App::drainProgressiveLoad() {
     while (nextAux_ < draw_.meshes.size() && elapsedMs() < budgetMs) {
       restoreDeferredMeshAux(nextAux_);
       renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
-      if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
+      if (useNextLoader_ && !needsMeshCpuGeometryForRT() &&
           !MeshIsDeformable(draw_.meshes[nextAux_])) {
         FreeMeshAuxCPU(draw_.meshes[nextAux_]);
       }
@@ -2154,7 +2154,7 @@ void App::drainProgressiveLoad() {
       ptexMeshDemanded_.push_back(uint8_t{0});
       deferredMeshAux_.emplace_back();
       DrawMeshCPU& retained = draw_.meshes.back();
-      if (useNextLoader_ && !cudaRt_ && !hipRt_ && !MeshIsDeformable(retained)) {
+      if (useNextLoader_ && !needsMeshCpuGeometryForRT() && !MeshIsDeformable(retained)) {
         if (streamAuxEager_)
           FreeMeshGeometryCPU(retained);
         else {
@@ -2382,7 +2382,7 @@ void App::ensureWireAuxReady() {
   while (nextAux_ < resident) {
     restoreDeferredMeshAux(nextAux_);
     renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
-    if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
+    if (useNextLoader_ && !needsMeshCpuGeometryForRT() &&
         !MeshIsDeformable(draw_.meshes[nextAux_])) {
       FreeMeshAuxCPU(draw_.meshes[nextAux_]);
     }
@@ -2409,7 +2409,7 @@ void App::stepProgressiveUpload() {
   // Geometry first so meshes appear, normally ~8ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
-    if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
+    if (useNextLoader_ && !needsMeshCpuGeometryForRT() &&
         !MeshIsDeformable(draw_.meshes[nextMesh_]))
       FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
     ++nextMesh_;
@@ -2421,7 +2421,7 @@ void App::stepProgressiveUpload() {
     while (nextAux_ < draw_.meshes.size()) {
       restoreDeferredMeshAux(nextAux_);
       renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
-      if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
+      if (useNextLoader_ && !needsMeshCpuGeometryForRT() &&
           !MeshIsDeformable(draw_.meshes[nextAux_])) {
         FreeMeshAuxCPU(draw_.meshes[nextAux_]);
       }
@@ -3060,6 +3060,16 @@ bool App::wantsGpuSkinningLoad() const {
 bool App::wantsNextGpuSkinning() const {
   return useNextLoader_ && wantsGpuSkinningLoad() && renderer_ &&
          renderer_->caps().supportsGpuSkinning;
+}
+
+bool App::needsMeshCpuGeometryForRT() const {
+  if (cudaRt_ || hipRt_) return true;
+  // rtPath_ is set as soon as --rt is requested and some RT technique is
+  // available (checked at renderer init, before setRayTracing() has
+  // necessarily run yet -- see the two rtPath_ = true; sites) -- so this is
+  // valid to check as early as scene load, same as cudaRt_/hipRt_ above.
+  return rtPath_ && renderer_ && renderer_->rayTracingAvailable() &&
+         !renderer_->rayTracingIsHardware();
 }
 
 void App::updateSkinningEffective() {
@@ -4152,6 +4162,11 @@ int App::run(const std::string& initialFile, int maxFrames,
   renderer_->setRtTextureBudgetBytes(rtTextureBudget);
   cudaTracer_.setTextureBudgetBytes(rtTextureBudget);
   hipTracer_.setTextureBudgetBytes(rtTextureBudget);
+  // draw_ is a stable App member (same address for the app's lifetime); the
+  // Vulkan compute-BVH RT fallback reads it lazily via BuildHostScene() when
+  // it needs to rebuild its software BVH, same data the CUDA/HIP tracers'
+  // build(draw_, ...) calls already use elsewhere in this file.
+  renderer_->setHostSceneSource(&draw_);
   if (headless_) renderer_->setHeadlessSize(winW, winH);
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
@@ -4178,7 +4193,9 @@ int App::run(const std::string& initialFile, int maxFrames,
       if (renderer_->rayTracingAvailable()) {
         rtPath_ = true;
         postGpu([this] { renderer_->setRayTracing(true); });
-        LOGI("Vulkan ray tracing (ray query) enabled.");
+        LOGI("Vulkan ray tracing enabled (%s).",
+             renderer_->rayTracingIsHardware() ? "hardware ray query"
+                                               : "compute-BVH fallback");
       } else {
         LOGW("--rt requested but ray tracing is unavailable; using rasterization.");
       }
@@ -4209,11 +4226,14 @@ int App::run(const std::string& initialFile, int maxFrames,
       if (renderer_->rayTracingAvailable()) {
         rtPath_ = true;
         renderer_->setRayTracing(true);
-        LOGI("Vulkan ray tracing (ray query) enabled.");
+        LOGI("Vulkan ray tracing enabled (%s).",
+             renderer_->rayTracingIsHardware() ? "hardware ray query"
+                                               : "compute-BVH fallback");
       } else {
         LOGW("--rt requested but ray tracing is unavailable (needs the Vulkan "
-             "backend on an RT-capable GPU + an RT-capable glslang at build time); "
-             "using rasterization.");
+             "backend + an RT-capable glslang at build time for either the "
+             "hardware ray-query or compute-BVH fallback shader); using "
+             "rasterization.");
       }
     }
 

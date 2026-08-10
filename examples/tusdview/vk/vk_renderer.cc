@@ -42,6 +42,9 @@
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
 #include "raytrace_comp.spv.h"  // ray-query compute shader (when glslang supports it)
 #endif
+#if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
+#include "raytrace_swbvh_comp.spv.h"  // compute-BVH fallback (no hardware ray query needed)
+#endif
 #if defined(TUSDVIEW_HAVE_SKIN_SHADER) && TUSDVIEW_HAVE_SKIN_SHADER
 #include "skin_comp.spv.h"  // RT GPU compute skinning (optional)
 #endif
@@ -362,6 +365,17 @@ struct RtPushC {
   float sceneExtent[4];
   float lens[4];        // focus distance, aperture radius, enabled, reserved
   uint32_t pointParams[4]; // native Gaussian point count, node count, chunk count
+};
+
+// Push constants for the compute-BVH fallback's milestone-1 debug shader
+// (raytrace_swbvh.comp): just enough to generate camera rays and test the
+// TLAS root AABB. Grows toward RtPushC's shape as later milestones add real
+// traversal + shared shading.
+struct SwRtPushC {
+  float invViewProj[16];
+  float clearColor[4];
+  uint32_t tlasNodeCount;
+  uint32_t pad[3];
 };
 
 // Per-mesh descriptor for the RT shader (scalar layout, must match raytrace.comp).
@@ -732,6 +746,21 @@ void VulkanRenderer::detectRtSupport() {
   LOGI("Vulkan RT limits: maxInstances=%u", rtMaxInstanceCount_);
 
   rtSupported_ = true;  // device-side OK; PFN load in createDevice may still veto
+  rtTechnique_ = RtTechnique::kHardware;
+#endif
+}
+
+void VulkanRenderer::detectSwRtSupport() {
+#if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
+  if (rtTechnique_ == RtTechnique::kHardware) return;  // hardware already selected
+  if (!phys_ || !device_) return;
+  // Compute-BVH needs only baseline Vulkan compute + storage-buffer support,
+  // which every device reaching this point already has (we already created a
+  // graphics+compute queue/device) -- no extension/feature probe needed here,
+  // unlike the hardware ray-query path above.
+  rtTechnique_ = RtTechnique::kComputeBvh;
+  rtSupported_ = true;
+  LOGI("ray tracing: hardware ray query unavailable; using compute-BVH fallback.");
 #endif
 }
 
@@ -966,7 +995,8 @@ bool VulkanRenderer::createDevice(std::string* err) {
     if (!pfnCmdWriteASProps_ || !pfnCmdCopyAS_) blasCompact_ = false;
     if (!pfnGetBufferDeviceAddress_ || !pfnGetASBuildSizes_ || !pfnCreateAS_ ||
         !pfnDestroyAS_ || !pfnCmdBuildAS_ || !pfnGetASDeviceAddress_) {
-      rtSupported_ = false;  // any missing entrypoint -> rasterization only
+      rtSupported_ = false;  // any missing entrypoint -> compute-BVH / rasterization
+      rtTechnique_ = RtTechnique::kNone;
       LOGD("ray tracing: PFN load failed: bda=%p sizes=%p create=%p destroy=%p "
            "build=%p addr=%p",
            (void*)pfnGetBufferDeviceAddress_, (void*)pfnGetASBuildSizes_,
@@ -974,6 +1004,12 @@ bool VulkanRenderer::createDevice(std::string* err) {
            (void*)pfnGetASDeviceAddress_);
     }
   }
+  // Hardware ray-query may have been vetoed above (missing extension/feature,
+  // or a PFN load failure just now) -- try the compute-BVH fallback so --rt
+  // still ray traces instead of dropping straight to rasterization. No-op
+  // when hardware already succeeded, or when the fallback shader wasn't
+  // compiled in (TUSDVIEW_HAVE_SWRT_SHADER=0).
+  detectSwRtSupport();
   LOGD("ray tracing: rtSupported_=%d after device creation", rtSupported_ ? 1 : 0);
   {
     uint64_t used = 0, budget = 0;
@@ -6928,7 +6964,12 @@ void VulkanRenderer::destroyTlasChunks() {
 }
 
 void VulkanRenderer::rebuildTlas() {
-  if (!rtSupported_ || (meshes_.empty() && nativePoints_.empty()) || !rtSet_) return;
+  // Hardware-AS-specific: never run under the compute-BVH fallback (in
+  // practice rtSet_ is also never created for that technique, since
+  // setRayTracing() calls createSwRtResources() instead of
+  // createRtResources() -- the explicit check documents the invariant).
+  if (!rtSupported_ || rtTechnique_ != RtTechnique::kHardware ||
+      (meshes_.empty() && nativePoints_.empty()) || !rtSet_) return;
   gaussianRtDisabled_ = false;
   const bool rebuildRtTextures =
       rtTextureTableDirty_ || !rtTexelBuf_ || !rtTexDescBuf_ ||
@@ -7992,6 +8033,259 @@ bool VulkanRenderer::createRtResources(std::string* err) {
 #endif
 }
 
+// Milestone-1 scope: a minimal pipeline for the compute-BVH fallback's debug
+// shader (root-AABB hit test only, see raytrace_swbvh.comp) -- validates the
+// upload -> bind -> dispatch -> present plumbing. Later milestones extend the
+// binding set to materials/lights/textures (mirroring createRtResources())
+// as real traversal + shading are ported in.
+bool VulkanRenderer::createSwRtResources(std::string* err) {
+#if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
+  VkDescriptorSetLayoutBinding b[2]{};
+  b[0].binding = 0;
+  b[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  b[0].descriptorCount = 1;
+  b[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  b[1].binding = 1;
+  b[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  b[1].descriptorCount = 1;
+  b[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  VkDescriptorSetLayoutCreateInfo lci{};
+  lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  lci.bindingCount = 2;
+  lci.pBindings = b;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &swRtSetLayout_),
+           "sw-rt descriptor set layout");
+
+  VkDescriptorPoolSize ps[2]{};
+  ps[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1};
+  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
+  VkDescriptorPoolCreateInfo pci{};
+  pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  pci.maxSets = 1;
+  pci.poolSizeCount = 2;
+  pci.pPoolSizes = ps;
+  VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &swRtPool_),
+           "sw-rt descriptor pool");
+
+  VkDescriptorSetAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  ai.descriptorPool = swRtPool_;
+  ai.descriptorSetCount = 1;
+  ai.pSetLayouts = &swRtSetLayout_;
+  VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &swRtSet_), "sw-rt descriptor set");
+
+  VkPushConstantRange pcr{};
+  pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  pcr.size = sizeof(SwRtPushC);
+  VkPipelineLayoutCreateInfo plci{};
+  plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  plci.setLayoutCount = 1;
+  plci.pSetLayouts = &swRtSetLayout_;
+  plci.pushConstantRangeCount = 1;
+  plci.pPushConstantRanges = &pcr;
+  VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &swRtPipelineLayout_),
+           "sw-rt pipeline layout");
+
+  VkShaderModule cs =
+      createShader(raytrace_swbvh_comp_spv, sizeof(raytrace_swbvh_comp_spv));
+  if (!cs) {
+    if (err) *err = "sw-rt shader module";
+    return false;
+  }
+  VkComputePipelineCreateInfo cpci{};
+  cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+  cpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  cpci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+  cpci.stage.module = cs;
+  cpci.stage.pName = "main";
+  cpci.layout = swRtPipelineLayout_;
+  VkResult r = vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &cpci,
+                                        nullptr, &swRtPipeline_);
+  vkDestroyShaderModule(device_, cs, nullptr);
+  if (r != VK_SUCCESS) {
+    if (err) {
+      *err = "sw-rt compute pipeline (VkResult " +
+             std::to_string(static_cast<int>(r)) + ")";
+    }
+    return false;
+  }
+  return true;
+#else
+  (void)err;
+  return false;
+#endif
+}
+
+void VulkanRenderer::destroySwRt() {
+  if (swTriBuf_) { vkDestroyBuffer(device_, swTriBuf_, nullptr); swTriBuf_ = VK_NULL_HANDLE; }
+  if (swTriMem_) { vkFreeMemory(device_, swTriMem_, nullptr); swTriMem_ = VK_NULL_HANDLE; }
+  if (swNrmBuf_) { vkDestroyBuffer(device_, swNrmBuf_, nullptr); swNrmBuf_ = VK_NULL_HANDLE; }
+  if (swNrmMem_) { vkFreeMemory(device_, swNrmMem_, nullptr); swNrmMem_ = VK_NULL_HANDLE; }
+  if (swColBuf_) { vkDestroyBuffer(device_, swColBuf_, nullptr); swColBuf_ = VK_NULL_HANDLE; }
+  if (swColMem_) { vkFreeMemory(device_, swColMem_, nullptr); swColMem_ = VK_NULL_HANDLE; }
+  if (swUvBuf_) { vkDestroyBuffer(device_, swUvBuf_, nullptr); swUvBuf_ = VK_NULL_HANDLE; }
+  if (swUvMem_) { vkFreeMemory(device_, swUvMem_, nullptr); swUvMem_ = VK_NULL_HANDLE; }
+  if (swMatBuf_) { vkDestroyBuffer(device_, swMatBuf_, nullptr); swMatBuf_ = VK_NULL_HANDLE; }
+  if (swMatMem_) { vkFreeMemory(device_, swMatMem_, nullptr); swMatMem_ = VK_NULL_HANDLE; }
+  if (swBlasBuf_) { vkDestroyBuffer(device_, swBlasBuf_, nullptr); swBlasBuf_ = VK_NULL_HANDLE; }
+  if (swBlasMem_) { vkFreeMemory(device_, swBlasMem_, nullptr); swBlasMem_ = VK_NULL_HANDLE; }
+  if (swTlasBuf_) { vkDestroyBuffer(device_, swTlasBuf_, nullptr); swTlasBuf_ = VK_NULL_HANDLE; }
+  if (swTlasMem_) { vkFreeMemory(device_, swTlasMem_, nullptr); swTlasMem_ = VK_NULL_HANDLE; }
+  if (swInstBuf_) { vkDestroyBuffer(device_, swInstBuf_, nullptr); swInstBuf_ = VK_NULL_HANDLE; }
+  if (swInstMem_) { vkFreeMemory(device_, swInstMem_, nullptr); swInstMem_ = VK_NULL_HANDLE; }
+  swTriCount_ = swBlasNodeCount_ = swTlasNodeCount_ = swInstCount_ = 0;
+  if (swRtPipeline_) { vkDestroyPipeline(device_, swRtPipeline_, nullptr); swRtPipeline_ = VK_NULL_HANDLE; }
+  if (swRtPipelineLayout_) { vkDestroyPipelineLayout(device_, swRtPipelineLayout_, nullptr); swRtPipelineLayout_ = VK_NULL_HANDLE; }
+  if (swRtPool_) { vkDestroyDescriptorPool(device_, swRtPool_, nullptr); swRtPool_ = VK_NULL_HANDLE; swRtSet_ = VK_NULL_HANDLE; }
+  if (swRtSetLayout_) { vkDestroyDescriptorSetLayout(device_, swRtSetLayout_, nullptr); swRtSetLayout_ = VK_NULL_HANDLE; }
+}
+
+// Rebuilds the compute-BVH scene data (triangle SoA + BLAS/TLAS + instances)
+// via rt_scene_build.cc's BuildHostScene() and uploads it as SSBOs. Pure
+// host-side build + buffer upload -- no shader dependency, so (unlike
+// createSwRtResources()/traceRtBvh()) this always compiles; it's simply
+// unreachable unless rtTechnique_ == kComputeBvh, which itself requires the
+// fallback shader to have been compiled in.
+void VulkanRenderer::rebuildSwBvh() {
+  if (!rtSupported_ || rtTechnique_ != RtTechnique::kComputeBvh || !swRtSet_ ||
+      !hostSceneSource_) {
+    tlasDirty_ = false;
+    return;
+  }
+  if (hostSceneSource_->meshes.empty()) {
+    swTriCount_ = swBlasNodeCount_ = swTlasNodeCount_ = swInstCount_ = 0;
+    tlasDirty_ = false;
+    return;
+  }
+
+  HostScene hs;
+  std::string buildErr;
+  // maxTris/maxInstances = 0 (unlimited), displacementScale = 0 (none): kept
+  // simple for the v1 fallback rather than threading through the same knobs
+  // the CUDA/HIP tracers expose (loadOpts_/rtMaxInstances_) -- revisit once
+  // this path is validated.
+  if (!BuildHostScene(*hostSceneSource_, /*maxTris=*/0, /*maxInstances=*/0,
+                      /*displacementScale=*/0.0f, &hs, &buildErr)) {
+    LOGW("compute-BVH: BuildHostScene failed: %s", buildErr.c_str());
+    tlasDirty_ = false;
+    return;
+  }
+
+  const auto destroySwBvhBuffers = [&]() {
+    if (swTriBuf_) { vkDestroyBuffer(device_, swTriBuf_, nullptr); swTriBuf_ = VK_NULL_HANDLE; }
+    if (swTriMem_) { vkFreeMemory(device_, swTriMem_, nullptr); swTriMem_ = VK_NULL_HANDLE; }
+    if (swNrmBuf_) { vkDestroyBuffer(device_, swNrmBuf_, nullptr); swNrmBuf_ = VK_NULL_HANDLE; }
+    if (swNrmMem_) { vkFreeMemory(device_, swNrmMem_, nullptr); swNrmMem_ = VK_NULL_HANDLE; }
+    if (swColBuf_) { vkDestroyBuffer(device_, swColBuf_, nullptr); swColBuf_ = VK_NULL_HANDLE; }
+    if (swColMem_) { vkFreeMemory(device_, swColMem_, nullptr); swColMem_ = VK_NULL_HANDLE; }
+    if (swUvBuf_) { vkDestroyBuffer(device_, swUvBuf_, nullptr); swUvBuf_ = VK_NULL_HANDLE; }
+    if (swUvMem_) { vkFreeMemory(device_, swUvMem_, nullptr); swUvMem_ = VK_NULL_HANDLE; }
+    if (swMatBuf_) { vkDestroyBuffer(device_, swMatBuf_, nullptr); swMatBuf_ = VK_NULL_HANDLE; }
+    if (swMatMem_) { vkFreeMemory(device_, swMatMem_, nullptr); swMatMem_ = VK_NULL_HANDLE; }
+    if (swBlasBuf_) { vkDestroyBuffer(device_, swBlasBuf_, nullptr); swBlasBuf_ = VK_NULL_HANDLE; }
+    if (swBlasMem_) { vkFreeMemory(device_, swBlasMem_, nullptr); swBlasMem_ = VK_NULL_HANDLE; }
+    if (swTlasBuf_) { vkDestroyBuffer(device_, swTlasBuf_, nullptr); swTlasBuf_ = VK_NULL_HANDLE; }
+    if (swTlasMem_) { vkFreeMemory(device_, swTlasMem_, nullptr); swTlasMem_ = VK_NULL_HANDLE; }
+    if (swInstBuf_) { vkDestroyBuffer(device_, swInstBuf_, nullptr); swInstBuf_ = VK_NULL_HANDLE; }
+    if (swInstMem_) { vkFreeMemory(device_, swInstMem_, nullptr); swInstMem_ = VK_NULL_HANDLE; }
+  };
+  destroySwBvhBuffers();
+
+  // Vulkan disallows zero-size buffers; substitute a 1-element dummy exactly
+  // like the existing point-BVH upload does (see rebuildTlas's createPointBuffers).
+  static const float kDummyF = 0.0f;
+  static const int kDummyI = 0;
+  static const Node kDummyNode{};
+  static const Inst kDummyInst{};
+  const auto uploadFloats = [&](const std::vector<float>& v, VkBuffer* buf,
+                                VkDeviceMemory* mem) {
+    return createHostBuffer(
+        v.empty() ? sizeof(kDummyF) : v.size() * sizeof(float),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        v.empty() ? static_cast<const void*>(&kDummyF)
+                  : static_cast<const void*>(v.data()),
+        buf, mem);
+  };
+  const auto uploadInts = [&](const std::vector<int>& v, VkBuffer* buf,
+                              VkDeviceMemory* mem) {
+    return createHostBuffer(
+        v.empty() ? sizeof(kDummyI) : v.size() * sizeof(int),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        v.empty() ? static_cast<const void*>(&kDummyI)
+                  : static_cast<const void*>(v.data()),
+        buf, mem);
+  };
+  const auto uploadNodes = [&](const std::vector<Node>& v, VkBuffer* buf,
+                               VkDeviceMemory* mem) {
+    return createHostBuffer(
+        v.empty() ? sizeof(kDummyNode) : v.size() * sizeof(Node),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        v.empty() ? static_cast<const void*>(&kDummyNode)
+                  : static_cast<const void*>(v.data()),
+        buf, mem);
+  };
+  const auto uploadInsts = [&](const std::vector<Inst>& v, VkBuffer* buf,
+                               VkDeviceMemory* mem) {
+    return createHostBuffer(
+        v.empty() ? sizeof(kDummyInst) : v.size() * sizeof(Inst),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        v.empty() ? static_cast<const void*>(&kDummyInst)
+                  : static_cast<const void*>(v.data()),
+        buf, mem);
+  };
+
+  bool ok = true;
+  ok = uploadFloats(hs.tris, &swTriBuf_, &swTriMem_) && ok;
+  ok = uploadFloats(hs.nrms, &swNrmBuf_, &swNrmMem_) && ok;
+  ok = uploadFloats(hs.cols, &swColBuf_, &swColMem_) && ok;
+  ok = uploadFloats(hs.uv, &swUvBuf_, &swUvMem_) && ok;
+  ok = uploadInts(hs.mat, &swMatBuf_, &swMatMem_) && ok;
+  ok = uploadNodes(hs.blas, &swBlasBuf_, &swBlasMem_) && ok;
+  ok = uploadNodes(hs.tlas, &swTlasBuf_, &swTlasMem_) && ok;
+  ok = uploadInsts(hs.instances, &swInstBuf_, &swInstMem_) && ok;
+
+  if (!ok) {
+    LOGW("compute-BVH: SSBO upload failed");
+    destroySwBvhBuffers();
+    tlasDirty_ = false;
+    return;
+  }
+
+  swTriCount_ = static_cast<uint32_t>(hs.triCount);
+  swBlasNodeCount_ = static_cast<uint32_t>(hs.blas.size());
+  swTlasNodeCount_ = static_cast<uint32_t>(hs.tlas.size());
+  swInstCount_ = static_cast<uint32_t>(hs.instCount);
+
+#if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
+  // Milestone-1 binding: the shared output image (rtImage_, same one
+  // traceRt()'s hardware path writes -- created by createRtImage(), which
+  // always runs, and re-runs, before the next tlasDirty_ rebuild reaches
+  // here) plus the TLAS buffer. Materials/lights/textures join once real
+  // shading is ported in (milestone 3).
+  VkDescriptorImageInfo outImgInfo{};
+  outImgInfo.imageView = rtImageView_;
+  outImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  VkDescriptorBufferInfo tlasInfo{swTlasBuf_, 0, VK_WHOLE_SIZE};
+  VkWriteDescriptorSet w[2]{};
+  w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[0].dstSet = swRtSet_;
+  w[0].dstBinding = 0;
+  w[0].descriptorCount = 1;
+  w[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  w[0].pImageInfo = &outImgInfo;
+  w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[1].dstSet = swRtSet_;
+  w[1].dstBinding = 1;
+  w[1].descriptorCount = 1;
+  w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w[1].pBufferInfo = &tlasInfo;
+  vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
+#endif
+
+  tlasDirty_ = false;
+  ++rtAccumGen_;  // geometry changed -> restart progressive accumulation
+}
+
 void VulkanRenderer::createRtImage() {
   if (!rtSupported_ || vpW_ < 1 || vpH_ < 1) return;
   if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
@@ -8210,33 +8504,107 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
              VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 }
 
+// Compute-BVH fallback dispatch. Milestone-1 scope: no progressive
+// accumulation, overlay pass, or shading yet (see raytrace_swbvh.comp) --
+// just enough to validate rebuildSwBvh()'s uploaded SSBOs render *something*
+// via the same rtImage_ -> colorImg_ copy path traceRt() uses.
+void VulkanRenderer::traceRtBvh(VkCommandBuffer cb) {
+#if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
+  vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, swRtPipeline_);
+  vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, swRtPipelineLayout_, 0,
+                          1, &swRtSet_, 0, nullptr);
+  SwRtPushC pc{};
+  light3d::Mat4 PV = ToMat4(proj_) * ToMat4(view_);
+  const light3d::Mat4 invPV = PV.inverse();
+  std::memcpy(pc.invViewProj, invPV.m, sizeof(pc.invViewProj));
+  for (int i = 0; i < 4; ++i) pc.clearColor[i] = clear_[i];
+  pc.tlasNodeCount = swTlasNodeCount_;
+  vkCmdPushConstants(cb, swRtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                     sizeof(SwRtPushC), &pc);
+  vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
+                (static_cast<uint32_t>(vpH_) + 7) / 8, 1);
+
+  auto imgBarrier = [&](VkImage img, VkImageLayout oldL, VkImageLayout newL,
+                        VkAccessFlags srcA, VkAccessFlags dstA, VkPipelineStageFlags srcS,
+                        VkPipelineStageFlags dstS) {
+    VkImageMemoryBarrier b{};
+    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.oldLayout = oldL;
+    b.newLayout = newL;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = img;
+    b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    b.subresourceRange.levelCount = 1;
+    b.subresourceRange.layerCount = 1;
+    b.srcAccessMask = srcA;
+    b.dstAccessMask = dstA;
+    vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
+  };
+  imgBarrier(rtImage_, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+             VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+  imgBarrier(colorImg_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+             VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+             VK_PIPELINE_STAGE_TRANSFER_BIT);
+  VkImageCopy copy{};
+  copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  copy.srcSubresource.layerCount = 1;
+  copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  copy.dstSubresource.layerCount = 1;
+  copy.extent = {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), 1};
+  vkCmdCopyImage(cb, rtImage_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, colorImg_,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+  imgBarrier(colorImg_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+             VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+  imgBarrier(rtImage_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+             VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+#else
+  (void)cb;
+#endif
+}
+
 void VulkanRenderer::setRayTracing(bool enable) {
   bool want = enable && rtSupported_;
-  if (want && rtPipeline_ == VK_NULL_HANDLE) {
+  const bool needsHwInit = want && rtTechnique_ == RtTechnique::kHardware &&
+                           rtPipeline_ == VK_NULL_HANDLE;
+  const bool needsSwInit = want && rtTechnique_ == RtTechnique::kComputeBvh &&
+                           swRtPipeline_ == VK_NULL_HANDLE;
+  if (needsHwInit || needsSwInit) {
     std::string error;
     const auto start = std::chrono::steady_clock::now();
-    if (!createRtResources(&error)) {
+    const bool ok = needsHwInit ? createRtResources(&error)
+                                : createSwRtResources(&error);
+    if (!ok) {
       LOGW("ray tracing initialization failed: %s", error.c_str());
-      destroyRt();
+      destroyRt();  // tears down both technique's resources (see destroySwRt())
       rtSupported_ = false;
+      rtTechnique_ = RtTechnique::kNone;
       caps_.supportsRayTracing = false;
       want = false;
     } else {
       rtInitMs_ = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - start)
                       .count();
-      LOGI("Vulkan ray tracing resources initialized in %.1f ms", rtInitMs_);
+      LOGI("Vulkan ray tracing resources initialized in %.1f ms (%s)",
+           rtInitMs_,
+           needsHwInit ? "hardware ray query" : "compute-BVH fallback");
     }
   }
   if (want == rtActive_) return;
   rtActive_ = want;
-  techniqueLabel_ = rtActive_ ? "Vulkan (ray query)" : "Vulkan (raster)";
+  techniqueLabel_ = !rtActive_               ? "Vulkan (raster)"
+                    : rayTracingIsHardware()  ? "Vulkan (ray query)"
+                                              : "Vulkan (compute BVH)";
   caps_.backend_name = techniqueLabel_.c_str();
   if (rtActive_) {
     // Raster texture uploads may have happened while RT was disabled; force the
     // RT SSBO table to be rebuilt before the first trace in that case.
     rtTextureTableDirty_ = true;
-    tlasDirty_ = true;  // build AS lazily before the next trace
+    tlasDirty_ = true;  // build AS/BVH lazily before the next trace
   }
 }
 
@@ -8248,6 +8616,7 @@ void VulkanRenderer::setLodCamera(const RtLodCamera& cam, bool reselect) {
 }
 
 void VulkanRenderer::destroyRt() {
+  destroySwRt();
   destroyTlasChunks();
   if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
@@ -9251,8 +9620,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   // vkDeviceWaitIdle and stall only on that one frame. The build itself is still
   // synchronous (its own one-shot submissions); fully overlapping it with the live
   // TLAS would need a background AS-build thread (follow-on).
-  if (rtFrame && tlasDirty_)
+  if (rtFrame && tlasDirty_ && rtTechnique_ == RtTechnique::kHardware)
     rebuildTlas();
+  else if (rtFrame && tlasDirty_ && rtTechnique_ == RtTechnique::kComputeBvh)
+    rebuildSwBvh();
   else if (rtFrame && rtTextureTableDirty_)
     rebuildRtTextureTable();
   if (rtBuildIncomplete_)
@@ -9328,6 +9699,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // (SHADER_READ_ONLY_OPTIMAL) via uploadViewportImage(); skip the 3D pass and let
     // the ImGui composite below sample it. Consumed once.
     externalColorValid_ = false;
+  } else if (rtFrame && rtTechnique_ == RtTechnique::kComputeBvh &&
+             swTlasNodeCount_ > 0) {
+    // Compute-BVH fallback: same offscreen-image target as traceRt(), just a
+    // different trace step (no hardware acceleration structure). Milestone-1
+    // scope has no overlay/volume pass yet -- that lands alongside real
+    // shading (see rebuildSwBvh()/traceRtBvh() TODOs).
+    traceRtBvh(cb);
   } else if (rtFrame && tlas_ != VK_NULL_HANDLE) {
     traceRt(cb);
     // Overlay pass: ray query writes the offscreen color image via compute (no
