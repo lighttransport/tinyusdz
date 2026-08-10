@@ -60,6 +60,10 @@ class VulkanRenderer final : public Renderer {
     rtTextureBudgetBytes_ = bytes;
     rtTextureTableDirty_ = true;
   }
+  // See renderer.hh: source scene for rebuildSwBvh()'s BuildHostScene() call.
+  void setHostSceneSource(const DrawScene* scene) override {
+    hostSceneSource_ = scene;
+  }
   bool updateTextureRegion(int slot, int x, int y, int w, int h,
                            const uint8_t* rgba,
                            size_t rowBytes = 0) override;
@@ -103,6 +107,12 @@ class VulkanRenderer final : public Renderer {
   const RendererCaps& caps() const override { return caps_; }
   bool rayTracingAvailable() const override { return rtSupported_; }
   bool rayTracingActive() const override { return rtActive_; }
+  // True when the active/available RT technique is hardware ray-query rather
+  // than the compute-BVH fallback. Diagnostics/UI only; rendering code should
+  // branch on rtTechnique_ directly.
+  bool rayTracingIsHardware() const override {
+    return rtTechnique_ == RtTechnique::kHardware;
+  }
   uint32_t rayTracingAccumulatedSamples() const override {
     return rtActive_ && tlas_ != VK_NULL_HANDLE ? rtAccumFrame_ + 1u : 0u;
   }
@@ -327,6 +337,22 @@ class VulkanRenderer final : public Renderer {
   void detectRtSupport();              // sets rtSupported_ + loads RT entrypoints
   bool createRtResources(std::string* err);  // descriptor layout/pool + pipeline
   void destroyRt();
+
+  // --- Ray tracing (compute-BVH fallback, no hardware ray query needed) ---
+  // Falls through from detectRtSupport() when hardware RT is vetoed. Sets
+  // rtTechnique_ = kComputeBvh (and rtSupported_ = true) only when the
+  // compute-BVH shader variant was actually compiled and embedded
+  // (TUSDVIEW_HAVE_SWRT_SHADER) -- otherwise a no-op, so --rt keeps its
+  // current rasterization fallback until that shader exists.
+  void detectSwRtSupport();
+  // Flattens the current scene via rt_scene_build.cc's BuildHostScene() and
+  // uploads the triangle SoA + BVH (BLAS/TLAS) + instance arrays as SSBOs.
+  // Pure host-side + buffer upload, no shader dependency -- always compiled,
+  // but only reachable when rtTechnique_ == kComputeBvh selects this path.
+  void rebuildSwBvh();
+  bool createSwRtResources(std::string* err);  // sw-BVH descriptor layout/pool + pipeline
+  void traceRtBvh(VkCommandBuffer cb);          // dispatch + copy into colorImg_
+  void destroySwRt();
   VkDeviceAddress bufferDeviceAddress(VkBuffer buf) const;
   bool createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                           VkBuffer* buf, VkDeviceMemory* mem);  // device-local + addr
@@ -836,8 +862,18 @@ class VulkanRenderer final : public Renderer {
   float lightColor_[3]{1.0f, 1.0f, 1.0f};
   float clear_[4]{0.12f, 0.12f, 0.13f, 1.0f};
 
-  // --- Ray tracing (ray query) state ---
-  bool rtSupported_{false};   // device + shader available
+  // --- Ray tracing (ray query / compute-BVH) state ---
+  // Which trace technique backs `rtSupported_`/`rtActive_`. Hardware ray-query
+  // is preferred when the device+shader support it; compute-BVH (a software
+  // BVH walk over rt_scene_build.cc's HostScene, see detectSwRtSupport())
+  // is the fallback so --rt still ray traces on GPUs without RT hardware
+  // instead of silently dropping to rasterization. Code that specifically
+  // builds hardware acceleration structures (buildBlas/refitBlas/rebuildTlas)
+  // must gate on `rtTechnique_ == RtTechnique::kHardware`, not just
+  // `rtSupported_`, since the latter is now true for either technique.
+  enum class RtTechnique { kNone, kHardware, kComputeBvh };
+  RtTechnique rtTechnique_{RtTechnique::kNone};
+  bool rtSupported_{false};   // device + shader available (either technique)
   // Buffer device address is also used by the raster instanced skinning shader.
   // It is a separate capability from ray queries: older GPUs may support the
   // former while (correctly) reporting no RT feature set.
@@ -1006,6 +1042,40 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSet rtSet_{VK_NULL_HANDLE};
   VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline rtPipeline_{VK_NULL_HANDLE};
+
+  // --- Compute-BVH fallback (rt_scene_build.cc HostScene, uploaded as SSBOs) ---
+  // Separate pipeline/descriptor-set-layout from the hardware-RT ones above:
+  // binding 0 is a fundamentally different descriptor type (storage buffers,
+  // not an acceleration structure), so the two techniques don't share layouts,
+  // mirroring the existing pipeline_/instPipeline_ "two draw paths" precedent.
+  VkBuffer swTriBuf_{VK_NULL_HANDLE};    // HostScene::tris (9 floats/tri)
+  VkDeviceMemory swTriMem_{VK_NULL_HANDLE};
+  VkBuffer swNrmBuf_{VK_NULL_HANDLE};    // HostScene::nrms (9 floats/tri)
+  VkDeviceMemory swNrmMem_{VK_NULL_HANDLE};
+  VkBuffer swColBuf_{VK_NULL_HANDLE};    // HostScene::cols (RGBA/vertex)
+  VkDeviceMemory swColMem_{VK_NULL_HANDLE};
+  VkBuffer swUvBuf_{VK_NULL_HANDLE};     // HostScene::uv
+  VkDeviceMemory swUvMem_{VK_NULL_HANDLE};
+  VkBuffer swMatBuf_{VK_NULL_HANDLE};    // HostScene::mat (material id/tri)
+  VkDeviceMemory swMatMem_{VK_NULL_HANDLE};
+  VkBuffer swBlasBuf_{VK_NULL_HANDLE};   // HostScene::blas (Node[])
+  VkDeviceMemory swBlasMem_{VK_NULL_HANDLE};
+  VkBuffer swTlasBuf_{VK_NULL_HANDLE};   // HostScene::tlas (Node[])
+  VkDeviceMemory swTlasMem_{VK_NULL_HANDLE};
+  VkBuffer swInstBuf_{VK_NULL_HANDLE};   // HostScene::instances (Inst[])
+  VkDeviceMemory swInstMem_{VK_NULL_HANDLE};
+  uint32_t swTriCount_{0};
+  uint32_t swBlasNodeCount_{0};
+  uint32_t swTlasNodeCount_{0};
+  uint32_t swInstCount_{0};
+
+  const DrawScene* hostSceneSource_{nullptr};  // see setHostSceneSource()
+
+  VkDescriptorSetLayout swRtSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool swRtPool_{VK_NULL_HANDLE};
+  VkDescriptorSet swRtSet_{VK_NULL_HANDLE};
+  VkPipelineLayout swRtPipelineLayout_{VK_NULL_HANDLE};
+  VkPipeline swRtPipeline_{VK_NULL_HANDLE};
 
   // Opt-in GPU compute skinning of the RT vertex stream (skin.comp):
   // descriptor-less (push constants carry buffer device addresses). Created

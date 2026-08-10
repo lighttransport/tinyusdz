@@ -362,6 +362,16 @@ class App
   void maybeReconvertForManualBlend();
   bool wantsGpuSkinningLoad() const;
   bool wantsNextGpuSkinning() const;
+  // True when some RT backend still needs draw_'s per-mesh CPU geometry to
+  // (re)build its own BVH from -- CUDA/HIP (cudaRt_/hipRt_, screenshot-only)
+  // or Vulkan's compute-BVH fallback (rt_scene_build.cc's BuildHostScene(),
+  // called lazily from VulkanRenderer::rebuildSwBvh() whenever the scene
+  // changes, unlike hardware ray-query which reads already-uploaded GPU
+  // buffers and hardware AS, not CPU arrays). The --next loader's
+  // FreeMeshSurfaceCPU/FreeMeshAuxCPU/FreeMeshGeometryCPU calls must all skip
+  // affected meshes while this is true, or the next Vulkan sw-BVH rebuild
+  // fails with "no geometry".
+  bool needsMeshCpuGeometryForRT() const;
   const char* skinningModeName(SkinningMode mode) const;
   // Advance the playback clock by `dtSec` and request a re-evaluation at the new
   // time (called once per frame while playing).
