@@ -12,11 +12,11 @@
  * in and chosen as the default (DEFLATE=auto|libdeflate), otherwise the in-tree
  * pure-C codec. exr_zlib_set_backend() overrides at runtime for tests/bench. */
 #if defined(EXR_USE_LIBDEFLATE) && EXR_ZLIB_DEFAULT_LIBDEFLATE
-_Atomic exr_zlib_inflate_fn exr_zlib_inflate = exr_ld_inflate_zlib;
-_Atomic exr_zlib_deflate_fn exr_zlib_deflate = exr_ld_deflate_zlib;
+EXR_ZLIB_BACKEND_QUALIFIER exr_zlib_inflate_fn exr_zlib_inflate = exr_ld_inflate_zlib;
+EXR_ZLIB_BACKEND_QUALIFIER exr_zlib_deflate_fn exr_zlib_deflate = exr_ld_deflate_zlib;
 #else
-_Atomic exr_zlib_inflate_fn exr_zlib_inflate = exr_inflate_zlib;
-_Atomic exr_zlib_deflate_fn exr_zlib_deflate = exr_deflate_zlib;
+EXR_ZLIB_BACKEND_QUALIFIER exr_zlib_inflate_fn exr_zlib_inflate = exr_inflate_zlib;
+EXR_ZLIB_BACKEND_QUALIFIER exr_zlib_deflate_fn exr_zlib_deflate = exr_deflate_zlib;
 #endif
 
 exr_result exr_zlib_set_backend(exr_zlib_backend backend) {

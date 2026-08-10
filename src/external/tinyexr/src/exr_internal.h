@@ -1068,13 +1068,29 @@ typedef exr_result (*exr_zlib_inflate_fn)(const uint8_t *src, size_t src_size,
 typedef exr_result (*exr_zlib_deflate_fn)(const exr_allocator *a,
                                           const uint8_t *src, size_t n,
                                           uint8_t **out_data, size_t *out_size);
-/* _Atomic so a write in exr_zlib_set_backend() races defined-behaviour-ly with
- * reads in the codec functions: a concurrent reader sees old-or-new, never a
- * torn value. (The documented contract is still "set before decoding"; this is
- * belt-and-suspenders.) Pointer-sized atomics are lock-free and lower to plain
- * loads/stores, so this adds no libcall and stays freestanding-clean. */
-extern _Atomic exr_zlib_inflate_fn exr_zlib_inflate;
-extern _Atomic exr_zlib_deflate_fn exr_zlib_deflate;
+/* MSVC's C compiler does not accept C11 _Atomic without the experimental
+ * /experimental:c11atomics flag (not set anywhere in this project's build --
+ * enabling an experimental compiler mode for a foundational vendored library
+ * is a bigger footprint than this one qualifier needs). Fall back to
+ * volatile: naturally-aligned, pointer-sized loads/stores are atomic in
+ * practice on every architecture/compiler this project ships on (x86/x64/
+ * ARM/ARM64 with MSVC/GCC/Clang), which is exactly the "old-or-new, never
+ * torn" property the comment below asks for -- it does not need _Atomic's
+ * additional (and here unused) formal ordering/fence guarantees. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#define EXR_ZLIB_BACKEND_QUALIFIER volatile
+#else
+#define EXR_ZLIB_BACKEND_QUALIFIER _Atomic
+#endif
+
+/* EXR_ZLIB_BACKEND_QUALIFIER (see above) so a write in exr_zlib_set_backend()
+ * races defined-behaviour-ly with reads in the codec functions: a concurrent
+ * reader sees old-or-new, never a torn value. (The documented contract is
+ * still "set before decoding"; this is belt-and-suspenders.) Pointer-sized
+ * atomics are lock-free and lower to plain loads/stores, so this adds no
+ * libcall and stays freestanding-clean. */
+extern EXR_ZLIB_BACKEND_QUALIFIER exr_zlib_inflate_fn exr_zlib_inflate;
+extern EXR_ZLIB_BACKEND_QUALIFIER exr_zlib_deflate_fn exr_zlib_deflate;
 
 /* fpnge-derived literal DEFLATE encoder with a PSHUFB Huffman-table lookup.
  * The PSHUFB-friendly table: symbols 0-15 and 240-255 are looked up by low
