@@ -9,6 +9,8 @@
 // ours, mirroring pxr_double_conversion ToShortest/ToShortestSingle.
 
 #include "dtoa.hh"
+#include "../crate/crate-format.hh"
+#include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <cmath>
 #include <cstdint>
@@ -360,6 +362,40 @@ void format_g_append(std::string& out, double v, int precision) {
   char buffer[48];
   char* end = dtoa_g_impl(v, buffer, precision);
   out.append(buffer, static_cast<size_t>(end - buffer));
+}
+
+std::string htos(uint16_t bits) {
+  char buffer[48];
+  return std::string(buffer, htos_to(buffer, bits));
+}
+
+size_t htos_to(char* dst, uint16_t bits) {
+  const float value = HalfToFloat(bits);
+  if (!std::isfinite(value) || value == 0.0f) return dtos_to(dst, value);
+
+  // binary16 needs at most five significant decimal digits for round-trip.
+  // Try fewer first so values such as 0x359a (~0.35009765625) retain the
+  // shortest half spelling, "0.35", instead of the widened float spelling.
+  for (int precision = 1; precision <= 5; ++precision) {
+    char candidate[48];
+    char* end = dtoa_g_impl(double(value), candidate, precision);
+    float parsed = 0.0f;
+    const auto result = fast_float::from_chars(
+        candidate, end, parsed);
+    if (result.ec == std::errc{} &&
+        result.ptr == end &&
+        FloatToHalf(parsed) == bits) {
+      const size_t size = static_cast<size_t>(end - candidate);
+      std::memcpy(dst, candidate, size);
+      return size;
+    }
+  }
+  return dtos_to(dst, value);
+}
+
+void htos_append(std::string& out, uint16_t bits) {
+  char buffer[48];
+  out.append(buffer, htos_to(buffer, bits));
 }
 
 }  // namespace next

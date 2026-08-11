@@ -74,6 +74,12 @@ struct RenderUpdateResult {
   uint64_t revision = 0;
   size_t upsert_count = 0;
   size_t remove_count = 0;
+  // Observability for incremental consumers. converted_resource_count is the
+  // number of retained resources produced by conversion (zero for a no-op),
+  // while upsert_count is the smaller set emitted to the sink.
+  size_t converted_resource_count = 0;
+  size_t converted_scene_bytes = 0;
+  bool full_resync = false;
   std::string error;
   std::vector<std::string> warnings;
 

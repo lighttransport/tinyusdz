@@ -533,10 +533,15 @@ bool PrimSpecToPrimInPlace(std::unique_ptr<PrimSpec> primspec, Prim *prim_out,
 
 namespace {
 
+// Keep recursive variant discovery within the same defensive namespace ceiling
+// used by next::ParseOptions and the Tydra next renderer. The former 1024*1024
+// call-site limit did not protect the native stack from hostile hierarchies.
+constexpr uint32_t kMaxVariantExtractionDepth = 256;
+
 bool ExtractVariantsRec(uint32_t depth, const std::string &root_path,
                         const PrimSpec &ps, Dictionary &dict,
                         const uint32_t max_depth, std::string *err) {
-  if (depth > max_depth) {
+  if (depth >= max_depth) {
     if (err) {
       (*err) += "Too deep\n";
     }
@@ -717,7 +722,7 @@ bool ExtractVariants(const Layer &layer, Dictionary *dict, std::string *err) {
 
   for (const auto &primspec : layer.primspecs()) {
     if (!ExtractVariantsRec(/* depth */ 0, /* root path */ "", primspec.second,
-                            (*dict), /* max_depth */ 1024 * 1024, err)) {
+                            (*dict), kMaxVariantExtractionDepth, err)) {
       return false;
     }
   }
@@ -736,7 +741,7 @@ bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err) {
 
   for (const auto &prim : stage.root_prims()) {
     if (!ExtractVariantsRec(/* depth */ 0, /* root path */ "", prim, (*dict),
-                            /* max_depth */ 1024 * 1024, err)) {
+                            kMaxVariantExtractionDepth, err)) {
       return false;
     }
   }

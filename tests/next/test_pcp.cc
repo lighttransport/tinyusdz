@@ -2209,7 +2209,8 @@ static void test_cross_layer_listops() {
   // (build/next) or a repo-root run.
   const char *dirs[] = {"../../tests/usda/composition/",
                         "tests/usda/composition/",
-                        "../../../tests/usda/composition/"};
+                        "../../../tests/usda/composition/",
+                        TINYUSDZ_TEST_REPO_ROOT "/tests/usda/composition/"};
   std::string base;
   for (const char *d : dirs) {
     std::ifstream probe(std::string(d) + "listop-xlayer-delete-000.usda");
@@ -2298,6 +2299,117 @@ static void test_cross_layer_listops() {
   std::remove(empty_sub.c_str());
   std::remove(empty_root.c_str());
 
+  std::cout << "  OK" << std::endl;
+}
+
+static void test_cross_layer_arc_reorder_fixtures() {
+  std::cout << "test_cross_layer_arc_reorder_fixtures..." << std::endl;
+  const char *dirs[] = {"../../tests/usda/composition/",
+                        "tests/usda/composition/",
+                        "../../../tests/usda/composition/",
+                        TINYUSDZ_TEST_REPO_ROOT "/tests/usda/composition/"};
+  std::string base;
+  for (const char *dir : dirs) {
+    std::ifstream probe(std::string(dir) +
+                        "listop-xlayer-reorder-000.usda");
+    if (probe.good()) { base = dir; break; }
+  }
+  PCP_CHECK(!base.empty(), "reorder composition fixture must be discoverable");
+  if (base.empty()) return;
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(base);
+  pcp::CompositionOptions options;
+  options.apply_list_ops = true;
+  Stage stage;
+  std::string warnings, errors;
+  const bool ok = pcp::ComposeStageFromFile(
+      base + "listop-xlayer-reorder-000.usda", resolver, &stage, options,
+      &warnings, &errors);
+  PCP_CHECK(ok, std::string("reorder fixture composition failed: ") + errors);
+  if (!ok) return;
+
+  auto check = [&](const char *path) {
+    const UsdPrim prim = stage.GetPrimAtPath(path);
+    PCP_CHECK(prim.IsValid(), std::string("missing composed prim ") + path);
+    if (!prim.IsValid()) return;
+    const Value *winner = prim.GetPropertyValue("winner");
+    PCP_CHECK(winner && winner->as_string() &&
+                  *winner->as_string() == "B",
+              std::string(path) +
+                  " reorder must make B the strongest arc opinion");
+    PCP_CHECK(prim.GetPropertyValue("fromA") != nullptr &&
+                  prim.GetPropertyValue("fromB") != nullptr &&
+                  prim.GetPropertyValue("fromC") != nullptr,
+              std::string(path) +
+                  " reorder must retain unordered arcs and ignore absent keys");
+  };
+  check("/Ref");
+  check("/Payload");
+  std::cout << "  OK" << std::endl;
+}
+
+static void test_authored_arc_fidelity_fixture() {
+  std::cout << "test_authored_arc_fidelity_fixture..." << std::endl;
+  const char *paths[] = {
+      "../../tests/usda/composition/authored-arc-fidelity.usda",
+      "tests/usda/composition/authored-arc-fidelity.usda",
+      "../../../tests/usda/composition/authored-arc-fidelity.usda",
+      TINYUSDZ_TEST_REPO_ROOT
+          "/tests/usda/composition/authored-arc-fidelity.usda"};
+  std::string text;
+  for (const char *path : paths) {
+    std::ifstream stream(path);
+    if (!stream.good()) continue;
+    text.assign(std::istreambuf_iterator<char>(stream),
+                std::istreambuf_iterator<char>());
+    break;
+  }
+  PCP_CHECK(!text.empty(), "authored arc fixture must be discoverable");
+  if (text.empty()) return;
+
+  std::string load_warnings, load_errors;
+  auto loaded = pcp::LoadLayerFromMemory(
+      "authored-arc-fidelity.usda",
+      reinterpret_cast<const uint8_t *>(text.data()), text.size(),
+      &load_warnings, &load_errors);
+  PCP_CHECK(bool(loaded), "authored arc fixture must parse");
+  if (!loaded) return;
+  const PrimSpec *prim = loaded->prim_at_path("/ArcFidelity");
+  PCP_CHECK(prim != nullptr, "authored arc fixture prim missing");
+  if (!prim) return;
+  const ArcListOpEdits *edits = prim->meta().arc_edits();
+  PCP_CHECK(edits != nullptr, "authored arc edits missing");
+  if (!edits) return;
+  PCP_CHECK(edits->references.prepended.size() == 1 &&
+                edits->references.appended.size() == 1 &&
+                edits->references.deleted.size() == 1 &&
+                edits->references.ordered.size() == 2,
+            "all authored reference list-op sublists must survive parsing");
+  PCP_CHECK(edits->payloads.prepended.size() == 1 &&
+                edits->payloads.appended.size() == 1 &&
+                edits->payloads.deleted.size() == 1 &&
+                edits->payloads.ordered.size() == 2,
+            "all authored payload list-op sublists must survive parsing");
+  PCP_CHECK(edits->references.prepended[0].find("?layerOffset=2.000000:0.500000") !=
+                std::string::npos,
+            "reference layer offset must survive authored parsing");
+  PCP_CHECK(edits->payloads.prepended[0].find("?layerOffset=-1.000000:2.000000") !=
+                std::string::npos,
+            "payload layer offset must survive authored parsing");
+
+  const std::string rewritten =
+      WriteLayerToString(*loaded, USDAWriteOptions());
+  PCP_CHECK(rewritten.find("reorder references") != std::string::npos &&
+                rewritten.find("reorder payload") != std::string::npos,
+            "USDA writer must preserve authored reorder qualifiers");
+  PCP_CHECK(rewritten.find("offset = 2") != std::string::npos &&
+                rewritten.find("scale = 0.5") != std::string::npos &&
+                rewritten.find("offset = -1") != std::string::npos &&
+                rewritten.find("scale = 2") != std::string::npos,
+            "USDA writer must decode canonical arc offsets");
+  PCP_CHECK(rewritten.find("authored-arc-fidelity") != std::string::npos,
+            "unrelated authored prim customData must not be lost");
   std::cout << "  OK" << std::endl;
 }
 
@@ -4574,6 +4686,8 @@ int main() {
   test_variant_selected_field();
   test_implied_intermediate();
   test_cross_layer_listops();
+  test_cross_layer_arc_reorder_fixtures();
+  test_authored_arc_fidelity_fixture();
   test_listop_edit_does_not_clear_other_arc_fields();
   test_writer_listop_fidelity();
   test_compose_from_file();

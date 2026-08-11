@@ -5,8 +5,6 @@
 
 #include "core/path-expression-eval.hh"
 
-#include "str-util.hh"  // GlobMatch (freestanding glob; no std::regex)
-
 #include <cstdint>
 #include <vector>
 
@@ -17,6 +15,30 @@ namespace {
 constexpr size_t kMaxMatchElems = 4096;
 constexpr size_t kMaxMatchSegments = 4096;
 constexpr size_t kMaxEvalOps = 4096;
+
+bool GlobMatch(const std::string &pattern, const std::string &text) {
+  size_t p = 0;
+  size_t t = 0;
+  size_t star = std::string::npos;
+  size_t retry = 0;
+  while (t < text.size()) {
+    if (p < pattern.size() &&
+        (pattern[p] == '?' || pattern[p] == text[t])) {
+      ++p;
+      ++t;
+    } else if (p < pattern.size() && pattern[p] == '*') {
+      star = p++;
+      retry = t;
+    } else if (star != std::string::npos) {
+      p = star + 1;
+      t = ++retry;
+    } else {
+      return false;
+    }
+  }
+  while (p < pattern.size() && pattern[p] == '*') ++p;
+  return p == pattern.size();
+}
 
 // A path decomposed for matching.
 struct PathParts {

@@ -855,10 +855,17 @@ def Xform "World"
         uniform token[] joints = ["Root", "Root/Spine"]
     }
 
-    def Camera "AnimatedCamera"
+    def Camera "AnimatedCamera" (
+        prepend apiSchemas = ["BackPlateAPI:hero"]
+    )
     {
         double shutter:open = -0.25
         double shutter:close = 0.25
+        asset backPlate:hero:image = @plates/hero.exr@
+        asset backPlate:hero:alpha:image = @plates/hero-alpha.exr@
+        float2 backPlate:hero:scale:tweak = (1.25, 0.75)
+        float3 backPlate:hero:luma:gain = (1.1, 1.2, 1.3)
+        token backPlate:hero:plateVisibility = "render"
         float focalLength.timeSamples = {
             0: 35,
             1: 50,
@@ -886,6 +893,7 @@ def Xform "World"
         }
     }
 }
+
 )";
 
   LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
@@ -1165,6 +1173,15 @@ def Xform "World"
   assert(result.scene.cameras.size() == 1);
   assert(std::fabs(result.scene.cameras[0].shutter_open + 0.25) < 0.001);
   assert(std::fabs(result.scene.cameras[0].shutter_close - 0.25) < 0.001);
+  assert(result.scene.cameras[0].back_plates.size() == 1);
+  const RenderBackPlate& plate = result.scene.cameras[0].back_plates[0];
+  assert(plate.instance_name == "hero");
+  assert(plate.image == "plates/hero.exr");
+  assert(plate.alpha_image == "plates/hero-alpha.exr");
+  assert(std::fabs(plate.scale_tweak.x - 1.25f) < 0.001f);
+  assert(std::fabs(plate.scale_tweak.y - 0.75f) < 0.001f);
+  assert(std::fabs(plate.luma_gain.z - 1.3f) < 0.001f);
+  assert(plate.plate_visibility == "render");
 
   assert(result.scene.skeletons.size() == 1);
   assert(result.scene.skeletons[0].joints.size() == 2);
@@ -1203,6 +1220,29 @@ def Xform "World"
   for (const auto& warn : result.warnings) {
     std::cout << "    Warning: " << warn << "\n";
   }
+}
+
+void TestRenderConverterHalfGaussian() {
+  std::cout << "Testing half-precision Gaussian conversion...\n";
+  const char* usda = R"(#usda 1.0
+def ParticleField3DGaussianSplat "Splat"
+{
+    point3h[] positionsh = [(0, 0, 0), (1, 2, 3)]
+    half3[] scalesh = [(1, 1, 1), (2, 3, 4)]
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  RenderSceneConverter converter;
+  ConvertResult result = converter.Convert(loaded.stage);
+  assert(result.success);
+  assert(result.scene.points.size() == 1);
+  const RenderPoints& points = result.scene.points[0];
+  assert(points.point_count() == 2);
+  assert(points.widths.size() == 2);
+  assert(std::fabs(points.widths[0] - 2.0f) < 0.001f);
+  assert(std::fabs(points.widths[1] - 8.0f) < 0.001f);
+  std::cout << "  half-precision Gaussian conversion: PASSED\n";
 }
 
 void TestRenderConverterMaterials() {
@@ -1261,7 +1301,7 @@ def Xform "World"
             uniform token info:id = "ND_open_pbr_surface_surfaceshader"
             color3f inputs:base_color.connect = </World/OpenPBRMat/NG.outputs:out>
             float inputs:base_metalness = 0.8
-            float inputs:base_roughness = 0.35
+            float inputs:base_roughness.connect = </World/OpenPBRMat/NG.outputs:roughness>
             float inputs:specular_anisotropy = 0.11
             float inputs:specular_roughness_anisotropy = 0.12
             float inputs:transmission_dispersion = 0.13
@@ -1280,6 +1320,7 @@ def Xform "World"
         def NodeGraph "NG"
         {
             color3f outputs:out.connect = </World/OpenPBRMat/NG/Choose.outputs:out>
+            float outputs:roughness.connect = </World/OpenPBRMat/NG/RoughnessSqrt.outputs:out>
             float outputs:opacity.connect = </World/OpenPBRMat/NG/OpacityExtract.outputs:out>
             normal3f outputs:normal.connect = </World/OpenPBRMat/NG/NormalMap.outputs:out>
             vector3f outputs:tangent.connect = </World/OpenPBRMat/NG/Rotate.outputs:out>
@@ -1291,6 +1332,13 @@ def Xform "World"
                     colorSpace = "srgb_rec709_scene"
                 )
                 color3f outputs:out
+            }
+
+            def Shader "RoughnessSqrt"
+            {
+                uniform token info:id = "ND_sqrt_float"
+                float inputs:in = 0.25
+                float outputs:out
             }
 
             def Shader "Subtract"
@@ -1436,7 +1484,7 @@ def Xform "World"
   assert(std::abs(openpbr.openpbr->base_color.value.y - 0.785959f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_color.value.z - 0.989977f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_metalness.value.x - 0.8f) < 0.001f);
-  assert(std::abs(openpbr.openpbr->base_roughness.value.x - 0.35f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->base_roughness.value.x - 0.5f) < 0.001f);
   assert(std::abs(openpbr.openpbr->specular_anisotropy.value.x - 0.11f) < 0.001f);
   assert(std::abs(openpbr.openpbr->specular_roughness_anisotropy.value.x -
                   0.12f) < 0.001f);
@@ -4519,6 +4567,13 @@ def Xform "World"
         float inputs:intensity = 1
     }
 
+    def SphereLight "ExpressionLight"
+    {
+        uniform pathExpression collection:base:membershipExpression = "/World/Props/Crate"
+        uniform pathExpression collection:lightLink:membershipExpression = "%:base + /World/Ground*"
+        uniform pathExpression collection:shadowLink:membershipExpression = "/World//*{isa:Mesh} - /World/Props/Barrel"
+    }
+
     def DomeLight "Sky"
     {
         asset inputs:texture:file = @sky.exr@
@@ -4556,6 +4611,7 @@ def Xform "World"
 
   const RenderLight* key = nullptr;
   const RenderLight* fill = nullptr;
+  const RenderLight* expression = nullptr;
   const RenderLight* sky = nullptr;
   const RenderLight* rect = nullptr;
   const RenderLight* disk = nullptr;
@@ -4564,13 +4620,14 @@ def Xform "World"
   for (const RenderLight& light : result.scene.lights) {
     if (light.prim_path == "/World/KeyLight") key = &light;
     if (light.prim_path == "/World/FillLight") fill = &light;
+    if (light.prim_path == "/World/ExpressionLight") expression = &light;
     if (light.prim_path == "/World/Sky") sky = &light;
     if (light.prim_path == "/World/DefaultRect") rect = &light;
     if (light.prim_path == "/World/DefaultDisk") disk = &light;
     if (light.prim_path == "/World/DefaultCylinder") cylinder = &light;
     if (light.prim_path == "/World/DefaultDistant") distant = &light;
   }
-  assert(key && fill && sky && rect && disk && cylinder && distant);
+  assert(key && fill && expression && sky && rect && disk && cylinder && distant);
 
   // KeyLight: lightLink includes /World/Props subtree minus Barrel.
   assert(!key->light_links_all);
@@ -4584,6 +4641,19 @@ def Xform "World"
   // FillLight: no collections authored -> links everything.
   assert(fill->light_links_all);
   assert(fill->shadow_links_all);
+
+  // membershipExpression supports set algebra, predicates, and references to
+  // another CollectionAPI instance on the same prim.
+  assert(!expression->light_links_all);
+  assert(expression->light_link_mesh_indices.size() == 2);
+  assert(std::find(expression->light_link_mesh_indices.begin(),
+                   expression->light_link_mesh_indices.end(), ground) !=
+         expression->light_link_mesh_indices.end());
+  assert(std::find(expression->light_link_mesh_indices.begin(),
+                   expression->light_link_mesh_indices.end(), crate) !=
+         expression->light_link_mesh_indices.end());
+  assert(!expression->shadow_links_all);
+  assert(expression->shadow_link_mesh_indices.size() == 2);
 
   // DomeLight format token.
   assert(sky->type == LightType::Dome);
@@ -6151,8 +6221,9 @@ def Xform "World" (
             color3f inputs:specular_color.connect = </World/MtlxTextureMat/ApiImage.outputs:out>
             color3f inputs:coat_color.connect = </World/MtlxTextureMat/Override.outputs:out>
             float inputs:coat = 1
-            color3f inputs:sheen_color.connect = </World/MtlxTextureMat/Mix.outputs:out>
-            float inputs:sheen_weight = 1
+            color3f inputs:fuzz_color.connect = </World/MtlxTextureMat/Mix.outputs:out>
+            float inputs:fuzz_weight = 1
+            float inputs:fuzz_roughness = 0.42
             token outputs:out
         }
         def Shader "Image"
@@ -6293,6 +6364,10 @@ def Xform "World" (
   assert(mtlx_material_ptr->openpbr);
   assert(mtlx_material_ptr->openpbr->base_color.is_texture());
   assert(mtlx_material_ptr->openpbr->specular_color.is_texture());
+  assert(std::fabs(mtlx_material_ptr->openpbr->sheen_weight.value.x - 1.0f) <
+         1.0e-6f);
+  assert(std::fabs(mtlx_material_ptr->openpbr->sheen_roughness.value.x -
+                   0.42f) < 1.0e-6f);
   assert(mtlx_material_ptr->mtlx_config.authored);
   assert(mtlx_material_ptr->mtlx_config.version == "1.39");
   assert(mtlx_material_ptr->mtlx_config.colorspace == "studio_ap0");
@@ -6467,6 +6542,9 @@ void TestIncrementalRenderSession() {
       render_session.Initialize(first_snapshot, &sink);
   if (!initial) std::cerr << "RenderSession init failed: " << initial.error << "\n";
   assert(initial);
+  assert(initial.full_resync);
+  assert(initial.converted_resource_count > 0);
+  assert(initial.converted_scene_bytes > 0);
   assert(sink.full_resync);
   assert(sink.mesh_upserts == 1);
   const RenderId mesh_id = sink.mesh_ids.at("/M");
@@ -6488,6 +6566,8 @@ void TestIncrementalRenderSession() {
   RenderUpdateResult update =
       render_session.Apply(second_snapshot, changes, &sink);
   assert(update);
+  assert(!update.full_resync);
+  assert(update.converted_resource_count > 0);
   assert(!sink.full_resync);
   assert(sink.mesh_upserts == 1);
   assert(sink.mesh_ids.at("/M") == mesh_id);
@@ -6529,6 +6609,8 @@ void TestIncrementalRenderSession() {
   assert(!sink.full_resync);
   assert(no_op_update.upsert_count == 0);
   assert(no_op_update.remove_count == 0);
+  assert(no_op_update.converted_resource_count == 0);
+  assert(no_op_update.converted_scene_bytes == 0);
   assert(sink.mesh_upserts == 0);
   assert(sink.removes == 0);
   assert(render_session.revision() == 4);
@@ -6616,6 +6698,7 @@ int main() {
 
   // Converter tests
   TestRenderConverter();
+  TestRenderConverterHalfGaussian();
   TestRenderConverterMaterials();
   TestRenderConverterUnrealSurfaceFallback();
   TestRenderConverterUnrealSourceAssetFallback();

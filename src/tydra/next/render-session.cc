@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <map>
+#include <limits>
 #include <set>
 #include <utility>
 
@@ -81,6 +82,7 @@ struct RenderSession::Impl {
   RenderScene scene;
   uint64_t revision = 0;
   RenderId next_id = 1;
+  bool id_exhausted = false;
   std::map<RenderResourceKind, IdMap> ids;
 
   bool IsAffected(RenderResourceKind kind, const std::string& key,
@@ -122,6 +124,7 @@ struct RenderSession::Impl {
                                SceneUpdateSink* sink) {
     RenderUpdateResult out;
     out.revision = revision;
+    out.full_resync = false;
     if (!sink->BeginUpdate(revision, snapshot.revision, false) ||
         !sink->UpdateCatalog(scene) || !sink->EndUpdate()) {
       out.error = "RenderSession: sink rejected no-op update";
@@ -138,7 +141,14 @@ struct RenderSession::Impl {
                  IdMap* next_keys) {
     IdMap& current = ids[kind];
     auto found = current.find(key);
-    const RenderId id = found == current.end() ? next_id++ : found->second;
+    RenderId id = found == current.end() ? kInvalidRenderId : found->second;
+    if (found == current.end()) {
+      if (next_id == (std::numeric_limits<RenderId>::max)()) {
+        id_exhausted = true;
+        return kInvalidRenderId;
+      }
+      id = next_id++;
+    }
     (*next_keys)[key] = id;
     return id;
   }
@@ -156,6 +166,7 @@ struct RenderSession::Impl {
         key += "#" + std::to_string(occurrence);
       }
       const RenderId id = IdFor(kind, key, next_keys);
+      if (id == kInvalidRenderId) return false;
       if (IsAffected(kind, key, changes)) {
         if (!emit(id, values[i])) return false;
         ++*upserts;
@@ -186,6 +197,7 @@ struct RenderSession::Impl {
       changes.new_revision = snapshot.revision;
       changes.full_resync = true;
     }
+    out.full_resync = changes.full_resync;
 
     // A transaction may advance the immutable Stage revision without changing
     // any render-affecting data (for example an edit batch that resolves to the
@@ -202,6 +214,13 @@ struct RenderSession::Impl {
       return out;
     }
     RenderScene& next = converted.scene;
+    out.converted_resource_count =
+        next.images.size() + next.textures.size() + next.materials.size() +
+        next.meshes.size() + next.points.size() + next.curves.size() +
+        next.point_instancers.size() + next.skeletons.size() +
+        next.animations.size() + next.lights.size() + next.cameras.size() +
+        next.nodes.size();
+    out.converted_scene_bytes = next.memory_usage();
     if (!sink->BeginUpdate(revision, snapshot.revision, changes.full_resync) ||
         !sink->UpdateCatalog(next)) {
       out.error = "RenderSession: sink rejected update start/catalog";
@@ -253,7 +272,9 @@ struct RenderSession::Impl {
       }
     }
     if (!ok || !sink->EndUpdate()) {
-      out.error = "RenderSession: sink rejected resource update";
+      out.error = id_exhausted
+          ? "RenderSession: stable resource ID space exhausted"
+          : "RenderSession: sink rejected resource update";
       sink->AbortUpdate();
       return out;
     }
@@ -295,6 +316,7 @@ void RenderSession::Reset() {
   impl_->scene = RenderScene();
   impl_->revision = 0;
   impl_->next_id = 1;
+  impl_->id_exhausted = false;
   impl_->ids.clear();
 }
 

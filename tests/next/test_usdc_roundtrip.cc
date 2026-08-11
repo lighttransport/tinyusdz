@@ -9,6 +9,7 @@
 #include <fstream>
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -24,6 +25,7 @@
 #include "next/crate/lazy-array.hh"
 #include "next/tinyusdz-next.hh"
 #include "next/writer/usdc-writer.hh"
+#include "next/writer/dtoa.hh"
 #include "next/parser/ascii-parser.hh"
 #include "next/layer/property-index.hh"
 #include "next/pcp/prim-index.hh"
@@ -902,6 +904,30 @@ void test_half_conversion() {
   assert(HalfToFloat(0x3C00) == 1.0f && "half 1.0");
   assert(HalfToFloat(0xC000) == -2.0f && "half -2.0");
   std::cout << "  " << checked << " half patterns round-tripped exactly\n\n";
+}
+
+// The next writer must spell a half with the shortest decimal that reparses to
+// the same binary16 value, rather than exposing its widened float value.
+void test_half_shortest_decimal() {
+  std::cout << "Testing shortest half decimal formatting...\n";
+  assert(htos(FloatToHalf(0.35f)) == "0.35");
+  assert(htos(FloatToHalf(-0.35f)) == "-0.35");
+
+  size_t checked = 0;
+  for (uint32_t bits = 0; bits < 0x10000u; ++bits) {
+    const uint16_t h = static_cast<uint16_t>(bits);
+    const uint32_t exp = (h >> 10) & 0x1Fu;
+    const uint32_t mant = h & 0x3FFu;
+    if (exp == 0x1Fu && mant != 0) continue;
+    const std::string text = htos(h);
+    char* end = nullptr;
+    const float parsed = std::strtof(text.c_str(), &end);
+    assert(end == text.c_str() + text.size());
+    assert(FloatToHalf(parsed) == h);
+    ++checked;
+  }
+  std::cout << "  " << checked
+            << " half spellings reparsed to identical bits\n\n";
 }
 
 // Half / Vec3h / Quath arrays must survive write -> read (values chosen exactly
@@ -2204,6 +2230,7 @@ int main() {
     test_roundtrip_vec_matrix_arrays();
     test_high_level_memory_caps();
     test_load_usdcomposed_usda_parse_options();
+    test_half_shortest_decimal();
     test_roundtrip_half_arrays();
     test_write_usdc_from_stage_api();
     test_roundtrip_variants();

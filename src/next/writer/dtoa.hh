@@ -13,6 +13,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace tinyusdz {
@@ -28,6 +29,14 @@ std::string dtos(double v);
 /// to dtos().
 void dtos_append(std::string& out, float v);
 void dtos_append(std::string& out, double v);
+
+/// Shortest decimal that parses back to the same IEEE binary16 bit pattern.
+/// `bits` is the raw half representation; the spelling may intentionally be
+/// shorter than formatting its widened float32 value (for example 0.35 rather
+/// than 0.35009766).
+std::string htos(uint16_t bits);
+size_t htos_to(char* dst, uint16_t bits);
+void htos_append(std::string& out, uint16_t bits);
 
 /// Same as dtos(), but formats into a caller-provided buffer and returns the
 /// byte count (no std::string at all). `dst` capacity must be >= 24 (float) /

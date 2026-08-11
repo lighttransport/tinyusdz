@@ -5,9 +5,9 @@
 // Import only (decode a .vdb into dense float grids). Writing .vdb is not
 // supported. Uses the vendored, patched tinyvdb (src/external/tinyvdb).
 //
-// Supported: float / half (save-float-as-half) FloatTree grids
-// (Tree4<float,5,4,3>) with None / ZIP / ACTIVE_MASK compression.
-// Not supported: BLOSC compression, non-float grids, instanced grids.
+// Supported: scalar bool/int/half/float/double grids and vec3 grids (converted
+// to magnitude), including ZIP/LZ4/Zstd payloads supported by the vendored
+// TinyVDB. Point-data/index grids are rejected explicitly.
 //
 // Typical usage (a UsdVol OpenVDBAsset field prim references a .vdb file):
 //
@@ -33,7 +33,9 @@ namespace usdVol {
 ///
 struct VDBGrid {
   std::string name;             // grid / field name (e.g. "density")
-  std::string value_type;       // logical value type ("float"); data is float
+  // Logical source type. Scalar grids are widened to float; vec3 grids use
+  // vector magnitude because the current volume renderer consumes one channel.
+  std::string value_type;
 
   int origin[3] = {0, 0, 0};    // index-space origin (min active voxel coord)
   int dim[3] = {0, 0, 0};       // voxel dimensions (x, y, z)

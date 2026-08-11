@@ -34,6 +34,8 @@
 #include "tiny-format.hh"
 #include "str-util.hh"
 #include "tydra/diff-and-compare.hh"
+#include "next/tinyusdz-next.hh"
+#include "next/diff/layer-diff.hh"
 
 namespace {
 
@@ -943,6 +945,13 @@ void print_usage() {
   std::cout << "OPTIONS:\n";
   std::cout << "  --json      Output diff in JSON format\n";
   std::cout << "  --quiet     Suppress diff output, exit code only\n";
+  std::cout << "  -q, --brief Alias for --quiet (OpenUSD usddiff compatibility).\n";
+  std::cout << "  -f, --flatten\n";
+  std::cout << "              Compose both inputs before comparing them. Uses the\n";
+  std::cout << "              dependency-free next PCP path and loads payloads.\n";
+  std::cout << "  -n, --noeffect\n";
+  std::cout << "              Accepted for OpenUSD usddiff compatibility. tusddiff\n";
+  std::cout << "              never edits its inputs, so this is always the default.\n";
   std::cout << "  --ulps N    Floating-point tolerance in ULPs (default 1).\n";
   std::cout << "              Absorbs ~1 ULP rounding (e.g. pxr quaternion/xform).\n";
   std::cout << "              Use 0 for bitwise-exact comparison.\n";
@@ -1010,6 +1019,7 @@ int main(int argc, char **argv) {
 
   bool json_output = false;
   bool quiet = false;
+  bool flatten = false;
   // Match flatten prototypes by CONTENT (default on) so non-deterministic
   // /Flattened_Prototype_N numbering does not produce spurious diffs.
   bool canonicalize_instances = true;
@@ -1036,8 +1046,15 @@ int main(int argc, char **argv) {
       return 0;
     } else if (args[i] == "--json") {
       json_output = true;
-    } else if (args[i] == "--quiet") {
+    } else if (args[i] == "--quiet" || args[i] == "--brief" ||
+               args[i] == "-q") {
       quiet = true;
+    } else if (args[i] == "--flatten" || args[i] == "-f") {
+      flatten = true;
+    } else if (args[i] == "--noeffect" || args[i] == "-n") {
+      // OpenUSD usddiff may write externally edited temporary USDA back to an
+      // input. tusddiff is a read-only semantic comparator, so no-effect is
+      // already its only behavior.
     } else if (args[i] == "--no-meta") {
       diff_opts.compareMetadata = false;
     } else if (args[i] == "--canonicalize-instances") {
@@ -1102,6 +1119,70 @@ int main(int argc, char **argv) {
     std::cerr << "Error: Please specify two USD files to compare\n";
     print_usage();
     return 2;
+  }
+
+  if (flatten && (fast || faster)) {
+    std::cerr << "Error: --flatten cannot be combined with --fast/--faster\n";
+    return 2;
+  }
+
+  if (flatten) {
+    tinyusdz::next::Stage stage1;
+    tinyusdz::next::Stage stage2;
+    std::string next_warn;
+    std::string next_err;
+    if (!tinyusdz::next::LoadUSDComposed(file1, &stage1, &next_warn,
+                                         &next_err)) {
+      std::cerr << "Error loading/composing " << file1 << ": " << next_err
+                << std::endl;
+      return 2;
+    }
+    if (!next_warn.empty()) {
+      std::cerr << "Warning loading/composing " << file1 << ": " << next_warn
+                << std::endl;
+    }
+    next_warn.clear();
+    next_err.clear();
+    if (!tinyusdz::next::LoadUSDComposed(file2, &stage2, &next_warn,
+                                         &next_err)) {
+      std::cerr << "Error loading/composing " << file2 << ": " << next_err
+                << std::endl;
+      return 2;
+    }
+    if (!next_warn.empty()) {
+      std::cerr << "Warning loading/composing " << file2 << ": " << next_warn
+                << std::endl;
+    }
+
+    tinyusdz::next::Layer layer1 = stage1.Flatten();
+    tinyusdz::next::Layer layer2 = stage2.Flatten();
+    tinyusdz::next::DiffOptions next_opts;
+    next_opts.floatUlps = diff_opts.floatUlps;
+    next_opts.doubleUlps = diff_opts.doubleUlps;
+    next_opts.timeUlps = diff_opts.timeUlps;
+    next_opts.absEps = diff_opts.absEps;
+    next_opts.compareMetadata = diff_opts.compareMetadata;
+    next_opts.fuzzyAssetPaths = diff_opts.fuzzyAssetPaths;
+
+    std::unordered_map<std::string, tinyusdz::next::PrimSpecDiff> ps_diffs;
+    std::unordered_map<std::string, tinyusdz::next::PropDiff> prop_diffs;
+    tinyusdz::next::LayerMetaDiff meta_diff;
+    tinyusdz::next::Diff(layer1, layer2, ps_diffs, prop_diffs, next_opts,
+                         &meta_diff);
+    const bool has_diffs =
+        !ps_diffs.empty() || !prop_diffs.empty() || meta_diff.changed();
+    if (!quiet) {
+      if (json_output) {
+        std::cout << tinyusdz::next::DiffToJSON(layer1, layer2, file1, file2,
+                                                next_opts);
+      } else if (has_diffs) {
+        std::cout << tinyusdz::next::DiffToText(layer1, layer2, file1, file2,
+                                                next_opts);
+      } else {
+        std::cout << "No differences found." << std::endl;
+      }
+    }
+    return has_diffs ? 1 : 0;
   }
 
   // --fast / --faster: structural byte-level diff. --faster adds whitespace /

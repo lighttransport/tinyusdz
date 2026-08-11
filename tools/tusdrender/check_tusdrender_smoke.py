@@ -585,29 +585,35 @@ def Xform "World"
     if len(set(pixels)) <= 1:
         raise RuntimeError("Gaussian RT preview render appears blank")
 
-    # AMD/HIP does not expose LightRT's analytic ellipse primitive. It must
-    # select the oriented-ellipse tessellation fallback rather than reaching
-    # the HIP backend with an empty mesh. A host without ROCm is still a valid
-    # smoke environment: in that case only the runtime-unavailable diagnostic
-    # is required.
+    # HIP uses native Gaussian ellipses for a pure splat scene and the bounded
+    # triangle fallback for a mixed scene. A host without ROCm is still a valid
+    # smoke environment: geometry selection must happen before backend startup,
+    # then a recognized runtime-unavailable diagnostic is sufficient.
     hip_gaussian_out = outdir / "tusdrender-hip-gaussian-splat.png"
     hip_gaussian = subprocess.run(
         [exe, str(gaussian_scene), str(hip_gaussian_out), "-hip", "-w", "16",
          "-height", "16", "-stats"],
-        env={**os.environ, "TUSDR_GPU_TRIANGLE_CHUNK": "1"},
+        env={**os.environ, "TUSDR_GAUSSIAN_CHUNK": "1",
+             "TUSDR_GPU_TRIANGLE_CHUNK": "1"},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
     hip_log = hip_gaussian.stdout + hip_gaussian.stderr
-    if "[gpu] gaussian splats:" not in hip_log:
+    native_gaussian = "native Gaussian ellipses: 2 in 2 chunk(s)" in hip_log
+    fallback_gaussian = "[gpu] gaussian splats:" in hip_log
+    if not native_gaussian and not fallback_gaussian:
         raise RuntimeError(
-            "HIP Gaussian tessellation fallback was not selected:\n" + hip_log)
-    if "GPU chunks: 2" not in hip_log:
+            "HIP Gaussian carrier path was not selected:\n" + hip_log)
+    if fallback_gaussian and "GPU chunks: 2" not in hip_log:
         raise RuntimeError(
             "HIP Gaussian fallback did not honor the bounded chunk limit:\n" +
             hip_log)
-    if hip_gaussian.returncode != 0 and "HIP ray tracing unavailable" not in hip_log:
+    hip_unavailable = (
+        "HIP ray tracing unavailable" in hip_log or
+        "Failed to create LightRT HIP Gaussian engine" in hip_log
+    )
+    if hip_gaussian.returncode != 0 and not hip_unavailable:
         raise RuntimeError("unexpected HIP Gaussian failure:\n" + hip_log)
     if hip_gaussian_out.exists():
         w, h, rgba = read_png_rgba(hip_gaussian_out)

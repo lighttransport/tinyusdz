@@ -78,6 +78,27 @@
       merged.insert(merged.end(), result.begin(), result.end());
       merged.insert(merged.end(), app.begin(), app.end());
       result.swap(merged);
+
+      // `reorder` changes only effective order; it neither adds nor removes
+      // arcs. Apply the shared SdfListOp ordering rule to arc keys, then carry
+      // each key's authoring-layer tag along so relative assets retain their
+      // original anchor.
+      if (!e->ordered.empty() && !result.empty()) {
+        const auto tagged = result;
+        std::vector<std::string> keys;
+        keys.reserve(result.size());
+        for (const auto &item : result) keys.push_back(item.first);
+        ApplyStringListOrder(e->ordered, &keys);
+        result.clear();
+        result.reserve(keys.size());
+        for (const std::string &key : keys) {
+          const auto found = std::find_if(
+              tagged.begin(), tagged.end(), [&](const auto &item) {
+                return item.first == key;
+              });
+          if (found != tagged.end()) result.push_back(*found);
+        }
+      }
     }
     return result;
   }

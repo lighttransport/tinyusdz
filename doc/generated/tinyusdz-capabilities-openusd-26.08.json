@@ -1,0 +1,1940 @@
+{
+  "excludedSchemaCount": 42,
+  "formatVersion": 1,
+  "openusd": {
+    "commit": "ee47c679abde5b467a7b6a41f3b2285564a4222e",
+    "version": "26.08"
+  },
+  "policy": {
+    "excludedDomains": {
+      "usdHydra": "Hydra/imaging integration is outside TinyUSDZ's renderer-neutral core",
+      "usdLod": "not part of the currently supported schema surface",
+      "usdProc": "procedural execution is outside the supported schema surface",
+      "usdProfiles": "not part of the currently supported schema surface",
+      "usdRender": "render-product/pass execution is explicitly excluded",
+      "usdRi": "RenderMan-specific",
+      "usdSemantics": "not part of the currently supported schema surface",
+      "usdUI": "DCC UI metadata is outside the supported schema surface",
+      "usdVol": "volume schema expansion is explicitly excluded"
+    },
+    "localExtensions": [
+      "PreliminaryAR",
+      "MuJoCo"
+    ],
+    "parityKind": "behavioral-within-supported-domains",
+    "requiredDomains": [
+      "usd",
+      "usdGeom",
+      "usdLux",
+      "usdMedia",
+      "usdMtlx",
+      "usdPhysics",
+      "usdShade",
+      "usdSkel"
+    ],
+    "runtimeOpenUSDDependency": false
+  },
+  "requiredSchemaCount": 92,
+  "schemas": [
+    {
+      "domain": "usd",
+      "kind": "abstract",
+      "name": "APISchemaBase",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usd",
+      "kind": "nonApplied",
+      "name": "ClipsAPI",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usd",
+      "kind": "multipleApply",
+      "name": "CollectionAPI",
+      "propertyCount": 7,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usd",
+      "kind": "singleApply",
+      "name": "ColorSpaceAPI",
+      "propertyCount": 1,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usd",
+      "kind": "multipleApply",
+      "name": "ColorSpaceDefinitionAPI",
+      "propertyCount": 7,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usd",
+      "kind": "nonApplied",
+      "name": "ModelAPI",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usd",
+      "kind": "abstract",
+      "name": "Typed",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "multipleApply",
+      "name": "BackPlateAPI",
+      "propertyCount": 13,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "BasisCurves",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "abstract",
+      "name": "Boundable",
+      "propertyCount": 1,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Camera",
+      "propertyCount": 18,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Capsule",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Capsule_1",
+      "propertyCount": 5,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Cone",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Cube",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "abstract",
+      "name": "Curves",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Cylinder",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Cylinder_1",
+      "propertyCount": 5,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "abstract",
+      "name": "GeomModelAPI",
+      "propertyCount": 11,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "GeomSubset",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "abstract",
+      "name": "Gprim",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "HermiteCurves",
+      "propertyCount": 1,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "abstract",
+      "name": "Imageable",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Mesh",
+      "propertyCount": 12,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "abstract",
+      "name": "MotionAPI",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "NurbsCurves",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "NurbsPatch",
+      "propertyCount": 17,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Plane",
+      "propertyCount": 5,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "abstract",
+      "name": "PointBased",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "PointInstancer",
+      "propertyCount": 11,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Points",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "nonApplied",
+      "name": "PrimvarsAPI",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Scope",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Sphere",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "TetMesh",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "abstract",
+      "name": "VisibilityAPI",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "concrete",
+      "name": "Xform",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "nonApplied",
+      "name": "XformCommonAPI",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdGeom",
+      "kind": "abstract",
+      "name": "Xformable",
+      "propertyCount": 1,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdHydra",
+      "kind": "abstract",
+      "name": "HydraGenerativeProceduralAPI",
+      "propertyCount": 2,
+      "reason": "Hydra/imaging integration is outside TinyUSDZ's renderer-neutral core",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdHydra",
+      "kind": "abstract",
+      "name": "HydraRenderPassAPI",
+      "propertyCount": 1,
+      "reason": "Hydra/imaging integration is outside TinyUSDZ's renderer-neutral core",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdLod",
+      "kind": "concrete",
+      "name": "LODDistanceHeuristic",
+      "propertyCount": 4,
+      "reason": "not part of the currently supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdLod",
+      "kind": "abstract",
+      "name": "LODHeuristic",
+      "propertyCount": 1,
+      "reason": "not part of the currently supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdLod",
+      "kind": "singleApply",
+      "name": "LODOverrideAPI",
+      "propertyCount": 2,
+      "reason": "not part of the currently supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdLod",
+      "kind": "singleApply",
+      "name": "LODRootAPI",
+      "propertyCount": 2,
+      "reason": "not part of the currently supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdLod",
+      "kind": "concrete",
+      "name": "LODScreenSizeHeuristic",
+      "propertyCount": 5,
+      "reason": "not part of the currently supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "abstract",
+      "name": "BoundableLightBase",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "CylinderLight",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "DiskLight",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "DistantLight",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "DomeLight",
+      "propertyCount": 5,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "DomeLight_1",
+      "propertyCount": 6,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "GeometryLight",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "abstract",
+      "name": "LightAPI",
+      "propertyCount": 13,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "LightFilter",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "abstract",
+      "name": "LightListAPI",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "abstract",
+      "name": "ListAPI",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "abstract",
+      "name": "MeshLightAPI",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "abstract",
+      "name": "NonboundableLightBase",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "PluginLight",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "PluginLightFilter",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "PortalLight",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "RectLight",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "abstract",
+      "name": "ShadowAPI",
+      "propertyCount": 5,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "abstract",
+      "name": "ShapingAPI",
+      "propertyCount": 7,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "concrete",
+      "name": "SphereLight",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdLux",
+      "kind": "abstract",
+      "name": "VolumeLightAPI",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdMedia",
+      "kind": "singleApply",
+      "name": "AssetPreviewsAPI",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdMedia",
+      "kind": "concrete",
+      "name": "SpatialAudio",
+      "propertyCount": 7,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdMtlx",
+      "kind": "abstract",
+      "name": "MaterialXConfigAPI",
+      "propertyCount": 1,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "abstract",
+      "name": "PhysicsArticulationRootAPI",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "abstract",
+      "name": "PhysicsCollisionAPI",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "concrete",
+      "name": "PhysicsCollisionGroup",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "concrete",
+      "name": "PhysicsDistanceJoint",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "multipleApply",
+      "name": "PhysicsDriveAPI",
+      "propertyCount": 6,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "abstract",
+      "name": "PhysicsFilteredPairsAPI",
+      "propertyCount": 1,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "concrete",
+      "name": "PhysicsFixedJoint",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "concrete",
+      "name": "PhysicsJoint",
+      "propertyCount": 11,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "multipleApply",
+      "name": "PhysicsLimitAPI",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "abstract",
+      "name": "PhysicsMassAPI",
+      "propertyCount": 5,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "abstract",
+      "name": "PhysicsMaterialAPI",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "abstract",
+      "name": "PhysicsMeshCollisionAPI",
+      "propertyCount": 1,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "concrete",
+      "name": "PhysicsPrismaticJoint",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "concrete",
+      "name": "PhysicsRevoluteJoint",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "abstract",
+      "name": "PhysicsRigidBodyAPI",
+      "propertyCount": 6,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "concrete",
+      "name": "PhysicsScene",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdPhysics",
+      "kind": "concrete",
+      "name": "PhysicsSphericalJoint",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdProc",
+      "kind": "concrete",
+      "name": "GenerativeProcedural",
+      "propertyCount": 1,
+      "reason": "procedural execution is outside the supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdProfiles",
+      "kind": "singleApply",
+      "name": "ClaimsAPI",
+      "propertyCount": 0,
+      "reason": "not part of the currently supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdRender",
+      "kind": "concrete",
+      "name": "RenderPass",
+      "propertyCount": 7,
+      "reason": "render-product/pass execution is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdRender",
+      "kind": "concrete",
+      "name": "RenderProduct",
+      "propertyCount": 3,
+      "reason": "render-product/pass execution is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdRender",
+      "kind": "concrete",
+      "name": "RenderSettings",
+      "propertyCount": 4,
+      "reason": "render-product/pass execution is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdRender",
+      "kind": "abstract",
+      "name": "RenderSettingsBase",
+      "propertyCount": 8,
+      "reason": "render-product/pass execution is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdRender",
+      "kind": "concrete",
+      "name": "RenderVar",
+      "propertyCount": 3,
+      "reason": "render-product/pass execution is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdRi",
+      "kind": "abstract",
+      "name": "RiMaterialAPI",
+      "propertyCount": 3,
+      "reason": "RenderMan-specific",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdRi",
+      "kind": "abstract",
+      "name": "RiSplineAPI",
+      "propertyCount": 0,
+      "reason": "RenderMan-specific",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdRi",
+      "kind": "abstract",
+      "name": "StatementsAPI",
+      "propertyCount": 0,
+      "reason": "RenderMan-specific",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdSemantics",
+      "kind": "multipleApply",
+      "name": "SemanticsLabelsAPI",
+      "propertyCount": 1,
+      "reason": "not part of the currently supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdShade",
+      "kind": "nonApplied",
+      "name": "ConnectableAPI",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdShade",
+      "kind": "multipleApply",
+      "name": "CoordSysAPI",
+      "propertyCount": 1,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdShade",
+      "kind": "concrete",
+      "name": "Material",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdShade",
+      "kind": "abstract",
+      "name": "MaterialBindingAPI",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdShade",
+      "kind": "singleApply",
+      "name": "NodeDefAPI",
+      "propertyCount": 2,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdShade",
+      "kind": "concrete",
+      "name": "NodeGraph",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdShade",
+      "kind": "concrete",
+      "name": "Shader",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdSkel",
+      "kind": "concrete",
+      "name": "BlendShape",
+      "propertyCount": 3,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdSkel",
+      "kind": "concrete",
+      "name": "SkelAnimation",
+      "propertyCount": 6,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdSkel",
+      "kind": "abstract",
+      "name": "SkelBindingAPI",
+      "propertyCount": 9,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdSkel",
+      "kind": "concrete",
+      "name": "SkelRoot",
+      "propertyCount": 0,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdSkel",
+      "kind": "concrete",
+      "name": "Skeleton",
+      "propertyCount": 4,
+      "rendering": "classify-per-feature-and-backend",
+      "requiredCapabilities": [
+        "authored_data_roundtrip",
+        "usda_read_write",
+        "usdc_read_write",
+        "composition_and_value_resolution",
+        "schema_fallbacks_and_validation"
+      ],
+      "scope": "required",
+      "tydraExtraction": "classify-per-schema",
+      "typedConvenienceAccessors": "demand-driven"
+    },
+    {
+      "domain": "usdUI",
+      "kind": "multipleApply",
+      "name": "AccessibilityAPI",
+      "propertyCount": 3,
+      "reason": "DCC UI metadata is outside the supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdUI",
+      "kind": "concrete",
+      "name": "Backdrop",
+      "propertyCount": 1,
+      "reason": "DCC UI metadata is outside the supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdUI",
+      "kind": "abstract",
+      "name": "NodeGraphNodeAPI",
+      "propertyCount": 7,
+      "reason": "DCC UI metadata is outside the supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdUI",
+      "kind": "abstract",
+      "name": "SceneGraphPrimAPI",
+      "propertyCount": 2,
+      "reason": "DCC UI metadata is outside the supported schema surface",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "concrete",
+      "name": "Field3DAsset",
+      "propertyCount": 2,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "abstract",
+      "name": "FieldAsset",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "abstract",
+      "name": "FieldBase",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "concrete",
+      "name": "OpenVDBAsset",
+      "propertyCount": 2,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "concrete",
+      "name": "ParticleField",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "concrete",
+      "name": "ParticleField3DGaussianSplat",
+      "propertyCount": 2,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldKernelBaseAPI",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldKernelConstantSurfletAPI",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldKernelGaussianEllipsoidAPI",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldKernelGaussianSurfletAPI",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldOpacityAttributeAPI",
+      "propertyCount": 2,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldOrientationAttributeAPI",
+      "propertyCount": 2,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldPositionAttributeAPI",
+      "propertyCount": 2,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldPositionBaseAPI",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldRadianceBaseAPI",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldScaleAttributeAPI",
+      "propertyCount": 2,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "singleApply",
+      "name": "ParticleFieldSphericalHarmonicsAttributeAPI",
+      "propertyCount": 3,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "concrete",
+      "name": "Volume",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "abstract",
+      "name": "VolumeFieldAsset",
+      "propertyCount": 5,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    },
+    {
+      "domain": "usdVol",
+      "kind": "abstract",
+      "name": "VolumeFieldBase",
+      "propertyCount": 0,
+      "reason": "volume schema expansion is explicitly excluded",
+      "scope": "excluded"
+    }
+  ]
+}

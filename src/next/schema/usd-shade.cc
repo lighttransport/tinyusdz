@@ -5,6 +5,9 @@
 
 #include "usd-shade.hh"
 
+#include <algorithm>
+#include <cmath>
+
 namespace tinyusdz {
 namespace next {
 
@@ -18,6 +21,134 @@ bool IsShader(const UsdPrim& prim) {
 
 bool IsNodeGraph(const UsdPrim& prim) {
   return prim.IsValid() && prim.GetTypeName() == "NodeGraph";
+}
+
+namespace {
+
+bool ResolveShaderPortValueRec(const Stage& stage, const UsdPrim& prim,
+                               const std::string& port_name, Value* out,
+                               double time, int depth, int max_depth) {
+  if (!prim || !out || depth > max_depth) return false;
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (spec) {
+    if (const std::vector<Path>* connections = spec->connection(port_name)) {
+      if (!connections->empty()) {
+        const Path& target = (*connections)[0];
+        const std::string target_port = target.property_name();
+        const UsdPrim target_prim = stage.GetPrimAtPath(target.prim_path());
+        if (!target_port.empty() && target_prim &&
+            ResolveShaderPortValueRec(stage, target_prim, target_port, out,
+                                      time, depth + 1, max_depth)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  EvalOptions options;
+  options.follow_connections = false;
+  options.max_connection_depth = max_depth;
+  options.time = TimeQuery::Numeric(time);
+  AttributeEval eval(&stage);
+  EvalResult result = eval.EvalWith(prim, port_name, options);
+  if (result.success) {
+    *out = result.value;
+    return true;
+  }
+
+  // MaterialX constant nodes author the value on inputs:value while their
+  // outputs:out port is a declaration without a default value.
+  if (port_name.rfind("outputs:", 0) == 0 && IsShader(prim)) {
+    const Value* id_value = prim.GetPropertyValue("info:id");
+    const std::string* id = id_value ? id_value->as_token() : nullptr;
+    if (id && (id->find("constant") != std::string::npos ||
+               id->find("Constant") != std::string::npos)) {
+      return ResolveShaderPortValueRec(stage, prim, "inputs:value", out, time,
+                                       depth + 1, max_depth);
+    }
+    if (id) {
+      auto read = [&](const char* input, Value* value) {
+        return ResolveShaderPortValueRec(stage, prim, input, value, time,
+                                         depth + 1, max_depth);
+      };
+      auto components = [](const Value& value, float lanes[3], int* count) {
+        if (const float* f = value.as_float()) {
+          lanes[0] = lanes[1] = lanes[2] = *f; *count = 1; return true;
+        }
+        if (const double* d = value.as_double()) {
+          lanes[0] = lanes[1] = lanes[2] = float(*d); *count = 1; return true;
+        }
+        if (value.to_float3(lanes)) { *count = 3; return true; }
+        return false;
+      };
+      auto make = [](const float lanes[3], int count) {
+        return count == 1 ? Value(lanes[0])
+                          : Value::MakeFloat3(lanes[0], lanes[1], lanes[2]);
+      };
+      auto starts = [&](const char* prefix) { return id->rfind(prefix, 0) == 0; };
+      if (starts("ND_add_") || starts("ND_subtract_") ||
+          starts("ND_multiply_") || starts("ND_divide_") ||
+          starts("ND_min_") || starts("ND_max_")) {
+        Value av, bv;
+        float a[3], b[3], result_lanes[3];
+        int ac = 0, bc = 0;
+        if (!read("inputs:in1", &av) || !read("inputs:in2", &bv) ||
+            !components(av, a, &ac) || !components(bv, b, &bc)) return false;
+        const int count = std::max(ac, bc);
+        for (int i = 0; i < count; ++i) {
+          if (starts("ND_add_")) result_lanes[i] = a[i] + b[i];
+          else if (starts("ND_subtract_")) result_lanes[i] = a[i] - b[i];
+          else if (starts("ND_multiply_")) result_lanes[i] = a[i] * b[i];
+          else if (starts("ND_divide_"))
+            result_lanes[i] = std::fabs(b[i]) > 1.0e-8f ? a[i] / b[i] : 0.0f;
+          else if (starts("ND_min_")) result_lanes[i] = std::min(a[i], b[i]);
+          else result_lanes[i] = std::max(a[i], b[i]);
+        }
+        *out = make(result_lanes, count);
+        return true;
+      }
+      if (starts("ND_clamp_")) {
+        Value vv, lv, hv;
+        float v[3], lo[3], hi[3], result_lanes[3];
+        int vc = 0, lc = 0, hc = 0;
+        if (!read("inputs:in", &vv) || !read("inputs:low", &lv) ||
+            !read("inputs:high", &hv) || !components(vv, v, &vc) ||
+            !components(lv, lo, &lc) || !components(hv, hi, &hc)) return false;
+        const int count = std::max(vc, std::max(lc, hc));
+        for (int i = 0; i < count; ++i)
+          result_lanes[i] = std::min(std::max(v[i], lo[i]), hi[i]);
+        *out = make(result_lanes, count);
+        return true;
+      }
+      if (starts("ND_mix_")) {
+        Value bgv, fgv, mixv;
+        float bg[3], fg[3], amount[3], result_lanes[3];
+        int bgc = 0, fgc = 0, mc = 0;
+        if (!read("inputs:bg", &bgv) || !read("inputs:fg", &fgv) ||
+            !read("inputs:mix", &mixv) || !components(bgv, bg, &bgc) ||
+            !components(fgv, fg, &fgc) || !components(mixv, amount, &mc))
+          return false;
+        const int count = std::max(bgc, fgc);
+        for (int i = 0; i < count; ++i) {
+          const float t = amount[mc == 1 ? 0 : i];
+          result_lanes[i] = bg[i] * (1.0f - t) + fg[i] * t;
+        }
+        *out = make(result_lanes, count);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+bool ResolveShaderPortValue(const Stage& stage, const UsdPrim& prim,
+                            const std::string& port_name, Value* out,
+                            double time, int max_depth) {
+  if (max_depth < 0) return false;
+  return ResolveShaderPortValueRec(stage, prim, port_name, out, time, 0,
+                                   max_depth);
 }
 
 namespace {

@@ -149,6 +149,11 @@ displays it with an ImGui docking UI.
   fallback, which rejects off-screen samples before expanding camera-facing
   quads. `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB` can rehearse a smaller device;
   otherwise the backend derives a ceiling from free VRAM with headroom.
+  OpenUSD's float and half attribute families (`positions`/`positionsh`,
+  `scales`/`scalesh`, orientations, opacities, and spherical harmonics) share
+  the same bounded path, with float-over-half precedence. Points/Curves-only
+  Vulkan RT scenes render their carrier fallback even when no triangle TLAS is
+  present.
 - **Surface displacement** (`UsdPreviewSurface inputs:displacement` — constant or
   a height texture, honoring the `UsdUVTexture` `scale`/`bias`). The **raster**
   paths displace in the vertex shader (coarse, no extra geometry), with an opt-in
@@ -509,6 +514,14 @@ USD ──LoadUSDFromFile──▶ Stage ──RenderSceneConverter──▶ tyd
 
 `renderer.hh` is the GL/Vulkan boundary; everything else (loader, mesh build,
 camera, GUI, `DrawScene`) is backend-neutral.
+
+Camera `BackPlateAPI:<instance>` schemas are decoded by the next loader when
+that camera is selected with `--camera`. Every visible instance becomes a
+camera-space textured grid in authored order. Optional alpha is merged into the
+plate texture and optional depth drives the grid vertices, so the same ordinary
+depth-tested draw stream displays the stack in both OpenGL and Vulkan raster.
+Use `tests/run-backplate-display.sh <tusdview> <repo-root>` for the focused
+headless Vulkan and Xvfb OpenGL regression.
 
 ## Threading model
 

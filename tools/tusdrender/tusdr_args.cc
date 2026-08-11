@@ -100,6 +100,9 @@ void PrintUsage(const char *prog) {
       << "  -w, -width <N>         Output width (default 960).\n"
       << "  -height <N>            Output height (default from aspect or 540).\n"
       << "  -camera <path|name>    Camera absolute path or camera name.\n"
+      << "  -renderSettings <path> Select a UsdRender RenderSettings prim.\n"
+      << "  -renderProduct <path>  Select one product from the settings.\n"
+      << "  -renderPass <path>     Apply a local RenderPass render source/visibility.\n"
       << "  -fitScale <value>      Auto-fit camera distance multiplier (default 1.8).\n"
       << "  -viewDir <x,y,z>       Auto-fit camera direction from target to eye.\n"
       << "  -purpose <list>        Visible USD purposes: default,render,proxy,guide.\n"
@@ -259,6 +262,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid width (1..32768).\n";
         return false;
       }
+      opt->width_explicit = true;
     }
     OPT_MATCH(a == "-height" || a == "--height") {
       const char *v = need_value(a.c_str());
@@ -267,12 +271,28 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid height (1..32768).\n";
         return false;
       }
+      opt->height_explicit = true;
     }
     OPT_MATCH(a == "-camera" || a == "--camera") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       opt->camera = v;
       opt->camera_explicit = true;
+    }
+    OPT_MATCH(a == "-renderSettings" || a == "--renderSettings") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      opt->render_settings = v;
+    }
+    OPT_MATCH(a == "-renderProduct" || a == "--renderProduct") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      opt->render_product = v;
+    }
+    OPT_MATCH(a == "-renderPass" || a == "--renderPass") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      opt->render_pass = v;
     }
     OPT_MATCH(a == "-fitScale" || a == "--fitScale") {
       const char *v = need_value(a.c_str());
@@ -319,18 +339,23 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         pos = comma + 1;
       }
       opt->purpose_mask = mask;
+      opt->purpose_explicit = true;
     }
     OPT_MATCH(a == "-showGuide" || a == "--showGuide") {
       opt->purpose_mask |= kPurposeGuideBit;
+      opt->purpose_explicit = true;
     }
     OPT_MATCH(a == "-hideProxy" || a == "--hideProxy") {
       opt->purpose_mask &= ~kPurposeProxyBit;
+      opt->purpose_explicit = true;
     }
     OPT_MATCH(a == "-hideRender" || a == "--hideRender") {
       opt->purpose_mask &= ~kPurposeRenderBit;
+      opt->purpose_explicit = true;
     }
     OPT_MATCH(a == "-hideDefault" || a == "--hideDefault") {
       opt->purpose_mask &= ~kPurposeDefaultBit;
+      opt->purpose_explicit = true;
     }
     OPT_MATCH(a == "-timecode" || a == "--timecode") {
       const char *v = need_value(a.c_str());

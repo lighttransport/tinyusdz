@@ -538,6 +538,19 @@ void test_crate_reader_audit_cluster() {
     assert(a.GetMeta().references.size() == 1);
     assert(a.GetMeta().references[0].find("b.usda") != std::string::npos);
     assert(a.HasProperty("after"));
+
+    // Compatibility mode preserves the arc while diagnosing the unmodeled
+    // per-reference dictionary. Strict fidelity mode must fail closed instead
+    // of silently presenting the load as lossless.
+    USDCLoadOptions strict_options;
+    strict_options.crate_options.strict_aousd_conformance = true;
+    USDCLoadResult strict = LoadUSDCFromFile(fx.c_str(), strict_options);
+    assert(!strict.success);
+    assert(std::any_of(strict.errors.begin(), strict.errors.end(),
+                       [](const CrateError& error) {
+                         return error.message.find("Reference customData is ignored") !=
+                                std::string::npos;
+                       }));
   }
 
   // Explicit-clear (`references = None`, pxr ListOpHeader 0x01 with no

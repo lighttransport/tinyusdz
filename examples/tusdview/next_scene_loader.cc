@@ -176,7 +176,8 @@ size_t ProgressiveCurvesBytes(const DrawCurvesCPU& c) {
 }
 
 size_t ProgressiveVolumeBytes(const DrawVolumeCPU& v) {
-  return v.density.size() * sizeof(float);
+  return (v.density.size() + v.emissionField.size() +
+          v.temperatureField.size()) * sizeof(float);
 }
 
 size_t ProgressiveTextureBytes(const DrawTextureCPU& t) {
@@ -3707,8 +3708,163 @@ static DrawCameraCPU MakeDrawCameraFromNext(
     float exposure, int projection,
     float zNear, float zFar);
 
+static float BackPlateDepthAt(const light3d::Image* image, float u, float v,
+                              const tnext::BackPlateData& plate,
+                              float fallback) {
+  if (!image || image->width <= 0 || image->height <= 0 ||
+      image->channels <= 0 || image->data.empty()) return fallback;
+  const int x = std::max(0, std::min(image->width - 1,
+      static_cast<int>(u * static_cast<float>(image->width - 1) + 0.5f)));
+  const int y = std::max(0, std::min(image->height - 1,
+      static_cast<int>((1.0f - v) * static_cast<float>(image->height - 1) + 0.5f)));
+  const size_t off = (static_cast<size_t>(y) * image->width + x) *
+                     static_cast<size_t>(image->channels);
+  if (off >= image->data.size()) return fallback;
+  const float z = static_cast<float>(image->data[off]) / 255.0f;
+  const float depth = z * plate.depth_normalizing_factor +
+                      plate.depth_min_offset + plate.depth_camera_space_offset;
+  return std::isfinite(depth) && depth > 0.0f ? depth : fallback;
+}
+
+// BackPlateAPI is camera-bound rather than scene geometry. Represent it as a
+// camera-space, depth-tested textured grid in the shared DrawScene so GL and
+// Vulkan rasterizers consume precisely the same multiple-instance stack.
+static void AddNextBackPlates(const tnext::Stage& stage,
+                              const tnext::UsdPrim& prim,
+                              const DrawCameraCPU& camera,
+                              NextTexCache* textures, DrawScene* draw,
+                              double time) {
+  if (!textures || !draw) return;
+  constexpr const char* prefix = "BackPlateAPI:";
+  for (const std::string& schema : prim.GetMeta().apiSchemas()) {
+    if (schema.rfind(prefix, 0) != 0) continue;
+    tnext::BackPlateData plate;
+    if (!tnext::GetBackPlateData(stage, prim, schema.substr(std::strlen(prefix)),
+                                 &plate, time) || plate.image.empty() ||
+        plate.plate_visibility == "invisible") continue;
+
+    light3d::Image color;
+    if (!DecodeNextImage(*textures, plate.image, true, &color)) continue;
+    light3d::Image alpha;
+    if (!plate.alpha_image.empty() &&
+        DecodeNextImage(*textures, plate.alpha_image, false, &alpha) &&
+        alpha.width == color.width && alpha.height == color.height) {
+      const size_t pixels = static_cast<size_t>(color.width) * color.height;
+      for (size_t i = 0; i < pixels; ++i) color.data[i * 4 + 3] = alpha.data[i * 4];
+    }
+    const size_t pixels = static_cast<size_t>(color.width) * color.height;
+    for (size_t i = 0; i < pixels; ++i) {
+      for (int c = 0; c < 3; ++c) {
+        float x = static_cast<float>(color.data[i * 4 + c]) / 255.0f;
+        x = x * plate.luma_gain[c] + plate.luma_lift[c];
+        const float gamma = std::max(1.0e-6f, plate.luma_gamma[c]);
+        x = std::pow(std::max(0.0f, x), 1.0f / gamma);
+        color.data[i * 4 + c] = static_cast<uint8_t>(
+            std::lround(std::max(0.0f, std::min(1.0f, x)) * 255.0f));
+      }
+    }
+    DrawTextureCPU texture;
+    texture.assetIdentifier = plate.image;
+    texture.image = std::move(color);
+    texture.srgb = true;
+    texture.wrapS = static_cast<int>(WrapMode::ClampToEdge);
+    texture.wrapT = static_cast<int>(WrapMode::ClampToEdge);
+    const int textureId = static_cast<int>(draw->textures.size());
+    draw->textures.push_back(std::move(texture));
+
+    DrawMaterialCPU material;
+    material.name = "BackPlateAPI:" + schema.substr(std::strlen(prefix));
+    material.absPath = prim.GetPath().str() + "." + material.name;
+    material.hasUsdPreviewSurface = true;
+    material.baseColor[0] = material.baseColor[1] = material.baseColor[2] = 1.0f;
+    material.roughness = 1.0f;
+    // Raster BackPlates must participate in the ordinary depth test. The GL
+    // renderer intentionally disables depth for general Blend materials, so use
+    // a near-zero alpha mask here: transparent plate texels are discarded while
+    // visible texels retain correct plate/geometry depth ordering on both GL/VK.
+    material.alphaMode = static_cast<int>(AlphaMode::Mask);
+    material.alphaCutoff = 1.0f / 255.0f;
+    material.baseColorTex = textureId;
+    material.baseColorSample.tex = textureId;
+    material.baseColorSample.wrapS = WrapMode::ClampToEdge;
+    material.baseColorSample.wrapT = WrapMode::ClampToEdge;
+    material.baseColorSample.colorSpace = DrawColorSpace::sRGB;
+    const int materialId = static_cast<int>(draw->materials.size());
+    draw->materials.push_back(std::move(material));
+
+    light3d::Image depth;
+    const bool hasDepth = !plate.depth_image.empty() &&
+                          DecodeNextImage(*textures, plate.depth_image, false,
+                                          &depth);
+    constexpr int cells = 16;
+    const int side = hasDepth ? cells + 1 : 2;
+    DrawMeshCPU mesh;
+    mesh.name = material.name;
+    mesh.absPath = prim.GetPath().str() + "/__" + material.name;
+    mesh.doubleSided = true;
+    for (int i = 0; i < 16; ++i) mesh.world[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+    float right[3] = {
+        camera.forward[1] * camera.up[2] - camera.forward[2] * camera.up[1],
+        camera.forward[2] * camera.up[0] - camera.forward[0] * camera.up[2],
+        camera.forward[0] * camera.up[1] - camera.forward[1] * camera.up[0]};
+    const float rl = std::sqrt(right[0] * right[0] + right[1] * right[1] +
+                               right[2] * right[2]);
+    if (rl > 1.0e-8f) for (float& x : right) x /= rl;
+    const float fallbackDepth = std::max(camera.zNear * 2.0f,
+                                         camera.zFar * 0.98f);
+    const float aspect = camera.verticalAperture > 1.0e-6f
+                             ? camera.horizontalAperture / camera.verticalAperture
+                             : 1.5f;
+    const float rot = plate.rotate_xyz_tweak[2] * 0.01745329251994329577f;
+    const float cs = std::cos(rot), sn = std::sin(rot);
+    for (int y = 0; y < side; ++y) {
+      for (int x = 0; x < side; ++x) {
+        const float u = static_cast<float>(x) / static_cast<float>(side - 1);
+        const float v = static_cast<float>(y) / static_cast<float>(side - 1);
+        const float sx = (u * 2.0f - 1.0f) * plate.scale_tweak[0];
+        const float sy = (v * 2.0f - 1.0f) * plate.scale_tweak[1];
+        const float rx = cs * sx - sn * sy + plate.translate_tweak[0];
+        const float ry = sn * sx + cs * sy + plate.translate_tweak[1];
+        const float distance = std::max(
+            camera.zNear * 1.001f,
+            BackPlateDepthAt(hasDepth ? &depth : nullptr, u, v, plate,
+                             fallbackDepth));
+        const float halfH = camera.projection == DrawCameraCPU::Projection::Perspective
+                                ? distance * std::tan(camera.fovYDeg *
+                                                     0.008726646259971648f)
+                                : camera.verticalAperture * 0.5f;
+        const float halfW = halfH * aspect;
+        DrawVertex vertex{};
+        float* position = &vertex.px;
+        float* normal = &vertex.nx;
+        for (int c = 0; c < 3; ++c) {
+          position[c] = camera.eye[c] + camera.forward[c] * distance +
+                        right[c] * rx * halfW + camera.up[c] * ry * halfH;
+          normal[c] = -camera.forward[c];
+        }
+        vertex.u = u;
+        vertex.v = 1.0f - v;
+        mesh.vertices.push_back(vertex);
+      }
+    }
+    for (int y = 0; y + 1 < side; ++y) for (int x = 0; x + 1 < side; ++x) {
+      const uint32_t a = static_cast<uint32_t>(y * side + x);
+      const uint32_t b = a + 1;
+      const uint32_t c = a + static_cast<uint32_t>(side);
+      const uint32_t d = c + 1;
+      mesh.indices.insert(mesh.indices.end(), {a, b, d, a, d, c});
+    }
+    mesh.submeshes.push_back(
+        DrawSubmesh{0, static_cast<uint32_t>(mesh.indices.size()), materialId,
+                    materialId});
+    draw->meshes.push_back(std::move(mesh));
+  }
+}
+
 static void GatherNextCamerasRec(const tnext::Stage& stage,
                                   const tnext::UsdPrim& prim, double time,
+                                  const std::string& selectedCamera,
+                                  NextTexCache* textures, DrawScene* draw,
                                   std::vector<DrawCameraCPU>* out) {
   if (prim.GetTypeName() == "Camera") {
     double mw[16];
@@ -3749,12 +3905,19 @@ static void GatherNextCamerasRec(const tnext::Stage& stage,
     dc.name = prim.GetName();
     dc.absPath = prim.GetPath().str();
     dc.displayName = dc.name;
+    const bool selected = !selectedCamera.empty() &&
+        (selectedCamera == dc.name || selectedCamera == dc.absPath ||
+         (dc.absPath.size() > selectedCamera.size() &&
+          dc.absPath.compare(dc.absPath.size() - selectedCamera.size(),
+                             selectedCamera.size(), selectedCamera) == 0 &&
+          dc.absPath[dc.absPath.size() - selectedCamera.size() - 1] == '/'));
+    if (selected) AddNextBackPlates(stage, prim, dc, textures, draw, time);
     out->push_back(std::move(dc));
     // Camera prims are leaf nodes (no meaningful children to iterate).
     return;
   }
   for (const tnext::UsdPrim& child : prim.GetChildren()) {
-    GatherNextCamerasRec(stage, child, time, out);
+    GatherNextCamerasRec(stage, child, time, selectedCamera, textures, draw, out);
   }
 }
 
@@ -3796,11 +3959,18 @@ static DrawCameraCPU MakeDrawCameraFromNext(
 }
 
 void GatherNextCameras(const tnext::Stage& stage, double time,
+                       const std::string& selectedCamera,
+                       NextTexCache* textures, DrawScene* draw,
                        std::vector<DrawCameraCPU>* out) {
   if (!out) return;
   for (const tnext::UsdPrim& root : stage.GetRootPrims()) {
-    GatherNextCamerasRec(stage, root, time, out);
+    GatherNextCamerasRec(stage, root, time, selectedCamera, textures, draw, out);
   }
+}
+
+void GatherNextCameras(const tnext::Stage& stage, double time,
+                       std::vector<DrawCameraCPU>* out) {
+  GatherNextCameras(stage, time, std::string(), nullptr, nullptr, out);
 }
 
 // The legacy loader has no next Stage, only the converted RenderScene -- so
@@ -4742,11 +4912,13 @@ bool FitNextVolumeDensity(DrawVolumeCPU* volume, size_t maxBytes) {
   const size_t targetVoxels = voxelCount();
   if (targetVoxels == 0 || targetVoxels >= sourceVoxels) return false;
 
-  std::vector<float> reduced(targetVoxels);
   const size_t sx = static_cast<size_t>(volume->dim[0]);
   const size_t sy = static_cast<size_t>(volume->dim[1]);
   const size_t sz = static_cast<size_t>(volume->dim[2]);
-  for (int z = 0; z < dims[2]; ++z) {
+  auto reduceField = [&](std::vector<float>* field) {
+    if (!field || field->size() != sourceVoxels) return;
+    std::vector<float> reduced(targetVoxels);
+    for (int z = 0; z < dims[2]; ++z) {
     const size_t oz = std::min(
         sz - 1, (static_cast<size_t>(z) * sz) /
                    static_cast<size_t>(dims[2]));
@@ -4763,15 +4935,92 @@ bool FitNextVolumeDensity(DrawVolumeCPU* volume, size_t maxBytes) {
                             static_cast<size_t>(y)) *
                                static_cast<size_t>(dims[0]) +
                            static_cast<size_t>(x);
-        reduced[dst] = volume->density[(oz * sy + oy) * sx + ox];
+        reduced[dst] = (*field)[(oz * sy + oy) * sx + ox];
       }
     }
-  }
-  volume->density.swap(reduced);
+    }
+    field->swap(reduced);
+  };
+  reduceField(&volume->density);
+  reduceField(&volume->emissionField);
+  reduceField(&volume->temperatureField);
   volume->dim[0] = dims[0];
   volume->dim[1] = dims[1];
   volume->dim[2] = dims[2];
   return true;
+}
+
+// Resample an auxiliary VDB grid onto the density lattice in object space.
+// This preserves independently authored OpenVDB transforms while keeping the
+// GPU carrier compact (all 3D textures share density dimensions/bounds).
+std::vector<float> ResampleNextVolumeField(
+    const tinyusdz::usdVol::VDBGrid& src,
+    const tinyusdz::usdVol::VDBGrid& density) {
+  const size_t n = size_t(density.dim[0]) * size_t(density.dim[1]) *
+                   size_t(density.dim[2]);
+  std::vector<float> out(n, src.background);
+  if (src.data.empty()) return out;
+  for (int z = 0; z < density.dim[2]; ++z) {
+    for (int y = 0; y < density.dim[1]; ++y) {
+      for (int x = 0; x < density.dim[0]; ++x) {
+        const int dc[3] = {x, y, z};
+        int sc[3];
+        for (int a = 0; a < 3; ++a) {
+          const double world =
+              double(density.origin[a] + dc[a]) * density.voxel_size[a] +
+              density.world_translation[a];
+          sc[a] = int(std::floor((world - src.world_translation[a]) /
+                                 src.voxel_size[a] + 0.5)) - src.origin[a];
+          sc[a] = std::max(0, std::min(src.dim[a] - 1, sc[a]));
+        }
+        out[size_t(x) + size_t(density.dim[0]) *
+                            (size_t(y) + size_t(density.dim[1]) * size_t(z))] =
+            src.data[size_t(sc[0]) + size_t(src.dim[0]) *
+                       (size_t(sc[1]) + size_t(src.dim[1]) * size_t(sc[2]))];
+      }
+    }
+  }
+  return out;
+}
+
+void ResolveNextVolumeMaterial(const tnext::Stage& stage,
+                               const tnext::UsdPrim& volume,
+                               DrawVolumeCPU* out) {
+  if (!out) return;
+  const std::string materialPath =
+      tnext::GetInheritedBoundMaterialPath(stage, volume.GetPath().str());
+  if (materialPath.empty()) return;
+  const tnext::UsdPrim material = stage.GetPrimAtPath(materialPath);
+  if (!material) return;
+  const std::string shaderPath = tnext::GetVolumeShader(stage, material);
+  if (shaderPath.empty()) return;
+  const tnext::UsdPrim shader = stage.GetPrimAtPath(shaderPath);
+  if (!shader) return;
+  auto scalar = [&](const char* name, float* dst) {
+    tnext::Value value;
+    if (!tnext::ResolveShaderPortValue(stage, shader, name, &value)) return;
+    if (const float* f = value.as_float()) *dst = *f;
+    else if (const double* d = value.as_double()) *dst = float(*d);
+  };
+  auto color = [&](const char* name, float dst[3]) {
+    tnext::Value value;
+    if (!tnext::ResolveShaderPortValue(stage, shader, name, &value)) return;
+    if (const float* f = value.as_float3()) {
+      dst[0] = f[0]; dst[1] = f[1]; dst[2] = f[2];
+    }
+  };
+  float emissionScale = 1.0f;
+  scalar("inputs:density", &out->densityScale);
+  color("inputs:scattering_color", out->albedo);
+  color("inputs:scatter_color", out->albedo);
+  color("inputs:emission_color", out->emission);
+  color("inputs:emissionColor", out->emission);
+  scalar("inputs:emission", &emissionScale);
+  scalar("inputs:emission_intensity", &emissionScale);
+  scalar("inputs:emissionIntensity", &emissionScale);
+  out->densityScale = std::max(0.0f, out->densityScale);
+  emissionScale = std::max(0.0f, emissionScale);
+  for (float& channel : out->emission) channel *= emissionScale;
 }
 
 bool BuildNextVolumes(
@@ -4787,8 +5036,14 @@ bool BuildNextVolumes(
       double w16[16];
       tydn::ComputeWorldTransform(stage, p, w16, time);
 
+      bool hasDensityRelationship = false;
+      for (const std::string& name : p.GetRelationshipNames()) {
+        if (name == "field:density") hasDensityRelationship = true;
+      }
+
       for (const std::string& relName : p.GetRelationshipNames()) {
         if (relName.rfind("field:", 0) != 0) continue;
+        if (hasDensityRelationship && relName != "field:density") continue;
         const std::vector<tnext::Path>* targets = p.GetRelationship(relName);
         if (!targets || targets->empty()) continue;
         tnext::UsdPrim field = stage.GetPrimAtPath((*targets)[0]);
@@ -4810,6 +5065,11 @@ bool BuildNextVolumes(
         std::vector<tinyusdz::usdVol::VDBGrid> grids;
         std::string vw, ve;
         if (!tinyusdz::usdVol::ReadVDBFromFile(vpath, &grids, &vw, &ve) || grids.empty()) {
+          const std::string reason = !ve.empty() ? ve : (!vw.empty() ? vw :
+              "no supported voxel grids");
+          draw->skipped.push_back("Volume '" + p.GetPath().str() + "': " + reason);
+          LOGW("next: Volume '%s' failed to load '%s': %s",
+               p.GetPath().str().c_str(), vpath.c_str(), reason.c_str());
           continue;
         }
         tinyusdz::usdVol::VDBGrid* g = nullptr;
@@ -4824,6 +5084,14 @@ bool BuildNextVolumes(
         for (int k = 0; k < 16; ++k) dv.world[k] = static_cast<float>(w16[k]);
         // Transfer ownership out of the temporary VDB grid instead of copying
         // a dense field while the decoded archive remains alive.
+        for (const auto& aux : grids) {
+          if (aux.name == "temperature") {
+            dv.temperatureField = ResampleNextVolumeField(aux, *g);
+          } else if (aux.name == "emission" || aux.name == "flame" ||
+                     aux.name == "heat") {
+            dv.emissionField = ResampleNextVolumeField(aux, *g);
+          }
+        }
         dv.density = std::move(g->data);
         for (int a = 0; a < 3; ++a) {
           dv.dim[a] = g->dim[a];
@@ -4833,6 +5101,7 @@ bool BuildNextVolumes(
                           float(g->world_translation[a]);
         }
         dv.background = g->background;
+        ResolveNextVolumeMaterial(stage, p, &dv);
 
         if (densityBudgetBytes > 0 && densityBytesUsed) {
           const size_t used = *densityBytesUsed;
@@ -5676,10 +5945,23 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // RenderPoints and then copied them again into the carrier, creating a
     // large transient peak and one monolithic record.
     if (gaussian) {
+      tnext::ParticleFieldData field;
+      std::string fieldWarning;
+      if (!tnext::GetParticleFieldData(stage, rec.prim, &field, time,
+                                       &fieldWarning)) {
+        draw->skipped.push_back("GaussianSplat '" + rec.path +
+                                "': invalid ParticleField schema data");
+        continue;
+      }
+      if (!fieldWarning.empty())
+        LOGW("GaussianSplat '%s': %s", rec.path.c_str(), fieldWarning.c_str());
       tydn::ValueArrayRead<float> positions;
       tydn::ValueArrayRead<float> scales;
-      if (!tydn::ReadFloatArray(rec.prim, "positions", time, &positions) ||
-          !tydn::ReadFloatArray(rec.prim, "scales", time, &scales) ||
+      if (field.positions_property.empty() || field.scales_property.empty() ||
+          !tydn::ReadFloatArray(rec.prim, field.positions_property.c_str(), time,
+                                &positions) ||
+          !tydn::ReadFloatArray(rec.prim, field.scales_property.c_str(), time,
+                                &scales) ||
           positions.size() < 3 || scales.size() < 3) {
         draw->skipped.push_back("GaussianSplat '" + rec.path +
                                 "': missing/invalid positions or scales");
@@ -5688,10 +5970,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       tydn::ValueArrayRead<float> orientations;
       tydn::ValueArrayRead<float> opacities;
       tydn::ValueArrayRead<float> sh;
-      const bool haveOrientations =
-          tydn::ReadFloatArray(rec.prim, "orientations", time, &orientations);
-      const bool haveOpacities =
-          tydn::ReadFloatArray(rec.prim, "opacities", time, &opacities);
+      const bool haveOrientations = !field.orientations_property.empty() &&
+          tydn::ReadFloatArray(rec.prim, field.orientations_property.c_str(), time,
+                               &orientations);
+      const bool haveOpacities = !field.opacities_property.empty() &&
+          tydn::ReadFloatArray(rec.prim, field.opacities_property.c_str(), time,
+                               &opacities);
       // Only the first three (DC RGB) coefficients are used by the preview.
       // A compressed crate-backed SH array otherwise forces a full decode just
       // to obtain those three values per splat, creating a large transient
@@ -5700,17 +5984,23 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       // when decoding the optional high-order payload would exceed the loader's
       // memory budget.
       bool allowSh = true;
-      if (const tnext::Value* shValue = rec.prim.GetPropertyValue(
-              "radiance:sphericalHarmonicsCoefficients")) {
-        constexpr size_t kMaxDecodedShBytes = size_t(128) * 1024 * 1024;
-        const size_t shElements = shValue->array_size();
-        const bool oversized =
-            shElements > kMaxDecodedShBytes / sizeof(float);
-        allowSh = !oversized || !shValue->is_lazy() ||
-                  tnext::CanBorrowLazyFlat(*shValue);
+      if (!field.spherical_harmonics_property.empty()) {
+        const tnext::Value* shValue = rec.prim.GetPropertyValue(
+            field.spherical_harmonics_property);
+        if (shValue) {
+          constexpr size_t kMaxDecodedShBytes = size_t(128) * 1024 * 1024;
+          const size_t shElements = shValue->array_size();
+          const bool oversized =
+              shElements > kMaxDecodedShBytes / sizeof(float);
+          allowSh = !oversized || !shValue->is_lazy() ||
+                    tnext::CanBorrowLazyFlat(*shValue);
+        }
       }
-      const bool haveSh = allowSh && tydn::ReadFloatArray(
-          rec.prim, "radiance:sphericalHarmonicsCoefficients", time, &sh);
+      const bool haveSh = allowSh &&
+          !field.spherical_harmonics_property.empty() &&
+          tydn::ReadFloatArray(rec.prim,
+                               field.spherical_harmonics_property.c_str(), time,
+                               &sh);
       if (!allowSh) {
         LOGI("GaussianSplat '%s': skipping compressed SH decode; using DC fallback",
              rec.path.c_str());
@@ -7694,7 +7984,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
   // Gather camera records for loader-equivalence testing (must run before the
   // early-exit checks below, since the stage may still be valid).
-  GatherNextCameras(stage, time, &draw->cameras);
+  GatherNextCameras(stage, time, opts.viewCamera, &texCache, draw,
+                    &draw->cameras);
 
   LOGI("next: '%s' -> %zu draws (%zu guide, %zu proxy, %zu render), %lld instances, "
        "%zu unique tris (%lld effective), %zu materials, %zu textures, "

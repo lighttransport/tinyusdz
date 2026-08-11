@@ -1794,7 +1794,7 @@ struct RenderVolume {
   float emission_color[3] = {0.0f, 0.0f, 0.0f};
   float emission_scale = 0.0f;
 
-  int material_id = -1;  // optional volume material (unused for now)
+  int material_id = -1;  // optional source material index
   uint64_t handle = 0;   // graphics API handle. 0 = invalid
 
   // Convenience: index of the "density" field, or first field, or -1.

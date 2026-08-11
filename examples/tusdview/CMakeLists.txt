@@ -246,6 +246,7 @@ if(TINYUSDZ_BUILD_TESTS)
       lightrt_mtlx_bridge.cc
       displacement_bake.cc
       skinning.cc
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
       ${COMMON_DIR}/light3d/math.cpp
       $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
   target_compile_features(tusdview_openpbr_material_test PRIVATE cxx_std_17)
@@ -404,6 +405,9 @@ if(TINYUSDZ_BUILD_TESTS)
       tusdview_rt_lod_test)
     add_test(NAME ${tv_test} COMMAND ${tv_test})
     set_tests_properties(${tv_test} PROPERTIES LABELS "tusdview")
+    if(COMMAND add_sanitizers)
+      add_sanitizers(${tv_test})
+    endif()
   endforeach()
 endif()
 

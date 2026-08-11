@@ -17,6 +17,9 @@ The tool supports both human-readable text output (similar to Unix `diff`) and s
 # Basic text diff
 tusddiff file1.usd file2.usd
 
+# Compare fully composed stages (OpenUSD usddiff-compatible spelling)
+tusddiff --flatten scene1.usda scene2.usda
+
 # JSON output
 tusddiff --json scene1.usda scene2.usda
 
@@ -27,6 +30,9 @@ tusddiff --help
 ### Command Line Options
 
 - `--json` - Output differences in JSON format instead of text
+- `-f`, `--flatten` - Compose both inputs before semantic comparison
+- `-q`, `--brief` - Suppress diff output and use the exit status only
+- `-n`, `--noeffect` - OpenUSD-compatible no-edit flag (TinyUSDZ is always read-only)
 - `--help`, `-h` - Display help information
 
 ### Supported File Formats
@@ -169,14 +175,16 @@ The executable will be created at `build/tusddiff`.
 
 ## Limitations
 
-- Currently compares USD structure at the Layer level
-- Property value comparison is basic (presence/absence, not deep value diff)
-- Does not perform composition-aware diffing (compares pre-composition layers)
+- The default compares authored layers; use `--flatten` for composition-aware
+  stage comparison.
+- Directory-pair and recursive per-entry USDZ workflows from OpenUSD `usddiff`
+  are not implemented yet.
+- TinyUSDZ never writes externally edited temporary USDA back to an input, so
+  `--noeffect` is accepted but is always the effective behavior.
 
 ## Future Enhancements
 
-- Deep value comparison for properties
-- Composition-aware diffing
+- Directory and recursive per-entry USDZ comparison
 - Visual diff output (HTML format)
 - Performance optimization for large scene graphs
 - Selective diffing (specific paths or property types)

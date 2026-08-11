@@ -64,6 +64,7 @@
 #include "tydra/attribute-eval.hh"
 #include "tydra/render-data.hh"
 #include "tydra/render-data-internal.hh"
+#include "tydra/render-data-material-internal.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 #include "value-types.hh"  // value::Mult
@@ -886,12 +887,164 @@ static bool GetFieldAssetInfo(const tinyusdz::Prim &prim,
   return true;
 }
 
+static const Attribute *FindShadeInput(const UsdShadePrim &shader,
+                                       const char *name) {
+  const auto it = shader.props.find(name);
+  if (it == shader.props.end() || !it->second.is_attribute()) return nullptr;
+  return it->second.get_attribute_or_null();
+}
+
+static const UsdShadePrim *GetShadeNodeData(const Prim *prim) {
+  if (!prim) return nullptr;
+  if (const Shader *shader = prim->as<Shader>()) {
+    return shader->value.as<ShaderNode>();
+  }
+  if (const NodeGraph *graph = prim->as<NodeGraph>()) return graph;
+  if (const Material *material = prim->as<Material>()) return material;
+  return nullptr;
+}
+
+static const Attribute *ResolveShadeInput(const Stage &stage,
+                                          const UsdShadePrim &node,
+                                          const char *name, int depth = 0) {
+  if (depth > 16) return nullptr;
+  const Attribute *attr = FindShadeInput(node, name);
+  if (!attr) return nullptr;
+  if (!attr->has_connections()) return attr;
+  const auto &connections = attr->connections();
+  if (connections.size() != 1) return nullptr;
+  const Path &target = connections[0];
+  const Prim *target_prim = nullptr;
+  if (!stage.find_prim_at_path(Path(target.prim_part(), ""), target_prim) ||
+      !target_prim) return nullptr;
+  const UsdShadePrim *target_node = GetShadeNodeData(target_prim);
+  if (!target_node) return nullptr;
+  const std::string property = target.prop_part();
+  if (!property.empty()) {
+    if (const Attribute *resolved = ResolveShadeInput(
+            stage, *target_node, property.c_str(), depth + 1)) {
+      return resolved;
+    }
+  }
+  // Generic MaterialX constant nodes declare outputs:out without a value.
+  if (const Shader *shader = target_prim->as<Shader>()) {
+    if (shader->info_id.find("constant") != std::string::npos ||
+        shader->info_id.find("Constant") != std::string::npos) {
+      return ResolveShadeInput(stage, *target_node, "inputs:value", depth + 1);
+    }
+  }
+  return nullptr;
+}
+
+static void ApplyVolumeShaderConstants(const Stage &stage,
+                                       const UsdShadePrim &shader,
+                                       RenderVolume *dst) {
+  auto scalar = [&](const char *name, float *out) {
+    if (const Attribute *source = FindShadeInput(shader, name)) {
+      if (source->connections().size() == 1) {
+        auto evaluated = EvaluateMtlxNodeGraphAsConstant(
+            stage, source->connections()[0], "lin_rec709");
+        if (evaluated && evaluated->n >= 1) {
+          *out = evaluated->v[0];
+          return;
+        }
+      }
+    }
+    const Attribute *attr = ResolveShadeInput(stage, shader, name);
+    if (!attr || attr->has_timesamples()) return;
+    if (auto v = attr->get_value<float>()) *out = v.value();
+    else if (auto d = attr->get_value<double>()) *out = float(d.value());
+  };
+  auto color = [&](const char *name, float out[3]) {
+    if (const Attribute *source = FindShadeInput(shader, name)) {
+      if (source->connections().size() == 1) {
+        auto evaluated = EvaluateMtlxNodeGraphAsConstant(
+            stage, source->connections()[0], "lin_rec709");
+        if (evaluated && evaluated->n >= 3) {
+          out[0] = evaluated->v[0]; out[1] = evaluated->v[1];
+          out[2] = evaluated->v[2];
+          return;
+        }
+      }
+    }
+    const Attribute *attr = ResolveShadeInput(stage, shader, name);
+    if (!attr || attr->has_timesamples()) return;
+    if (auto v = attr->get_value<value::color3f>()) {
+      out[0] = (*v)[0]; out[1] = (*v)[1]; out[2] = (*v)[2];
+    } else if (auto v = attr->get_value<value::float3>()) {
+      out[0] = (*v)[0]; out[1] = (*v)[1]; out[2] = (*v)[2];
+    }
+  };
+  scalar("inputs:density", &dst->density_scale);
+  color("inputs:scattering_color", dst->albedo);
+  color("inputs:scatter_color", dst->albedo);
+  color("inputs:emission_color", dst->emission_color);
+  color("inputs:emissionColor", dst->emission_color);
+  scalar("inputs:emission", &dst->emission_scale);
+  scalar("inputs:emission_intensity", &dst->emission_scale);
+  scalar("inputs:emissionIntensity", &dst->emission_scale);
+  dst->density_scale = std::max(0.0f, dst->density_scale);
+  dst->emission_scale = std::max(0.0f, dst->emission_scale);
+}
+
 bool RenderSceneConverter::ConvertVolume(
     const RenderSceneConverterEnv &env, const std::string &volume_abs_path,
     const Volume &volume, RenderVolume *dst) {
   if (!dst) return false;
 
   dst->abs_path = volume_abs_path;
+
+  Path material_path;
+  const Material *material = nullptr;
+  std::string material_err;
+  GetBoundMaterialCached(env.stage, Path(volume_abs_path, ""), "",
+                         &material_path, &material, &material_err);
+  // Dynamic UsdVol reconstruction predates MaterialBindingAPI support. Keep a
+  // relationship fallback so a directly authored binding is not lost even
+  // when the applied API instance was not reconstructed on this schema.
+  if (!material) {
+    Relationship direct_binding;
+    bool has_direct_binding =
+        volume.get_materialBinding(value::token(""), &direct_binding);
+    if (has_direct_binding) {
+      const Relationship &rel = direct_binding;
+      Path target;
+      if (!rel.targetPathVector.empty()) target = rel.targetPathVector[0];
+      else target = rel.targetPath;
+      const Prim *mat_prim = nullptr;
+      if (target.is_valid() &&
+          env.stage.find_prim_at_path(Path(target.prim_part(), ""), mat_prim) &&
+          mat_prim) {
+        material = mat_prim->as<Material>();
+      }
+    }
+  }
+  if (material) {
+    std::vector<Path> connections;
+    if (material->volume.authored()) {
+      connections = material->volume.get_connections();
+    } else {
+      const auto output = material->props.find("outputs:volume");
+      if (output != material->props.end() && output->second.is_attribute()) {
+        if (const Attribute *attr = output->second.get_attribute_or_null()) {
+          connections = attr->connections();
+        }
+      }
+    }
+    if (connections.size() == 1) {
+      const Prim *shader_prim = nullptr;
+      std::string lookup_err;
+      if (env.stage.find_prim_at_path(
+              Path(connections[0].prim_part(), ""), shader_prim,
+              &lookup_err) && shader_prim) {
+        if (const Shader *shader = shader_prim->as<Shader>()) {
+          if (const ShaderNode *node = shader->value.as<ShaderNode>()) {
+            ApplyVolumeShaderConstants(env.stage, *node, dst);
+          }
+        }
+      }
+    }
+  }
 
   const AssetResolutionResolver &assetResolver = env.asset_resolver;
 

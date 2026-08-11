@@ -127,10 +127,23 @@ bool IsStaticGeometryArray(const std::string& type,
         GetPropNameTable().intern("orientations");
     static const PropNameId kIdOpacities =
         GetPropNameTable().intern("opacities");
-    static const PropNameId kIdSh = GetPropNameTable().intern("sh");
+    static const PropNameId kIdPositionsH =
+        GetPropNameTable().intern("positionsh");
+    static const PropNameId kIdScalesH =
+        GetPropNameTable().intern("scalesh");
+    static const PropNameId kIdOrientationsH =
+        GetPropNameTable().intern("orientationsh");
+    static const PropNameId kIdOpacitiesH =
+        GetPropNameTable().intern("opacitiesh");
+    static const PropNameId kIdSh = GetPropNameTable().intern(
+        "radiance:sphericalHarmonicsCoefficients");
+    static const PropNameId kIdShH = GetPropNameTable().intern(
+        "radiance:sphericalHarmonicsCoefficientsh");
     return property_id == kIdPositions || property_id == kIdScales ||
            property_id == kIdOrientations || property_id == kIdOpacities ||
-           property_id == kIdSh;
+           property_id == kIdPositionsH || property_id == kIdScalesH ||
+           property_id == kIdOrientationsH || property_id == kIdOpacitiesH ||
+           property_id == kIdSh || property_id == kIdShH;
   }
   return false;
 }

@@ -2,6 +2,13 @@
 
 Coverage of OpenUSD schema domains in tinyusdz.
 
+> This page's historical `done/stub` counts describe the legacy typed-prim
+> surface only. They are not renderer or cross-pipeline percentages. The pinned
+> machine-readable baseline is
+> [`generated/openusd-schema-26.08.json`](generated/openusd-schema-26.08.json),
+> and the capability tiers and refresh procedure are documented in
+> [`openusd-schema-compatibility.md`](openusd-schema-compatibility.md).
+
 **Legend**: done = full pipeline (parse + pprint + USDC write), stub = struct exists but not wired into pipeline, -- = not implemented
 
 ---
@@ -32,6 +39,7 @@ Coverage of OpenUSD schema domains in tinyusdz.
 | Capsule_1 | concrete | done | Updated capsule with separate top/bottom radii |
 | VisibilityAPI | API (single) | done | |
 | GeomModelAPI | API (single) | done | |
+| BackPlateAPI | API (multiple) | next schema | OpenUSD 26.08 registry/validation, typed extraction, render-camera propagation, tusdrender color/alpha/depth compositing, and camera-space depth-tested GL/Vulkan raster display for every authored instance |
 | MotionAPI | API (single) | done | |
 | PrimvarsAPI | API (non-applied) | done | |
 | XformCommonAPI | API (non-applied) | done | |
@@ -194,9 +202,9 @@ MjcActuator, MjcTendon, MjcKeyframe, MjcSensor (concrete); MjcSceneAPI, MjcJoint
 | Field3DAsset | concrete | done | `FieldAsset`-derived |
 | VolumeFieldBase | abstract | -- | pxr 25.x name for the former `FieldBase` abstract base |
 | VolumeFieldAsset | abstract | -- | pxr 25.x name for the former `FieldAsset` abstract base |
-| ParticleField | concrete | -- | |
-| ParticleField3DGaussianSplat | concrete | -- | Gaussian splatting |
-| 11 ParticleField API schemas | API (single) | -- | Position, orientation, scale, opacity, kernel, radiance |
+| ParticleField | concrete | next schema | Registry ancestry and validation; legacy preserves generic data |
+| ParticleField3DGaussianSplat | concrete | rendered | Next Vulkan/RT Gaussian carrier plus 26.08 fallbacks and validation |
+| 11 ParticleField API schemas | API (single) | next schema | Official position/orientation/scale/opacity/kernel/radiance declarations; typed accessors remain |
 
 **Coverage: 4/6 concrete, 0/11 API** (Volume, FieldAsset, OpenVDBAsset,
 Field3DAsset implemented; ParticleField / ParticleField3DGaussianSplat
@@ -205,6 +213,12 @@ remain; VolumeFieldBase / VolumeFieldAsset are abstract bases)
 > Note: `core/model-scope.hh` carries a corrective comment — the UsdVol prims
 > (Volume, FieldAsset, OpenVDBAsset, Field3DAsset) are GPrim-derived and defined
 > in `usdGeom.hh`, not placeholder structs.
+
+The runtime OpenVDB adapter is backed by the current vendored TinyVDB C API and
+loads scalar bool/int/half/float/double grids from OpenVDB 1.x--13.x files.
+Vector grids are exposed to the existing scalar volume renderer as magnitude;
+PointDataGrid is diagnosed and skipped. The external corpus regression is
+`tests/run-tinyvdbio-corpus.sh`.
 
 ---
 
@@ -215,7 +229,7 @@ remain; VolumeFieldBase / VolumeFieldAsset are abstract bases)
 | RenderSettings | concrete | stub | Recognized placeholder prim (typed, in pipeline for parse + pprint + roundtrip); schema attrs stay generic (`props`) |
 | RenderProduct | concrete | stub | Same placeholder treatment |
 | RenderVar | concrete | stub | Same placeholder treatment |
-| RenderPass | concrete | -- | |
+| RenderPass | concrete | next schema | Registry fallbacks/declarations and relationship validation; render-pass execution remains |
 | RenderSettingsBase | abstract | -- | |
 
 **Coverage: 0/5 fully typed (3 placeholder-stub)**
@@ -273,7 +287,9 @@ recognized placeholder prim — see `core/model-scope.hh` — not a generic Mode
 
 ### Remaining gaps
 
-1. **UsdVol** -- ParticleField / ParticleField3DGaussianSplat concrete prims and
-   the 11 ParticleField API schemas (13 schemas; Gaussian splat support)
-2. **UsdRender** -- fully-typed render settings (RenderSettings/RenderProduct/
-   RenderVar are placeholder-stubs; RenderPass not implemented)
+1. **UsdVol** -- further volume-rendering work is intentionally deferred.
+2. **UsdRender** -- multi-pass dependency execution and non-color RenderVar AOV
+   emission remain. External commands are intentionally never executed.
+3. **UsdGeom draw modes** -- `model:cardVisibility` inheritance and face
+   selection are implemented; generating complete bounds/origin/cards proxy
+   geometry remains a separate draw-mode feature.

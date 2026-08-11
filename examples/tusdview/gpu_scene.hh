@@ -625,6 +625,10 @@ struct DrawVolumeCPU {
   std::string name;
   int dim[3]{0, 0, 0};
   std::vector<float> density;  // dense, length dim[0]*dim[1]*dim[2]
+  // Optional scalar grids aligned with density. Raster backends use these for
+  // spatial emission and blackbody fire shading.
+  std::vector<float> emissionField;
+  std::vector<float> temperatureField;
   float world[16];             // column-major 4x4 (light3d::Mat4 layout)
   float aabbMin[3]{0, 0, 0};   // object-space grid bounds
   float aabbMax[3]{0, 0, 0};

@@ -2288,6 +2288,8 @@ void VulkanRenderer::recordVolumePass(VkCommandBuffer cb, VkPipeline pipe) {
       ubo.albedo[a] = gv.albedo[a];
       ubo.emission[a] = gv.emission[a];
     }
+    ubo.bmin[3] = gv.hasEmissionField ? 1.0f : 0.0f;
+    ubo.bmax[3] = gv.hasTemperatureField ? 1.0f : 0.0f;
     ubo.albedo[3] = gv.densityScale;
     ubo.emission[3] = gv.background;
     if (gv.uboMapped) std::memcpy(gv.uboMapped, &ubo, sizeof(ubo));
@@ -2317,19 +2319,27 @@ void VulkanRenderer::appendVolume(const DrawVolumeCPU& v) {
   }
   gv.densityScale = v.densityScale;
   gv.background = v.background;
+  gv.hasEmissionField = v.emissionField.size() == v.density.size();
+  gv.hasTemperatureField = v.temperatureField.size() == v.density.size();
 
-  // 3D density image (R32_SFLOAT) via staging.
-  const VkDeviceSize bytes = VkDeviceSize(v.density.size()) * sizeof(float);
+  // Packed fields: density, optional emission/flame, optional temperature.
+  std::vector<float> packed(v.density.size() * 4, 0.0f);
+  for (size_t i = 0; i < v.density.size(); ++i) {
+    packed[4 * i] = v.density[i];
+    if (gv.hasEmissionField) packed[4 * i + 1] = v.emissionField[i];
+    if (gv.hasTemperatureField) packed[4 * i + 2] = v.temperatureField[i];
+  }
+  const VkDeviceSize bytes = VkDeviceSize(packed.size()) * sizeof(float);
   VkBuffer staging = VK_NULL_HANDLE;
   VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-  if (!createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, v.density.data(),
+  if (!createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, packed.data(),
                         &staging, &stagingMem)) {
     return;
   }
   VkImageCreateInfo ici{};
   ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   ici.imageType = VK_IMAGE_TYPE_3D;
-  ici.format = VK_FORMAT_R32_SFLOAT;
+  ici.format = VK_FORMAT_R32G32B32A32_SFLOAT;
   ici.extent = {uint32_t(v.dim[0]), uint32_t(v.dim[1]), uint32_t(v.dim[2])};
   ici.mipLevels = 1;
   ici.arrayLayers = 1;
@@ -7045,17 +7055,38 @@ void VulkanRenderer::rebuildTlas() {
   constexpr uint64_t kEstimatedPointBvhBytes =
       sizeof(RtPointGPU) + sizeof(Node) + sizeof(int);
   size_t candidatePointCount = 0;
+  bool candidatePointCountOverflow = false;
   for (const DrawPointsCPU& src : nativePoints_) {
     if (!src.gaussian || src.ellipseRadii.size() < (src.points.size() / 3) * 2 ||
         src.ellipseNormals.size() < (src.points.size() / 3) * 3 ||
         src.ellipseMajorAxes.size() < (src.points.size() / 3) * 3)
       continue;
-    candidatePointCount += src.points.size() / 3;
+    const size_t count = src.points.size() / 3;
+    if (count > (std::numeric_limits<size_t>::max)() -
+                    candidatePointCount) {
+      candidatePointCountOverflow = true;
+      break;
+    }
+    candidatePointCount += count;
   }
+  const bool pointCountExceedsGpuAbi = candidatePointCountOverflow ||
+      candidatePointCount >
+          static_cast<size_t>((std::numeric_limits<uint32_t>::max)());
   const uint64_t estimatedPointBytes =
-      uint64_t(candidatePointCount) * kEstimatedPointBvhBytes;
+      pointCountExceedsGpuAbi ||
+              uint64_t(candidatePointCount) >
+                  (std::numeric_limits<uint64_t>::max)() /
+                      kEstimatedPointBvhBytes
+          ? (std::numeric_limits<uint64_t>::max)()
+          : uint64_t(candidatePointCount) * kEstimatedPointBvhBytes;
   const bool skipAnalyticGaussian =
-      forcedPointBudget != 0 && estimatedPointBytes > forcedPointBudget;
+      pointCountExceedsGpuAbi ||
+      (forcedPointBudget != 0 && estimatedPointBytes > forcedPointBudget);
+  if (pointCountExceedsGpuAbi) {
+    LOGW("[vk_rt] Gaussian point count exceeds the uint32 GPU descriptor ABI; "
+         "using raster fallback");
+    gaussianRtDisabled_ = true;
+  }
   if (skipAnalyticGaussian && candidatePointCount > 0) {
     LOGW("[vk_rt] Gaussian point estimate %.1f MiB exceeds point-buffer ceiling "
          "%.1f MiB; skipping analytic point/BVH build and using raster fallback",
@@ -7079,20 +7110,40 @@ void VulkanRenderer::rebuildTlas() {
       p.center[0] = src.world[0] * src.points[i*3] + src.world[4] * src.points[i*3+1] + src.world[8] * src.points[i*3+2] + src.world[12];
       p.center[1] = src.world[1] * src.points[i*3] + src.world[5] * src.points[i*3+1] + src.world[9] * src.points[i*3+2] + src.world[13];
       p.center[2] = src.world[2] * src.points[i*3] + src.world[6] * src.points[i*3+1] + src.world[10] * src.points[i*3+2] + src.world[14];
-      float major[3], normal[3];
+      const float* localMajor = &src.ellipseMajorAxes[i * 3];
+      const float* localNormal = &src.ellipseNormals[i * 3];
+      const float localMinor[3] = {
+          localNormal[1] * localMajor[2] - localNormal[2] * localMajor[1],
+          localNormal[2] * localMajor[0] - localNormal[0] * localMajor[2],
+          localNormal[0] * localMajor[1] - localNormal[1] * localMajor[0]};
+      float major[3], minor[3];
       for (int k = 0; k < 3; ++k) {
-        major[k] = src.world[k] * src.ellipseMajorAxes[i*3] + src.world[4+k] * src.ellipseMajorAxes[i*3+1] + src.world[8+k] * src.ellipseMajorAxes[i*3+2];
-        normal[k] = src.world[k] * src.ellipseNormals[i*3] + src.world[4+k] * src.ellipseNormals[i*3+1] + src.world[8+k] * src.ellipseNormals[i*3+2];
+        major[k] = src.world[k] * localMajor[0] +
+                   src.world[4 + k] * localMajor[1] +
+                   src.world[8 + k] * localMajor[2];
+        minor[k] = src.world[k] * localMinor[0] +
+                   src.world[4 + k] * localMinor[1] +
+                   src.world[8 + k] * localMinor[2];
       }
-      float ml = std::sqrt(major[0]*major[0]+major[1]*major[1]+major[2]*major[2]);
-      float nl = std::sqrt(normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]);
+      const float ml = std::sqrt(major[0] * major[0] + major[1] * major[1] +
+                                 major[2] * major[2]);
+      const float il = std::sqrt(minor[0] * minor[0] + minor[1] * minor[1] +
+                                 minor[2] * minor[2]);
+      float normal[3] = {
+          major[1] * minor[2] - major[2] * minor[1],
+          major[2] * minor[0] - major[0] * minor[2],
+          major[0] * minor[1] - major[1] * minor[0]};
+      const float nl = std::sqrt(normal[0] * normal[0] +
+                                 normal[1] * normal[1] +
+                                 normal[2] * normal[2]);
       const float opacity = src.opacities.empty() ? 1.0f :
           src.opacities[src.opacities.size() > i ? i : 0];
       const float rx = src.ellipseRadii[i*2] * ml;
-      const float ry = src.ellipseRadii[i*2+1] * ml;
+      const float ry = src.ellipseRadii[i*2+1] * il;
       if (!std::isfinite(opacity) || opacity < 0.01f ||
-          !std::isfinite(ml) || !std::isfinite(nl) || ml <= 1e-8f ||
-          nl <= 1e-8f || !std::isfinite(rx) || !std::isfinite(ry) ||
+          !std::isfinite(ml) || !std::isfinite(il) || !std::isfinite(nl) ||
+          ml <= 1e-8f || il <= 1e-8f || nl <= 1e-8f ||
+          !std::isfinite(rx) || !std::isfinite(ry) ||
           rx <= 1e-8f || ry <= 1e-8f) continue;
       for (int k = 0; k < 3; ++k) { p.major[k] = major[k] / ml; p.normal[k] = normal[k] / nl; }
       p.radii[0] = rx;
@@ -7120,7 +7171,7 @@ void VulkanRenderer::rebuildTlas() {
             static_cast<size_t>(std::numeric_limits<int>::max()));
     }
     for (size_t first = 0; first < pointDescs.size(); first += chunkLimit) {
-      const size_t count = std::min(pointDescs.size(), first + chunkLimit) - first;
+      const size_t count = std::min(chunkLimit, pointDescs.size() - first);
       std::vector<float> centers(count * 3), aabb(count * 6);
       std::vector<int> order(count);
       for (size_t i = 0; i < count; ++i) {
@@ -9774,6 +9825,28 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     rp.clearValueCount = 2;
     rp.pClearValues = clears;
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    // A Points/Curves-only scene may intentionally have no triangle TLAS. In
+    // that case `tlas_` will never become ready, so clearing and waiting for a
+    // later frame permanently hid the native raster carriers in RT mode.
+    // Render those carriers into the freshly-cleared offscreen target now.
+    if (hasParams_ && !nonMeshCopy_.empty()) {
+      VkViewport vpRect{};
+      vpRect.x = 0.0f;
+      vpRect.y = static_cast<float>(vpH_);
+      vpRect.width = static_cast<float>(vpW_);
+      vpRect.height = -static_cast<float>(vpH_);
+      vpRect.minDepth = 0.0f;
+      vpRect.maxDepth = 1.0f;
+      vkCmdSetViewport(cb, 0, 1, &vpRect);
+      VkRect2D sc{{0, 0},
+                  {static_cast<uint32_t>(vpW_),
+                   static_cast<uint32_t>(vpH_)}};
+      vkCmdSetScissor(cb, 0, 1, &sc);
+      const light3d::Mat4 VP = ToMat4(proj_) * ToMat4(view_);
+      drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_],
+                  &nonMeshMem_[frame_], &nonMeshCap_[frame_],
+                  nonMeshPipeline_, VP.m, &nonMeshChunkUploads_[frame_]);
+    }
     vkCmdEndRenderPass(cb);
   } else if (offscreenFb_ && hasParams_) {
     shadowCamera_.lightSlot = -1;

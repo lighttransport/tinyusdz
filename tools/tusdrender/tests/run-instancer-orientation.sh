@@ -4,10 +4,10 @@
 #
 # The next stage stores quats as (w, x, y, z) -- crate is imaginary-first on disk
 # and the reader swizzles on load (crate-reader-unpack.cc). InstanceTRS used to read
-# the four floats as (x, y, z, w), which turns a 90-degree Z rotation into a
-# 180-degree rotation about an axis in the XY plane: instances came out rotated
-# wrongly, and often upside down. In usd-wg/assets' OpenChessSet that flipped every
-# PointInstancer'd PAWN through the board, where it rendered hidden underneath.
+# the four floats as (x, y, z, w), which changes an authored Z rotation into a
+# different transform: instances came out rotated wrongly, and often upside
+# down. In usd-wg/assets' OpenChessSet that flipped every PointInstancer'd PAWN
+# through the board, where it rendered hidden underneath.
 #
 # Asserted as an EQUIVALENCE, not a threshold or a golden image: the same mesh,
 # placed once by a PointInstancer with a quaternion, and once by an xformOp:rotateZ
@@ -35,10 +35,10 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# A quarter turn about +Z. Real-first: (w=cos45, x=0, y=0, z=sin45).
-# Read imaginary-first, the SAME four floats mean (x=cos45, y=0, z=0, w=sin45) --
-# a 90-degree rotation about +X instead. The two disagree on where the prototype's
-# tall arm points, which is what the render sees.
+# A half turn about +Z. Real-first: (w=0, x=0, y=0, z=1). Unlike a 90-degree
+# quaternion this is exactly representable as quath, so the byte-identical
+# comparison remains valid now that USDA quath authoring is correctly rounded
+# to binary16. Read imaginary-first and it instead becomes the identity.
 cat > "$TMP/instanced.usda" <<'USDA'
 #usda 1.0
 (
@@ -60,7 +60,7 @@ def Xform "World"
 
     def PointInstancer "PI"
     {
-        quath[] orientations = [(0.7071068, 0, 0, 0.7071068)]
+        quath[] orientations = [(0, 0, 0, 1)]
         point3f[] positions = [(0, 0, 0)]
         int[] protoIndices = [0]
         rel prototypes = </World/PI/Proto>
@@ -82,7 +82,7 @@ def Xform "World"
 }
 USDA
 
-# The same mesh, the same quarter turn about +Z, expressed as an xformOp. No
+# The same mesh, the same half turn about +Z, expressed as an xformOp. No
 # instancing involved, so this render is the reference the instanced one must match.
 cat > "$TMP/xformed.usda" <<'USDA'
 #usda 1.0
@@ -105,7 +105,7 @@ def Xform "World"
 
     def Xform "Placed"
     {
-        double xformOp:rotateZ = 90
+        double xformOp:rotateZ = 180
         uniform token[] xformOpOrder = ["xformOp:rotateZ"]
 
         def Mesh "Proto"
@@ -190,13 +190,13 @@ if [ "${COVER:-0}" -lt 200 ]; then
 fi
 
 if ! cmp -s "$TMP/instanced.png" "$TMP/xformed.png"; then
-  echo "FAIL: a PointInstancer instance rotated by quath (0.7071, 0, 0, 0.7071) does"
-  echo "      NOT land where the same mesh under xformOp:rotateZ=90 lands. Those are"
+  echo "FAIL: a PointInstancer instance rotated by quath (0, 0, 0, 1) does"
+  echo "      NOT land where the same mesh under xformOp:rotateZ=180 lands. Those are"
   echo "      the same rotation, so they are the same world geometry and must render"
   echo "      identically. The next stage stores quats REAL-FIRST (w, x, y, z) -- the"
   echo "      crate reader swizzles them on load -- so InstanceTRS must read"
   echo "      (w, x, y, z), not (x, y, z, w). Reading it imaginary-first turns this"
-  echo "      quarter turn about +Z into a half turn about a diagonal, and in real"
+  echo "      half turn about +Z into the identity, and in real"
   echo "      assets (OpenChessSet) it buried the instanced pawns under the board."
   exit 1
 fi

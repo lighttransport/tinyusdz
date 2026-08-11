@@ -28,6 +28,8 @@ class SchemaRegistry {
   const SchemaPropertyDefinition* FindProperty(
       const PrimSpec& prim, const std::string& property_name) const;
   std::vector<std::string> PropertyNames(const PrimSpec& prim) const;
+  /// Whether the identifier is in the supported schema surface. Recognition
+  /// does not imply that every schema property has a registered definition.
   bool IsKnownSchema(const std::string& schema_type) const;
   std::vector<std::string> SchemaTypes() const;
   /// True when `schema_type` is `ancestor` or reaches it through the
@@ -44,6 +46,7 @@ class SchemaRegistry {
 
   std::vector<SchemaPropertyDefinition> properties_;
   std::vector<std::pair<std::string, std::string>> parents_;
+  std::vector<std::string> known_schemas_;
 };
 
 const SchemaRegistry& GetSchemaRegistry();

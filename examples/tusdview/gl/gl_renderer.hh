@@ -76,6 +76,8 @@ class GLRenderer final : public Renderer {
   // proxy-box pass over its object-space AABB.
   struct GLVolume {
     GLuint tex3d{0};
+    GLuint emissionTex3d{0};
+    GLuint temperatureTex3d{0};
     float world[16];     // object -> world (column-major)
     float invWorld[16];  // world -> object (column-major)
     float bmin[3]{0, 0, 0};
@@ -401,6 +403,8 @@ class GLRenderer final : public Renderer {
   GLuint volumeCubeVao_{0}, volumeCubeVbo_{0}, volumeCubeEbo_{0};
   GLint uVolVP_{-1}, uVolModel_{-1}, uVolInvModel_{-1}, uVolCameraPos_{-1};
   GLint uVolBmin_{-1}, uVolBmax_{-1}, uVolDensity_{-1}, uVolDensityScale_{-1};
+  GLint uVolEmissionField_{-1}, uVolTemperatureField_{-1};
+  GLint uVolHasEmissionField_{-1}, uVolHasTemperatureField_{-1};
   GLint uVolAlbedo_{-1}, uVolEmission_{-1}, uVolBackground_{-1};
   std::vector<GLVolume> volumes_;
 

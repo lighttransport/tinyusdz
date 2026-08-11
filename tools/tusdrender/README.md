@@ -67,6 +67,8 @@ well; mixed mesh+splat scenes (and D3D11) use the bounded tessellated fallback,
 with SH/color buckets sharing one global `TUSDR_GPU_TRIANGLE_CHUNK` pending
 budget rather than each of the 64 quantized buckets becoming a separate
 multi-million-triangle allocation.
+The OpenUSD float/half property pairs share float-over-half selection and
+array-length validation across native and fallback paths.
 
 For GPU mesh previews, next-loader traversal records are also collected and
 converted one stage root at a time. This keeps large instancer/job lists from
@@ -102,6 +104,24 @@ bounded voxel count and later fields are skipped once the total is exhausted;
 the loader reports the resident/budget MiB. VDB grid data is moved into the
 raymarch carrier instead of copied, preventing a second full dense allocation
 during extraction.
+Multi-field volumes are composited once: `density` controls extinction, while
+`temperature` and `emission`/`flame`/`heat` drive spatial blackbody/emissive
+shading. CPU rendering samples independently transformed/resolved VDB fields;
+the interactive GL/Vulkan paths resample auxiliary fields onto the density
+lattice before uploading packed 3D textures.
+Inherited UsdShade material bindings are followed through `outputs:volume`.
+Constant MaterialX/OpenPBR volume inputs for density, scattering color,
+emission color, and emission intensity are honored; connected procedural
+inputs resolve through Material/NodeGraph interfaces and MaterialX constant
+nodes. Constant add/subtract/multiply/divide/min/max, clamp, and mix graphs are
+evaluated without baking. Texture, noise, and other spatial procedural volume
+graphs remain unsupported.
+The vendored TinyVDB reader accepts OpenVDB 1.x through 13.x scalar grids
+(`bool`, integer, half, float, and double). Vec3 grids are reduced to vector
+magnitude for the single-channel density renderer. ZIP, active-mask, BLOSC/LZ4,
+and BLOSC/zstd payloads use tinyusdz's existing vendored codecs. PointDataGrid
+assets are rejected explicitly because they are point payloads, not voxel-valued
+UsdVol fields.
 
 Curve point arrays use the same lazy view reader before conversion to the
 native LightRT strand representation, so ordinary uncompressed USDC curves do
@@ -169,8 +189,15 @@ analytic curve API is available.
   through LightRT's OpenPBR BSDF. The diffuse irradiance and prefiltered
   reflection IBL terms also use `bsdf_eval` in this mode, and opaque hits trace
   a bounded `bsdf_sample` continuation bounce for indirect reflection/
-  transmission. Legacy material resolution still falls back to the slim material
-  fields.
+  transmission. Transmission uses Beer-Lambert extinction over the measured
+  interior ray distance; subsurface uses a radius/scale-aware normalized
+  diffusion response, fuzz uses the Charlie distribution, and thin film uses
+  wavelength-sensitive Airy interference. Legacy material resolution still
+  falls back to the slim material fields.
+* **Back plates** — the next CPU backend composites the selected camera's first
+  visible `BackPlateAPI` instance. Color and optional alpha/depth images,
+  scale/translate/Z-rotation tweaks, luma gain/lift/gamma, and camera-space
+  depth normalization are honored. GPU backends currently omit the plate.
 * **Displacement** — `UsdPreviewSurface inputs:displacement` (constant or a
   height texture, honoring the `UsdUVTexture` `scale`/`bias`) offsets each vertex
   along its normal before the BVH build — coarse (no extra geometry), so it works

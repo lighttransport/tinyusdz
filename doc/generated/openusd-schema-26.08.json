@@ -1,0 +1,4187 @@
+{
+  "formatVersion": 1,
+  "openusd": {
+    "commit": "ee47c679abde5b467a7b6a41f3b2285564a4222e",
+    "version": "26.08"
+  },
+  "schemaCount": 134,
+  "schemas": [
+    {
+      "domain": "usd",
+      "kind": "abstract",
+      "name": "APISchemaBase",
+      "properties": [],
+      "source": "pxr/usd/usd/schema.usda"
+    },
+    {
+      "domain": "usd",
+      "inherits": "APISchemaBase",
+      "kind": "nonApplied",
+      "name": "ClipsAPI",
+      "properties": [],
+      "source": "pxr/usd/usd/schema.usda"
+    },
+    {
+      "domain": "usd",
+      "inherits": "APISchemaBase",
+      "kind": "multipleApply",
+      "name": "CollectionAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "__INSTANCE_NAME__",
+          "type": "opaque",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "excludes",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "explicitOnly",
+            "expandPrims",
+            "expandPrimsAndProperties"
+          ],
+          "fallback": "\"expandPrims\"",
+          "kind": "attribute",
+          "name": "expansionRule",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "includeRoot",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "includes",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "membershipExpression",
+          "type": "pathExpression",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "automatic",
+            "relationship",
+            "expression"
+          ],
+          "fallback": "\"automatic\"",
+          "kind": "attribute",
+          "name": "mode",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "propertyNamespacePrefix": "collection",
+      "source": "pxr/usd/usd/schema.usda"
+    },
+    {
+      "domain": "usd",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ColorSpaceAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "colorSpace:name",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usd/schema.usda"
+    },
+    {
+      "domain": "usd",
+      "inherits": "APISchemaBase",
+      "kind": "multipleApply",
+      "name": "ColorSpaceDefinitionAPI",
+      "properties": [
+        {
+          "fallback": "(0, 0)",
+          "kind": "attribute",
+          "name": "blueChroma",
+          "type": "float2",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "gamma",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0, 1)",
+          "kind": "attribute",
+          "name": "greenChroma",
+          "type": "float2",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "linearBias",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"custom\"",
+          "kind": "attribute",
+          "name": "name",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "(1, 0)",
+          "kind": "attribute",
+          "name": "redChroma",
+          "type": "float2",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0.33333333, 0.33333333)",
+          "kind": "attribute",
+          "name": "whitePoint",
+          "type": "float2",
+          "variability": "varying"
+        }
+      ],
+      "propertyNamespacePrefix": "colorSpaceDefinition",
+      "source": "pxr/usd/usd/schema.usda"
+    },
+    {
+      "domain": "usd",
+      "inherits": "APISchemaBase",
+      "kind": "nonApplied",
+      "name": "ModelAPI",
+      "properties": [],
+      "source": "pxr/usd/usd/schema.usda"
+    },
+    {
+      "domain": "usd",
+      "kind": "abstract",
+      "name": "Typed",
+      "properties": [],
+      "source": "pxr/usd/usd/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "APISchemaBase",
+      "kind": "multipleApply",
+      "name": "BackPlateAPI",
+      "properties": [
+        {
+          "fallback": "\"\"",
+          "kind": "attribute",
+          "name": "alpha:image",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "depth:cameraSpaceOffset",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"\"",
+          "kind": "attribute",
+          "name": "depth:image",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "depth:minOffset",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "depth:normalizingFactor",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"\"",
+          "kind": "attribute",
+          "name": "image",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(1.0,1.0,1.0)",
+          "kind": "attribute",
+          "name": "luma:gain",
+          "type": "float3",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(1.0,1.0,1.0)",
+          "kind": "attribute",
+          "name": "luma:gamma",
+          "type": "float3",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0.0,0.0,0.0)",
+          "kind": "attribute",
+          "name": "luma:lift",
+          "type": "float3",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "all",
+            "solo",
+            "mute"
+          ],
+          "fallback": "\"solo\"",
+          "kind": "attribute",
+          "name": "plateVisibility",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0.0,0.0,0.0)",
+          "kind": "attribute",
+          "name": "rotateXYZ:tweak",
+          "type": "float3",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(1.0,1.0)",
+          "kind": "attribute",
+          "name": "scale:tweak",
+          "type": "float2",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0.0,0.0,0.0)",
+          "kind": "attribute",
+          "name": "translate:tweak",
+          "type": "float3",
+          "variability": "varying"
+        }
+      ],
+      "propertyNamespacePrefix": "backPlate",
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Curves",
+      "kind": "concrete",
+      "name": "BasisCurves",
+      "properties": [
+        {
+          "allowedTokens": [
+            "bezier",
+            "bspline",
+            "catmullRom"
+          ],
+          "fallback": "\"bezier\"",
+          "kind": "attribute",
+          "name": "basis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "linear",
+            "cubic"
+          ],
+          "fallback": "\"cubic\"",
+          "kind": "attribute",
+          "name": "type",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "nonperiodic",
+            "periodic",
+            "pinned"
+          ],
+          "fallback": "\"nonperiodic\"",
+          "kind": "attribute",
+          "name": "wrap",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Xformable",
+      "kind": "abstract",
+      "name": "Boundable",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Xformable",
+      "kind": "concrete",
+      "name": "Camera",
+      "properties": [
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "clippingPlanes",
+          "type": "float4[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(1, 1000000)",
+          "kind": "attribute",
+          "name": "clippingRange",
+          "type": "float2",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "exposure",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "exposure:fStop",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "100.0",
+          "kind": "attribute",
+          "name": "exposure:iso",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "exposure:responsivity",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "exposure:time",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "fStop",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "50.0",
+          "kind": "attribute",
+          "name": "focalLength",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "focusDistance",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "20.9550",
+          "kind": "attribute",
+          "name": "horizontalAperture",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "horizontalApertureOffset",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "perspective",
+            "orthographic"
+          ],
+          "fallback": "\"perspective\"",
+          "kind": "attribute",
+          "name": "projection",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "shutter:close",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "shutter:open",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "mono",
+            "left",
+            "right"
+          ],
+          "fallback": "\"mono\"",
+          "kind": "attribute",
+          "name": "stereoRole",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "15.2908",
+          "kind": "attribute",
+          "name": "verticalAperture",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "verticalApertureOffset",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "Capsule",
+      "properties": [
+        {
+          "allowedTokens": [
+            "X",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"Z\"",
+          "kind": "attribute",
+          "name": "axis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[(-0.5, -0.5, -1.0), (0.5, 0.5, 1.0)]",
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "height",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.5",
+          "kind": "attribute",
+          "name": "radius",
+          "type": "double",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "Capsule_1",
+      "properties": [
+        {
+          "allowedTokens": [
+            "X",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"Z\"",
+          "kind": "attribute",
+          "name": "axis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[(-0.5, -0.5, -1.0), (0.5, 0.5, 1.0)]",
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "height",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.5",
+          "kind": "attribute",
+          "name": "radiusBottom",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.5",
+          "kind": "attribute",
+          "name": "radiusTop",
+          "type": "double",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "Cone",
+      "properties": [
+        {
+          "allowedTokens": [
+            "X",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"Z\"",
+          "kind": "attribute",
+          "name": "axis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[(-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)]",
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "2.0",
+          "kind": "attribute",
+          "name": "height",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "radius",
+          "type": "double",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "Cube",
+      "properties": [
+        {
+          "fallback": "[(-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)]",
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "2.0",
+          "kind": "attribute",
+          "name": "size",
+          "type": "double",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "PointBased",
+      "kind": "abstract",
+      "name": "Curves",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "curveVertexCounts",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "widths",
+          "type": "float[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "Cylinder",
+      "properties": [
+        {
+          "allowedTokens": [
+            "X",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"Z\"",
+          "kind": "attribute",
+          "name": "axis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[(-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)]",
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "2",
+          "kind": "attribute",
+          "name": "height",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "radius",
+          "type": "double",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "Cylinder_1",
+      "properties": [
+        {
+          "allowedTokens": [
+            "X",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"Z\"",
+          "kind": "attribute",
+          "name": "axis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[(-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)]",
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "2",
+          "kind": "attribute",
+          "name": "height",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "radiusBottom",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "radiusTop",
+          "type": "double",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "GeomModelAPI",
+      "properties": [
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "model:applyDrawMode",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "cross",
+            "box",
+            "fromTexture"
+          ],
+          "fallback": "\"cross\"",
+          "kind": "attribute",
+          "name": "model:cardGeometry",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "model:cardTextureXNeg",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "model:cardTextureXPos",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "model:cardTextureYNeg",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "model:cardTextureYPos",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "model:cardTextureZNeg",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "model:cardTextureZPos",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "full",
+            "simple",
+            "inherited"
+          ],
+          "fallback": "\"inherited\"",
+          "kind": "attribute",
+          "name": "model:cardVisibility",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "origin",
+            "bounds",
+            "cards",
+            "default",
+            "inherited"
+          ],
+          "fallback": "\"inherited\"",
+          "kind": "attribute",
+          "name": "model:drawMode",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "(0.18, 0.18, 0.18)",
+          "kind": "attribute",
+          "name": "model:drawModeColor",
+          "type": "float3",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "GeomSubset",
+      "properties": [
+        {
+          "allowedTokens": [
+            "face",
+            "point",
+            "edge",
+            "segment",
+            "tetrahedron"
+          ],
+          "fallback": "\"face\"",
+          "kind": "attribute",
+          "name": "elementType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "\"\"",
+          "kind": "attribute",
+          "name": "familyName",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "indices",
+          "type": "int[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Boundable",
+      "kind": "abstract",
+      "name": "Gprim",
+      "properties": [
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "doubleSided",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "rightHanded",
+            "leftHanded"
+          ],
+          "fallback": "\"rightHanded\"",
+          "kind": "attribute",
+          "name": "orientation",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "primvars:displayColor",
+          "type": "color3f[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "primvars:displayOpacity",
+          "type": "float[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Curves",
+      "kind": "concrete",
+      "name": "HermiteCurves",
+      "properties": [
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "tangents",
+          "type": "vector3f[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Typed",
+      "kind": "abstract",
+      "name": "Imageable",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "proxyPrim",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "default",
+            "render",
+            "proxy",
+            "guide"
+          ],
+          "fallback": "\"default\"",
+          "kind": "attribute",
+          "name": "purpose",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "inherited",
+            "invisible"
+          ],
+          "fallback": "\"inherited\"",
+          "kind": "attribute",
+          "name": "visibility",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "PointBased",
+      "kind": "concrete",
+      "name": "Mesh",
+      "properties": [
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "cornerIndices",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "cornerSharpnesses",
+          "type": "float[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "creaseIndices",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "creaseLengths",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "creaseSharpnesses",
+          "type": "float[]",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "none",
+            "cornersOnly",
+            "cornersPlus1",
+            "cornersPlus2",
+            "boundaries",
+            "all"
+          ],
+          "fallback": "\"cornersPlus1\"",
+          "kind": "attribute",
+          "name": "faceVaryingLinearInterpolation",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "faceVertexCounts",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "faceVertexIndices",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "holeIndices",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "none",
+            "edgeOnly",
+            "edgeAndCorner"
+          ],
+          "fallback": "\"edgeAndCorner\"",
+          "kind": "attribute",
+          "name": "interpolateBoundary",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "catmullClark",
+            "loop",
+            "bilinear",
+            "none"
+          ],
+          "fallback": "\"catmullClark\"",
+          "kind": "attribute",
+          "name": "subdivisionScheme",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "catmullClark",
+            "smooth"
+          ],
+          "fallback": "\"catmullClark\"",
+          "kind": "attribute",
+          "name": "triangleSubdivisionRule",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "MotionAPI",
+      "properties": [
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "motion:blurScale",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "3",
+          "kind": "attribute",
+          "name": "motion:nonlinearSampleCount",
+          "type": "int",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "motion:velocityScale",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Curves",
+      "kind": "concrete",
+      "name": "NurbsCurves",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "knots",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "order",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "pointWeights",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "ranges",
+          "type": "double2[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "PointBased",
+      "kind": "concrete",
+      "name": "NurbsPatch",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "pointWeights",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "trimCurve:counts",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "trimCurve:knots",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "trimCurve:orders",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "trimCurve:points",
+          "type": "double3[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "trimCurve:ranges",
+          "type": "double2[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "trimCurve:vertexCounts",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "open",
+            "closed",
+            "periodic"
+          ],
+          "fallback": "\"open\"",
+          "kind": "attribute",
+          "name": "uForm",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "uKnots",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "uOrder",
+          "type": "int",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "uRange",
+          "type": "double2",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "uVertexCount",
+          "type": "int",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "open",
+            "closed",
+            "periodic"
+          ],
+          "fallback": "\"open\"",
+          "kind": "attribute",
+          "name": "vForm",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "vKnots",
+          "type": "double[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "vOrder",
+          "type": "int",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "vRange",
+          "type": "double2",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "vVertexCount",
+          "type": "int",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "Plane",
+      "properties": [
+        {
+          "allowedTokens": [
+            "X",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"Z\"",
+          "kind": "attribute",
+          "name": "axis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "doubleSided",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[(-1.0, -1.0, 0.0), (1.0, 1.0, 0.0)]",
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "2.0",
+          "kind": "attribute",
+          "name": "length",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "2.0",
+          "kind": "attribute",
+          "name": "width",
+          "type": "double",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Gprim",
+      "kind": "abstract",
+      "name": "PointBased",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "accelerations",
+          "type": "vector3f[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "normals",
+          "type": "normal3f[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "points",
+          "type": "point3f[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "velocities",
+          "type": "vector3f[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Boundable",
+      "kind": "concrete",
+      "name": "PointInstancer",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "accelerations",
+          "type": "vector3f[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "angularVelocities",
+          "type": "vector3f[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "ids",
+          "type": "int64[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "invisibleIds",
+          "type": "int64[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "orientations",
+          "type": "quath[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "orientationsf",
+          "type": "quatf[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "positions",
+          "type": "point3f[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "protoIndices",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "prototypes",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "scales",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "velocities",
+          "type": "vector3f[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "PointBased",
+      "kind": "concrete",
+      "name": "Points",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "ids",
+          "type": "int64[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "widths",
+          "type": "float[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "APISchemaBase",
+      "kind": "nonApplied",
+      "name": "PrimvarsAPI",
+      "properties": [],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Imageable",
+      "kind": "concrete",
+      "name": "Scope",
+      "properties": [],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "Sphere",
+      "properties": [
+        {
+          "fallback": "[(-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)]",
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "radius",
+          "type": "double",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "PointBased",
+      "kind": "concrete",
+      "name": "TetMesh",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "surfaceFaceVertexIndices",
+          "type": "int3[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "tetVertexIndices",
+          "type": "int4[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "VisibilityAPI",
+      "properties": [
+        {
+          "allowedTokens": [
+            "inherited",
+            "invisible",
+            "visible"
+          ],
+          "fallback": "\"invisible\"",
+          "kind": "attribute",
+          "name": "guideVisibility",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "inherited",
+            "invisible",
+            "visible"
+          ],
+          "fallback": "\"inherited\"",
+          "kind": "attribute",
+          "name": "proxyVisibility",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "inherited",
+            "invisible",
+            "visible"
+          ],
+          "fallback": "\"inherited\"",
+          "kind": "attribute",
+          "name": "renderVisibility",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Xformable",
+      "kind": "concrete",
+      "name": "Xform",
+      "properties": [],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "APISchemaBase",
+      "kind": "nonApplied",
+      "name": "XformCommonAPI",
+      "properties": [],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdGeom",
+      "inherits": "Imageable",
+      "kind": "abstract",
+      "name": "Xformable",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "xformOpOrder",
+          "type": "token[]",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdGeom/schema.usda"
+    },
+    {
+      "domain": "usdHydra",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "HydraGenerativeProceduralAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "primvars:hdGp:proceduralType",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"hydraGenerativeProcedural\"",
+          "kind": "attribute",
+          "name": "proceduralSystem",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdHydra/schema.usda"
+    },
+    {
+      "domain": "usdHydra",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "HydraRenderPassAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "hydra:rendererName",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdHydra/schema.usda"
+    },
+    {
+      "domain": "usdLod",
+      "inherits": "LODHeuristic",
+      "kind": "concrete",
+      "name": "LODDistanceHeuristic",
+      "properties": [
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "blendThresholds",
+          "type": "float[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "boundingVolume",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "center",
+          "type": "point3f",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "thresholds",
+          "type": "float[]",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLod/schema.usda"
+    },
+    {
+      "domain": "usdLod",
+      "inherits": "Typed",
+      "kind": "abstract",
+      "name": "LODHeuristic",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "lod:domain",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLod/schema.usda"
+    },
+    {
+      "domain": "usdLod",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "LODOverrideAPI",
+      "properties": [
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "lod:override:index",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "inherited",
+            "noOverride",
+            "indexedLOD",
+            "noLOD",
+            "allLOD"
+          ],
+          "fallback": "\"inherited\"",
+          "kind": "attribute",
+          "name": "lod:override:mode",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLod/schema.usda"
+    },
+    {
+      "domain": "usdLod",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "LODRootAPI",
+      "properties": [
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "lod:default:index",
+          "type": "int",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "lod:heuristics",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLod/schema.usda"
+    },
+    {
+      "domain": "usdLod",
+      "inherits": "LODHeuristic",
+      "kind": "concrete",
+      "name": "LODScreenSizeHeuristic",
+      "properties": [
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "blendThresholds",
+          "type": "float[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "boundingVolume",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "fallback": "[(-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)]",
+          "kind": "attribute",
+          "name": "extent",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "projectedExtent",
+            "projectedSphere"
+          ],
+          "fallback": "\"projectedSphere\"",
+          "kind": "attribute",
+          "name": "projectionMethod",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "thresholds",
+          "type": "float[]",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLod/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "Boundable",
+      "kind": "abstract",
+      "name": "BoundableLightBase",
+      "properties": [],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "BoundableLightBase",
+      "kind": "concrete",
+      "name": "CylinderLight",
+      "properties": [
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "inputs:length",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.5",
+          "kind": "attribute",
+          "name": "inputs:radius",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"CylinderLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "treatAsLine",
+          "type": "bool",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "BoundableLightBase",
+      "kind": "concrete",
+      "name": "DiskLight",
+      "properties": [
+        {
+          "fallback": "0.5",
+          "kind": "attribute",
+          "name": "inputs:radius",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"DiskLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "NonboundableLightBase",
+      "kind": "concrete",
+      "name": "DistantLight",
+      "properties": [
+        {
+          "fallback": "0.53",
+          "kind": "attribute",
+          "name": "inputs:angle",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "50000",
+          "kind": "attribute",
+          "name": "inputs:intensity",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"DistantLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "NonboundableLightBase",
+      "kind": "concrete",
+      "name": "DomeLight",
+      "properties": [
+        {
+          "fallback": "1.0e5",
+          "kind": "attribute",
+          "name": "guideRadius",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "inputs:texture:file",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "automatic",
+            "latlong",
+            "mirroredBall",
+            "angular",
+            "cubeMapVerticalCross"
+          ],
+          "fallback": "\"automatic\"",
+          "kind": "attribute",
+          "name": "inputs:texture:format",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"DomeLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "portals",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "NonboundableLightBase",
+      "kind": "concrete",
+      "name": "DomeLight_1",
+      "properties": [
+        {
+          "fallback": "1.0e5",
+          "kind": "attribute",
+          "name": "guideRadius",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "inputs:texture:file",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "automatic",
+            "latlong",
+            "mirroredBall",
+            "angular",
+            "cubeMapVerticalCross"
+          ],
+          "fallback": "\"automatic\"",
+          "kind": "attribute",
+          "name": "inputs:texture:format",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"DomeLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "scene",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"scene\"",
+          "kind": "attribute",
+          "name": "poleAxis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "portals",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "NonboundableLightBase",
+      "kind": "concrete",
+      "name": "GeometryLight",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "geometry",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"GeometryLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "LightAPI",
+      "properties": [
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "collection:lightLink:includeRoot",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "collection:shadowLink:includeRoot",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "(1, 1, 1)",
+          "kind": "attribute",
+          "name": "inputs:color",
+          "type": "color3f",
+          "variability": "varying"
+        },
+        {
+          "fallback": "6500",
+          "kind": "attribute",
+          "name": "inputs:colorTemperature",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "inputs:diffuse",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "inputs:enableColorTemperature",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "inputs:exposure",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "inputs:intensity",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "inputs:normalize",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "inputs:specular",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "light:filters",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "materialGlowTintsLight",
+            "independent",
+            "noMaterialResponse"
+          ],
+          "fallback": "\"noMaterialResponse\"",
+          "kind": "attribute",
+          "name": "light:materialSyncMode",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "\"\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "Xformable",
+      "kind": "concrete",
+      "name": "LightFilter",
+      "properties": [
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "collection:filterLink:includeRoot",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "\"\"",
+          "kind": "attribute",
+          "name": "lightFilter:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "LightListAPI",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "lightList",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "consumeAndHalt",
+            "consumeAndContinue",
+            "ignore"
+          ],
+          "kind": "attribute",
+          "name": "lightList:cacheBehavior",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "ListAPI",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "lightList",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "consumeAndHalt",
+            "consumeAndContinue",
+            "ignore"
+          ],
+          "kind": "attribute",
+          "name": "lightList:cacheBehavior",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "MeshLightAPI",
+      "properties": [
+        {
+          "fallback": "\"materialGlowTintsLight\"",
+          "kind": "attribute",
+          "name": "light:materialSyncMode",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "\"MeshLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "Xformable",
+      "kind": "abstract",
+      "name": "NonboundableLightBase",
+      "properties": [],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "Xformable",
+      "kind": "concrete",
+      "name": "PluginLight",
+      "properties": [],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "LightFilter",
+      "kind": "concrete",
+      "name": "PluginLightFilter",
+      "properties": [],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "BoundableLightBase",
+      "kind": "concrete",
+      "name": "PortalLight",
+      "properties": [
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "inputs:height",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "inputs:width",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"PortalLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "BoundableLightBase",
+      "kind": "concrete",
+      "name": "RectLight",
+      "properties": [
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "inputs:height",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "inputs:texture:file",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "inputs:width",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"RectLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "ShadowAPI",
+      "properties": [
+        {
+          "fallback": "(0, 0, 0)",
+          "kind": "attribute",
+          "name": "inputs:shadow:color",
+          "type": "color3f",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-1.0",
+          "kind": "attribute",
+          "name": "inputs:shadow:distance",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "inputs:shadow:enable",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-1.0",
+          "kind": "attribute",
+          "name": "inputs:shadow:falloff",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "inputs:shadow:falloffGamma",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "ShapingAPI",
+      "properties": [
+        {
+          "fallback": "90",
+          "kind": "attribute",
+          "name": "inputs:shaping:cone:angle",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "inputs:shaping:cone:softness",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "inputs:shaping:focus",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0, 0, 0)",
+          "kind": "attribute",
+          "name": "inputs:shaping:focusTint",
+          "type": "color3f",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "inputs:shaping:ies:angleScale",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "inputs:shaping:ies:file",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "inputs:shaping:ies:normalize",
+          "type": "bool",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "BoundableLightBase",
+      "kind": "concrete",
+      "name": "SphereLight",
+      "properties": [
+        {
+          "fallback": "0.5",
+          "kind": "attribute",
+          "name": "inputs:radius",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"SphereLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "treatAsPoint",
+          "type": "bool",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdLux",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "VolumeLightAPI",
+      "properties": [
+        {
+          "fallback": "\"materialGlowTintsLight\"",
+          "kind": "attribute",
+          "name": "light:materialSyncMode",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "\"VolumeLight\"",
+          "kind": "attribute",
+          "name": "light:shaderId",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdLux/schema.usda"
+    },
+    {
+      "domain": "usdMedia",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "AssetPreviewsAPI",
+      "properties": [],
+      "source": "pxr/usd/usdMedia/schema.usda"
+    },
+    {
+      "domain": "usdMedia",
+      "inherits": "Xformable",
+      "kind": "concrete",
+      "name": "SpatialAudio",
+      "properties": [
+        {
+          "allowedTokens": [
+            "spatial",
+            "nonSpatial"
+          ],
+          "fallback": "\"spatial\"",
+          "kind": "attribute",
+          "name": "auralMode",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "endTime",
+          "type": "timecode",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "@@",
+          "kind": "attribute",
+          "name": "filePath",
+          "type": "asset",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "gain",
+          "type": "double",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "mediaOffset",
+          "type": "double",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "onceFromStart",
+            "onceFromStartToEnd",
+            "loopFromStart",
+            "loopFromStartToEnd",
+            "loopFromStage"
+          ],
+          "fallback": "\"onceFromStart\"",
+          "kind": "attribute",
+          "name": "playbackMode",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "0",
+          "kind": "attribute",
+          "name": "startTime",
+          "type": "timecode",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdMedia/schema.usda"
+    },
+    {
+      "domain": "usdMtlx",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "MaterialXConfigAPI",
+      "properties": [
+        {
+          "fallback": "\"1.38\"",
+          "kind": "attribute",
+          "name": "config:mtlx:version",
+          "type": "string",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdMtlx/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "PhysicsArticulationRootAPI",
+      "properties": [],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "PhysicsCollisionAPI",
+      "properties": [
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "physics:collisionEnabled",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "physics:simulationOwner",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "PhysicsCollisionGroup",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "physics:filteredGroups",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "physics:invertFilteredGroups",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "physics:mergeGroup",
+          "type": "string",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "PhysicsJoint",
+      "kind": "concrete",
+      "name": "PhysicsDistanceJoint",
+      "properties": [
+        {
+          "fallback": "-1.0",
+          "kind": "attribute",
+          "name": "physics:maxDistance",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-1.0",
+          "kind": "attribute",
+          "name": "physics:minDistance",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "multipleApply",
+      "name": "PhysicsDriveAPI",
+      "properties": [
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:damping",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "physics:maxForce",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:stiffness",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:targetPosition",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:targetVelocity",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "force",
+            "acceleration"
+          ],
+          "fallback": "\"force\"",
+          "kind": "attribute",
+          "name": "physics:type",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "propertyNamespacePrefix": "drive",
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "PhysicsFilteredPairsAPI",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "physics:filteredPairs",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "PhysicsJoint",
+      "kind": "concrete",
+      "name": "PhysicsFixedJoint",
+      "properties": [],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "Imageable",
+      "kind": "concrete",
+      "name": "PhysicsJoint",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "physics:body0",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "physics:body1",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "physics:breakForce",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "physics:breakTorque",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "physics:collisionEnabled",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "physics:excludeFromArticulation",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "physics:jointEnabled",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "physics:localPos0",
+          "type": "point3f",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "physics:localPos1",
+          "type": "point3f",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(1.0, 0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "physics:localRot0",
+          "type": "quatf",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(1.0, 0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "physics:localRot1",
+          "type": "quatf",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "multipleApply",
+      "name": "PhysicsLimitAPI",
+      "properties": [
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "physics:high",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "physics:low",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "propertyNamespacePrefix": "limit",
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "PhysicsMassAPI",
+      "properties": [
+        {
+          "fallback": "(-inf, -inf, -inf)",
+          "kind": "attribute",
+          "name": "physics:centerOfMass",
+          "type": "point3f",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:density",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "physics:diagonalInertia",
+          "type": "float3",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:mass",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0, 0, 0, 0)",
+          "kind": "attribute",
+          "name": "physics:principalAxes",
+          "type": "quatf",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "PhysicsMaterialAPI",
+      "properties": [
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:density",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:dynamicFriction",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:restitution",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "0.0",
+          "kind": "attribute",
+          "name": "physics:staticFriction",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "PhysicsMeshCollisionAPI",
+      "properties": [
+        {
+          "allowedTokens": [
+            "none",
+            "convexDecomposition",
+            "convexHull",
+            "boundingSphere",
+            "boundingCube",
+            "meshSimplification"
+          ],
+          "fallback": "\"none\"",
+          "kind": "attribute",
+          "name": "physics:approximation",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "PhysicsJoint",
+      "kind": "concrete",
+      "name": "PhysicsPrismaticJoint",
+      "properties": [
+        {
+          "allowedTokens": [
+            "X",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"X\"",
+          "kind": "attribute",
+          "name": "physics:axis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "physics:lowerLimit",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "physics:upperLimit",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "PhysicsJoint",
+      "kind": "concrete",
+      "name": "PhysicsRevoluteJoint",
+      "properties": [
+        {
+          "allowedTokens": [
+            "X",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"X\"",
+          "kind": "attribute",
+          "name": "physics:axis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "physics:lowerLimit",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "inf",
+          "kind": "attribute",
+          "name": "physics:upperLimit",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "PhysicsRigidBodyAPI",
+      "properties": [
+        {
+          "fallback": "(0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "physics:angularVelocity",
+          "type": "vector3f",
+          "variability": "varying"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "physics:kinematicEnabled",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "fallback": "true",
+          "kind": "attribute",
+          "name": "physics:rigidBodyEnabled",
+          "type": "bool",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "physics:simulationOwner",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "physics:startsAsleep",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "(0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "physics:velocity",
+          "type": "vector3f",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "PhysicsScene",
+      "properties": [
+        {
+          "fallback": "(0.0, 0.0, 0.0)",
+          "kind": "attribute",
+          "name": "physics:gravityDirection",
+          "type": "vector3f",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-inf",
+          "kind": "attribute",
+          "name": "physics:gravityMagnitude",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdPhysics",
+      "inherits": "PhysicsJoint",
+      "kind": "concrete",
+      "name": "PhysicsSphericalJoint",
+      "properties": [
+        {
+          "allowedTokens": [
+            "X",
+            "Y",
+            "Z"
+          ],
+          "fallback": "\"X\"",
+          "kind": "attribute",
+          "name": "physics:axis",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "-1.0",
+          "kind": "attribute",
+          "name": "physics:coneAngle0Limit",
+          "type": "float",
+          "variability": "varying"
+        },
+        {
+          "fallback": "-1.0",
+          "kind": "attribute",
+          "name": "physics:coneAngle1Limit",
+          "type": "float",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdPhysics/schema.usda"
+    },
+    {
+      "domain": "usdProc",
+      "inherits": "Boundable",
+      "kind": "concrete",
+      "name": "GenerativeProcedural",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "proceduralSystem",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdProc/schema.usda"
+    },
+    {
+      "domain": "usdProfiles",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ClaimsAPI",
+      "properties": [],
+      "source": "pxr/usd/usdProfiles/schema.usda"
+    },
+    {
+      "domain": "usdRender",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "RenderPass",
+      "properties": [
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "collection:cameraVisibility:includeRoot",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1",
+          "kind": "attribute",
+          "name": "collection:renderVisibility:includeRoot",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "command",
+          "type": "string[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "fileName",
+          "type": "asset",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "inputPasses",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "passType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "renderSource",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdRender/schema.usda"
+    },
+    {
+      "domain": "usdRender",
+      "inherits": "RenderSettingsBase",
+      "kind": "concrete",
+      "name": "RenderProduct",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "orderedVars",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "fallback": "\"\"",
+          "kind": "attribute",
+          "name": "productName",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "raster",
+            "deepRaster"
+          ],
+          "fallback": "\"raster\"",
+          "kind": "attribute",
+          "name": "productType",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdRender/schema.usda"
+    },
+    {
+      "domain": "usdRender",
+      "inherits": "RenderSettingsBase",
+      "kind": "concrete",
+      "name": "RenderSettings",
+      "properties": [
+        {
+          "fallback": "[\"default\", \"render\"]",
+          "kind": "attribute",
+          "name": "includedPurposes",
+          "type": "token[]",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "full",
+            "preview",
+            ""
+          ],
+          "fallback": "[\"full\", \"\"]",
+          "kind": "attribute",
+          "name": "materialBindingPurposes",
+          "type": "token[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "products",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "renderingColorSpace",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdRender/schema.usda"
+    },
+    {
+      "domain": "usdRender",
+      "inherits": "Typed",
+      "kind": "abstract",
+      "name": "RenderSettingsBase",
+      "properties": [
+        {
+          "allowedTokens": [
+            "expandAperture",
+            "cropAperture",
+            "adjustApertureWidth",
+            "adjustApertureHeight",
+            "adjustPixelAspectRatio"
+          ],
+          "fallback": "\"expandAperture\"",
+          "kind": "attribute",
+          "name": "aspectRatioConformPolicy",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "camera",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "fallback": "(0.0, 0.0, 1.0, 1.0)",
+          "kind": "attribute",
+          "name": "dataWindowNDC",
+          "type": "float4",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "disableDepthOfField",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "disableMotionBlur",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "false",
+          "kind": "attribute",
+          "name": "instantaneousShutter",
+          "type": "bool",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "1.0",
+          "kind": "attribute",
+          "name": "pixelAspectRatio",
+          "type": "float",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "(2048, 1080)",
+          "kind": "attribute",
+          "name": "resolution",
+          "type": "int2",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdRender/schema.usda"
+    },
+    {
+      "domain": "usdRender",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "RenderVar",
+      "properties": [
+        {
+          "fallback": "\"color3f\"",
+          "kind": "attribute",
+          "name": "dataType",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "fallback": "\"\"",
+          "kind": "attribute",
+          "name": "sourceName",
+          "type": "string",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "raw",
+            "primvar",
+            "lpe",
+            "intrinsic"
+          ],
+          "fallback": "\"raw\"",
+          "kind": "attribute",
+          "name": "sourceType",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdRender/schema.usda"
+    },
+    {
+      "domain": "usdRi",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "RiMaterialAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "outputs:ri:displacement",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "outputs:ri:surface",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "outputs:ri:volume",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdRi/schema.usda"
+    },
+    {
+      "domain": "usdRi",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "RiSplineAPI",
+      "properties": [],
+      "source": "pxr/usd/usdRi/schema.usda"
+    },
+    {
+      "domain": "usdRi",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "StatementsAPI",
+      "properties": [],
+      "source": "pxr/usd/usdRi/schema.usda"
+    },
+    {
+      "domain": "usdSemantics",
+      "inherits": "APISchemaBase",
+      "kind": "multipleApply",
+      "name": "SemanticsLabelsAPI",
+      "properties": [
+        {
+          "fallback": "[]",
+          "kind": "attribute",
+          "name": "__INSTANCE_NAME__",
+          "type": "token[]",
+          "variability": "varying"
+        }
+      ],
+      "propertyNamespacePrefix": "semantics:labels",
+      "source": "pxr/usd/usdSemantics/schema.usda"
+    },
+    {
+      "domain": "usdShade",
+      "inherits": "APISchemaBase",
+      "kind": "nonApplied",
+      "name": "ConnectableAPI",
+      "properties": [],
+      "source": "pxr/usd/usdShade/schema.usda"
+    },
+    {
+      "domain": "usdShade",
+      "inherits": "APISchemaBase",
+      "kind": "multipleApply",
+      "name": "CoordSysAPI",
+      "properties": [
+        {
+          "kind": "relationship",
+          "name": "binding",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "propertyNamespacePrefix": "coordSys",
+      "source": "pxr/usd/usdShade/schema.usda"
+    },
+    {
+      "domain": "usdShade",
+      "inherits": "NodeGraph",
+      "kind": "concrete",
+      "name": "Material",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "outputs:displacement",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "outputs:surface",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "outputs:volume",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdShade/schema.usda"
+    },
+    {
+      "domain": "usdShade",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "MaterialBindingAPI",
+      "properties": [],
+      "source": "pxr/usd/usdShade/schema.usda"
+    },
+    {
+      "domain": "usdShade",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "NodeDefAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "info:id",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "id",
+            "sourceAsset",
+            "sourceCode"
+          ],
+          "fallback": "\"id\"",
+          "kind": "attribute",
+          "name": "info:implementationSource",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdShade/schema.usda"
+    },
+    {
+      "domain": "usdShade",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "NodeGraph",
+      "properties": [],
+      "source": "pxr/usd/usdShade/schema.usda"
+    },
+    {
+      "domain": "usdShade",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "Shader",
+      "properties": [],
+      "source": "pxr/usd/usdShade/schema.usda"
+    },
+    {
+      "domain": "usdSkel",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "BlendShape",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "normalOffsets",
+          "type": "vector3f[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "offsets",
+          "type": "vector3f[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "pointIndices",
+          "type": "int[]",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdSkel/schema.usda"
+    },
+    {
+      "domain": "usdSkel",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "SkelAnimation",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "blendShapeWeights",
+          "type": "float[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "blendShapes",
+          "type": "token[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "joints",
+          "type": "token[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "rotations",
+          "type": "quatf[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "scales",
+          "type": "half3[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "translations",
+          "type": "float3[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdSkel/schema.usda"
+    },
+    {
+      "domain": "usdSkel",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "SkelBindingAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "primvars:skel:geomBindTransform",
+          "type": "matrix4d",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "primvars:skel:jointIndices",
+          "type": "int[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "primvars:skel:jointWeights",
+          "type": "float[]",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "classicLinear",
+            "dualQuaternion"
+          ],
+          "fallback": "\"classicLinear\"",
+          "kind": "attribute",
+          "name": "primvars:skel:skinningMethod",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "skel:animationSource",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "relationship",
+          "name": "skel:blendShapeTargets",
+          "type": "rel",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "skel:blendShapes",
+          "type": "token[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "skel:joints",
+          "type": "token[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "relationship",
+          "name": "skel:skeleton",
+          "type": "rel",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdSkel/schema.usda"
+    },
+    {
+      "domain": "usdSkel",
+      "inherits": "Boundable",
+      "kind": "concrete",
+      "name": "SkelRoot",
+      "properties": [],
+      "source": "pxr/usd/usdSkel/schema.usda"
+    },
+    {
+      "domain": "usdSkel",
+      "inherits": "Boundable",
+      "kind": "concrete",
+      "name": "Skeleton",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "bindTransforms",
+          "type": "matrix4d[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "jointNames",
+          "type": "token[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "joints",
+          "type": "token[]",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "restTransforms",
+          "type": "matrix4d[]",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdSkel/schema.usda"
+    },
+    {
+      "domain": "usdUI",
+      "inherits": "APISchemaBase",
+      "kind": "multipleApply",
+      "name": "AccessibilityAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "description",
+          "type": "string",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "label",
+          "type": "string",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "low",
+            "standard",
+            "high"
+          ],
+          "fallback": "\"standard\"",
+          "kind": "attribute",
+          "name": "priority",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "propertyNamespacePrefix": "accessibility",
+      "source": "pxr/usd/usdUI/schema.usda"
+    },
+    {
+      "domain": "usdUI",
+      "inherits": "Typed",
+      "kind": "concrete",
+      "name": "Backdrop",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "ui:description",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdUI/schema.usda"
+    },
+    {
+      "domain": "usdUI",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "NodeGraphNodeAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "ui:nodegraph:node:displayColor",
+          "type": "color3f",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "ui:nodegraph:node:docURI",
+          "type": "string",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "open",
+            "closed",
+            "minimized"
+          ],
+          "kind": "attribute",
+          "name": "ui:nodegraph:node:expansionState",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "ui:nodegraph:node:icon",
+          "type": "asset",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "ui:nodegraph:node:pos",
+          "type": "float2",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "ui:nodegraph:node:size",
+          "type": "float2",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "ui:nodegraph:node:stackingOrder",
+          "type": "int",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdUI/schema.usda"
+    },
+    {
+      "domain": "usdUI",
+      "inherits": "APISchemaBase",
+      "kind": "abstract",
+      "name": "SceneGraphPrimAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "ui:displayGroup",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "kind": "attribute",
+          "name": "ui:displayName",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdUI/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "FieldAsset",
+      "kind": "concrete",
+      "name": "Field3DAsset",
+      "properties": [
+        {
+          "allowedTokens": [
+            "half",
+            "float",
+            "double",
+            "half3",
+            "float3",
+            "double3"
+          ],
+          "kind": "attribute",
+          "name": "fieldDataType",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "fieldPurpose",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "VolumeFieldAsset",
+      "kind": "abstract",
+      "name": "FieldAsset",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "VolumeFieldBase",
+      "kind": "abstract",
+      "name": "FieldBase",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "FieldAsset",
+      "kind": "concrete",
+      "name": "OpenVDBAsset",
+      "properties": [
+        {
+          "allowedTokens": [
+            "levelSet",
+            "fogVolume",
+            "staggered",
+            "unknown"
+          ],
+          "kind": "attribute",
+          "name": "fieldClass",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "half",
+            "float",
+            "double",
+            "int",
+            "uint",
+            "int64",
+            "half2",
+            "float2",
+            "double2",
+            "int2",
+            "half3",
+            "float3",
+            "double3",
+            "int3",
+            "matrix3d",
+            "matrix4d",
+            "quatd",
+            "bool",
+            "mask",
+            "string"
+          ],
+          "kind": "attribute",
+          "name": "fieldDataType",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "ParticleField",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "ParticleField",
+      "kind": "concrete",
+      "name": "ParticleField3DGaussianSplat",
+      "properties": [
+        {
+          "allowedTokens": [
+            "perspective",
+            "tangential"
+          ],
+          "fallback": "\"perspective\"",
+          "kind": "attribute",
+          "name": "projectionModeHint",
+          "type": "token",
+          "variability": "uniform"
+        },
+        {
+          "allowedTokens": [
+            "zDepth",
+            "cameraDistance",
+            "rayHitDistance"
+          ],
+          "fallback": "\"zDepth\"",
+          "kind": "attribute",
+          "name": "sortingModeHint",
+          "type": "token",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldKernelBaseAPI",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldKernelConstantSurfletAPI",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldKernelGaussianEllipsoidAPI",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldKernelGaussianSurfletAPI",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldOpacityAttributeAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "opacities",
+          "type": "float[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "opacitiesh",
+          "type": "half[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldOrientationAttributeAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "orientations",
+          "type": "quatf[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "orientationsh",
+          "type": "quath[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldPositionAttributeAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "positions",
+          "type": "point3f[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "positionsh",
+          "type": "point3h[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldPositionBaseAPI",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldRadianceBaseAPI",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldScaleAttributeAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "scales",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "scalesh",
+          "type": "half3[]",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "APISchemaBase",
+      "kind": "singleApply",
+      "name": "ParticleFieldSphericalHarmonicsAttributeAPI",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "radiance:sphericalHarmonicsCoefficients",
+          "type": "float3[]",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "radiance:sphericalHarmonicsCoefficientsh",
+          "type": "half3[]",
+          "variability": "varying"
+        },
+        {
+          "fallback": "3",
+          "kind": "attribute",
+          "name": "radiance:sphericalHarmonicsDegree",
+          "type": "int",
+          "variability": "uniform"
+        }
+      ],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "Gprim",
+      "kind": "concrete",
+      "name": "Volume",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "FieldBase",
+      "kind": "abstract",
+      "name": "VolumeFieldAsset",
+      "properties": [
+        {
+          "kind": "attribute",
+          "name": "fieldDataType",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "fieldIndex",
+          "type": "int",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "fieldName",
+          "type": "token",
+          "variability": "varying"
+        },
+        {
+          "kind": "attribute",
+          "name": "filePath",
+          "type": "asset",
+          "variability": "varying"
+        },
+        {
+          "allowedTokens": [
+            "None",
+            "Point",
+            "Normal",
+            "Vector",
+            "Color"
+          ],
+          "fallback": "\"None\"",
+          "kind": "attribute",
+          "name": "vectorDataRoleHint",
+          "type": "token",
+          "variability": "varying"
+        }
+      ],
+      "source": "pxr/usd/usdVol/schema.usda"
+    },
+    {
+      "domain": "usdVol",
+      "inherits": "Xformable",
+      "kind": "abstract",
+      "name": "VolumeFieldBase",
+      "properties": [],
+      "source": "pxr/usd/usdVol/schema.usda"
+    }
+  ]
+}

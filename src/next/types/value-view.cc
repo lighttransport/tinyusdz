@@ -21,12 +21,17 @@ TypeId ScalarComponent(TypeId id) {
   return c == TypeId::Invalid ? id : c;
 }
 
+bool RequiresLazyComponentReorder(TypeId id) {
+  return id == TypeId::Quatf || id == TypeId::Quatd || id == TypeId::Quath;
+}
+
 template <typename T>
 bool BorrowLazyFlatArray(const Value& value, TypeId component_type,
                          ArrayView<T>* out) {
   const LazyArrayRef* ref = value.lazy_ref();
   if (!ref || !ref->source || ref->is_compressed || !ref->source->can_borrow())
     return false;
+  if (RequiresLazyComponentReorder(ref->value_type)) return false;
   if (ScalarComponent(ref->value_type) != component_type) return false;
   const size_t comps = GetComponentCount(ref->value_type);
   if (comps == 0) return false;
@@ -85,7 +90,12 @@ bool FinishBorrowedView(const std::vector<T>* storage, ArrayView<T>* out) {
 }
 
 bool FinishFloatBackedView(const Value& value, ArrayView<float>* out) {
-  if (!value.is_array() || GetComponentType(value.type_id()) != TypeId::Float)
+  const TypeId component = GetComponentType(value.type_id());
+  // Half arrays are widened into float storage by both USDA and Crate readers.
+  // Preserve their authored TypeId while allowing float consumers to borrow
+  // the already-widened buffer.
+  if (!value.is_array() ||
+      (component != TypeId::Float && component != TypeId::Half))
     return false;
   const size_t components = GetComponentCount(value.type_id());
   if (components == 0) return false;
@@ -107,6 +117,7 @@ bool CanBorrowLazyFlat(const Value& value) {
   const LazyArrayRef* ref = value.lazy_ref();
   if (!ref || !ref->source || ref->is_compressed || !ref->source->can_borrow())
     return false;
+  if (RequiresLazyComponentReorder(ref->value_type)) return false;
   const size_t ts = ScalarByteSize(ScalarComponent(ref->value_type));
   if (ts == 0) return false;
   const size_t comps = GetComponentCount(ref->value_type);

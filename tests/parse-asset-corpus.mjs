@@ -17,7 +17,7 @@
 //   SKIP    .mtlx (MaterialX is XML; tusdcat parses USD only) unless --include-mtlx
 //
 // Usage:
-//   node tests/parse-asset-corpus.mjs [--assets DIR] [--tusdcat PATH]
+//   node tests/parse-asset-corpus.mjs [--assets DIR] [--optional-assets] [--tusdcat PATH]
 //        [--mode load|flatten] [--timeout MS] [--jobs N] [--include-mtlx]
 //        [--out DIR]
 // Env: TUSDCAT_PATH overrides the default binary path.
@@ -44,6 +44,10 @@ function parseArgs(argv) {
     timeout: 30000,
     jobs: Math.max(1, (os.cpus()?.length || 4) - 1),
     includeMtlx: false,
+    // Let an automated CTest registration skip cleanly on developer machines
+    // that do not have the optional usd-wg/assets checkout. Explicit CLI use
+    // remains strict unless this flag is passed.
+    optionalAssets: false,
     // Regression gate: exit non-zero if (FAIL + CRASH) exceeds this. Default
     // off (report only); CI passes e.g. `--max-fail 0`.
     maxFail: Infinity,
@@ -70,6 +74,7 @@ function parseArgs(argv) {
       case '--timeout': a.timeout = parseInt(val(), 10); break;
       case '--jobs': a.jobs = parseInt(val(), 10); break;
       case '--include-mtlx': a.includeMtlx = true; break;
+      case '--optional-assets': a.optionalAssets = true; break;
       case '--max-fail': a.maxFail = parseInt(val(), 10); break;
       case '--max-differ': a.maxDiffer = parseInt(val(), 10); break;
       case '--out': a.out = val(); break;
@@ -78,7 +83,7 @@ function parseArgs(argv) {
       case '--tusddiff': a.tusddiff = val(); break;
       case '--serialize-args': a.serializeArgs = val().split(/\s+/).filter(Boolean); break;
       case '-h': case '--help':
-        console.log('Usage: node tests/parse-asset-corpus.mjs [--assets DIR] [--tusdcat PATH] ' +
+        console.log('Usage: node tests/parse-asset-corpus.mjs [--assets DIR] [--optional-assets] [--tusdcat PATH] ' +
           '[--mode load|flatten] [--timeout MS] [--jobs N] [--include-mtlx] [--out DIR]\n' +
           '       [--compare [--usdcat PATH] [--tusddiff PATH]]');
         process.exit(0);
@@ -95,6 +100,10 @@ function parseArgs(argv) {
 
 function validateInputs(a) {
   if (!a.assets) {
+    if (a.optionalAssets) {
+      console.log('SKIPPED: no asset corpus configured (set USD_WG_ASSETS_DIR or pass --assets).');
+      process.exit(77);
+    }
     console.error('No asset corpus configured. Pass --assets DIR or set USD_WG_ASSETS_DIR.');
     process.exit(2);
   }

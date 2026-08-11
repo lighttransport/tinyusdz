@@ -38,6 +38,13 @@ bool IsShader(const UsdPrim& prim);
 /// Check if prim is a NodeGraph
 bool IsNodeGraph(const UsdPrim& prim);
 
+/// Resolve an authored shader port through Material/NodeGraph connections.
+/// Besides ordinary connected attributes, recognizes constant shader nodes
+/// whose output forwards `inputs:value`. Cycles/deep graphs fail safely.
+bool ResolveShaderPortValue(const Stage& stage, const UsdPrim& prim,
+                            const std::string& port_name, Value* out,
+                            double time = 0.0, int max_depth = 16);
+
 // ============================================================
 // Material API
 // ============================================================

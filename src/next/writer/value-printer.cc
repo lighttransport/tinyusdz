@@ -124,6 +124,11 @@ class ChunkedStream {
     size_t n = dtos_to(t, v);
     append(t, n < sizeof(t) ? n : sizeof(t));
   }
+  void append_half(uint16_t bits) {
+    char t[48];
+    size_t n = htos_to(t, bits);
+    append(t, n < sizeof(t) ? n : sizeof(t));
+  }
   void append_double(double v) {
     char t[32];
     size_t n = dtos_to(t, v);
@@ -530,7 +535,9 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
       const bool dbl = (component == TypeId::Double) ||
                        type_id == TypeId::Double ||
                        type_id == TypeId::TimeCode;
-      const bool flt = (component == TypeId::Float) || type_id == TypeId::Float;
+      const bool half = (component == TypeId::Half) || type_id == TypeId::Half;
+      const bool flt = (component == TypeId::Float) ||
+                       type_id == TypeId::Float || half;
       if (dbl) {
         ArrayScratch<double> scratch;
         ArrayView<double> view;
@@ -544,7 +551,13 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         ArrayView<float> view;
         if (!GetFloatArrayView(value, &scratch, &view)) return false;
         EmitCompArray(out, view.data, view.size, type_id, maxN,
-                      [&](float v) { out.append_float(v); });
+                      [&](float v) {
+                        if (half) {
+                          out.append_half(FloatToHalf(v));
+                        } else {
+                          out.append_float(v);
+                        }
+                      });
         return true;
       }
       if (component == TypeId::Int) {  // Int2/Int3/Int4 arrays
@@ -601,12 +614,21 @@ void PrintValueInto(std::string& out, const Value& value,
         (type_id == TypeId::Matrix3f || type_id == TypeId::Matrix3d) ? 3 : 4;
     size_t comp_count = GetComponentCount(type_id);
     if (comp_count < 1) comp_count = 1;
+    const bool is_half = (GetComponentType(type_id) == TypeId::Half) ||
+                         type_id == TypeId::Half;
 
     // Reserve a generous estimate (over-reserve is the accepted marginal memory)
     // so large numeric arrays append without reallocation churn.
     out += "[";
 
     // Emit a single element (scalar, vector tuple, or nested matrix rows).
+    auto emit_float = [&](float v) {
+      if (is_half) {
+        htos_append(out, FloatToHalf(v));
+      } else {
+        AppendFloat(out, v);
+      }
+    };
     auto emit_elem_float = [&](const float* d) {
       if (is_matrix) {
         out += "(";
@@ -615,7 +637,7 @@ void PrintValueInto(std::string& out, const Value& value,
           out += "(";
           for (size_t c = 0; c < mat_dim; ++c) {
             if (c) out += ", ";
-            AppendFloat(out, d[r * mat_dim + c]);
+            emit_float(d[r * mat_dim + c]);
           }
           out += ")";
         }
@@ -624,11 +646,11 @@ void PrintValueInto(std::string& out, const Value& value,
         out += "(";
         for (size_t c = 0; c < comp_count; ++c) {
           if (c) out += ", ";
-          AppendFloat(out, d[c]);
+          emit_float(d[c]);
         }
         out += ")";
       } else {
-        AppendFloat(out, d[0]);
+        emit_float(d[0]);
       }
     };
     auto emit_elem_double = [&](const double* d) {
@@ -1067,11 +1089,11 @@ void PrintValueInto(std::string& out, const Value& value,
       if (!b || comps == 0 || comps > 4) { out += "None"; return; }
       uint16_t lanes[4];
       std::memcpy(lanes, b, comps * 2);
-      if (comps == 1) { AppendFloat(out, HalfToFloat(lanes[0])); return; }
+      if (comps == 1) { htos_append(out, lanes[0]); return; }
       out += '(';
       for (size_t c = 0; c < comps; ++c) {
         if (c) out += ", ";
-        AppendFloat(out, HalfToFloat(lanes[c]));
+        htos_append(out, lanes[c]);
       }
       out += ')';
       return;
@@ -1240,8 +1262,9 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
       const TypeId component = GetComponentType(type_id);
       const bool dbl = (component == TypeId::Double) || type_id == TypeId::Double;
       // Half-backed types widen to float via as_float_array (see IsChunkableType).
+      const bool half = (component == TypeId::Half) || type_id == TypeId::Half;
       const bool flt = (component == TypeId::Float) || type_id == TypeId::Float ||
-                       (component == TypeId::Half) || type_id == TypeId::Half;
+                       half;
       if (dbl) {
         ArrayScratch<double> scratch;
         ArrayView<double> view;
@@ -1255,7 +1278,13 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
         ArrayView<float> view;
         if (!GetFloatArrayView(value, &scratch, &view)) return false;
         EmitCompRange(out, view.data, type_id, elem_lo, elem_hi, open, close,
-                      [&](float v) { out.append_float(v); });
+                      [&](float v) {
+                        if (half) {
+                          out.append_half(FloatToHalf(v));
+                        } else {
+                          out.append_float(v);
+                        }
+                      });
         return done();
       }
       return false;

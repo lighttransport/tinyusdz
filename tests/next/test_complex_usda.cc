@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <cassert>
+#include <cmath>
 #include <string>
 
 #include "next/reader/usda-reader.hh"
@@ -554,6 +555,38 @@ def Xform "World"
         "#usda  1.0\ndef Xform \"W\"\n{\n}\n";
     LoadResult r = LoadUSDAFromString(input);
     assert(r.success);
+  }
+
+  // Authored half arrays quantize at parse time to their exact binary16 value.
+  // The writer deliberately uses the shortest decimal that reparses to those
+  // bits; OpenUSD instead exposes a widened approximation in its USDA output.
+  {
+    const char* input = R"(#usda 1.0
+def Scope "H"
+{
+    half[] scalar = [0.35, -0.35]
+    point3h[] points = [(0.35, 0, 0), (-0.35, 0, 0)]
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    const UsdPrim h = r.stage.GetPrimAtPath("/H");
+    const Value* scalar = h.GetPropertyValue("scalar");
+    const Value* points = h.GetPropertyValue("points");
+    assert(scalar && scalar->type_id() == TypeId::Half &&
+           scalar->as_float_array());
+    assert(points && points->type_id() == TypeId::Point3h &&
+           points->as_float_array());
+    constexpr float quantized = 0.35009765625f;
+    assert(std::fabs((*scalar->as_float_array())[0] - quantized) < 1.0e-8f);
+    assert(std::fabs((*points->as_float_array())[0] - quantized) < 1.0e-8f);
+    const std::string out = WriteUSDAToString(r.stage);
+    assert(out.find("half[] scalar") != std::string::npos);
+    assert(out.find("point3h[] points") != std::string::npos);
+    assert(out.find("[0.35, -0.35]") != std::string::npos);
+    assert(out.find("[(0.35, 0, 0), (-0.35, 0, 0)]") !=
+           std::string::npos);
+    assert(out.find("0.350098") == std::string::npos);
   }
 
   // M7: per-arc customData on a reference must be skipped structurally, not

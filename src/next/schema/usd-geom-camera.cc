@@ -4,6 +4,7 @@
 // TinyUSDZ Next - UsdGeomCamera Schema Implementation
 
 #include "usd-geom-camera.hh"
+#include "../prim/identifier.hh"
 #include <cmath>
 
 namespace tinyusdz {
@@ -11,6 +12,11 @@ namespace next {
 
 namespace {
 constexpr float kPI = 3.14159265358979323846f;
+
+std::string BackPlateName(const std::string& instance_name,
+                          const char* suffix) {
+  return "backPlate:" + instance_name + ":" + suffix;
+}
 }
 
 bool IsCamera(const UsdPrim& prim) {
@@ -58,6 +64,58 @@ bool GetCameraData(const Stage& stage, const UsdPrim& prim,
   out->fov_vertical = ComputeVerticalFOV(out->focal_length, out->vertical_aperture);
   out->aspect_ratio = out->horizontal_aperture / out->vertical_aperture;
 
+  return true;
+}
+
+bool HasBackPlateAPI(const UsdPrim& prim, const std::string& instance_name) {
+  if (!prim.IsValid() ||
+      !IsValidNamespacedIdentifier(instance_name)) return false;
+  const std::string schema = "BackPlateAPI:" + instance_name;
+  for (const std::string& applied : prim.GetMeta().apiSchemas()) {
+    if (applied == schema) return true;
+  }
+  return false;
+}
+
+bool GetBackPlateData(const Stage& stage, const UsdPrim& prim,
+                      const std::string& instance_name, BackPlateData* out,
+                      double time) {
+  if (!out || !HasBackPlateAPI(prim, instance_name)) return false;
+  *out = BackPlateData{};
+  AttributeEval eval(&stage);
+  eval.SetTime(time);
+
+  auto asset = [&](const char* suffix, std::string* dst) {
+    if (const auto value =
+            eval.EvalAssetPath(prim, BackPlateName(instance_name, suffix))) {
+      *dst = *value;
+    }
+  };
+  asset("image", &out->image);
+  asset("alpha:image", &out->alpha_image);
+  asset("depth:image", &out->depth_image);
+  out->depth_min_offset = eval.EvalOr(
+      prim, BackPlateName(instance_name, "depth:minOffset"), 0.0f);
+  out->depth_normalizing_factor = eval.EvalOr(
+      prim, BackPlateName(instance_name, "depth:normalizingFactor"), 1.0f);
+  out->depth_camera_space_offset = eval.EvalOr(
+      prim, BackPlateName(instance_name, "depth:cameraSpaceOffset"), 0.0f);
+  eval.EvalFloat2(prim, BackPlateName(instance_name, "scale:tweak"),
+                  out->scale_tweak);
+  eval.EvalFloat3(prim, BackPlateName(instance_name, "rotateXYZ:tweak"),
+                  out->rotate_xyz_tweak);
+  eval.EvalFloat3(prim, BackPlateName(instance_name, "translate:tweak"),
+                  out->translate_tweak);
+  eval.EvalFloat3(prim, BackPlateName(instance_name, "luma:gain"),
+                  out->luma_gain);
+  eval.EvalFloat3(prim, BackPlateName(instance_name, "luma:lift"),
+                  out->luma_lift);
+  eval.EvalFloat3(prim, BackPlateName(instance_name, "luma:gamma"),
+                  out->luma_gamma);
+  if (const auto value = eval.EvalToken(
+          prim, BackPlateName(instance_name, "plateVisibility"))) {
+    out->plate_visibility = *value;
+  }
   return true;
 }
 

@@ -4,6 +4,9 @@
 // Tydra Next - Render Scene Converter Implementation
 
 #include "safe-arithmetic.hh"
+#include "core/path-expression-eval.hh"
+#include "next/schema/usd-vol.hh"
+#include "next/schema/usd-geom-camera.hh"
 #include "render-converter.hh"
 #include "mem-budget.hh"
 #include "next/schema/color-space.hh"
@@ -26,6 +29,8 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <deque>
+#include <memory>
 #include <unordered_map>
 #include <optional>
 #include <set>
@@ -1224,6 +1229,35 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
       for (int i = 0; i < out->components; ++i) {
         out->value[static_cast<size_t>(i)] /= length;
       }
+    }
+    return true;
+  }
+
+  // Constant-fold the common MaterialX unary math family. These nodes occur
+  // frequently between DCC-authored controls and surface inputs; treating
+  // them as unsupported discarded an otherwise fully evaluable material.
+  if (starts("ND_absval_") || starts("ND_floor_") ||
+      starts("ND_ceil_") || starts("ND_round_") ||
+      starts("ND_sqrt_") || starts("ND_exp_") ||
+      starts("ND_ln_") || starts("ND_sin_") || starts("ND_cos_") ||
+      starts("ND_tan_")) {
+    MtlxConstantValue value;
+    if (!input("in", &value)) return false;
+    *out = value;
+    for (int i = 0; i < out->components; ++i) {
+      const float x = value.component(i);
+      float y = x;
+      if (starts("ND_absval_")) y = std::fabs(x);
+      else if (starts("ND_floor_")) y = std::floor(x);
+      else if (starts("ND_ceil_")) y = std::ceil(x);
+      else if (starts("ND_round_")) y = std::round(x);
+      else if (starts("ND_sqrt_")) y = std::sqrt(std::max(0.0f, x));
+      else if (starts("ND_exp_")) y = std::exp(x);
+      else if (starts("ND_ln_")) y = x > 0.0f ? std::log(x) : 0.0f;
+      else if (starts("ND_sin_")) y = std::sin(x);
+      else if (starts("ND_cos_")) y = std::cos(x);
+      else if (starts("ND_tan_")) y = std::tan(x);
+      out->value[static_cast<size_t>(i)] = y;
     }
     return true;
   }
@@ -2742,22 +2776,130 @@ class MeshPathIndex {
   uint32_t generation_ = 0;
 };
 
+bool EvalNextPathPredicate(const Stage& stage, const std::string& predicate,
+                           const std::string& prim_path) {
+  std::string func = predicate;
+  std::string arg;
+  const size_t paren = func.find('(');
+  if (paren != std::string::npos && !func.empty() && func.back() == ')') {
+    arg = func.substr(paren + 1, func.size() - paren - 2);
+    func.resize(paren);
+  } else {
+    const size_t colon = func.find(':');
+    if (colon != std::string::npos) {
+      arg = func.substr(colon + 1);
+      func.resize(colon);
+    }
+  }
+  auto trim = [](std::string* text) {
+    const size_t first = text->find_first_not_of(" \t");
+    if (first == std::string::npos) { text->clear(); return; }
+    const size_t last = text->find_last_not_of(" \t");
+    *text = text->substr(first, last - first + 1);
+  };
+  trim(&func);
+  trim(&arg);
+  if (arg.size() >= 2 &&
+      ((arg.front() == '"' && arg.back() == '"') ||
+       (arg.front() == '\'' && arg.back() == '\''))) {
+    arg = arg.substr(1, arg.size() - 2);
+  }
+
+  const UsdPrim prim = stage.GetPrimAtPath(prim_path);
+  if (!prim.IsValid()) return false;
+  if (func == "defined") return prim.IsDefined();
+  if (func == "abstract") return prim.IsAbstract();
+  if (func == "active") return prim.IsActive();
+  if (func == "isa") return prim.GetTypeName() == arg;
+  const std::string& kind = prim.GetMeta().kind();
+  if (func == "kind") return kind == arg;
+  if (func == "model") return !kind.empty();
+  if (func == "group") return kind == "group" || kind == "assembly";
+  if (func == "assembly") return kind == "assembly";
+  if (func == "component") return kind == "component";
+  if (func == "subcomponent") return kind == "subcomponent";
+  if (func == "hasAPI") {
+    for (const std::string& schema : prim.GetMeta().apiSchemas()) {
+      if (schema == arg) return true;
+      const size_t separator = schema.find(':');
+      if (separator != std::string::npos &&
+          schema.substr(separator + 1) == arg) return true;
+    }
+  }
+  return false;
+}
+
+bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
+                                 const std::string& property_name,
+                                 const RenderScene& scene,
+                                 std::vector<int32_t>* mesh_indices) {
+  const Value* value = owner.GetPropertyValue(property_name);
+  if (!value ||
+      value->type_id() != ::tinyusdz::next::TypeId::PathExpression) return false;
+  const std::string* text = value->as_string();
+  if (!text) return false;
+  ParsedPathExpression expression = ParsedPathExpression::Parse(*text);
+  if (!expression.valid()) return false;
+
+  PathExpressionEvalContext context;
+  context.eval_predicate = [&stage](const std::string& pred,
+                                    const std::string& path) {
+    return EvalNextPathPredicate(stage, pred, path);
+  };
+  auto subexpressions = std::make_shared<std::deque<ParsedPathExpression>>();
+  const std::string seed_owner = owner.GetPath().str();
+  context.resolve_ref =
+      [&stage, subexpressions, seed_owner](const ExpressionReference& ref)
+          -> const ParsedPathExpression* {
+    if (ref.is_weaker()) return nullptr;
+    const std::string owner_path = ref.path.empty() ? seed_owner : ref.path;
+    const UsdPrim ref_owner = stage.GetPrimAtPath(owner_path);
+    if (!ref_owner.IsValid()) return nullptr;
+    const Value* ref_value = ref_owner.GetPropertyValue(
+        "collection:" + ref.name + ":membershipExpression");
+    if (!ref_value || ref_value->type_id() !=
+                          ::tinyusdz::next::TypeId::PathExpression) return nullptr;
+    const std::string* ref_text = ref_value->as_string();
+    if (!ref_text) return nullptr;
+    std::string qualified = *ref_text;
+    const std::string replacement = "%" + owner_path + ":";
+    size_t pos = 0;
+    while ((pos = qualified.find("%:", pos)) != std::string::npos) {
+      qualified.replace(pos, 2, replacement);
+      pos += replacement.size();
+    }
+    subexpressions->push_back(ParsedPathExpression::Parse(qualified));
+    return subexpressions->back().valid() ? &subexpressions->back() : nullptr;
+  };
+
+  mesh_indices->clear();
+  for (size_t i = 0; i < scene.meshes.size(); ++i) {
+    if (MatchPath(expression, scene.meshes[i].prim_path, context)) {
+      mesh_indices->push_back(static_cast<int32_t>(i));
+    }
+  }
+  return true;
+}
+
 // Resolve one CollectionAPI instance (collection:<name>:*) on a light prim
 // to RenderScene mesh indices, mirroring legacy ResolveLightLinking:
 // excludes take hierarchical precedence, includeRoot adds the light prim's
 // subtree, explicitOnly matches exact paths, expandPrims (default) and
 // expandPrimsAndProperties match descendants. Unauthored collections keep
-// *links_all = true (light affects everything); membershipExpression
-// collections are not evaluated (no path-expression parser in next) and
-// also keep the links-all default.
-void ResolveLightLinkInstance(const UsdPrim& prim, const RenderScene& scene,
+// *links_all = true (light affects everything).
+void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
+                              const RenderScene& scene,
                               MeshPathIndex& index,
                               const std::string& instance_name,
                               bool* links_all,
                               std::vector<int32_t>* mesh_indices) {
-  (void)scene;
   const std::string base = "collection:" + instance_name + ":";
-  if (prim.HasProperty(base + "membershipExpression")) return;
+  if (prim.HasProperty(base + "membershipExpression")) {
+    if (ResolveExpressionLightLinks(stage, prim,
+                                    base + "membershipExpression", scene,
+                                    mesh_indices)) *links_all = false;
+    return;
+  }
 
   const std::vector<::tinyusdz::next::Path>* includes =
       prim.GetRelationship(base + "includes");
@@ -2830,10 +2972,10 @@ void ResolveLightLinking(const Stage& stage, RenderScene* scene) {
   for (RenderLight& light : scene->lights) {
     UsdPrim prim = stage.GetPrimAtPath(light.prim_path);
     if (!prim.IsValid()) continue;
-    ResolveLightLinkInstance(prim, *scene, index, "lightLink",
+    ResolveLightLinkInstance(stage, prim, *scene, index, "lightLink",
                              &light.light_links_all,
                              &light.light_link_mesh_indices);
-    ResolveLightLinkInstance(prim, *scene, index, "shadowLink",
+    ResolveLightLinkInstance(stage, prim, *scene, index, "shadowLink",
                              &light.shadow_links_all,
                              &light.shadow_link_mesh_indices);
   }
@@ -3306,10 +3448,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     if (emit_animations) {
       result.scene.animations.reserve(extracted.records.size());
     }
-    size_t point_prim_count = 0;
-    for (const RenderPrimRecord& rec : extracted.records) {
-      if (rec.type_name == "Points") ++point_prim_count;
-    }
+    const size_t point_prim_count = extracted.points.size();
     result.scene.meshes.reserve(extracted.meshes.size());
     result.scene.points.reserve(point_prim_count);
     result.scene.curves.reserve(extracted.curves.size());
@@ -3327,6 +3466,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     const bool has_time_samples = emit_animations;
     for (const RenderPrimRecord& rec : extracted.records) {
       if (rec.type_name != "Points" &&
+          rec.type_name != "ParticleField3DGaussianSplat" &&
           IsUnsupportedRenderableTypeName(rec.type_name)) {
         UnsupportedRenderable unsupported;
         unsupported.prim_path = rec.path;
@@ -3413,10 +3553,9 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
     }
 
-    for (const auto& rec : extracted.records) {
-      if (rec.type_name != "Points") continue;
+    for (const auto& rec : extracted.points) {
       RenderPoints points;
-      if (ConvertPoints(rec.prim, &points)) {
+      if (ConvertPoints(stage, rec.prim, &points)) {
         if (points.has_alloc_failure()) {
           warnings_.push_back("Out of memory converting Points '" + rec.path +
                               "'; the prim was skipped");
@@ -3565,7 +3704,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     // Convert cameras
     for (const auto& rec : extracted.cameras) {
       RenderCamera camera;
-      if (ConvertCamera(rec.prim, &camera)) {
+      if (ConvertCamera(stage, rec.prim, &camera)) {
         for (int i = 0; i < 16; ++i) {
           camera.transform.m[i] = static_cast<float>(rec.world[i]);
         }
@@ -3790,6 +3929,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   }
   for (const RenderPrimRecord& rec : extracted.records) {
     if (rec.type_name != "Points" &&
+        rec.type_name != "ParticleField3DGaussianSplat" &&
         IsUnsupportedRenderableTypeName(rec.type_name)) {
       UnsupportedRenderable unsupported;
       unsupported.prim_path = rec.path;
@@ -3863,7 +4003,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   }
   for (const RenderPrimRecord& rec : extracted.cameras) {
     RenderCamera camera;
-    if (!ConvertCamera(rec.prim, &camera)) continue;
+    if (!ConvertCamera(stage, rec.prim, &camera)) continue;
     for (int i = 0; i < 16; ++i) camera.transform.m[i] = float(rec.world[i]);
     const int32_t id = static_cast<int32_t>(catalog.cameras.size());
     catalog.cameras.push_back(std::move(camera));
@@ -4021,7 +4161,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
       continue;
     }
     RenderPoints points;
-    if (ConvertPoints(rec.prim, &points)) {
+    if (ConvertPoints(stage, rec.prim, &points)) {
       if (points.has_alloc_failure()) {
         warnings_.push_back("Out of memory converting Points '" + rec.path +
                             "'; the prim was skipped");
@@ -5855,7 +5995,8 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
   return true;
 }
 
-bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
+bool RenderSceneConverter::ConvertPoints(const Stage& stage,
+                                         const UsdPrim& prim,
                                          RenderPoints* out) {
   const bool gaussian = prim.GetTypeName() == "ParticleField3DGaussianSplat";
   if (!out || !prim.IsValid() ||
@@ -5864,8 +6005,21 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
     return false;
   }
 
+  ::tinyusdz::next::ParticleFieldData particle_field;
+  if (gaussian) {
+    std::string particle_warning;
+    if (!::tinyusdz::next::GetParticleFieldData(
+            stage, prim, &particle_field, config_.time_code,
+            &particle_warning)) {
+      last_error_ = "Invalid ParticleField data";
+      return false;
+    }
+    if (!particle_warning.empty()) warnings_.push_back(particle_warning);
+  }
   ValueArrayRead<float> points;
-  const char* point_property = gaussian ? "positions" : "points";
+  const char* point_property = gaussian
+      ? particle_field.positions_property.c_str()
+      : "points";
   if (!ReadFloatArray(prim, point_property, config_.time_code, &points) ||
       points.empty() || (points.view.size % 3) != 0) {
     last_error_ = "Invalid Points.points data";
@@ -5889,7 +6043,9 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
 
   ValueArrayRead<float> widths;
   const bool have_widths = gaussian
-      ? ReadFloatArray(prim, "scales", config_.time_code, &widths)
+      ? (!particle_field.scales_property.empty() &&
+         ReadFloatArray(prim, particle_field.scales_property.c_str(),
+                        config_.time_code, &widths))
       : ReadFloatArray(prim, kIdWidths(), config_.time_code, &widths);
   if (have_widths &&
       !widths.empty()) {
@@ -6899,10 +7055,23 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   size_t tri_count = 0;
   for (size_t i = 0; i < mesh->face_vertex_counts.size(); ++i) {
     uint32_t nverts = mesh->face_vertex_counts[i];
-    if (nverts >= 3) tri_count += nverts - 2;
+    if (nverts >= 3) {
+      size_t next_tri_count = 0;
+      if (!safe::add(tri_count, size_t(nverts - 2), &next_tri_count)) {
+        warnings_.push_back("Mesh '" + mesh->prim_path +
+                            "' triangle count overflows size_t; skipping");
+        return false;
+      }
+      tri_count = next_tri_count;
+    }
   }
-  const size_t tri_corner_count = tri_count * 3;
-  if (tri_count >= kMaxTriangulationCornerCount) {
+  size_t tri_corner_count = 0;
+  if (!safe::mul(tri_count, size_t(3), &tri_corner_count)) {
+    warnings_.push_back("Mesh '" + mesh->prim_path +
+                        "' triangulated corner count overflows size_t; skipping");
+    return false;
+  }
+  if (tri_corner_count >= kMaxTriangulationCornerCount) {
     warnings_.push_back("Mesh '" + mesh->prim_path +
                         "' has too many triangulated corners (" +
                         std::to_string(tri_corner_count) +
@@ -6916,8 +7085,8 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
     return false;
   }
 
-  if (!mesh->triangulated_indices.reserve(tri_count * 3) ||
-      !mesh->triangulated_face_vertex_indices.reserve(tri_count * 3)) {
+  if (!mesh->triangulated_indices.reserve(tri_corner_count) ||
+      !mesh->triangulated_face_vertex_indices.reserve(tri_corner_count)) {
     warnings_.push_back("Out of memory triangulating mesh '" +
                         mesh->prim_path + "'");
     return false;
@@ -7146,16 +7315,30 @@ bool RenderSceneConverter::TriangulateFan(
   size_t required_index_count = 0;
   for (size_t i = 0; i < face_count; ++i) {
     uint32_t nverts = face_vertex_counts[i];
-    required_index_count += nverts;
+    size_t next_required_index_count = 0;
+    if (!safe::add(required_index_count, size_t(nverts),
+                   &next_required_index_count)) {
+      return false;
+    }
+    required_index_count = next_required_index_count;
     if (nverts >= 3) {
-      tri_count += nverts - 2;
+      size_t next_tri_count = 0;
+      if (!safe::add(tri_count, size_t(nverts - 2), &next_tri_count)) {
+        return false;
+      }
+      tri_count = next_tri_count;
     }
   }
   if (required_index_count > index_count) {
     return false;
   }
 
-  out_indices->reserve(tri_count * 3);
+  size_t tri_corner_count = 0;
+  if (!safe::mul(tri_count, size_t(3), &tri_corner_count) ||
+      tri_corner_count >= kMaxTriangulationCornerCount ||
+      !out_indices->reserve(tri_corner_count)) {
+    return false;
+  }
 
   size_t idx_offset = 0;
   for (size_t f = 0; f < face_count; ++f) {
@@ -8067,9 +8250,24 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                        scene);
   }
 
-  ExtractShaderParam(stage, shader_prim, "sheen_weight", &out->sheen_weight, scene);
-  ExtractShaderParam(stage, shader_prim, "sheen_color", &out->sheen_color, scene);
-  ExtractShaderParam(stage, shader_prim, "sheen_roughness", &out->sheen_roughness, scene);
+  // OpenPBR renamed the grazing cloth lobe to fuzz. Retain the older sheen
+  // spellings for Standard Surface and early OpenPBR files, but prefer the
+  // current names when both are authored.
+  if (!ExtractShaderParam(stage, shader_prim, "fuzz_weight",
+                          &out->sheen_weight, scene)) {
+    ExtractShaderParam(stage, shader_prim, "sheen_weight",
+                       &out->sheen_weight, scene);
+  }
+  if (!ExtractShaderParam(stage, shader_prim, "fuzz_color",
+                          &out->sheen_color, scene)) {
+    ExtractShaderParam(stage, shader_prim, "sheen_color",
+                       &out->sheen_color, scene);
+  }
+  if (!ExtractShaderParam(stage, shader_prim, "fuzz_roughness",
+                          &out->sheen_roughness, scene)) {
+    ExtractShaderParam(stage, shader_prim, "sheen_roughness",
+                       &out->sheen_roughness, scene);
+  }
   ExtractShaderParam(stage, shader_prim, "thin_film_weight",
                      &out->thin_film_weight, scene);
   ExtractShaderParam(stage, shader_prim, "thin_film_thickness",
@@ -8460,8 +8658,10 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
 // Camera conversion
 //
 
-bool RenderSceneConverter::ConvertCamera(const UsdPrim& prim, RenderCamera* out) {
-  if (!out || !IsCamera(prim)) {
+bool RenderSceneConverter::ConvertCamera(const Stage& stage,
+                                         const UsdPrim& prim,
+                                         RenderCamera* out) {
+  if (!out || !::tinyusdz::tydra::next::IsCamera(prim)) {
     last_error_ = "Invalid camera prim";
     return false;
   }
@@ -8523,6 +8723,43 @@ bool RenderSceneConverter::ConvertCamera(const UsdPrim& prim, RenderCamera* out)
   // Motion-blur shutter interval
   GetDouble(prim, kIdShutterOpen(), &out->shutter_open);
   GetDouble(prim, kIdShutterClose(), &out->shutter_close);
+
+  // BackPlateAPI is a multiple-apply schema. Preserve every applied instance
+  // in authored order; image decoding/compositing belongs to the backend.
+  constexpr const char* kBackPlatePrefix = "BackPlateAPI:";
+  for (const std::string& schema : prim.GetMeta().apiSchemas()) {
+    if (schema.compare(0, std::strlen(kBackPlatePrefix), kBackPlatePrefix) != 0)
+      continue;
+    const std::string instance = schema.substr(std::strlen(kBackPlatePrefix));
+    ::tinyusdz::next::BackPlateData source;
+    if (!::tinyusdz::next::GetBackPlateData(stage, prim, instance, &source,
+                                             config_.time_code)) {
+      continue;
+    }
+    RenderBackPlate plate;
+    plate.instance_name = instance;
+    plate.image = source.image;
+    plate.alpha_image = source.alpha_image;
+    plate.depth_image = source.depth_image;
+    plate.depth_min_offset = source.depth_min_offset;
+    plate.depth_normalizing_factor = source.depth_normalizing_factor;
+    plate.depth_camera_space_offset = source.depth_camera_space_offset;
+    plate.scale_tweak = {source.scale_tweak[0], source.scale_tweak[1]};
+    plate.rotate_xyz_tweak = {source.rotate_xyz_tweak[0],
+                              source.rotate_xyz_tweak[1],
+                              source.rotate_xyz_tweak[2]};
+    plate.translate_tweak = {source.translate_tweak[0],
+                             source.translate_tweak[1],
+                             source.translate_tweak[2]};
+    plate.luma_gain = {source.luma_gain[0], source.luma_gain[1],
+                       source.luma_gain[2]};
+    plate.luma_lift = {source.luma_lift[0], source.luma_lift[1],
+                       source.luma_lift[2]};
+    plate.luma_gamma = {source.luma_gamma[0], source.luma_gamma[1],
+                        source.luma_gamma[2]};
+    plate.plate_visibility = source.plate_visibility;
+    out->back_plates.push_back(std::move(plate));
+  }
 
   return true;
 }

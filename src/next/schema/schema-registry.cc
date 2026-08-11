@@ -22,6 +22,20 @@ bool HasAppliedSchema(const PrimSpec& prim, const std::string& schema) {
       return true;
     }
   }
+  // OpenUSD auto-applies these API schemas to the concrete 3D Gaussian type.
+  // They need not appear in authored apiSchemas metadata.
+  if (prim.type_name() == "ParticleField3DGaussianSplat") {
+    static const char* kGaussianSchemas[] = {
+        "ParticleFieldPositionAttributeAPI",
+        "ParticleFieldOrientationAttributeAPI",
+        "ParticleFieldScaleAttributeAPI",
+        "ParticleFieldOpacityAttributeAPI",
+        "ParticleFieldKernelGaussianEllipsoidAPI",
+        "ParticleFieldSphericalHarmonicsAttributeAPI"};
+    for (const char* auto_applied : kGaussianSchemas) {
+      if (schema == auto_applied) return true;
+    }
+  }
   return false;
 }
 
@@ -46,6 +60,9 @@ bool MatchDefinitionName(const PrimSpec& prim,
 }  // namespace
 
 SchemaRegistry::SchemaRegistry() {
+#define TINYUSDZ_NEXT_SUPPORTED_SCHEMA(name) known_schemas_.push_back(name);
+#include "generated/openusd-supported-schema-names.inc"
+#undef TINYUSDZ_NEXT_SUPPORTED_SCHEMA
   parents_ = {
       {"Xform", "Xformable"}, {"Xformable", "Imageable"},
       {"Curves", "PointBased"}, {"BasisCurves", "Curves"},
@@ -76,6 +93,8 @@ SchemaRegistry::SchemaRegistry() {
       {"VolumeFieldBase", "Xformable"}, {"FieldBase", "VolumeFieldBase"},
       {"VolumeFieldAsset", "FieldBase"}, {"FieldAsset", "VolumeFieldAsset"},
       {"Field3DAsset", "FieldAsset"}, {"OpenVDBAsset", "FieldAsset"},
+      {"ParticleField", "Gprim"},
+      {"ParticleField3DGaussianSplat", "ParticleField"},
       // UsdRender types inherit Typed in pxr (NOT Imageable/Xformable): no
       // visibility/purpose fallbacks. Typed is a terminal marker with no
       // properties; recording it makes the ancestry KNOWN so consumers can
@@ -84,6 +103,7 @@ SchemaRegistry::SchemaRegistry() {
       {"RenderSettings", "RenderSettingsBase"},
       {"RenderProduct", "RenderSettingsBase"},
       {"RenderVar", "Typed"},
+      {"RenderPass", "Typed"},
   };
 
   auto add = [&](const char* schema, const char* name, const char* type,
@@ -258,6 +278,51 @@ SchemaRegistry::SchemaRegistry() {
   add("RenderVar", "sourceType", "token", Token("raw"));
   add("RenderProduct", "productType", "token", Token("raster"));
   add("RenderProduct", "productName", "token", Token(""));
+  add("RenderPass", "collection:renderVisibility:includeRoot", "bool",
+      Value(true));
+  add("RenderPass", "collection:cameraVisibility:includeRoot", "bool",
+      Value(true));
+
+  // OpenUSD 26.08 UsdVol ParticleField definitions. The concrete Gaussian
+  // type auto-applies the six data/kernel APIs handled by HasAppliedSchema().
+  add("ParticleField3DGaussianSplat", "projectionModeHint", "token",
+      Token("perspective"));
+  add("ParticleField3DGaussianSplat", "sortingModeHint", "token",
+      Token("zDepth"));
+  add("ParticleFieldSphericalHarmonicsAttributeAPI",
+      "radiance:sphericalHarmonicsDegree", "int", Value(int32_t(3)));
+
+  // OpenUSD 26.08 additions. Multiple-apply names use the registry's
+  // __INSTANCE__ marker and are expanded from authored apiSchemas metadata.
+  add("GeomModelAPI", "model:cardVisibility", "token", Token("inherited"));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:image", "asset",
+      Value::MakeAssetPath(""));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:alpha:image", "asset",
+      Value::MakeAssetPath(""));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:depth:image", "asset",
+      Value::MakeAssetPath(""));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:depth:minOffset", "float",
+      Value(0.0f));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:depth:normalizingFactor",
+      "float", Value(1.0f));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:depth:cameraSpaceOffset",
+      "float", Value(0.0f));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:scale:tweak", "float2",
+      Value::MakeFloat2(1.0f, 1.0f));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:rotateXYZ:tweak", "float3",
+      Value::MakeFloat3(0.0f, 0.0f, 0.0f));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:translate:tweak", "float3",
+      Value::MakeFloat3(0.0f, 0.0f, 0.0f));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:luma:gain", "float3",
+      Value::MakeFloat3(1.0f, 1.0f, 1.0f));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:luma:lift", "float3",
+      Value::MakeFloat3(0.0f, 0.0f, 0.0f));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:luma:gamma", "float3",
+      Value::MakeFloat3(1.0f, 1.0f, 1.0f));
+  add("BackPlateAPI", "backPlate:__INSTANCE__:plateVisibility", "token",
+      Token("solo"));
+  add("SemanticsLabelsAPI", "semantics:labels:__INSTANCE__", "token[]",
+      Value::MakeTokenArray({}));
 
   // Data-driven declarations for the remaining schemas implemented by next.
   // Declarations populate HasProperty()/property-name queries without
@@ -336,11 +401,29 @@ SchemaRegistry::SchemaRegistry() {
           {"VolumeFieldAsset", "fieldDataType", "token"},
           {"OpenVDBAsset", "fieldClass", "token"},
           {"Field3DAsset", "fieldPurpose", "token"},
+          // UsdVol ParticleField applied API attributes.
+          {"ParticleFieldPositionAttributeAPI", "positions", "point3f[]"},
+          {"ParticleFieldPositionAttributeAPI", "positionsh", "point3h[]"},
+          {"ParticleFieldOrientationAttributeAPI", "orientations", "quatf[]"},
+          {"ParticleFieldOrientationAttributeAPI", "orientationsh", "quath[]"},
+          {"ParticleFieldScaleAttributeAPI", "scales", "float3[]"},
+          {"ParticleFieldScaleAttributeAPI", "scalesh", "half3[]"},
+          {"ParticleFieldOpacityAttributeAPI", "opacities", "float[]"},
+          {"ParticleFieldOpacityAttributeAPI", "opacitiesh", "half[]"},
+          {"ParticleFieldSphericalHarmonicsAttributeAPI",
+           "radiance:sphericalHarmonicsCoefficients", "float3[]"},
+          {"ParticleFieldSphericalHarmonicsAttributeAPI",
+           "radiance:sphericalHarmonicsCoefficientsh", "half3[]"},
           // UsdRender relationships + optional token.
           {"RenderSettingsBase", "camera", "relationship"},
           {"RenderSettings", "products", "relationship"},
           {"RenderSettings", "renderingColorSpace", "token"},
           {"RenderProduct", "orderedVars", "relationship"},
+          {"RenderPass", "passType", "token"},
+          {"RenderPass", "command", "string[]"},
+          {"RenderPass", "renderSource", "relationship"},
+          {"RenderPass", "inputPasses", "relationship"},
+          {"RenderPass", "fileName", "asset"},
       };
   for (const Decl& declaration : declarations) {
     declare(declaration.schema, declaration.name, declaration.type);
@@ -439,6 +522,8 @@ bool SchemaRegistry::HasParentEntry(const std::string& schema_type) const {
 }
 
 bool SchemaRegistry::IsKnownSchema(const std::string& schema_type) const {
+  if (std::find(known_schemas_.begin(), known_schemas_.end(), schema_type) !=
+      known_schemas_.end()) return true;
   if (std::find_if(properties_.begin(), properties_.end(), [&](const auto& p) {
         return p.schema_type == schema_type;
       }) != properties_.end()) return true;
@@ -453,6 +538,7 @@ std::vector<std::string> SchemaRegistry::SchemaTypes() const {
     if (std::find(result.begin(), result.end(), schema) == result.end())
       result.push_back(schema);
   };
+  for (const std::string& schema : known_schemas_) add_unique(schema);
   for (const auto& parent : parents_) {
     add_unique(parent.first);
     add_unique(parent.second);

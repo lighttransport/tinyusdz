@@ -125,6 +125,9 @@ int main() {
   for (uint32_t i = 0; i < 96; i++) uids.push_back(i * 13u + 5u);
   std::vector<uint64_t> hashes;     // 32 uint64s
   for (uint64_t i = 0; i < 32; i++) hashes.push_back((i << 40) | (i * 17u));
+  std::vector<uint32_t> bytes(64);  // 64 uchars
+  for (uint32_t i = 0; i < bytes.size(); ++i) bytes[i] = i & 0xffu;
+  std::vector<double> timecodes = {0.0, 1.25, 24.0, 1001.0};
   std::vector<float> quats;         // 64 quatf
   for (int i = 0; i < 64; i++) {
     quats.push_back(0.0f);
@@ -154,6 +157,12 @@ int main() {
   lb.add_property("faceVertexIndices", Value::MakeIntArray(indices));
   lb.add_property("primvars:ids", Value::MakeUIntArray(uids));
   lb.add_property("primvars:hashes", Value::MakeUInt64Array(hashes));
+  lb.add_property("primvars:bytes", Value::MakeUIntCompArray(
+                                           std::vector<uint32_t>(bytes),
+                                           TypeId::UChar, 1));
+  lb.add_property("sampleTimes", Value::MakeDoubleCompArray(
+                                      std::vector<double>(timecodes),
+                                      TypeId::TimeCode, 1));
   lb.add_property("orientations",
                   Value::MakeFloatCompArray(std::vector<float>(quats),
                                             TypeId::Quatf, 4));
@@ -465,15 +474,31 @@ int main() {
     std::cout << "  unsigned integer views read without materializing source"
               << (view.borrowed ? " (borrowed)" : " (scratch)") << std::endl;
   }
+  const Value* bytev = ps->property_value("primvars:bytes");
+  const Value* timev = ps->property_value("sampleTimes");
+  assert(bytev && bytev->type_id() == TypeId::UChar && bytev->is_lazy());
+  assert(timev && timev->type_id() == TypeId::TimeCode && timev->is_lazy());
 
-  // ---- orientations / xforms: vector/matrix array laziness ------------------
-  // Quat arrays decode EAGERLY by design: the crate stores components
-  // imaginary-first while the internal layout is real-first, so a lazy byte
-  // view would surface the wrong component order. The values still round-trip.
+  // ---- orientations / xforms: quaternion/matrix array laziness --------------
+  // Quaternion crate bytes are imaginary-first, while Value is real-first.
+  // They stay lazy, but their read-only view uses a swizzled scratch value
+  // rather than incorrectly aliasing the on-disk component order.
   const Value* qv = ps->property_value("orientations");
-  assert(qv && qv->is_array() && !qv->is_lazy());
-  const std::vector<float>* qa = qv->as_float_array();
+  assert(qv && qv->is_array() && qv->is_lazy());
+  assert(!CanBorrowLazyFlat(*qv));
+  {
+    ArrayScratch<float> scratch;
+    ArrayView<float> view;
+    assert(GetFloatArrayView(*qv, &scratch, &view));
+    assert(view.size == quats.size());
+    assert(!scratch.materialized.is_empty());
+    for (size_t i = 0; i < quats.size(); ++i) assert(view[i] == quats[i]);
+    assert(qv->is_lazy() && !qv->is_dirty());
+  }
+  Value qcopy = qv->materialized_copy();
+  const std::vector<float>* qa = qcopy.as_float_array();
   assert(qa && *qa == quats);
+  assert(qv->is_lazy());
   const Value* mv = ps->property_value("xforms");
   assert(mv && mv->is_array() && mv->is_lazy());
   const std::vector<double>* ma = mv->as_double_array();
@@ -544,10 +569,10 @@ int main() {
     assert(wres.success);
     // Numeric arrays (points Vec3f, indices Int, ids UInt, hashes UInt64,
     // xforms Matrix4d, tangents Vec4f, extent Vec2d, and two velocities
-    // TimeSamples) copied verbatim. Quat arrays (orientations) are no longer
-    // lazy (component swizzle on decode), so they re-encode rather than
-    // pass through.
-    assert(wres.arrays_passed_through >= 9);
+    // TimeSamples and orientations Quatf) copied verbatim. Quaternion views
+    // materialize through a swizzled scratch value, but an untouched lazy
+    // quaternion block can still pass through without decoding.
+    assert(wres.arrays_passed_through >= 12);
     assert(wres.arrays_reencoded == 0);
     std::cout << "  writer passed through " << wres.arrays_passed_through
               << " arrays (" << wres.arrays_reencoded << " reencoded)" << std::endl;
@@ -603,7 +628,7 @@ int main() {
     bool ok = pipeline::FlattenUSDCToUSDC(buf.data(), buf.size(), fout, fopts,
                                           &fstats, &ferr);
     assert(ok);
-    assert(fstats.arrays_passed_through >= 9);  // quats re-encode (swizzle)
+    assert(fstats.arrays_passed_through >= 12);
     assert(fstats.arrays_reencoded == 0);
     std::cout << "  FlattenUSDCToUSDC: " << fstats.input_bytes << " -> "
               << fstats.output_bytes << " bytes, passthrough="
