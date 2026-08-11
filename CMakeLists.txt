@@ -2359,7 +2359,14 @@ if(TINYUSDZ_BUILD_TESTS)
   # Only the hermetic ones are registered: run-gpu-render.sh needs a GPU, and
   # run-large-scene-profiles.sh / run-material-resolver.sh /
   # run-alpha-blend-sort-external.sh need external multi-GB asset corpora.
-  if(TARGET tusdrender)
+  #
+  # bash is required (Git Bash/WSL on Windows). Without this find_program guard
+  # -- mirroring TUSDR_PYTHON's guard on the smoke tests above -- ctest can't
+  # find/launch the COMMAND at all on a native Windows box with neither on
+  # PATH, which fails hard rather than the intended SKIP_RETURN_CODE 77 skip
+  # (that property only takes effect once the test process actually runs).
+  find_program(TUSDR_BASH NAMES bash)
+  if(TARGET tusdrender AND TUSDR_BASH)
     set(TUSDR_SHELL_TESTS
         backplate
         backface-material
@@ -2405,7 +2412,7 @@ if(TINYUSDZ_BUILD_TESTS)
     foreach(t ${TUSDR_SHELL_TESTS})
       add_test(
         NAME tool-tusdrender-${t}
-        COMMAND bash
+        COMMAND ${TUSDR_BASH}
                 ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-${t}.sh
                 "$<TARGET_FILE:tusdrender>"
       )
@@ -2418,7 +2425,7 @@ if(TINYUSDZ_BUILD_TESTS)
     # that don't. README.md already told people to run it by this ctest name.
     add_test(
       NAME tool-tusdrender-material-resolver
-      COMMAND bash ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-material-resolver.sh
+      COMMAND ${TUSDR_BASH} ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-material-resolver.sh
     )
     set_tests_properties(tool-tusdrender-material-resolver
                          PROPERTIES SKIP_RETURN_CODE 77
@@ -2426,7 +2433,7 @@ if(TINYUSDZ_BUILD_TESTS)
 
     add_test(
       NAME tool-tusdrender-alpha-blend-sort-external
-      COMMAND bash
+      COMMAND ${TUSDR_BASH}
               ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-alpha-blend-sort-external.sh
               "$<TARGET_FILE:tusdrender>"
     )
