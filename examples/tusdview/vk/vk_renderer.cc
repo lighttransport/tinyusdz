@@ -474,16 +474,33 @@ uint64_t QueryDeviceLocalVramBytes() {
   std::vector<VkPhysicalDevice> devices(count);
   vkEnumeratePhysicalDevices(inst, &count, devices.data());
 
-  // Same preference as startup device selection: a discrete GPU if there is one,
-  // else the first device. Picking the largest heap instead would be wrong on a
-  // laptop whose iGPU reports all of system RAM as device-local.
-  VkPhysicalDevice chosen = devices[0];
+  // Same preference as startup device selection (pickPhysicalDevice(), below):
+  // rank by DeviceAutoScore and never pick a CPU/software-ICD device (Mesa
+  // lavapipe, SwiftShader -- plausible in an RDP session, VM, or CI runner)
+  // when a real GPU is also enumerated, even if the CPU device happens to
+  // enumerate first. Picking the largest heap instead of scoring would be
+  // wrong on a laptop whose iGPU reports all of system RAM as device-local;
+  // picking "first discrete, else first" (the old rule here) silently
+  // reported a software device's heap as VRAM whenever it enumerated first.
+  bool haveHardware = false;
   for (VkPhysicalDevice d : devices) {
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(d, &props);
-    if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-      chosen = d;
+    if (props.deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU) {
+      haveHardware = true;
       break;
+    }
+  }
+  VkPhysicalDevice chosen = devices[0];
+  int bestScore = std::numeric_limits<int>::min();
+  for (VkPhysicalDevice d : devices) {
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(d, &props);
+    if (haveHardware && props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) continue;
+    const int score = DeviceAutoScore(props, /*hasRtFeatureSet=*/false);
+    if (score > bestScore) {
+      bestScore = score;
+      chosen = d;
     }
   }
 
