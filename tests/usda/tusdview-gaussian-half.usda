@@ -1,0 +1,23 @@
+#usda 1.0
+
+def "GaussianHalfFixture" (
+    kind = "component"
+)
+{
+    double3 xformOp:scale = (2, 0.5, 1)
+    uniform token[] xformOpOrder = ["xformOp:scale"]
+
+    def ParticleField3DGaussianSplat "SplatField"
+    {
+        float3[] extent = [(-1, -1, -0.1), (1, 1, 0.1)]
+        point3h[] positionsh = [(-0.35, 0, 0), (0.35, 0, 0)]
+        half3[] scalesh = [(0.18, 0.08, 0.02), (0.08, 0.18, 0.02)]
+        quath[] orientationsh = [(1, 0, 0, 0), (1, 0, 0, 0)]
+        half[] opacitiesh = [0.9, 0.75]
+        int radiance:sphericalHarmonicsDegree = 0
+        half3[] radiance:sphericalHarmonicsCoefficientsh = [
+            (1.0, 0.2, 0.05),
+            (0.05, 0.3, 1.0)
+        ]
+    }
+}

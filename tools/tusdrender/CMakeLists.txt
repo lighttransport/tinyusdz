@@ -85,6 +85,10 @@ target_link_libraries(tusdrender
   lightrt_c
 )
 
+if(COMMAND add_sanitizers)
+  add_sanitizers(tusdrender)
+endif()
+
 # Vendored texture tools: the opt-in `-ibl envmap` DomeLight IBL backend.
 if(TINYUSDZ_WITH_TEXTOOLS)
   target_link_libraries(tusdrender tinyusdz_textools)

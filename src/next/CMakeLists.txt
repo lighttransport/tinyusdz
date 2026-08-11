@@ -10,6 +10,10 @@ project(tinyusdz_next C CXX)
 # Define source files
 set(TINYUSDZ_NEXT_SOURCES
     ../color-transform.cc
+    # Shared SdfPathExpression parser/matcher. Kept stage-neutral so next
+    # collection consumers do not need the legacy Stage representation.
+    ../core/path-expression.cc
+    ../core/path-expression-eval.cc
     # Type system
     types/type-info.cc
     types/value.cc
@@ -80,6 +84,7 @@ set(TINYUSDZ_NEXT_SOURCES
     schema/color-space.cc
     schema/usd-lux.cc
     schema/usd-geom-camera.cc
+    schema/usd-geom-model.cc
     schema/usd-shade.cc
     schema/usd-skel.cc
     schema/physics-scene.cc
@@ -89,6 +94,9 @@ set(TINYUSDZ_NEXT_SOURCES
     schema/usd-ar.cc
     schema/usd-media.cc
     schema/usd-mtlx.cc
+    schema/usd-render.cc
+    schema/usd-semantics.cc
+    schema/usd-vol.cc
 
     # Attribute evaluation
     eval/attribute-eval.cc
@@ -367,6 +375,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp.cc
     )
     target_link_libraries(test_pcp PRIVATE tinyusdz_next)
+    target_compile_definitions(test_pcp PRIVATE
+        TINYUSDZ_TEST_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
     add_executable(test_pcp_parallel
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp_parallel.cc
@@ -437,6 +447,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schemas_ext.cc
     )
     target_link_libraries(test_schemas_ext PRIVATE tinyusdz_next)
+    target_compile_definitions(test_schemas_ext PRIVATE
+        TINYUSDZ_TEST_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
     add_executable(test_usdcat_roundtrip
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdcat_roundtrip.cc
@@ -604,6 +616,15 @@ if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     else()
         target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
     endif()
+endif()
+
+if(TINYUSDZ_NEXT_BUILD_FUZZERS)
+    target_compile_options(tydra_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
+    add_executable(fuzz_next_render
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/next_render_fuzzmain.cc)
+    target_link_libraries(fuzz_next_render PRIVATE tydra_next tinyusdz_next)
+    target_compile_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+    target_link_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
 endif()
 
 # ============================================================

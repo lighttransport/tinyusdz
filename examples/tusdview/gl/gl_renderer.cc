@@ -916,9 +916,19 @@ void main() {
         "uniform mat4 uInvModel;\n"  // world -> object
         "uniform vec3 uBmin; uniform vec3 uBmax;\n"
         "uniform sampler3D uDensity;\n"
+        "uniform sampler3D uEmissionField; uniform sampler3D uTemperatureField;\n"
+        "uniform bool uHasEmissionField; uniform bool uHasTemperatureField;\n"
         "uniform float uDensityScale;\n"
         "uniform vec3 uAlbedo; uniform vec3 uEmission;\n"
         "uniform float uBackground;\n"
+        "vec3 blackbody(float value){\n"
+        "  float k=value>100.0?value:1000.0+5500.0*max(value,0.0);\n"
+        "  float t=clamp(k/100.0,10.0,400.0);\n"
+        "  float r=t<=66.0?1.0:1.2929362*pow(t-60.0,-0.13320476);\n"
+        "  float g=t<=66.0?0.39008158*log(t)-0.63184144:1.1298909*pow(t-60.0,-0.07551485);\n"
+        "  float b=t>=66.0?1.0:(t<=19.0?0.0:0.5432068*log(t-10.0)-1.1962541);\n"
+        "  return clamp(vec3(r,g,b),0.0,1.0);\n"
+        "}\n"
         "bool rayAABB(vec3 o, vec3 d, vec3 lo, vec3 hi, out float t0, out float t1){\n"
         "  vec3 inv = 1.0/d;\n"
         "  vec3 ta=(lo-o)*inv, tb=(hi-o)*inv;\n"
@@ -945,7 +955,11 @@ void main() {
         "    float dens=(texture(uDensity,uvw).r - uBackground)*uDensityScale;\n"
         "    if(dens>0.0){\n"
         "      float a=1.0-exp(-dens*step);\n"
-        "      vec3 src=uAlbedo*a + uEmission*(dens*step);\n"
+        "      float ew=uHasEmissionField?max(texture(uEmissionField,uvw).r,0.0):dens;\n"
+        "      vec3 ec=uEmission;\n"
+        "      if(uHasTemperatureField){ float temp=max(texture(uTemperatureField,uvw).r,0.0);\n"
+        "        vec3 tint=blackbody(temp); ec=dot(ec,vec3(1.0))>0.0?ec*tint:tint; ew=max(ew,temp); }\n"
+        "      vec3 src=uAlbedo*a + ec*(ew*step);\n"
         "      L+=T*src; T*=(1.0-a);\n"
         "      if(T<0.003) break;\n"
         "    }\n"
@@ -964,6 +978,10 @@ void main() {
       uVolBmin_ = glGetUniformLocation(volumeProgram_, "uBmin");
       uVolBmax_ = glGetUniformLocation(volumeProgram_, "uBmax");
       uVolDensity_ = glGetUniformLocation(volumeProgram_, "uDensity");
+      uVolEmissionField_ = glGetUniformLocation(volumeProgram_, "uEmissionField");
+      uVolTemperatureField_ = glGetUniformLocation(volumeProgram_, "uTemperatureField");
+      uVolHasEmissionField_ = glGetUniformLocation(volumeProgram_, "uHasEmissionField");
+      uVolHasTemperatureField_ = glGetUniformLocation(volumeProgram_, "uHasTemperatureField");
       uVolDensityScale_ = glGetUniformLocation(volumeProgram_, "uDensityScale");
       uVolAlbedo_ = glGetUniformLocation(volumeProgram_, "uAlbedo");
       uVolEmission_ = glGetUniformLocation(volumeProgram_, "uEmission");
@@ -1412,6 +1430,8 @@ void GLRenderer::destroyScene() {
   nonMeshBatches_.clear();
   for (GLVolume& gv : volumes_) {
     if (gv.tex3d) glDeleteTextures(1, &gv.tex3d);
+    if (gv.emissionTex3d) glDeleteTextures(1, &gv.emissionTex3d);
+    if (gv.temperatureTex3d) glDeleteTextures(1, &gv.temperatureTex3d);
   }
   volumes_.clear();
   for (GLTexture& tex : textures_) {
@@ -3570,6 +3590,22 @@ void GLRenderer::appendVolume(const DrawVolumeCPU& v) {
                GL_RED, GL_FLOAT, v.density.data());
   glBindTexture(GL_TEXTURE_3D, 0);
 
+  auto uploadAux = [&](const std::vector<float>& field, GLuint* tex) {
+    if (field.size() != v.density.size()) return;
+    glGenTextures(1, tex);
+    glBindTexture(GL_TEXTURE_3D, *tex);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, v.dim[0], v.dim[1], v.dim[2], 0,
+                 GL_RED, GL_FLOAT, field.data());
+  };
+  uploadAux(v.emissionField, &gv.emissionTex3d);
+  uploadAux(v.temperatureField, &gv.temperatureTex3d);
+  glBindTexture(GL_TEXTURE_3D, 0);
+
   volumes_.push_back(gv);
 }
 
@@ -3944,6 +3980,8 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glUniform3fv(uVolCameraPos_, 1, params.cameraPos);
     glActiveTexture(GL_TEXTURE0);
     glUniform1i(uVolDensity_, 0);
+    glUniform1i(uVolEmissionField_, 1);
+    glUniform1i(uVolTemperatureField_, 2);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);  // premultiplied "over"
@@ -3963,6 +4001,13 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
       glUniform3fv(uVolAlbedo_, 1, gv.albedo);
       glUniform3fv(uVolEmission_, 1, gv.emission);
       glUniform1f(uVolBackground_, gv.background);
+      glUniform1i(uVolHasEmissionField_, gv.emissionTex3d != 0);
+      glUniform1i(uVolHasTemperatureField_, gv.temperatureTex3d != 0);
+      glActiveTexture(GL_TEXTURE1);
+      glBindTexture(GL_TEXTURE_3D, gv.emissionTex3d);
+      glActiveTexture(GL_TEXTURE2);
+      glBindTexture(GL_TEXTURE_3D, gv.temperatureTex3d);
+      glActiveTexture(GL_TEXTURE0);
       glBindTexture(GL_TEXTURE_3D, gv.tex3d);
       glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
     }
@@ -4184,6 +4229,8 @@ void GLRenderer::shutdown() {
   if (lineVao_) { glDeleteVertexArrays(1, &lineVao_); lineVao_ = 0; }
   for (GLVolume& gv : volumes_) {
     if (gv.tex3d) glDeleteTextures(1, &gv.tex3d);
+    if (gv.emissionTex3d) glDeleteTextures(1, &gv.emissionTex3d);
+    if (gv.temperatureTex3d) glDeleteTextures(1, &gv.temperatureTex3d);
   }
   volumes_.clear();
   if (volumeProgram_) { glDeleteProgram(volumeProgram_); volumeProgram_ = 0; }

@@ -212,6 +212,7 @@ bool ReadCrateArrayCount(StreamReader& r, CrateVersion version,
 bool CrateArrayTypeCanBeLazy(CrateTypeId id, bool compressed) {
   (void)compressed;
   switch (id) {
+    case CrateTypeId::UChar:
     case CrateTypeId::Int:
     case CrateTypeId::UInt:
       return true;
@@ -233,14 +234,15 @@ bool CrateArrayTypeCanBeLazy(CrateTypeId id, bool compressed) {
     case CrateTypeId::Int64:
     case CrateTypeId::UInt64:
     case CrateTypeId::Bool:
+    case CrateTypeId::TimeCode:
       return true;
-    // Quat arrays need a per-element component swizzle (disk is
-    // imaginary-first, internal is real-first). DecodeCrateArray now applies
-    // it on materialize, but they are conservatively kept eager.
     case CrateTypeId::Quatf:
     case CrateTypeId::Quatd:
     case CrateTypeId::Quath:
-      return false;
+      // These remain deferred, but cannot be exposed as a direct flat view:
+      // crate stores imaginary-first while Value uses real-first. Deferred
+      // materialization performs the required per-element swizzle.
+      return true;
     default:
       return false;
   }
@@ -251,6 +253,7 @@ TypeId CrateArrayValueType(CrateTypeId id) {
     case CrateTypeId::Bool:
       return TypeId::Bool;
     case CrateTypeId::UChar:
+      return TypeId::UChar;
     case CrateTypeId::UInt:
       return TypeId::UInt;
     case CrateTypeId::Int:
@@ -668,6 +671,17 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       *out = Value::MakeUIntArray(std::move(data));
       return true;
     }
+    case CrateTypeId::UChar: {
+      // uchar[] is stored tightly packed on disk but uses the shared uint32
+      // array storage in Value. Keep the authored UChar identity while
+      // widening each lane on materialization.
+      if (compressed) return false;
+      std::vector<uint8_t> raw8(static_cast<size_t>(count));
+      if (!read_raw(raw8.data(), sizeof(uint8_t))) return false;
+      std::vector<uint32_t> data(raw8.begin(), raw8.end());
+      *out = Value::MakeUIntCompArray(std::move(data), TypeId::UChar, 1);
+      return true;
+    }
     case CrateTypeId::UInt64: {
       std::vector<uint64_t> data(static_cast<size_t>(count));
       if (compressed) {
@@ -692,6 +706,19 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       std::vector<bool> out_bool(static_cast<size_t>(count));
       for (size_t i = 0; i < count; i++) out_bool[i] = (bytes[i] != 0);
       *out = Value::MakeBoolArray(out_bool);
+      return true;
+    }
+    case CrateTypeId::TimeCode: {
+      std::vector<double> data(static_cast<size_t>(count));
+      if (compressed) {
+        if (!read_compressed_floating_n(data.data(),
+                                        static_cast<size_t>(count))) {
+          return false;
+        }
+      } else if (!read_raw(data.data(), sizeof(double))) {
+        return false;
+      }
+      *out = Value::MakeDoubleCompArray(std::move(data), TypeId::TimeCode, 1);
       return true;
     }
     case CrateTypeId::Token: {

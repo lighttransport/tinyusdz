@@ -26,6 +26,20 @@ bool IsFloat4Like(TypeId type) {
          type == TypeId::Color4h || type == TypeId::Color4f;
 }
 
+bool IsHalfLike(TypeId type) {
+  return type == TypeId::Half || type == TypeId::Half2 ||
+         type == TypeId::Half3 || type == TypeId::Half4 ||
+         type == TypeId::Point3h || type == TypeId::Vector3h ||
+         type == TypeId::Normal3h || type == TypeId::Color3h ||
+         type == TypeId::Color4h || type == TypeId::Texcoord2h ||
+         type == TypeId::Texcoord3h || type == TypeId::Quath;
+}
+
+void QuantizeHalfValues(std::vector<float>* values) {
+  if (!values) return;
+  for (float& value : *values) value = HalfToFloat(FloatToHalf(value));
+}
+
 bool IsDouble2Like(TypeId type) {
   return type == TypeId::Double2 || type == TypeId::Texcoord2d;
 }
@@ -941,6 +955,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
                                              &values, parse_float)) {
       return ParseResult::Error("Failed to parse half array");
     }
+    QuantizeHalfValues(&values);
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 1));
   }
   if (element_type == TypeId::TimeCode) {
@@ -1150,6 +1165,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
                                                &values, parse_float)) {
       return ParseResult::Error("Failed to parse float2 array");
     }
+    if (IsHalfLike(element_type)) QuantizeHalfValues(&values);
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 2));
   }
   if (IsFloat3Like(element_type)) {
@@ -1158,6 +1174,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
                                                &values, parse_float)) {
       return ParseResult::Error("Failed to parse float3 array");
     }
+    if (IsHalfLike(element_type)) QuantizeHalfValues(&values);
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 3));
   }
   if (IsFloat4Like(element_type)) {
@@ -1166,6 +1183,7 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
                                                &values, parse_float)) {
       return ParseResult::Error("Failed to parse float4 array");
     }
+    if (IsHalfLike(element_type)) QuantizeHalfValues(&values);
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 4));
   }
   if (IsDouble2Like(element_type)) {

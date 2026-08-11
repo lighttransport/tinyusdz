@@ -280,7 +280,8 @@ class RenderSceneConverter {
   bool ConvertRenderableMesh(const Stage& stage, const UsdPrim& prim,
                              RenderMesh* out);
   bool ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out);
-  bool ConvertPoints(const UsdPrim& prim, RenderPoints* out);
+  bool ConvertPoints(const Stage& stage, const UsdPrim& prim,
+                     RenderPoints* out);
   bool ConvertCurves(const UsdPrim& prim, RenderCurves* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
@@ -288,7 +289,8 @@ class RenderSceneConverter {
                        const UsdPrim& prim, RenderMaterial* out,
                        RenderScene* scene);
   bool ConvertLight(const UsdPrim& prim, RenderLight* out);
-  bool ConvertCamera(const UsdPrim& prim, RenderCamera* out);
+  bool ConvertCamera(const ::tinyusdz::next::Stage& stage,
+                     const UsdPrim& prim, RenderCamera* out);
   bool ConvertSkeleton(const UsdPrim& prim, Skeleton* out);
   bool ConvertAnimation(const ::tinyusdz::next::Stage& stage,
                         const UsdPrim& prim, AnimationClip* out);

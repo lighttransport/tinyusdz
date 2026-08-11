@@ -7,6 +7,9 @@
 
 #include "tydra/render-data-shader.hh"
 #include "tydra/render-data.hh"
+extern "C" {
+#include "external/lightrt/mtlxrender/bsdf.h"
+}
 
 namespace {
 
@@ -57,6 +60,72 @@ int AddTexture(tydra::RenderScene* scene, int imageId,
 }  // namespace
 
 int main() {
+  // Subsurface is a normalized-diffusion response, not merely a color tint:
+  // zero radius stays Lambertian while a finite radius broadens grazing light.
+  {
+    OpenPBRParams p{};
+    p.base_weight = 1.0f;
+    p.base_color = v3_make(0.8f, 0.6f, 0.4f);
+    p.specular_weight = 0.0f;
+    p.specular_ior = 1.5f;
+    p.specular_roughness = 0.5f;
+    p.subsurface = 1.0f;
+    p.subsurface_color = p.base_color;
+    p.subsurface_radius = v3_splat(0.0f);
+    p.subsurface_scale = 1.0f;
+    p.sheen_color = v3_splat(1.0f);
+    p.coat_color = v3_splat(1.0f);
+    const v3 n = v3_make(0.0f, 0.0f, 1.0f);
+    const v3 wo = v3_normalize(v3_make(0.8f, 0.0f, 0.6f));
+    const v3 wi = v3_normalize(v3_make(-0.8f, 0.0f, 0.6f));
+    float pdf0 = 0.0f, pdf1 = 0.0f;
+    const v3 zero_radius = bsdf_eval(&p, n, wo, wi, &pdf0);
+    p.subsurface_radius = v3_splat(2.0f);
+    const v3 finite_radius = bsdf_eval(&p, n, wo, wi, &pdf1);
+    if (!(pdf0 > 0.0f && pdf1 > 0.0f) ||
+        std::fabs(finite_radius.x - zero_radius.x) < 1.0e-4f) {
+      std::fprintf(stderr,
+                   "subsurface radius did not alter normalized diffusion\n");
+      return 1;
+    }
+
+    p.subsurface = 0.0f;
+    p.sheen_weight = 0.0f;
+    const v3 wi_fuzz = wo;
+    const v3 plain = bsdf_eval(&p, n, wo, wi_fuzz, &pdf0);
+    p.sheen_weight = 0.8f;
+    p.sheen_roughness = 0.35f;
+    const v3 fuzz = bsdf_eval(&p, n, wo, wi_fuzz, &pdf1);
+    if (fuzz.x <= plain.x) {
+      std::fprintf(stderr, "Charlie fuzz lobe did not add grazing response\n");
+      return 1;
+    }
+
+    p.sheen_weight = 0.0f;
+    p.specular_weight = 1.0f;
+    p.thin_film_weight = 0.0f;
+    const v3 uncoated = bsdf_eval(&p, n, wo, wi_fuzz, &pdf0);
+    p.thin_film_weight = 1.0f;
+    p.thin_film_thickness = 450.0f;
+    p.thin_film_ior = 1.4f;
+    const v3 film = bsdf_eval(&p, n, wo, wi_fuzz, &pdf1);
+    const float film_delta = std::fabs(film.x - uncoated.x) +
+                             std::fabs(film.y - uncoated.y) +
+                             std::fabs(film.z - uncoated.z);
+    if (film_delta < 1.0e-4f) {
+      std::fprintf(stderr, "thin-film interference did not alter Fresnel\n");
+      return 1;
+    }
+
+    p.transmission_color = v3_make(0.25f, 0.5f, 1.0f);
+    p.transmission_depth = 2.0f;
+    const VolumeMedium medium = transmission_medium(&p);
+    if (!(medium.sigma_t.x > medium.sigma_t.y &&
+          medium.sigma_t.y > medium.sigma_t.z && medium.sigma_t.z == 0.0f)) {
+      std::fprintf(stderr, "transmission medium extinction is incorrect\n");
+      return 1;
+    }
+  }
   tydra::RenderScene scene;
 
   const int baseImage = AddImage(&scene, tydra::ColorSpace::sRGB_Texture);

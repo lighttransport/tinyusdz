@@ -13,7 +13,11 @@ add_sanitizers(${TUSDDIFF_TARGET})
 target_include_directories(${TUSDDIFF_TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR})
-target_link_libraries(${TUSDDIFF_TARGET} ${TINYUSDZ_TARGET_STATIC})
+if(NOT TARGET tinyusdz_next)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
+                   ${CMAKE_BINARY_DIR}/tusddiff_next_build)
+endif()
+target_link_libraries(${TUSDDIFF_TARGET} ${TINYUSDZ_TARGET_STATIC} tinyusdz_next)
 
 # Warning flags (same policy as the core library)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -38,3 +42,14 @@ endif()
 set_source_files_properties(tusddiff.cc PROPERTIES COMPILE_FLAGS "${TUSDDIFF_CXX_FLAGS}")
 
 set_target_properties(${TUSDDIFF_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+if(TINYUSDZ_BUILD_TESTS)
+  add_test(NAME tusddiff_flatten_composed
+    COMMAND tusddiff --flatten
+            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/composed.usda
+            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/flattened.usda)
+  add_test(NAME tusddiff_openusd_cli_aliases
+    COMMAND tusddiff -n -q -f
+            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/composed.usda
+            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/flattened.usda)
+endif()

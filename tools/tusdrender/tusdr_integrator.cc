@@ -1093,7 +1093,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
                *openpbr_mats,
            bool indirect,
-           const std::vector<TriangleSceneChunk> *triangle_chunks) {
+           const std::vector<TriangleSceneChunk> *triangle_chunks,
+           float *primary_hit_t) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -1296,6 +1297,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   }();
   const bool gathered_directly = indirect && !kDoubleCount;
   if (!tri_hit && !direct_hit.hit) {
+    if (primary_hit_t) *primary_hit_t = camera.zfar;
     // An escaping BSDF bounce must not bring the ENVIRONMENT back with it: the
     // surface that spawned it already integrated the dome over this very lobe
     // (the split-sum IBL term, or the flat dome term), so returning it here
@@ -1320,6 +1322,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     tri = hit_tri;
     tri_openpbr = hit_openpbr;
   }
+  if (primary_hit_t) *primary_hit_t = hit_t;
   // Occlusion against whichever acceleration structure is active.
   auto occluded = [&](const Vec3 &op, const Vec3 &on, const Vec3 &ol,
                       float omax) -> bool {
@@ -1492,10 +1495,23 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     bounce_camera.znear = eps;
     RayDiff bounce_rd;
     bounce_rd.valid = false;
+    float bounce_hit_t = bounce_camera.zfar;
     Vec3 bounce = Shade(scene, direct, tris, mats, lights, ibl, bounce_camera,
                         opt, bounce_org, wi, textures, tri_uvs, tlas, blas,
                         instances, bounce_rd, depth + 1, tri_colors,
-                        tri_normals, openpbr_mats, /*indirect=*/true);
+                        tri_normals, openpbr_mats, /*indirect=*/true,
+                        triangle_chunks, &bounce_hit_t);
+    // OpenPBR transmission_depth defines a homogeneous interior medium. Apply
+    // Beer-Lambert extinction over the actual continuation-ray distance instead
+    // of tinting only at the interface; this makes thick glass absorb more than
+    // thin glass and keeps transmission_color physically meaningful.
+    if (sample.transmission && sample.crossed &&
+        bounce_hit_t < bounce_camera.zfar) {
+      const VolumeMedium medium = transmission_medium(&params);
+      bounce.x *= std::exp(-medium.sigma_t.x * bounce_hit_t);
+      bounce.y *= std::exp(-medium.sigma_t.y * bounce_hit_t);
+      bounce.z *= std::exp(-medium.sigma_t.z * bounce_hit_t);
+    }
     Vec3 out = FiniteColor(bounce) ? Mul(bounce, throughput)
                                    : Vec3{0.0f, 0.0f, 0.0f};
 
@@ -1510,7 +1526,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       Vec3 L{0.0f, 0.0f, 0.0f};
       const float pdf_l = light_pdf_along(light, wi, &hit_dist, &L);
       if (pdf_l <= 0.0f) continue;
-      if (opt.shadows &&
+      if (opt.shadows && light.shadow_enable &&
           occluded(p, n, wi, std::max(0.0f, hit_dist - 1.0e-3f))) {
         continue;
       }
@@ -1552,7 +1568,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     if (!ok) return;
     const float ndotl = Dot(n, ls.wi);
     if (ndotl <= 0.0f || ls.pdf <= 0.0f) return;
-    if (opt.shadows &&
+    if (opt.shadows && light.shadow_enable &&
         occluded(p, n, ls.wi, std::max(0.0f, ls.dist - 1.0e-3f))) {
       return;
     }
@@ -1601,7 +1617,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       radiance = Mul(radiance, 1.0f / std::max(1.0e-4f, dist * dist));
     }
     if (Dot(n, l) <= 0.0f) return;
-    if (opt.shadows && occluded(p, n, l, max_t)) {
+    if (opt.shadows && light.shadow_enable && occluded(p, n, l, max_t)) {
       return;
     }
     c = Add(c, EvalMaterialDirect(tri, n, view, l, radiance, opt,
@@ -1705,29 +1721,58 @@ std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
                        v.emission_color[1] * v.emission_scale,
                        v.emission_color[2] * v.emission_scale};
     vd.background = f.background;
+
+    for (const auto &aux : v.fields) {
+      if (aux.buffer_id < 0 ||
+          size_t(aux.buffer_id) >= scene.buffers.size()) continue;
+      const auto &abuf = scene.buffers[size_t(aux.buffer_id)];
+      const size_t an = size_t(aux.dim[0]) * size_t(aux.dim[1]) *
+                        size_t(aux.dim[2]);
+      if (an == 0 || abuf.data.size() < an * sizeof(float)) continue;
+      VolumeScalarField *dst_field = nullptr;
+      if (aux.field_name == "temperature") {
+        dst_field = &vd.temperature_field;
+      } else if (aux.field_name == "emission" || aux.field_name == "flame" ||
+                 aux.field_name == "heat") {
+        dst_field = &vd.emission_field;
+      }
+      if (dst_field) {
+        dst_field->data.resize(an);
+        std::memcpy(dst_field->data.data(), abuf.data.data(), an * sizeof(float));
+        for (int a = 0; a < 3; ++a) {
+          dst_field->dim[a] = aux.dim[a];
+        }
+        dst_field->bmin = {aux.bounds_min[0], aux.bounds_min[1], aux.bounds_min[2]};
+        dst_field->bmax = {aux.bounds_max[0], aux.bounds_max[1], aux.bounds_max[2]};
+        dst_field->background = aux.background;
+      }
+    }
     out.push_back(std::move(vd));
   }
   return out;
 }
 
-// Trilinear density sample at an object-space point.
-static float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
-  const float ex = vd.bmax.x - vd.bmin.x;
-  const float ey = vd.bmax.y - vd.bmin.y;
-  const float ez = vd.bmax.z - vd.bmin.z;
+// Trilinear scalar-field sample at an object-space point. Auxiliary fields
+// deliberately use the density lattice (validated while building VolumeData).
+static float SampleVolumeField(const std::vector<float> &field,
+                               const int dim[3], const Vec3 &bmin,
+                               const Vec3 &bmax, const Vec3 &p) {
+  const float ex = bmax.x - bmin.x;
+  const float ey = bmax.y - bmin.y;
+  const float ez = bmax.z - bmin.z;
   if (ex <= 0.0f || ey <= 0.0f || ez <= 0.0f) return 0.0f;
   // fractional voxel index, voxel-center convention.
-  float gx = (p.x - vd.bmin.x) / ex * float(vd.dim[0]) - 0.5f;
-  float gy = (p.y - vd.bmin.y) / ey * float(vd.dim[1]) - 0.5f;
-  float gz = (p.z - vd.bmin.z) / ez * float(vd.dim[2]) - 0.5f;
+  float gx = (p.x - bmin.x) / ex * float(dim[0]) - 0.5f;
+  float gy = (p.y - bmin.y) / ey * float(dim[1]) - 0.5f;
+  float gz = (p.z - bmin.z) / ez * float(dim[2]) - 0.5f;
   int x0 = int(std::floor(gx)), y0 = int(std::floor(gy)), z0 = int(std::floor(gz));
   float fx = gx - float(x0), fy = gy - float(y0), fz = gz - float(z0);
   auto fetch = [&](int x, int y, int z) -> float {
-    if (x < 0) x = 0; else if (x >= vd.dim[0]) x = vd.dim[0] - 1;
-    if (y < 0) y = 0; else if (y >= vd.dim[1]) y = vd.dim[1] - 1;
-    if (z < 0) z = 0; else if (z >= vd.dim[2]) z = vd.dim[2] - 1;
-    return vd.density[size_t(x) + size_t(vd.dim[0]) *
-                                      (size_t(y) + size_t(vd.dim[1]) * size_t(z))];
+    if (x < 0) x = 0; else if (x >= dim[0]) x = dim[0] - 1;
+    if (y < 0) y = 0; else if (y >= dim[1]) y = dim[1] - 1;
+    if (z < 0) z = 0; else if (z >= dim[2]) z = dim[2] - 1;
+    return field[size_t(x) + size_t(dim[0]) *
+                                  (size_t(y) + size_t(dim[1]) * size_t(z))];
   };
   float c00 = fetch(x0, y0, z0) * (1 - fx) + fetch(x0 + 1, y0, z0) * fx;
   float c10 = fetch(x0, y0 + 1, z0) * (1 - fx) + fetch(x0 + 1, y0 + 1, z0) * fx;
@@ -1736,6 +1781,31 @@ static float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
   float c0 = c00 * (1 - fy) + c10 * fy;
   float c1 = c01 * (1 - fy) + c11 * fy;
   return c0 * (1 - fz) + c1 * fz;
+}
+
+static float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
+  return SampleVolumeField(vd.density, vd.dim, vd.bmin, vd.bmax, p);
+}
+
+// Fast blackbody approximation in linear-ish RGB. VDB fire fields are often
+// normalized rather than Kelvin, so map [0,1] to a useful 1000..6500 K range.
+static Vec3 VolumeTemperatureColor(float temperature) {
+  float kelvin = temperature > 100.0f
+                     ? temperature
+                     : 1000.0f + 5500.0f * std::max(0.0f, temperature);
+  float t = std::max(10.0f, std::min(400.0f, kelvin / 100.0f));
+  float r = t <= 66.0f ? 1.0f
+                       : 1.2929362f * std::pow(t - 60.0f, -0.13320476f);
+  float g = t <= 66.0f
+                ? 0.39008158f * std::log(t) - 0.63184144f
+                : 1.1298909f * std::pow(t - 60.0f, -0.07551485f);
+  float b = t >= 66.0f ? 1.0f
+                       : (t <= 19.0f ? 0.0f
+                                     : 0.5432068f * std::log(t - 10.0f) -
+                                           1.1962541f);
+  return Vec3{std::max(0.0f, std::min(1.0f, r)),
+              std::max(0.0f, std::min(1.0f, g)),
+              std::max(0.0f, std::min(1.0f, b))};
 }
 
 // Slab ray/AABB intersection. Returns the [t0,t1] overlap (t in `o`/`d` units).
@@ -1797,7 +1867,31 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
       float dens = (SampleVolumeDensity(vd, p) - vd.background) * vd.density_scale;
       if (dens > 1.0e-5f) {
         float a = 1.0f - std::exp(-dens * step);
-        Vec3 src = Add(Mul(vd.albedo, a), Mul(vd.emission, dens * step));
+        Vec3 emit = vd.emission;
+        float emit_weight = dens;
+        if (!vd.emission_field.data.empty()) {
+          emit_weight = std::max(0.0f,
+              SampleVolumeField(vd.emission_field.data, vd.emission_field.dim,
+                                vd.emission_field.bmin, vd.emission_field.bmax, p) -
+                  vd.emission_field.background);
+        }
+        if (!vd.temperature_field.data.empty()) {
+          const float temperature = std::max(0.0f,
+              SampleVolumeField(vd.temperature_field.data,
+                                vd.temperature_field.dim,
+                                vd.temperature_field.bmin,
+                                vd.temperature_field.bmax, p) -
+                  vd.temperature_field.background);
+          const Vec3 tint = VolumeTemperatureColor(temperature);
+          // A temperature field is useful even when no explicit volume
+          // material was authored: use it as physically motivated emission.
+          emit = (emit.x + emit.y + emit.z) > 0.0f
+                     ? Vec3{emit.x * tint.x, emit.y * tint.y, emit.z * tint.z}
+                     : tint;
+          emit_weight = std::max(emit_weight, temperature);
+        }
+        Vec3 src = Add(Mul(vd.albedo, a),
+                       Mul(emit, emit_weight * vd.emission_scale * step));
         L = Add(L, Mul(src, T));
         T *= (1.0f - a);
         if (T < 0.003f) break;
@@ -1808,6 +1902,42 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
   }
   return result;
 }
+
+namespace {
+bool SampleBackPlate(const BackPlateImage &plate, float u, float v,
+                     Vec3 *color, float *alpha, float *depth) {
+  const float angle = plate.rotate_degrees * (3.14159265358979323846f / 180.0f);
+  const float cs = std::cos(angle), sn = std::sin(angle);
+  float x = u - 0.5f - plate.translate_x;
+  float y = v - 0.5f - plate.translate_y;
+  const float rx = cs * x + sn * y;
+  const float ry = -sn * x + cs * y;
+  u = rx / std::max(std::fabs(plate.scale_x), 1.0e-8f) + 0.5f;
+  v = ry / std::max(std::fabs(plate.scale_y), 1.0e-8f) + 0.5f;
+  if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) return false;
+  const int ix = std::min(plate.width - 1,
+                          std::max(0, int(u * float(plate.width))));
+  const int iy = std::min(plate.height - 1,
+                          std::max(0, int(v * float(plate.height))));
+  const size_t index = size_t(iy) * size_t(plate.width) + size_t(ix);
+  Vec3 c = plate.color[index];
+  auto grade = [](float value, float gain, float lift, float gamma) {
+    value = std::max(0.0f, value * gain + lift);
+    return std::pow(value, 1.0f / std::max(gamma, 1.0e-6f));
+  };
+  c.x = grade(c.x, plate.gain.x, plate.lift.x, plate.gamma.x);
+  c.y = grade(c.y, plate.gain.y, plate.lift.y, plate.gamma.y);
+  c.z = grade(c.z, plate.gain.z, plate.lift.z, plate.gamma.z);
+  *color = c;
+  *alpha = plate.alpha.empty() ? 1.0f
+                               : ClampFloat(plate.alpha[index], 0.0f, 1.0f);
+  *depth = plate.depth.empty()
+               ? std::numeric_limits<float>::infinity()
+               : plate.depth[index] * plate.depth_normalizing_factor +
+                     plate.depth_min_offset + plate.depth_camera_space_offset;
+  return true;
+}
+}  // namespace
 
 tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<FlatTri> &tris,
@@ -1825,7 +1955,8 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<VolumeData> *volumes,
                             const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
                                 *openpbr_mats,
-                            const std::vector<TriangleSceneChunk> *triangle_chunks) {
+                            const std::vector<TriangleSceneChunk> *triangle_chunks,
+                            const std::vector<BackPlateImage> *backplates) {
   tinyusdz::Image img;
   img.width = opt.width;
   img.height = height;
@@ -1863,10 +1994,30 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
                   &rd.dy);
           rd.valid = true;
+          float primary_hit_t = camera.zfar;
           Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, camera, opt,
                             org, dir, textures, tri_uvs, tlas, blas, instances,
                             rd, 0, tri_colors, tri_normals, openpbr_mats,
-                            false, triangle_chunks);
+                            false, triangle_chunks, &primary_hit_t);
+          if (backplates) {
+            for (const BackPlateImage &backplate : *backplates) {
+              if (!backplate.valid()) continue;
+              Vec3 plate_color;
+              float plate_alpha = 0.0f;
+              float plate_depth = 0.0f;
+              if (SampleBackPlate(backplate, fx, fy, &plate_color, &plate_alpha,
+                                  &plate_depth)) {
+                const bool no_surface = primary_hit_t >= camera.zfar;
+                const bool plate_in_front = !backplate.depth.empty() &&
+                                            plate_depth > 0.0f &&
+                                            plate_depth < primary_hit_t;
+                if (no_surface || plate_in_front) {
+                  surf = Add(Mul(plate_color, plate_alpha),
+                             Mul(surf, 1.0f - plate_alpha));
+                }
+              }
+            }
+          }
           if (volumes && !volumes->empty()) {
             surf = CompositeVolumes(*volumes, org, dir, surf);
           }

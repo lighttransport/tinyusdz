@@ -11,11 +11,17 @@
 #include "next/schema/physics-joint.hh"
 #include "next/schema/physics-collision.hh"
 #include "next/schema/schema-registry.hh"
+#include "next/schema/usd-shade.hh"
+#include "next/schema/usd-geom-model.hh"
 #include "next/prim/path.hh"
+#include "next/types/value-view.hh"
 #include <cstdio>
+#include <cstring>
 #include <cassert>
 #include <string>
 #include <vector>
+#include <fstream>
+#include <iterator>
 
 using namespace tinyusdz::next;
 
@@ -25,6 +31,106 @@ static int pass_count = 0;
 #define TEST(name) do { printf("  %s ... ", name); test_count++; } while(0)
 #define PASS() do { pass_count++; printf("PASS\n"); } while(0)
 #define FAIL(msg) do { printf("FAIL: %s\n", msg); } while(0)
+
+static void test_connected_shader_constant() {
+  TEST("connected MaterialX constant shader value");
+  const char* text = R"USD(#usda 1.0
+def Material "Mat" {
+  token outputs:volume.connect = </Mat/Volume.outputs:volume>
+  def Shader "Color" {
+    uniform token info:id = "ND_constant_color3"
+    color3f inputs:value = (0.2, 0.4, 0.8)
+    color3f outputs:out
+  }
+  def Shader "Scale" {
+    uniform token info:id = "ND_constant_float"
+    float inputs:value = 0.5
+    float outputs:out
+  }
+  def Shader "Multiply" {
+    uniform token info:id = "ND_multiply_color3FA"
+    color3f inputs:in1.connect = </Mat/Color.outputs:out>
+    float inputs:in2.connect = </Mat/Scale.outputs:out>
+    color3f outputs:out
+  }
+  def Shader "Volume" {
+    uniform token info:id = "ND_standard_volume_volume"
+    color3f inputs:emission_color.connect = </Mat/Multiply.outputs:out>
+    token outputs:volume
+  }
+}
+)USD";
+  Stage stage;
+  std::string warn, err;
+  if (!LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(text),
+                         std::strlen(text), &stage, &warn, &err)) {
+    FAIL(err.c_str());
+    return;
+  }
+  const UsdPrim shader = stage.GetPrimAtPath("/Mat/Volume");
+  Value value;
+  if (!ResolveShaderPortValue(stage, shader, "inputs:emission_color", &value)) {
+    FAIL("connection did not resolve");
+    return;
+  }
+  const float* color = value.as_float3();
+  if (!color || color[0] != 0.1f || color[1] != 0.2f || color[2] != 0.4f) {
+    FAIL("resolved constant has wrong value");
+    return;
+  }
+  PASS();
+}
+
+static void test_generated_supported_schema_fixture() {
+  TEST("generated OpenUSD supported-schema USDA/USDC coverage");
+  const char* paths[] = {
+      "../../tests/usda/generated/openusd-supported-schema-26.08.usda",
+      "tests/usda/generated/openusd-supported-schema-26.08.usda",
+      "../../../tests/usda/generated/openusd-supported-schema-26.08.usda",
+      TINYUSDZ_TEST_REPO_ROOT
+          "/tests/usda/generated/openusd-supported-schema-26.08.usda"};
+  std::string text;
+  for (const char* path : paths) {
+    std::ifstream stream(path);
+    if (!stream.good()) continue;
+    text.assign(std::istreambuf_iterator<char>(stream),
+                std::istreambuf_iterator<char>());
+    break;
+  }
+  if (text.empty()) { FAIL("fixture not found"); return; }
+  LoadResult loaded = LoadUSDAFromString(text.data(), text.size());
+  if (!loaded.success) { FAIL("USDA fixture did not parse"); return; }
+  size_t prim_count = 0;
+  bool markers_ok = true;
+  loaded.stage.Traverse([&](const UsdPrim& prim) {
+    ++prim_count;
+    const Value* marker = prim.GetPropertyValue("parity:schema");
+    markers_ok = markers_ok && marker && marker->as_string() &&
+                 !marker->as_string()->empty() &&
+                 GetSchemaRegistry().IsKnownSchema(*marker->as_string());
+    return true;
+  });
+  if (prim_count != 92 || !markers_ok) {
+    FAIL("fixture schema markers/count mismatch"); return;
+  }
+  std::vector<uint8_t> crate;
+  USDCWriteResult written = WriteUSDCToMemory(crate, loaded.stage);
+  if (!written.success) { FAIL("fixture did not write to USDC"); return; }
+  USDCLoadResult reread = LoadUSDCFromMemory(crate.data(), crate.size());
+  if (!reread.success) { FAIL("fixture USDC did not reload"); return; }
+  size_t reread_count = 0;
+  bool reread_markers = true;
+  reread.stage.Traverse([&](const UsdPrim& prim) {
+    ++reread_count;
+    const Value* marker = prim.GetPropertyValue("parity:schema");
+    reread_markers = reread_markers && marker && marker->as_string();
+    return true;
+  });
+  if (reread_count != 92 || !reread_markers) {
+    FAIL("USDC schema coverage roundtrip lost authored data"); return;
+  }
+  PASS();
+}
 
 // ============================================================
 // Test stage builders
@@ -577,8 +683,57 @@ static void test_domain_schema_breadth() {
   layer.begin_prim("Vol", "Volume");
   layer.end_prim();
   layer.begin_prim("Rs", "RenderSettings");
+  layer.add_property("resolution", Value::MakeInt2(1280, 720));
+  layer.add_property("disableMotionBlur", Value(true));
+  layer.add_relationship("products", Path("/Rp"));
+  layer.end_prim();
+  layer.begin_prim("Rp", "RenderProduct");
+  layer.add_property("productType", Value::MakeToken("raster"));
+  layer.add_relationship("orderedVars", Path("/Rv"));
   layer.end_prim();
   layer.begin_prim("Rv", "RenderVar");
+  layer.add_property("sourceName", Value(std::string("depth")));
+  layer.end_prim();
+  layer.begin_prim("Pass", "RenderPass");
+  layer.add_relationship("renderSource", Path("/Rs"));
+  layer.add_relationship("collection:renderVisibility:includes", Path("/Keep"));
+  layer.add_relationship("collection:renderVisibility:excludes", Path("/Drop"));
+  layer.add_property("collection:renderVisibility:includeRoot", Value(false));
+  layer.add_relationship("collection:cameraVisibility:includes", Path("/Camera"));
+  layer.add_relationship("collection:cameraVisibility:excludes", Path("/HiddenCamera"));
+  layer.add_property("collection:cameraVisibility:includeRoot", Value(false));
+  layer.end_prim();
+  layer.begin_prim("Splat", "ParticleField3DGaussianSplat");
+  layer.add_property("positions", Value::MakeFloatCompArray(
+      {0, 0, 0, 1, 0, 0}, TypeId::Point3f, 3));
+  layer.add_property("scales", Value::MakeFloat3Array({1, 1, 1, 2, 2, 2}));
+  layer.end_prim();
+  layer.begin_prim("SplatHalf", "ParticleField3DGaussianSplat");
+  layer.add_property("positionsh", Value::MakeFloatCompArray(
+      {0, 0, 0, 1, 2, 3}, TypeId::Point3h, 3));
+  layer.add_property("scalesh", Value::MakeFloatCompArray(
+      {1, 1, 1, 2, 2, 2}, TypeId::Half3, 3));
+  layer.end_prim();
+  layer.begin_prim("Camera", "Camera");
+  layer.current()->meta().apiSchemas().push_back("BackPlateAPI:plate");
+  layer.add_property("backPlate:plate:image",
+                     Value::MakeAssetPath("plate.exr"));
+  layer.add_property("backPlate:plate:scale:tweak",
+                     Value::MakeFloat2(2.0f, 3.0f));
+  layer.end_prim();
+  layer.begin_prim("Model", "Xform");
+  layer.current()->meta().apiSchemas().push_back("GeomModelAPI");
+  layer.add_property("model:cardVisibility", Value::MakeToken("simple"));
+  layer.add_property("model:cardTextureXPos",
+                     Value::MakeAssetPath("xpos.png"));
+  layer.begin_prim("Child", "Xform");
+  layer.current()->meta().apiSchemas().push_back("GeomModelAPI");
+  layer.end_prim();
+  layer.end_prim();
+  layer.begin_prim("Semantic", "Xform");
+  layer.current()->meta().apiSchemas().push_back("SemanticsLabelsAPI:class");
+  layer.add_property("semantics:labels:class",
+                     Value::MakeTokenArray({"vehicle", "foreground"}));
   layer.end_prim();
   layer.finalize();
   Stage stage = sb.Build();
@@ -642,6 +797,101 @@ static void test_domain_schema_breadth() {
   assert(registry.FindProperty(*spec("/Vdb"), "fieldClass"));
   assert(registry.FindProperty(*spec("/Rs"), "products"));
 
+  // OpenUSD 26.08 additions and domain gaps.
+  const SchemaPropertyDefinition* projection =
+      registry.FindProperty(*spec("/Splat"), "projectionModeHint");
+  assert(projection && projection->has_fallback &&
+         *projection->fallback.as_token() == "perspective");
+  assert(registry.FindProperty(*spec("/Splat"), "positions") &&
+         "Gaussian schemas are auto-applied without authored apiSchemas");
+  ParticleFieldData particle_field;
+  assert(GetParticleFieldData(stage, stage.GetPrimAtPath("/Splat"),
+                              &particle_field));
+  assert(particle_field.particle_count == 2 &&
+         particle_field.positions_property == "positions" &&
+         particle_field.scales_property == "scales" &&
+         particle_field.kernel == ParticleKernel::GaussianEllipsoid);
+  ParticleFieldData half_field;
+  const UsdPrim half_prim = stage.GetPrimAtPath("/SplatHalf");
+  assert(GetParticleFieldData(stage, half_prim, &half_field));
+  assert(half_field.particle_count == 2 && half_field.positions_half &&
+         half_field.scales_half && half_field.positions_property == "positionsh");
+  const Value* half_positions = half_prim.GetPropertyValue("positionsh");
+  ArrayScratch<float> half_scratch;
+  ArrayView<float> half_view;
+  assert(half_positions &&
+         GetFloatArrayView(*half_positions, &half_scratch, &half_view) &&
+         half_view.size == 6 && half_view[5] == 3.0f);
+  const SchemaPropertyDefinition* render_root = registry.FindProperty(
+      *spec("/Pass"), "collection:renderVisibility:includeRoot");
+  assert(render_root && render_root->has_fallback &&
+         *render_root->fallback.as_bool());
+  assert(registry.FindProperty(*spec("/Pass"), "renderSource"));
+  const SchemaPropertyDefinition* plate = registry.FindProperty(
+      *spec("/Camera"), "backPlate:plate:plateVisibility");
+  assert(plate && plate->has_fallback &&
+         *plate->fallback.as_token() == "solo");
+  const SchemaPropertyDefinition* card =
+      registry.FindProperty(*spec("/Model"), "model:cardVisibility");
+  assert(card && card->has_fallback &&
+         *card->fallback.as_token() == "inherited");
+  GeomModelData geom_model;
+  const UsdPrim model = stage.GetPrimAtPath("/Model");
+  assert(GetGeomModelData(stage, model, &geom_model) &&
+         geom_model.card_visibility == "simple" &&
+         geom_model.card_geometry == "cross" &&
+         geom_model.card_textures[1] == "xpos.png");
+  const UsdPrim model_child = stage.GetPrimAtPath("/Model/Child");
+  assert(ComputeModelCardVisibility(stage, model_child) == "simple");
+  assert(ComputeModelCardFaceMask(stage, model_child, 'Z') ==
+         (kAllCardFaces & ~(kCardZNeg | kCardZPos)));
+  const SchemaPropertyDefinition* labels = registry.FindProperty(
+      *spec("/Semantic"), "semantics:labels:class");
+  assert(labels && labels->has_fallback && labels->fallback.is_array() &&
+         labels->fallback.array_size() == 0);
+
+  BackPlateData back_plate;
+  assert(GetBackPlateData(stage, stage.GetPrimAtPath("/Camera"), "plate",
+                          &back_plate));
+  assert(back_plate.image == "plate.exr" &&
+         back_plate.scale_tweak[0] == 2.0f &&
+         back_plate.scale_tweak[1] == 3.0f &&
+         back_plate.plate_visibility == "solo");
+  assert(!HasBackPlateAPI(stage.GetPrimAtPath("/Camera"), "plate:"));
+  std::vector<std::string> semantic_labels;
+  assert(GetSemanticsLabels(stage, stage.GetPrimAtPath("/Semantic"), "class",
+                            &semantic_labels));
+  assert(semantic_labels.size() == 2 && semantic_labels[0] == "vehicle" &&
+         semantic_labels[1] == "foreground");
+  assert(!HasSemanticsLabelsAPI(stage.GetPrimAtPath("/Semantic"),
+                                "class:invalid:"));
+
+  RenderSettingsData settings;
+  assert(GetRenderSettingsData(stage, stage.GetPrimAtPath("/Rs"), &settings));
+  assert(settings.resolution[0] == 1280 && settings.resolution[1] == 720);
+  assert(settings.disable_motion_blur && settings.products.size() == 1 &&
+         settings.products[0].str() == "/Rp");
+  RenderProductData product;
+  assert(GetRenderProductData(stage, stage.GetPrimAtPath("/Rp"), &product));
+  assert(product.product_type == "raster" && product.ordered_vars.size() == 1);
+  RenderVarData render_var;
+  assert(GetRenderVarData(stage, stage.GetPrimAtPath("/Rv"), &render_var));
+  assert(render_var.source_name == "depth" && render_var.data_type == "color3f");
+  RenderPassData render_pass;
+  assert(GetRenderPassData(stage, stage.GetPrimAtPath("/Pass"), &render_pass));
+  assert(render_pass.render_source.size() == 1 &&
+         render_pass.render_source[0].str() == "/Rs" &&
+         render_pass.render_visibility_includes.size() == 1 &&
+         render_pass.render_visibility_includes[0].str() == "/Keep" &&
+         render_pass.render_visibility_excludes.size() == 1 &&
+         render_pass.render_visibility_excludes[0].str() == "/Drop" &&
+         !render_pass.render_visibility_include_root &&
+         render_pass.camera_visibility_includes.size() == 1 &&
+         render_pass.camera_visibility_includes[0].str() == "/Camera" &&
+         render_pass.camera_visibility_excludes.size() == 1 &&
+         render_pass.camera_visibility_excludes[0].str() == "/HiddenCamera" &&
+         !render_pass.camera_visibility_include_root);
+
   PASS();
 }
 
@@ -652,6 +902,8 @@ static void test_domain_schema_breadth() {
 int main() {
   printf("Extended Schema Tests\n");
   printf("=====================\n\n");
+
+  test_generated_supported_schema_fixture();
 
   printf("Skel:\n");
   test_skel_types();
@@ -665,6 +917,7 @@ int main() {
 
   printf("\nMaterialX:\n");
   test_mtlx_types();
+  test_connected_shader_constant();
 
   printf("\nMedia:\n");
   test_media_types();

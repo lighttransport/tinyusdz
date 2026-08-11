@@ -79,6 +79,9 @@
 #include "schema/usd-ar.hh"
 #include "schema/usd-media.hh"
 #include "schema/usd-mtlx.hh"
+#include "schema/usd-render.hh"
+#include "schema/usd-semantics.hh"
+#include "schema/usd-vol.hh"
 
 namespace tinyusdz {
 namespace next {

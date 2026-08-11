@@ -454,6 +454,7 @@ struct PreviewLight {
   Vec3 axis_v{0.0f, 1.0f, 0.0f};   // local +Y in world space
   float power{0.0f};
   float cdf{0.0f};
+  bool shadow_enable{true};
   int tri_id{-1};
   int texture_id{-1};
   std::string texture_file;
@@ -486,6 +487,28 @@ struct EnvImage {
   int width{0};
   int height{0};
   std::vector<Vec3> pixels;
+};
+
+struct BackPlateImage {
+  int width{0};
+  int height{0};
+  std::vector<Vec3> color;
+  std::vector<float> alpha;
+  std::vector<float> depth;
+  Vec3 gain{1.0f, 1.0f, 1.0f};
+  Vec3 lift{0.0f, 0.0f, 0.0f};
+  Vec3 gamma{1.0f, 1.0f, 1.0f};
+  float scale_x{1.0f}, scale_y{1.0f};
+  float translate_x{0.0f}, translate_y{0.0f};
+  float rotate_degrees{0.0f};
+  float depth_min_offset{0.0f};
+  float depth_normalizing_factor{1.0f};
+  float depth_camera_space_offset{0.0f};
+
+  bool valid() const {
+    return width > 0 && height > 0 &&
+           color.size() == size_t(width) * size_t(height);
+  }
 };
 
 struct IblCache {
@@ -542,6 +565,12 @@ struct Options {
   LargeSceneProfile large_scene_profile{LargeSceneProfile::Off};
   bool backend_explicit{false};  // -rtPreview/-vk/-vkr/-vkInstanced/-d3d/-hip
   bool camera_explicit{false};
+  bool width_explicit{false};
+  bool height_explicit{false};
+  bool purpose_explicit{false};
+  std::string render_settings;
+  std::string render_product;
+  std::string render_pass;
   bool max_mem_explicit{false};
   bool max_vram_explicit{false};
   bool lod_stream_explicit{false};
@@ -861,8 +890,21 @@ struct RayDiff {
   bool valid{false};
 };
 
+struct VolumeScalarField {
+  std::vector<float> data;
+  int dim[3] = {0, 0, 0};
+  Vec3 bmin{0.0f, 0.0f, 0.0f};
+  Vec3 bmax{0.0f, 0.0f, 0.0f};
+  float background = 0.0f;
+};
+
 struct VolumeData {
   std::vector<float> density;  // dense grid, x-contiguous
+  // Optional scalar fields on the same index-space lattice as `density`.
+  // emission modulates the authored emission color. temperature is converted
+  // to a blackbody tint (Kelvin when > 100, normalized fire heat otherwise).
+  VolumeScalarField emission_field;
+  VolumeScalarField temperature_field;
   int dim[3] = {0, 0, 0};
   Vec3 bmin{0.0f, 0.0f, 0.0f};  // object-space AABB
   Vec3 bmax{0.0f, 0.0f, 0.0f};
@@ -870,6 +912,7 @@ struct VolumeData {
   float density_scale = 1.0f;
   Vec3 albedo{0.6f, 0.6f, 0.65f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
+  float emission_scale = 1.0f;
   float background = 0.0f;
 };
 

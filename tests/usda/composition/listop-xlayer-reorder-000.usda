@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    subLayers = [@listop-xlayer-reorder-000-sub.usda@]
+)
+
+over "Ref" (
+    reorder references = [</Library/B>, </Library/Missing>, </Library/A>]
+)
+{
+}
+
+over "Payload" (
+    reorder payload = [</Library/B>, </Library/Missing>, </Library/A>]
+)
+{
+}

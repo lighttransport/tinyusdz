@@ -1891,6 +1891,89 @@ void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
                            result);
 }
 
+void ValidateParticleField(
+    const PrimSpec &ps, const std::vector<AppliedSchema> &applied_schemas,
+    const std::string &prim_location, USDValidationResult *result) {
+  const bool gaussian = ps.type_name() == "ParticleField3DGaussianSplat";
+  if (gaussian) {
+    ValidateTokenSetProperty(ps, "projectionModeHint",
+                             {"perspective", "tangential"},
+                             "vol.particleField.projectionModeHint",
+                             prim_location, result);
+    ValidateTokenSetProperty(ps, "sortingModeHint",
+                             {"zDepth", "cameraDistance", "rayHitDistance"},
+                             "vol.particleField.sortingModeHint",
+                             prim_location, result);
+  }
+
+  const bool has_position_api =
+      gaussian || HasAppliedSchema(applied_schemas,
+                                   "ParticleFieldPositionAttributeAPI");
+  const bool has_kernel_api =
+      gaussian ||
+      HasAppliedSchema(applied_schemas,
+                       "ParticleFieldKernelGaussianEllipsoidAPI") ||
+      HasAppliedSchema(applied_schemas,
+                       "ParticleFieldKernelGaussianSurfletAPI") ||
+      HasAppliedSchema(applied_schemas,
+                       "ParticleFieldKernelConstantSurfletAPI");
+  if (!has_position_api) {
+    AddWarning(result, "vol.particleField.position", prim_location,
+               "ParticleField has no applied position provider API");
+  }
+  if (!has_kernel_api) {
+    AddWarning(result, "vol.particleField.kernel", prim_location,
+               "ParticleField has no applied kernel API");
+  }
+
+  size_t particle_count = 0;
+  bool have_positions = GetArrayLengthProperty(ps, "positions", &particle_count);
+  if (!have_positions) {
+    have_positions =
+        GetArrayLengthProperty(ps, "positionsh", &particle_count);
+  }
+  if (!have_positions) return;
+
+  // OpenUSD discards a short auxiliary array and truncates a long one. Report
+  // the authored mismatch without treating that defined fallback behavior as
+  // a fatal validation error.
+  for (const char *prop_name :
+       {"orientations", "orientationsh", "scales", "scalesh", "opacities",
+        "opacitiesh"}) {
+    size_t value_count = 0;
+    if (GetArrayLengthProperty(ps, prop_name, &value_count) &&
+        value_count != particle_count) {
+      AddWarning(result, "vol.particleField.arraySize",
+                 MakePropertyLocation(prim_location, prop_name),
+                 std::string(prop_name) + " has " +
+                     std::to_string(value_count) + " elements for " +
+                     std::to_string(particle_count) +
+                     " particles; OpenUSD will " +
+                     (value_count < particle_count ? "discard" : "truncate") +
+                     " it");
+    }
+  }
+}
+
+void ValidateOpenUsd2608GeomAPIs(
+    const PrimSpec &ps, const std::vector<AppliedSchema> &applied_schemas,
+    const std::string &prim_location, USDValidationResult *result) {
+  if (HasAppliedSchema(applied_schemas, "GeomModelAPI")) {
+    ValidateTokenSetProperty(ps, "model:cardVisibility",
+                             {"full", "simple", "inherited"},
+                             "geom.model.cardVisibility", prim_location,
+                             result);
+  }
+  for (const AppliedSchema &schema : applied_schemas) {
+    if (schema.name != "BackPlateAPI" || schema.instance_name.empty()) continue;
+    const std::string prop_name = "backPlate:" + schema.instance_name +
+                                  ":plateVisibility";
+    ValidateTokenSetProperty(ps, prop_name, {"all", "solo", "mute"},
+                             "geom.backPlate.visibility", prim_location,
+                             result);
+  }
+}
+
 // pxr usdValidation:AttributeTypeMismatch for schema attributes whose
 // DECLARED type must match the registry exactly. Empty means "not declared
 // locally" and is fine.
@@ -1908,12 +1991,19 @@ void CheckDeclaredAttrType(const PrimSpec &ps, const char *prop_name,
 }
 
 void ValidateRenderPrim(const PrimSpec &ps, const std::string &prim_location,
+                        const PrimTypeByPath &prim_types,
                         USDValidationResult *result) {
   static const std::set<std::string> kConformPolicy = {
       "expandAperture", "cropAperture", "adjustApertureWidth",
       "adjustApertureHeight", "adjustPixelAspectRatio"};
   static const std::set<std::string> kSourceType = {"raw", "primvar", "lpe",
                                                     "intrinsic"};
+  static const std::set<std::string> kCameraType = {"Camera"};
+  static const std::set<std::string> kProductType = {"RenderProduct"};
+  static const std::set<std::string> kVarType = {"RenderVar"};
+  static const std::set<std::string> kRenderSourceTypes = {
+      "RenderSettings", "RenderProduct"};
+  static const std::set<std::string> kPassType = {"RenderPass"};
   const std::string &type_name = ps.type_name();
   if (type_name == "RenderSettings" || type_name == "RenderProduct") {
     // Rule ids name the prim type they fire on (render.settings.* vs
@@ -1941,10 +2031,39 @@ void ValidateRenderPrim(const PrimSpec &ps, const std::string &prim_location,
     if (!is_settings) {
       CheckDeclaredAttrType(ps, "productName", "token", prim_location, result);
     }
+    ValidateRelationshipTargetPrimTypes(
+        ps, "camera",
+        is_settings ? "render.settings.targetType"
+                    : "render.product.targetType",
+        MakePropertyLocation(prim_location, "camera"), prim_types, kCameraType,
+        result);
+    ValidateRelationshipTargetPrimTypes(
+        ps, is_settings ? "products" : "orderedVars",
+        is_settings ? "render.settings.targetType"
+                    : "render.product.targetType",
+        MakePropertyLocation(prim_location,
+                             is_settings ? "products" : "orderedVars"),
+        prim_types, is_settings ? kProductType : kVarType, result);
   } else if (type_name == "RenderVar") {
     ValidateTokenSetProperty(ps, "sourceType", kSourceType,
                              "render.var.sourceType", prim_location, result);
     CheckDeclaredAttrType(ps, "sourceName", "string", prim_location, result);
+  } else if (type_name == "RenderPass") {
+    for (const char *rel : {"renderSource", "inputPasses"}) {
+      if (HasProperty(ps, rel) && !IsRelationshipProp(ps, rel)) {
+        AddError(result, "render.pass.relationship",
+                 MakePropertyLocation(prim_location, rel),
+                 std::string(rel) + " must be a relationship");
+      }
+    }
+    ValidateRelationshipTargetPrimTypes(
+        ps, "renderSource", "render.pass.targetType",
+        MakePropertyLocation(prim_location, "renderSource"), prim_types,
+        kRenderSourceTypes, result);
+    ValidateRelationshipTargetPrimTypes(
+        ps, "inputPasses", "render.pass.targetType",
+        MakePropertyLocation(prim_location, "inputPasses"), prim_types,
+        kPassType, result);
   }
 }
 
@@ -5864,7 +5983,11 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
       ValidateVolume(ps, prim_location, result);
     } else if (type_name == "OpenVDBAsset" || type_name == "Field3DAsset") {
       ValidateFieldAsset(ps, prim_location, result);
+    } else if (type_name == "ParticleField" ||
+               type_name == "ParticleField3DGaussianSplat") {
+      ValidateParticleField(ps, applied_schemas, prim_location, result);
     }
+    ValidateOpenUsd2608GeomAPIs(ps, applied_schemas, prim_location, result);
     ValidatePrimvars(ps, prim_location, result);
     if (type_name == "Mesh") {
       ValidateSkinningPrimvars(ps, prim_location, prim_types, skeleton_joints,
@@ -5885,8 +6008,8 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
   // UsdRender is its own rule group: scene-description checks, not geometry.
   if (options.render && !has_arc && !is_over &&
       (type_name == "RenderSettings" || type_name == "RenderProduct" ||
-       type_name == "RenderVar")) {
-    ValidateRenderPrim(ps, prim_location, result);
+       type_name == "RenderVar" || type_name == "RenderPass")) {
+    ValidateRenderPrim(ps, prim_location, prim_types, result);
   }
 
   if (options.physics && !has_arc && !is_over) {

@@ -1150,15 +1150,29 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
           !std::isfinite(c[2]))
         continue;
       float major[3], normal[3];
+      float gaussianMinorLength = 0.0f;
       if (gaussian) {
+        const float* localMajor = &src.ellipseMajorAxes[i * 3];
+        const float* localNormal = &src.ellipseNormals[i * 3];
+        const float localMinor[3] = {
+            localNormal[1] * localMajor[2] - localNormal[2] * localMajor[1],
+            localNormal[2] * localMajor[0] - localNormal[0] * localMajor[2],
+            localNormal[0] * localMajor[1] - localNormal[1] * localMajor[0]};
+        float minor[3];
         for (int k = 0; k < 3; ++k) {
-          major[k] = src.world[0 * 4 + k] * src.ellipseMajorAxes[i * 3 + 0] +
-                    src.world[1 * 4 + k] * src.ellipseMajorAxes[i * 3 + 1] +
-                    src.world[2 * 4 + k] * src.ellipseMajorAxes[i * 3 + 2];
-          normal[k] = src.world[0 * 4 + k] * src.ellipseNormals[i * 3 + 0] +
-                     src.world[1 * 4 + k] * src.ellipseNormals[i * 3 + 1] +
-                     src.world[2 * 4 + k] * src.ellipseNormals[i * 3 + 2];
+          major[k] = src.world[0 * 4 + k] * localMajor[0] +
+                     src.world[1 * 4 + k] * localMajor[1] +
+                     src.world[2 * 4 + k] * localMajor[2];
+          minor[k] = src.world[0 * 4 + k] * localMinor[0] +
+                     src.world[1 * 4 + k] * localMinor[1] +
+                     src.world[2 * 4 + k] * localMinor[2];
         }
+        normal[0] = major[1] * minor[2] - major[2] * minor[1];
+        normal[1] = major[2] * minor[0] - major[0] * minor[2];
+        normal[2] = major[0] * minor[1] - major[1] * minor[0];
+        gaussianMinorLength =
+            std::sqrt(minor[0] * minor[0] + minor[1] * minor[1] +
+                      minor[2] * minor[2]);
       } else {
         for (int k = 0; k < 3; ++k) {
           major[k] = src.world[0 * 4 + k];
@@ -1185,7 +1199,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       float rx = 0.0f, ry = 0.0f;
       if (gaussian) {
         rx = src.ellipseRadii[i * 2] * ml;
-        ry = src.ellipseRadii[i * 2 + 1] * ml;
+        ry = src.ellipseRadii[i * 2 + 1] * gaussianMinorLength;
       } else {
         const float minor[3] = {
             normal[1] * major[2] - normal[2] * major[1],

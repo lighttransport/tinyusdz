@@ -9,6 +9,7 @@
   static bool IsPodPassThroughType(CrateTypeId t) {
     switch (t) {
       case CrateTypeId::Bool:
+      case CrateTypeId::UChar:
       case CrateTypeId::Int:
       case CrateTypeId::UInt:
       case CrateTypeId::Int64:
@@ -16,6 +17,7 @@
       case CrateTypeId::Half:
       case CrateTypeId::Float:
       case CrateTypeId::Double:
+      case CrateTypeId::TimeCode:
       case CrateTypeId::Vec2f:
       case CrateTypeId::Vec3f:
       case CrateTypeId::Vec4f:

@@ -234,38 +234,61 @@ void AppendGpuPointDisc(const Vec3 &center, const Vec3 &normal, float radius,
 }
 
 void CollectGpuPointsRec(
-    const tinyusdz::next::UsdPrim &prim, const matrix4d &parent_world,
+    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &prim,
+    const matrix4d &parent_world,
     double time, std::vector<Vec3> *base_colors,
-    std::vector<RTPreviewStats::MeshGeometry> *geos) {
+    std::vector<RTPreviewStats::MeshGeometry> *geos, size_t depth) {
+  constexpr size_t kMaxGpuPointTraversalDepth = 256;
+  if (depth >= kMaxGpuPointTraversalDepth) {
+    std::cerr << "WARN: GPU point fallback traversal exceeded "
+              << kMaxGpuPointTraversalDepth << " levels at "
+              << prim.GetPath().str() << "; subtree skipped.\n";
+    return;
+  }
   if (!prim.IsActive()) return;
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
   const matrix4d world = local * parent_world;
   if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
+    tinyusdz::next::ParticleFieldData field;
+    std::string field_warning;
+    if (!tinyusdz::next::GetParticleFieldData(
+            stage, prim, &field, time, &field_warning)) {
+      std::cerr << "Gaussian fallback: invalid ParticleField data at "
+                << prim.GetPath().str() << ".\n";
+      return;
+    }
+    if (!field_warning.empty()) std::cerr << field_warning << "\n";
     tinyusdz::tydra::next::ValueArrayRead<float> points;
     tinyusdz::tydra::next::ValueArrayRead<float> scales;
     tinyusdz::tydra::next::ValueArrayRead<float> orientations;
     tinyusdz::tydra::next::ValueArrayRead<float> opacities;
     tinyusdz::tydra::next::ValueArrayRead<float> sh;
-    const bool have_points =
-        ReadFloatArrayViewLazy(prim, "positions", time, &points);
-    const bool have_scales =
-        ReadFloatArrayViewLazy(prim, "scales", time, &scales);
-    const bool have_orientations =
-        ReadFloatArrayViewLazy(prim, "orientations", time, &orientations);
-    const bool have_opacities =
-        ReadFloatArrayViewLazy(prim, "opacities", time, &opacities);
+    const bool have_points = !field.positions_property.empty() &&
+        ReadFloatArrayViewLazy(prim, field.positions_property.c_str(), time,
+                               &points);
+    const bool have_scales = !field.scales_property.empty() &&
+        ReadFloatArrayViewLazy(prim, field.scales_property.c_str(), time,
+                               &scales);
+    const bool have_orientations = !field.orientations_property.empty() &&
+        ReadFloatArrayViewLazy(prim, field.orientations_property.c_str(), time,
+                               &orientations);
+    const bool have_opacities = !field.opacities_property.empty() &&
+        ReadFloatArrayViewLazy(prim, field.opacities_property.c_str(), time,
+                               &opacities);
     const bool allow_sh = AllowGaussianSHDecode(prim);
-    const bool have_sh = allow_sh && ReadFloatArrayViewLazy(
-        prim, "radiance:sphericalHarmonicsCoefficients", time, &sh);
+    const bool have_sh = allow_sh &&
+        !field.spherical_harmonics_property.empty() && ReadFloatArrayViewLazy(
+        prim, field.spherical_harmonics_property.c_str(), time, &sh);
     if (!allow_sh)
       std::cerr << "Gaussian fallback: skipping oversized compressed SH payload at "
                 << prim.GetPath().str() << "; using fallback color.\n";
     const size_t count = have_points ? points.size() / 3 : 0;
     if (!have_points || !have_scales || count == 0 || scales.size() < 3) {
       for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
-        CollectGpuPointsRec(child, world, time, base_colors, geos);
+        CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
+                            depth + 1);
       return;
     }
     size_t limit = count;
@@ -390,7 +413,8 @@ void CollectGpuPointsRec(
     };
     if (!have_points) {
       for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
-        CollectGpuPointsRec(child, world, time, base_colors, geos);
+        CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
+                            depth + 1);
       return;
     }
     for (size_t i = 0; i + 2 < points.size(); i += 3) {
@@ -426,7 +450,8 @@ void CollectGpuPointsRec(
     flush();
   }
   for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
-    CollectGpuPointsRec(child, world, time, base_colors, geos);
+    CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
+                        depth + 1);
 }
 
 // LightRT's GPU triangle APIs currently accept triangle BVHs, while its
@@ -1551,8 +1576,8 @@ int main(int argc, char **argv) {
     }
     if (gpu_backend && !native_gaussian) {
       for (const auto &root : stage.GetRootPrims()) {
-        CollectGpuPointsRec(root, matrix4d::identity(), opt.timecode,
-                            &base_colors, &geos);
+        CollectGpuPointsRec(stage, root, matrix4d::identity(), opt.timecode,
+                            &base_colors, &geos, 0);
       }
     }
 #endif

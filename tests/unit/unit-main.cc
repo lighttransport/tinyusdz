@@ -164,6 +164,8 @@ TEST_LIST = {
   { "array_edit_usda_crate_roundtrip_test", array_edit_usda_crate_roundtrip_test },
   { "render_vol_usda_roundtrip_test", render_vol_usda_roundtrip_test },
   { "render_vol_crate_roundtrip_test", render_vol_crate_roundtrip_test },
+  { "usdvol_vdb_corpus_test", usdvol_vdb_corpus_test },
+  { "usdvol_material_binding_test", usdvol_material_binding_test },
   { "namespace_edit_rename_test", namespace_edit_rename_test },
   { "namespace_edit_remove_test", namespace_edit_remove_test },
   { "namespace_edit_reparent_test", namespace_edit_reparent_test },

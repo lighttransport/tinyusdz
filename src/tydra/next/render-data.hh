@@ -893,8 +893,8 @@ struct RenderLight {
   // Light/shadow linking resolved to RenderScene mesh indices (CollectionAPI
   // collection:lightLink / collection:shadowLink relationship form). When the
   // collection is unauthored the light links everything and *_links_all stays
-  // true; membershipExpression collections are not evaluated (no path
-  // expression parser in next) and also keep *_links_all = true.
+  // true. Relationship and membershipExpression collection forms are both
+  // resolved by the converter.
   bool light_links_all = true;
   std::vector<int32_t> light_link_mesh_indices;
   bool shadow_links_all = true;
@@ -933,6 +933,23 @@ struct RenderLight {
 //
 // RenderCamera
 //
+struct RenderBackPlate {
+  std::string instance_name;
+  std::string image;
+  std::string alpha_image;
+  std::string depth_image;
+  float depth_min_offset = 0.0f;
+  float depth_normalizing_factor = 1.0f;
+  float depth_camera_space_offset = 0.0f;
+  Float2 scale_tweak = {1.0f, 1.0f};
+  Float3 rotate_xyz_tweak = {0.0f, 0.0f, 0.0f};
+  Float3 translate_tweak = {0.0f, 0.0f, 0.0f};
+  Float3 luma_gain = {1.0f, 1.0f, 1.0f};
+  Float3 luma_lift = {0.0f, 0.0f, 0.0f};
+  Float3 luma_gamma = {1.0f, 1.0f, 1.0f};
+  std::string plate_visibility = "solo";
+};
+
 struct RenderCamera {
   std::string name;
   std::string prim_path;
@@ -963,6 +980,7 @@ struct RenderCamera {
   enum class StereoRole : uint8_t { Mono = 0, Left, Right };
   StereoRole stereo_role = StereoRole::Mono;
   std::vector<Float4> clipping_planes;
+  std::vector<RenderBackPlate> back_plates;
 
   // Motion-blur shutter interval (UsdGeomCamera shutter:open/close), in
   // time-code offsets relative to the sample time.

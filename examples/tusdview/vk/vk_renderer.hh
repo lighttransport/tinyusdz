@@ -571,6 +571,8 @@ class VulkanRenderer final : public Renderer {
     float bmin[3], bmax[3];
     float albedo[3], densityScale;
     float emission[3], background;
+    bool hasEmissionField{false};
+    bool hasTemperatureField{false};
   };
   bool createVolumePipeline(std::string* err);
   // Record the volume raymarch draws (UBO update + proxy boxes) with `pipe`.

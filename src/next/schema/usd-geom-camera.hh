@@ -9,6 +9,8 @@
 #include "../stage/stage.hh"
 #include "../eval/attribute-eval.hh"
 
+#include <string>
+
 namespace tinyusdz {
 namespace next {
 
@@ -43,12 +45,35 @@ struct CameraData {
   float aspect_ratio = 1.5f;
 };
 
+struct BackPlateData {
+  std::string image;
+  std::string alpha_image;
+  std::string depth_image;
+  float depth_min_offset = 0.0f;
+  float depth_normalizing_factor = 1.0f;
+  float depth_camera_space_offset = 0.0f;
+  float scale_tweak[2] = {1.0f, 1.0f};
+  float rotate_xyz_tweak[3] = {0.0f, 0.0f, 0.0f};
+  float translate_tweak[3] = {0.0f, 0.0f, 0.0f};
+  float luma_gain[3] = {1.0f, 1.0f, 1.0f};
+  float luma_lift[3] = {0.0f, 0.0f, 0.0f};
+  float luma_gamma[3] = {1.0f, 1.0f, 1.0f};
+  std::string plate_visibility = "solo";
+};
+
 /// Check if prim is a Camera
 bool IsCamera(const UsdPrim& prim);
 
 /// Get camera data
 bool GetCameraData(const Stage& stage, const UsdPrim& prim,
                    CameraData* out, double time = 0.0);
+
+bool HasBackPlateAPI(const UsdPrim& prim, const std::string& instance_name);
+
+/// Evaluate one BackPlateAPI instance without loading its referenced images.
+bool GetBackPlateData(const Stage& stage, const UsdPrim& prim,
+                      const std::string& instance_name, BackPlateData* out,
+                      double time = 0.0);
 
 /// Get focal length in mm
 float GetFocalLength(const Stage& stage, const UsdPrim& prim, double time = 0.0);

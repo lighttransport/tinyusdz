@@ -2361,6 +2361,7 @@ if(TINYUSDZ_BUILD_TESTS)
   # run-alpha-blend-sort-external.sh need external multi-GB asset corpora.
   if(TARGET tusdrender)
     set(TUSDR_SHELL_TESTS
+        backplate
         backface-material
         camera-modes
         cli-robustness
@@ -2377,6 +2378,7 @@ if(TINYUSDZ_BUILD_TESTS)
         instancer-orientation
         light-double-count
         light-normalize
+        light-shadow-enable
         material-shading-bsdf-sample
         mesh-light-gaps
         mtlx-usdz-texture-equivalence
@@ -2394,9 +2396,11 @@ if(TINYUSDZ_BUILD_TESTS)
         timecode-points-animation
         timecode-transform-animation
         transparency
+        usdrender-settings
         usdz-texture-equivalence
         uv-set-routing
         gaussian-carrier-dispatch
+        gaussian-schema-aliases
         vk-ray-tiling)
     foreach(t ${TUSDR_SHELL_TESTS})
       add_test(
@@ -3271,7 +3275,8 @@ if(TINYUSDZ_BUILD_TESTS)
                 bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
         )
       set_tests_properties("${_test_name}" PROPERTIES
-                           SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "tusdview")
+                           SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "tusdview"
+                           RESOURCE_LOCK tusdview_semantic_gpu)
     endforeach()
 
     # Keep the RT texture-table path loader-neutral. Split by backend while
@@ -3298,7 +3303,8 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
       )
       set_tests_properties("${_test_name}" PROPERTIES
-                           SKIP_RETURN_CODE 77 TIMEOUT 900 LABELS "tusdview")
+                           SKIP_RETURN_CODE 77 TIMEOUT 900 LABELS "tusdview"
+                           RESOURCE_LOCK tusdview_semantic_gpu)
     endforeach()
 
     add_test(
@@ -3519,6 +3525,34 @@ if(TINYUSDZ_BUILD_TESTS)
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/gen-usd-preview-surface-inputs.py --check
     )
 
+  # Offline pin/integrity gate for the generated OpenUSD compatibility
+  # baseline. Refreshing the file requires an OpenUSD checkout, but normal CI
+  # deliberately has no runtime or network dependency on OpenUSD.
+  add_test(
+    NAME openusd-schema-manifest
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check-openusd-schema-manifest.py
+            ${PROJECT_SOURCE_DIR}/doc/generated/openusd-schema-26.08.json
+    )
+
+  add_test(
+    NAME openusd-capability-ledger
+    COMMAND python3
+            ${PROJECT_SOURCE_DIR}/scripts/generate-tinyusdz-capability-ledger.py
+            --check
+            --manifest ${PROJECT_SOURCE_DIR}/doc/generated/openusd-schema-26.08.json
+            --output ${PROJECT_SOURCE_DIR}/doc/generated/tinyusdz-capabilities-openusd-26.08.json
+    )
+
+  add_test(
+    NAME openusd-supported-schema-fixture
+    COMMAND python3
+            ${PROJECT_SOURCE_DIR}/scripts/generate-openusd-supported-schema-fixture.py
+            --check
+            --ledger ${PROJECT_SOURCE_DIR}/doc/generated/tinyusdz-capabilities-openusd-26.08.json
+            --output ${PROJECT_SOURCE_DIR}/tests/usda/generated/openusd-supported-schema-26.08.usda
+            --registry-output ${PROJECT_SOURCE_DIR}/src/next/schema/generated/openusd-supported-schema-names.inc
+    )
+
   #
   # USDA roundtrip tester
   #
@@ -3589,11 +3623,13 @@ if(TINYUSDZ_BUILD_TESTS)
       NAME corpus-parse-native
       COMMAND ${TINYUSDZ_NODE_EXECUTABLE}
               ${PROJECT_SOURCE_DIR}/tests/parse-asset-corpus.mjs
+              --optional-assets
               --mode load
               --tusdcat "$<TARGET_FILE:tusdcat>"
               --out "${CMAKE_BINARY_DIR}/corpus-parse-results"
               --max-fail 0
       )
+    set_tests_properties(corpus-parse-native PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 
   #

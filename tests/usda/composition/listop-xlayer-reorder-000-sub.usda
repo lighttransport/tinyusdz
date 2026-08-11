@@ -1,0 +1,33 @@
+#usda 1.0
+
+def "Ref" (
+    references = [</Library/A>, </Library/C>, </Library/B>]
+)
+{
+}
+
+def "Payload" (
+    payload = [</Library/A>, </Library/C>, </Library/B>]
+)
+{
+}
+
+def Scope "Library"
+{
+    def Scope "A"
+    {
+        custom string winner = "A"
+        custom int fromA = 1
+    }
+
+    def Scope "B"
+    {
+        custom string winner = "B"
+        custom int fromB = 1
+    }
+
+    def Scope "C"
+    {
+        custom int fromC = 1
+    }
+}

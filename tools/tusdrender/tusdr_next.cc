@@ -18,6 +18,8 @@
 #include "next/eval/value-clip.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/schema/usd-shade.hh"  // GetInheritedBoundMaterialPath
+#include "next/schema/usd-render.hh"
+#include "next/schema/usd-geom-camera.hh"
 #include "next/schema/usd-skel.hh"
 #include "next/types/value-view.hh"
 #include "tsd/tinysubdiv.hh"
@@ -2193,14 +2195,25 @@ void ExpandGeomSubsetJobsNext(const tinyusdz::next::Stage &stage, double time,
 bool PathMatchesMask(const std::string &path,
                      const std::vector<std::string> &mask) {
   if (mask.empty()) return true;
+  bool has_include = false;
+  for (const std::string &entry : mask) {
+    if (entry.empty() || entry[0] != '!') continue;
+    const std::string excluded = entry.substr(1);
+    if (path == excluded ||
+        (path.size() > excluded.size() &&
+         path.compare(0, excluded.size(), excluded) == 0 &&
+         path[excluded.size()] == '/')) return false;
+  }
   for (const std::string &m : mask) {
+    if (m.empty() || m[0] == '!') continue;
+    has_include = true;
     if (path == m) return true;
     if (path.size() > m.size() && path.compare(0, m.size(), m) == 0 &&
         path[m.size()] == '/') {
       return true;
     }
   }
-  return false;
+  return !has_include;
 }
 
 // True if any of the prim's authored xform ops are time-sampled (so its local
@@ -2667,6 +2680,50 @@ static bool FitNextVolumeDensity(VolumeData *volume, size_t max_bytes) {
   return true;
 }
 
+void ResolveVolumeMaterialNext(const tinyusdz::next::Stage &stage,
+                               const tinyusdz::next::UsdPrim &volume,
+                               VolumeData *out) {
+  if (!out) return;
+  const std::string material_path =
+      tinyusdz::next::GetInheritedBoundMaterialPath(stage,
+                                                     volume.GetPath().str());
+  if (material_path.empty()) return;
+  const tinyusdz::next::UsdPrim material = stage.GetPrimAtPath(material_path);
+  if (!material) return;
+  const std::string shader_path =
+      tinyusdz::next::GetVolumeShader(stage, material);
+  if (shader_path.empty()) return;
+  const tinyusdz::next::UsdPrim shader = stage.GetPrimAtPath(shader_path);
+  if (!shader) return;
+
+  auto scalar = [&](const char *name, float *dst) {
+    tinyusdz::next::Value value;
+    if (!tinyusdz::next::ResolveShaderPortValue(stage, shader, name, &value))
+      return;
+    if (const float *f = value.as_float()) *dst = *f;
+    else if (const double *d = value.as_double()) *dst = float(*d);
+  };
+  auto color = [&](const char *name, Vec3 *dst) {
+    tinyusdz::next::Value value;
+    if (!tinyusdz::next::ResolveShaderPortValue(stage, shader, name, &value))
+      return;
+    if (const float *f = value.as_float3()) *dst = Vec3{f[0], f[1], f[2]};
+  };
+
+  // MaterialX standard_volume/OpenPBR spellings, plus the widespread
+  // UsdVolumeShader aliases used by DCC exporters.
+  scalar("inputs:density", &out->density_scale);
+  color("inputs:scattering_color", &out->albedo);
+  color("inputs:scatter_color", &out->albedo);
+  color("inputs:emission_color", &out->emission);
+  color("inputs:emissionColor", &out->emission);
+  scalar("inputs:emission", &out->emission_scale);
+  scalar("inputs:emission_intensity", &out->emission_scale);
+  scalar("inputs:emissionIntensity", &out->emission_scale);
+  out->density_scale = std::max(0.0f, out->density_scale);
+  out->emission_scale = std::max(0.0f, out->emission_scale);
+}
+
 void CollectVolumesNext(const tinyusdz::next::Stage &stage,
                         const tinyusdz::next::UsdPrim &prim,
                         const matrix4d &parent_world, double time,
@@ -2681,8 +2738,17 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
   const matrix4d world = reset ? local : (local * parent_world);
 
   if (prim.GetTypeName() == "Volume") {
+    bool has_density_relationship = false;
+    for (const std::string &name : prim.GetRelationshipNames()) {
+      if (name == "field:density") has_density_relationship = true;
+    }
     for (const std::string &relName : prim.GetRelationshipNames()) {
       if (relName.rfind("field:", 0) != 0) continue;
+      // One UsdVol prim is one participating medium, not one medium per field.
+      // Decode its density relationship once; auxiliary grids in the same VDB
+      // are attached below. Preserve the old first-field fallback when density
+      // was not authored.
+      if (has_density_relationship && relName != "field:density") continue;
       const std::vector<tinyusdz::next::Path> *targets =
           prim.GetRelationship(relName);
       if (!targets || targets->empty()) continue;
@@ -2719,6 +2785,34 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
       vd.dim[0] = g->dim[0];
       vd.dim[1] = g->dim[1];
       vd.dim[2] = g->dim[2];
+      for (const auto &aux : grids) {
+        VolumeScalarField *dst = nullptr;
+        if (aux.name == "temperature") {
+          dst = &vd.temperature_field;
+        } else if (aux.name == "emission" || aux.name == "flame" ||
+                   aux.name == "heat") {
+          dst = &vd.emission_field;
+        }
+        if (dst) {
+          dst->data = aux.data;
+          for (int a = 0; a < 3; ++a) dst->dim[a] = aux.dim[a];
+          dst->bmin = Vec3{
+              float(aux.origin[0]) * float(aux.voxel_size[0]) +
+                  float(aux.world_translation[0]),
+              float(aux.origin[1]) * float(aux.voxel_size[1]) +
+                  float(aux.world_translation[1]),
+              float(aux.origin[2]) * float(aux.voxel_size[2]) +
+                  float(aux.world_translation[2])};
+          dst->bmax = Vec3{
+              float(aux.origin[0] + aux.dim[0]) * float(aux.voxel_size[0]) +
+                  float(aux.world_translation[0]),
+              float(aux.origin[1] + aux.dim[1]) * float(aux.voxel_size[1]) +
+                  float(aux.world_translation[1]),
+              float(aux.origin[2] + aux.dim[2]) * float(aux.voxel_size[2]) +
+                  float(aux.world_translation[2])};
+          dst->background = aux.background;
+        }
+      }
       vd.density = std::move(g->data);
       float lo[3], hi[3];
       for (int a = 0; a < 3; a++) {
@@ -2733,6 +2827,7 @@ void CollectVolumesNext(const tinyusdz::next::Stage &stage,
       if (!tinyusdz::inverse(world, invw, 1.0e-12)) invw = matrix4d::identity();
       vd.inv_world = invw;
       vd.background = g->background;
+      ResolveVolumeMaterialNext(stage, prim, &vd);
       if (max_density_bytes > 0 && density_bytes_used) {
         const size_t used = *density_bytes_used;
         const size_t remaining = used < max_density_bytes
@@ -2990,6 +3085,55 @@ void ResolveCameraNext(RenderContext &ctx) {
                                  height, ctx.up_axis);
   }
   ctx.height = height;
+}
+
+void ResolveBackPlateNext(RenderContext &ctx) {
+  ctx.backplates.clear();
+  if (ctx.opt.camera.empty()) return;
+  tinyusdz::next::UsdPrim camera = ctx.stage.GetPrimAtPath(ctx.opt.camera);
+  if (!camera.IsValid()) {
+    std::vector<tinyusdz::next::UsdPrim> stack = ctx.stage.GetRootPrims();
+    while (!stack.empty()) {
+      const tinyusdz::next::UsdPrim prim = stack.back();
+      stack.pop_back();
+      if (prim.GetTypeName() == "Camera" && prim.GetName() == ctx.opt.camera) {
+        camera = prim;
+        break;
+      }
+      for (const tinyusdz::next::UsdPrim &child : prim.GetChildren())
+        stack.push_back(child);
+    }
+  }
+  if (!camera.IsValid()) return;
+  constexpr const char *prefix = "BackPlateAPI:";
+  for (const std::string &schema : camera.GetMeta().apiSchemas()) {
+    if (schema.rfind(prefix, 0) != 0) continue;
+    tinyusdz::next::BackPlateData data;
+    if (!tinyusdz::next::GetBackPlateData(
+            ctx.stage, camera, schema.substr(std::strlen(prefix)), &data,
+            ctx.frame_time) || data.image.empty() ||
+        data.plate_visibility == "invisible") continue;
+    auto anchored = [&](const std::string &path) {
+      if (path.empty() || path[0] == '/') return path;
+      const std::string base = DirName(ctx.opt.input);
+      return base.empty() ? path : base + "/" + path;
+    };
+    BackPlateImage plate;
+    if (!LoadBackPlateImage(anchored(data.image), anchored(data.alpha_image),
+                            anchored(data.depth_image), &plate)) continue;
+    plate.scale_x = data.scale_tweak[0];
+    plate.scale_y = data.scale_tweak[1];
+    plate.rotate_degrees = data.rotate_xyz_tweak[2];
+    plate.translate_x = data.translate_tweak[0];
+    plate.translate_y = data.translate_tweak[1];
+    plate.gain = {data.luma_gain[0], data.luma_gain[1], data.luma_gain[2]};
+    plate.lift = {data.luma_lift[0], data.luma_lift[1], data.luma_lift[2]};
+    plate.gamma = {data.luma_gamma[0], data.luma_gamma[1], data.luma_gamma[2]};
+    plate.depth_min_offset = data.depth_min_offset;
+    plate.depth_normalizing_factor = data.depth_normalizing_factor;
+    plate.depth_camera_space_offset = data.depth_camera_space_offset;
+    ctx.backplates.push_back(std::move(plate));
+  }
 }
 
 // Prototype BLAS to build: the holder prim's path + the inherited purpose
@@ -3482,6 +3626,14 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
     const matrix4d local = Mat4FromArray(dmat);
     const matrix4d world = local * parent;
     if (prim.GetTypeName() == "ParticleField3DGaussianSplat") {
+      tinyusdz::next::ParticleFieldData field;
+      std::string field_warning;
+      if (!tinyusdz::next::GetParticleFieldData(
+              stage, prim, &field, time, &field_warning)) {
+        build_ok = false;
+        return;
+      }
+      if (!field_warning.empty()) std::cerr << field_warning << "\n";
       // Keep uncompressed USDC arrays borrowed from the retained crate buffer
       // (and decode compressed/lazy values only into the ValueArrayRead's
       // bounded scratch). The previous Copy helper held five complete source
@@ -3491,13 +3643,21 @@ bool BuildNextGaussianEllipses(const tinyusdz::next::Stage &stage,
       tinyusdz::tydra::next::ValueArrayRead<float> qv;
       tinyusdz::tydra::next::ValueArrayRead<float> op;
       tinyusdz::tydra::next::ValueArrayRead<float> sh;
-      const bool have_p = ReadFloatArrayViewLazy(prim, "positions", time, &p);
-      const bool have_s = ReadFloatArrayViewLazy(prim, "scales", time, &s);
-      const bool have_q = ReadFloatArrayViewLazy(prim, "orientations", time, &qv);
-      const bool have_op = ReadFloatArrayViewLazy(prim, "opacities", time, &op);
+      const bool have_p = !field.positions_property.empty() &&
+          ReadFloatArrayViewLazy(prim, field.positions_property.c_str(), time,
+                                 &p);
+      const bool have_s = !field.scales_property.empty() &&
+          ReadFloatArrayViewLazy(prim, field.scales_property.c_str(), time, &s);
+      const bool have_q = !field.orientations_property.empty() &&
+          ReadFloatArrayViewLazy(prim, field.orientations_property.c_str(), time,
+                                 &qv);
+      const bool have_op = !field.opacities_property.empty() &&
+          ReadFloatArrayViewLazy(prim, field.opacities_property.c_str(), time,
+                                 &op);
       const bool allow_sh = AllowGaussianSHDecode(prim);
-      const bool have_sh = allow_sh && ReadFloatArrayViewLazy(
-          prim, "radiance:sphericalHarmonicsCoefficients", time, &sh);
+      const bool have_sh = allow_sh &&
+          !field.spherical_harmonics_property.empty() && ReadFloatArrayViewLazy(
+          prim, field.spherical_harmonics_property.c_str(), time, &sh);
       if (!allow_sh)
         std::cerr << "Gaussian splat: skipping oversized compressed SH payload at "
                   << prim.GetPath().str() << "; using fallback color.\n";
@@ -5787,6 +5947,10 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
     // surface lit nothing at all, and only lit what was behind it.
     dst.normal = dst.direction;
     dst.radiance = Mul(color, scale);
+    if (const tinyusdz::next::Value *v =
+            prim.GetPropertyValue("inputs:shadow:enable")) {
+      if (const bool *b = v->as_bool()) dst.shadow_enable = *b;
+    }
     const float radius = ReadCamFloatNext(prim, "inputs:radius", 0.5f);
     const float width = ReadCamFloatNext(prim, "inputs:width", 1.0f);
     const float height = ReadCamFloatNext(prim, "inputs:height", 1.0f);
@@ -5971,6 +6135,7 @@ bool PayloadPathWithin(const std::string &path, const std::string &ancestor) {
 bool PayloadIntersectsMask(const std::string &payload_path,
                            const std::vector<std::string> &mask) {
   for (const std::string &mask_path : mask) {
+    if (mask_path.empty() || mask_path[0] == '!') continue;
     if (PayloadPathWithin(payload_path, mask_path) ||
         PayloadPathWithin(mask_path, payload_path)) {
       return true;
@@ -6070,6 +6235,119 @@ bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
   return true;
 }
 
+bool HasAuthoredProperty(const tinyusdz::next::UsdPrim &prim,
+                         const char *name) {
+  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  return spec && spec->property(name);
+}
+
+uint32_t RenderPurposeMask(const std::vector<std::string> &purposes) {
+  uint32_t mask = 0;
+  for (const std::string &purpose : purposes) {
+    if (purpose == "default") mask |= kPurposeDefaultBit;
+    else if (purpose == "render") mask |= kPurposeRenderBit;
+    else if (purpose == "proxy") mask |= kPurposeProxyBit;
+    else if (purpose == "guide") mask |= kPurposeGuideBit;
+  }
+  return mask;
+}
+
+void AppendCollectionMask(const std::vector<tinyusdz::next::Path> &includes,
+                          const std::vector<tinyusdz::next::Path> &excludes,
+                          bool include_root, std::vector<std::string> *mask) {
+  if (!mask) return;
+  if (!include_root) {
+    for (const auto &path : includes) mask->push_back(path.prim_path().str());
+  }
+  for (const auto &path : excludes) {
+    mask->push_back("!" + path.prim_path().str());
+  }
+}
+
+bool ApplyUsdRenderOptions(const tinyusdz::next::Stage &stage,
+                           Options *opt) {
+  if (!opt) return false;
+  using namespace tinyusdz::next;
+
+  UsdPrim pass;
+  RenderPassData pass_data;
+  if (!opt->render_pass.empty()) {
+    pass = stage.GetPrimAtPath(opt->render_pass);
+    if (!GetRenderPassData(stage, pass, &pass_data, opt->timecode)) {
+      std::cerr << "Invalid RenderPass path: " << opt->render_pass << "\n";
+      return false;
+    }
+    if (!pass_data.command.is_empty()) {
+      std::cerr << "WARN: RenderPass command is preserved but never executed\n";
+    }
+    AppendCollectionMask(pass_data.render_visibility_includes,
+                         pass_data.render_visibility_excludes,
+                         pass_data.render_visibility_include_root, &opt->mask);
+  }
+
+  std::string settings_path = opt->render_settings;
+  std::string product_path = opt->render_product;
+  if (!pass_data.render_source.empty()) {
+    const UsdPrim source = stage.GetPrimAtPath(pass_data.render_source[0]);
+    if (IsRenderSettings(source) && settings_path.empty())
+      settings_path = source.GetPath().str();
+    else if (IsRenderProduct(source) && product_path.empty())
+      product_path = source.GetPath().str();
+  }
+  if (settings_path.empty() && stage.GetMeta().renderSettingsPrimPath_set)
+    settings_path = stage.GetMeta().renderSettingsPrimPath;
+
+  UsdPrim settings_prim = settings_path.empty()
+                              ? UsdPrim()
+                              : stage.GetPrimAtPath(settings_path);
+  RenderSettingsData settings;
+  if (!settings_path.empty() &&
+      !GetRenderSettingsData(stage, settings_prim, &settings, opt->timecode)) {
+    std::cerr << "Invalid RenderSettings path: " << settings_path << "\n";
+    return false;
+  }
+  if (settings_prim) {
+    if (!opt->width_explicit && HasAuthoredProperty(settings_prim, "resolution"))
+      opt->width = std::max(1, settings.resolution[0]);
+    if (!opt->height_explicit && HasAuthoredProperty(settings_prim, "resolution"))
+      opt->height = std::max(1, settings.resolution[1]);
+    if (!opt->camera_explicit && !settings.camera.empty())
+      opt->camera = settings.camera[0].prim_path().str();
+    if (!opt->purpose_explicit) {
+      const uint32_t mask = RenderPurposeMask(settings.included_purposes);
+      if (mask) opt->purpose_mask = mask;
+    }
+    if (product_path.empty() && !settings.products.empty())
+      product_path = settings.products[0].prim_path().str();
+  }
+
+  if (!product_path.empty()) {
+    const UsdPrim product_prim = stage.GetPrimAtPath(product_path);
+    RenderProductData product;
+    if (!GetRenderProductData(stage, product_prim, &product, opt->timecode)) {
+      std::cerr << "Invalid RenderProduct path: " << product_path << "\n";
+      return false;
+    }
+    if (!opt->width_explicit && HasAuthoredProperty(product_prim, "resolution"))
+      opt->width = std::max(1, product.resolution[0]);
+    if (!opt->height_explicit && HasAuthoredProperty(product_prim, "resolution"))
+      opt->height = std::max(1, product.resolution[1]);
+    if (!opt->camera_explicit && !product.camera.empty())
+      opt->camera = product.camera[0].prim_path().str();
+    for (const Path &var_path : product.ordered_vars) {
+      RenderVarData var;
+      const UsdPrim var_prim = stage.GetPrimAtPath(var_path.prim_path());
+      if (!GetRenderVarData(stage, var_prim, &var, opt->timecode)) continue;
+      if (!(var.source_name.empty() || var.source_name == "Ci" ||
+            var.source_name == "color")) {
+        std::cerr << "WARN: RenderVar '" << var_path.str() << "' source '"
+                  << var.source_name << "' is preserved but not emitted\n";
+      }
+    }
+  }
+  return true;
+}
+
 bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   ctx.opt = opt;
   ctx.width = opt.width > 0 ? opt.width : 960;
@@ -6090,6 +6368,9 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   const auto load_t1 = std::chrono::steady_clock::now();
   ctx.load_seconds = std::chrono::duration<double>(load_t1 - load_t0).count();
 
+  if (!ApplyUsdRenderOptions(ctx.stage, &ctx.opt)) return false;
+  ctx.width = ctx.opt.width > 0 ? ctx.opt.width : 960;
+
   // The composed stage is the memory baseline; everything our pool allocator
   // tracks (triangle buffers) must fit in cap - base. Abort now if compose alone
   // already blew the cap.
@@ -6102,13 +6383,13 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   MemBudget::Get().SnapshotBase();
 
   ctx.up_axis = GetUpAxis(ctx.stage.GetUpAxis());
-  ctx.geometry_animated = SceneGeometryAnimated(ctx.stage, opt.mask);
+  ctx.geometry_animated = SceneGeometryAnimated(ctx.stage, ctx.opt.mask);
 
   // Initial time: default value unless -timecode was given. -defaultTime forces
   // the default (NaN) explicitly.
-  const double init_time = opt.default_time
+  const double init_time = ctx.opt.default_time
                                ? std::numeric_limits<double>::quiet_NaN()
-                               : opt.timecode;
+                               : ctx.opt.timecode;
   if (!ExtractAndBuildBVH(ctx, init_time)) return false;
 
   // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Extend bounds with
@@ -6124,7 +6405,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   size_t volume_density_bytes = 0;
   for (const tinyusdz::next::UsdPrim &root : ctx.stage.GetRootPrims())
     CollectVolumesNext(ctx.stage, root, matrix4d::identity(), init_time,
-                       DirName(opt.input), &ctx.volumes, volume_budget_bytes,
+                       DirName(ctx.opt.input), &ctx.volumes, volume_budget_bytes,
                        &volume_density_bytes);
   ExpandBoundsByVolume(ctx.volumes, &ctx.bounds);
   if (!ctx.volumes.empty()) {
@@ -6134,14 +6415,15 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   }
 
   ResolveCameraNext(ctx);
+  ResolveBackPlateNext(ctx);
 
   // Image-based lighting: an explicit --env override wins, else the first
   // UsdLuxDomeLight's texture (scaled by intensity*color). Enables the glossy
   // BRDF (roughness/metallic) + env background; absent -> camera headlight.
-  BuildNextIbl(ctx.stage, opt, DirName(opt.input), init_time, &ctx.ibl);
-  if (opt.stats && ctx.ibl.valid) {
+  BuildNextIbl(ctx.stage, ctx.opt, DirName(ctx.opt.input), init_time, &ctx.ibl);
+  if (ctx.opt.stats && ctx.ibl.valid) {
     std::cerr << "ibl: " << ctx.ibl.env.width << "x" << ctx.ibl.env.height
-              << " (" << (opt.env_file.empty() ? "DomeLight" : "--env") << ")\n";
+              << " (" << (ctx.opt.env_file.empty() ? "DomeLight" : "--env") << ")\n";
   }
   // Finite UsdLux lights (Rect/Sphere/Disk/Cylinder/Distant) -> ctx.lights, so the
   // shading path lights interiors that the dome can't reach (e.g. ALab's shot rig).
@@ -6150,7 +6432,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
     CollectLightsNext(ctx.stage, root, matrix4d::identity(), init_time,
                       &ctx.lights);
   AppendPowerCdf(&ctx.lights.finite, &ctx.lights.finite_cdf);
-  if (opt.stats && !ctx.lights.finite.empty())
+  if (ctx.opt.stats && !ctx.lights.finite.empty())
     std::cerr << "rt finite lights: " << ctx.lights.finite.size() << "\n";
 
   CollectMeshLightsNext(ctx);
@@ -6196,7 +6478,8 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.tri_normals.empty() ? nullptr : &ctx.tri_normals,
       ctx.volumes.empty() ? nullptr : &ctx.volumes,
       ctx.flat_openpbr_mats.empty() ? nullptr : &ctx.flat_openpbr_mats,
-      ctx.triangle_chunks.empty() ? nullptr : &ctx.triangle_chunks);
+      ctx.triangle_chunks.empty() ? nullptr : &ctx.triangle_chunks,
+      ctx.backplates.empty() ? nullptr : &ctx.backplates);
   const auto t1 = std::chrono::steady_clock::now();
   tinyusdz::image::WriteOption wopt;
   wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
@@ -6473,6 +6756,7 @@ int RunRTPreviewNext(const Options &opt) {
         ctx.frame_time = t;  // static geometry: keep BVH, animate camera only
       }
       ResolveCameraNext(ctx);
+      ResolveBackPlateNext(ctx);
       const std::string out = SubstituteFrame(opt.output, std::lround(t));
       const double secs = RenderFrameTo(ctx, out);
       if (secs < 0.0) return EXIT_FAILURE;

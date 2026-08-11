@@ -722,6 +722,7 @@ def Xform "World"
     def RenderProduct "Rp"
     {
         rel orderedVars = </World/Rv>
+        rel camera = </World/Rv>
     }
     def RenderVar "Rv"
     {
@@ -743,6 +744,34 @@ def Xform "World"
             1: "lpe",
             2: "raw",
         }
+    }
+    def ParticleField3DGaussianSplat "Splats"
+    {
+        uniform token projectionModeHint = "fisheye"
+        uniform token sortingModeHint = "random"
+        point3f[] positions = [(0, 0, 0), (1, 0, 0)]
+        float3[] scales = [(1, 1, 1)]
+    }
+    def Camera "PlateCamera" (
+        prepend apiSchemas = ["BackPlateAPI:plate"]
+    )
+    {
+        token backPlate:plate:plateVisibility = "sometimes"
+    }
+    def Xform "CardModel" (
+        prepend apiSchemas = ["GeomModelAPI"]
+    )
+    {
+        uniform token model:cardVisibility = "complex"
+    }
+    def RenderPass "Pass"
+    {
+        string renderSource = "/World/Rs"
+    }
+    def RenderPass "PassTargets"
+    {
+        rel renderSource = </World/Rv>
+        rel inputPasses = </World/Rp>
     }
 }
 )";
@@ -773,6 +802,21 @@ def Xform "World"
   CHECK(CountErrors(result, "render.settings.relationship") == 0,
         "authored relationships are clean; a custom `orderedVars` attribute "
         "on RenderSettings is not kind-checked");
+  CHECK(CountErrors(result, "vol.particleField.projectionModeHint") == 1 &&
+            CountErrors(result, "vol.particleField.sortingModeHint") == 1,
+        "invalid Gaussian rendering hints are errors");
+  CHECK(CountWarnings(result, "vol.particleField.arraySize") == 1,
+        "short Gaussian auxiliary arrays warn about OpenUSD discard behavior");
+  CHECK(CountErrors(result, "geom.backPlate.visibility") == 1,
+        "invalid BackPlateAPI visibility is an error");
+  CHECK(CountErrors(result, "geom.model.cardVisibility") == 1,
+        "invalid GeomModelAPI cardVisibility is an error");
+  CHECK(CountErrors(result, "render.pass.relationship") == 1,
+        "RenderPass renderSource must be a relationship");
+  CHECK(CountWarnings(result, "render.product.targetType") == 1,
+        "RenderProduct camera target type is checked");
+  CHECK(CountWarnings(result, "render.pass.targetType") == 2,
+        "RenderPass source/input pass target types are checked");
   if (g_fail) DumpIssues(result);
 
   // render.* rules are their own group: geom alone must not run them.

@@ -46,6 +46,7 @@ struct RenderContext {
   IblCache ibl;                   // image-based lighting (--env / DomeLight)
   tinyusdz::Axis up_axis{tinyusdz::Axis::Y};
   CameraFrame camera;
+  std::vector<BackPlateImage> backplates;
   Options opt;  // mutable render parameters (width/height/ambient/bg/...)
   int width{960};
   int height{540};
@@ -147,6 +148,10 @@ bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
 
 bool LoadEnvImageFromFile(const std::string &path, const Vec3 &scale,
                           EnvImage *out);
+bool LoadBackPlateImage(const std::string &color_path,
+                        const std::string &alpha_path,
+                        const std::string &depth_path,
+                        BackPlateImage *out);
 
 Vec3 SampleIblMip(const std::vector<EnvImage> &mips, const Vec3 &dir,
                   float roughness);
@@ -287,7 +292,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            //     already delivers (TriInfo::area_light marks those triangles).
            // Without this, both are counted twice in `-materialShading lightrt-bsdf`.
            bool indirect = false,
-           const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr);
+           const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr,
+           float *primary_hit_t = nullptr);
 
 uint8_t ToSRGB8(float linear);
 
@@ -315,7 +321,8 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<VolumeData> *volumes = nullptr,
                             const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
                                 *openpbr_mats = nullptr,
-                            const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr);
+                            const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr,
+                            const std::vector<BackPlateImage> *backplates = nullptr);
 
 bool LoadProgress(float progress, void *);
 

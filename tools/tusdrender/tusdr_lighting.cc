@@ -461,6 +461,85 @@ bool LoadEnvImageFromFile(const std::string &path, const Vec3 &scale,
   return true;
 }
 
+bool LoadBackPlateImage(const std::string &color_path,
+                        const std::string &alpha_path,
+                        const std::string &depth_path,
+                        BackPlateImage *out) {
+  if (!out || color_path.empty()) return false;
+  auto load = [](const std::string &path, tinyusdz::Image *image) {
+    if (path.empty()) return false;
+    auto result = tinyusdz::image::LoadImageFromFile(path);
+    if (!result) return false;
+    *image = std::move(result.value().image);
+    return image->width > 0 && image->height > 0 && image->channels > 0;
+  };
+  auto channel = [](const tinyusdz::Image &image, size_t pixel,
+                    size_t component) {
+    const size_t ch = size_t(image.channels);
+    component = std::min(component, ch - 1);
+    if (image.format == tinyusdz::Image::PixelFormat::Float &&
+        image.bpp == 32) {
+      const float *data = reinterpret_cast<const float *>(image.data.data());
+      return data[pixel * ch + component];
+    }
+    return float(image.data[pixel * ch + component]) / 255.0f;
+  };
+  tinyusdz::Image color;
+  if (!load(color_path, &color) ||
+      !((color.format == tinyusdz::Image::PixelFormat::Float &&
+         color.bpp == 32) || color.bpp == 8)) {
+    std::cerr << "WARN: failed to load BackPlate image: " << color_path << "\n";
+    return false;
+  }
+  BackPlateImage plate;
+  plate.width = color.width;
+  plate.height = color.height;
+  const size_t count = size_t(plate.width) * size_t(plate.height);
+  const size_t color_stride = size_t(color.channels) *
+      ((color.format == tinyusdz::Image::PixelFormat::Float &&
+        color.bpp == 32) ? sizeof(float) : sizeof(uint8_t));
+  if (count > color.data.size() / color_stride) return false;
+  plate.color.resize(count);
+  const bool srgb = color.format != tinyusdz::Image::PixelFormat::Float;
+  auto linear = [srgb](float value) {
+    if (!srgb) return value;
+    return value <= 0.04045f ? value / 12.92f
+                            : std::pow((value + 0.055f) / 1.055f, 2.4f);
+  };
+  for (size_t i = 0; i < count; ++i) {
+    plate.color[i] = {linear(channel(color, i, 0)),
+                      linear(channel(color, i, 1)),
+                      linear(channel(color, i, 2))};
+    if (color.channels >= 4) {
+      if (plate.alpha.empty()) plate.alpha.resize(count);
+      plate.alpha[i] = channel(color, i, 3);
+    }
+  }
+  auto load_scalar = [&](const std::string &path, std::vector<float> *dst) {
+    if (path.empty()) return true;
+    tinyusdz::Image image;
+    if (!load(path, &image) || image.width != plate.width ||
+        image.height != plate.height ||
+        !((image.format == tinyusdz::Image::PixelFormat::Float &&
+           image.bpp == 32) || image.bpp == 8)) {
+      std::cerr << "WARN: BackPlate auxiliary image is invalid or has a "
+                   "different resolution: " << path << "\n";
+      return false;
+    }
+    const size_t stride = size_t(image.channels) *
+        ((image.format == tinyusdz::Image::PixelFormat::Float &&
+          image.bpp == 32) ? sizeof(float) : sizeof(uint8_t));
+    if (count > image.data.size() / stride) return false;
+    dst->resize(count);
+    for (size_t i = 0; i < count; ++i) (*dst)[i] = channel(image, i, 0);
+    return true;
+  };
+  if (!alpha_path.empty() && !load_scalar(alpha_path, &plate.alpha)) return false;
+  if (!load_scalar(depth_path, &plate.depth)) return false;
+  *out = std::move(plate);
+  return true;
+}
+
 Vec3 SampleIblMip(const std::vector<EnvImage> &mips, const Vec3 &dir,
                   float roughness) {
   if (mips.empty()) return Vec3{0.0f, 0.0f, 0.0f};
@@ -533,6 +612,7 @@ void AddFiniteLight(const RenderLight &light, PreviewLight::Kind kind,
   // surface lit nothing at all, and only lit what was behind it.
   dst.normal = dst.direction;
   dst.radiance = LightColor(light);
+  dst.shadow_enable = light.shadowEnable;
   dst.radius = light.radius;
   dst.width = light.width;
   dst.height = light.height;

@@ -19,7 +19,20 @@ layout(set = 0, binding = 0, std140) uniform VolumeUBO {
   vec4 emission;  // .xyz emission, .w background
 } u;
 
-layout(set = 0, binding = 1) uniform sampler3D uDensity;
+// R=density, G=emission/flame, B=temperature. bmin.w/bmax.w indicate
+// whether the optional channels are present.
+layout(set = 0, binding = 1) uniform sampler3D uFields;
+
+vec3 blackbody(float value) {
+  float k = value > 100.0 ? value : 1000.0 + 5500.0 * max(value, 0.0);
+  float t = clamp(k / 100.0, 10.0, 400.0);
+  float r = t <= 66.0 ? 1.0 : 1.2929362 * pow(t - 60.0, -0.13320476);
+  float g = t <= 66.0 ? 0.39008158 * log(t) - 0.63184144
+                      : 1.1298909 * pow(t - 60.0, -0.07551485);
+  float b = t >= 66.0 ? 1.0 : (t <= 19.0 ? 0.0
+                                         : 0.5432068 * log(t - 10.0) - 1.1962541);
+  return clamp(vec3(r, g, b), 0.0, 1.0);
+}
 
 bool rayAABB(vec3 o, vec3 d, vec3 lo, vec3 hi, out float t0, out float t1) {
   vec3 inv = 1.0 / d;
@@ -57,10 +70,19 @@ void main() {
     if (t >= t1) break;
     vec3 p = oo + od * (t + 0.5 * step);
     vec3 uvw = (p - bmin) / ext;
-    float dens = (texture(uDensity, uvw).r - background) * densityScale;
+    vec3 fields = texture(uFields, uvw).rgb;
+    float dens = (fields.r - background) * densityScale;
     if (dens > 0.0) {
       float a = 1.0 - exp(-dens * step);
-      vec3 src = u.albedo.xyz * a + u.emission.xyz * (dens * step);
+      float ew = u.bmin.w > 0.5 ? max(fields.g, 0.0) : dens;
+      vec3 ec = u.emission.xyz;
+      if (u.bmax.w > 0.5) {
+        float temp = max(fields.b, 0.0);
+        vec3 tint = blackbody(temp);
+        ec = dot(ec, vec3(1.0)) > 0.0 ? ec * tint : tint;
+        ew = max(ew, temp);
+      }
+      vec3 src = u.albedo.xyz * a + ec * (ew * step);
       L += T * src;
       T *= (1.0 - a);
       if (T < 0.003) break;
