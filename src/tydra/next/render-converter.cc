@@ -3518,9 +3518,14 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     float mesh_progress_end = 0.5f;
 
     const size_t mesh_count = extracted.meshes.size();
-    const unsigned hw_threads = std::thread::hardware_concurrency();
-    const size_t mesh_workers =
-        std::max<size_t>(1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
+    size_t mesh_workers;
+    if (config_.max_worker_threads > 0) {
+      mesh_workers = config_.max_worker_threads;
+    } else {
+      const unsigned hw_threads = std::thread::hardware_concurrency();
+      mesh_workers =
+          std::max<size_t>(1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
+    }
 
     size_t next_mesh = 0;
     bool mesh_budget_hit = false;
@@ -5325,6 +5330,18 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
           sb.joint_weights = std::move(reduced_weights);
         }
 
+      // Cumulative budget guard: ProbeAlloc above only bounds the transient
+      // bone-reduction scratch for THIS mesh; a scene of many meshes each
+      // authoring dense-but-individually-small skin influences can still
+      // sum the tracked joint_indices/joint_weights buffers past the cap
+      // without any single mesh tripping a per-call probe.
+      if (BudgetWouldExceed(
+              SaturatingMul(sb.joint_indices.size(), sizeof(int32_t) +
+                                                          sizeof(float)),
+              "skin binding decode")) {
+        AddWarning("Memory budget reached; skipping skin binding for " +
+                            prim.GetPath().str());
+      } else {
       out->skin = std::make_unique<RenderMesh::SkinBinding>();
       out->skin->joint_indices.reserve(sb.joint_indices.size());
       for (int32_t ji : sb.joint_indices) {
@@ -5343,6 +5360,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
       // (stored in skin->skeleton_id via the path recorded here).
       out->skin->skeleton_path = sb.skeleton_path;
       }
+      }
     }
   }
 
@@ -5353,6 +5371,20 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     ::tinyusdz::next::BlendShapeData bd;
     if (!::tinyusdz::next::GetBlendShapeData(stage, bs_prim, &bd)) continue;
     if (bd.offsets.empty()) continue;
+    // Cumulative budget guard: a scene with many blend-shape targets (or
+    // dense per-vertex offsets on a single target) can sum well past the cap
+    // one target at a time, each individually too small to trip a per-call
+    // probe. Estimate offsets + normalOffsets + every in-between's offsets.
+    {
+      size_t bs_floats = bd.offsets.size() + bd.normalOffsets.size();
+      for (const auto& ib : bd.inbetweens) bs_floats += ib.offsets.size();
+      if (BudgetWouldExceed(SaturatingMul(bs_floats, sizeof(float)),
+                            "blend shape decode")) {
+        AddWarning("Memory budget reached; skipping blend shape '" +
+                            bs_prim.GetPath().str() + "'");
+        continue;
+      }
+    }
     RenderMesh::BlendShape shape;
     shape.name = bs.name.empty() ? bs_prim.GetName() : bs.name;
 
