@@ -350,6 +350,16 @@ class VulkanRenderer final : public Renderer {
   // Pure host-side + buffer upload, no shader dependency -- always compiled,
   // but only reachable when rtTechnique_ == kComputeBvh selects this path.
   void rebuildSwBvh();
+  // Builds the SAME rtMatBuf_/rtMatLightRtBuf_/rtLightBuf_/rtTex*Buf_ SSBOs
+  // rebuildTlas() builds for the hardware technique (same source CPU state:
+  // matColor_/matLightRt_/lightParams_/rtTexturesCpu_/rtMaterialsCpu_/
+  // rtLightsCpu_), so the shared shading GLSL sees identically-laid-out data
+  // regardless of technique. Deliberately a separate function rather than a
+  // shared helper factored out of rebuildTlas(): that function is proven,
+  // hardware-RT-only code this session cannot runtime-verify on hardware
+  // without RT support, so it stays untouched to avoid an unverifiable
+  // regression risk.
+  void rebuildSwMaterialLightSSBOs();
   bool createSwRtResources(std::string* err);  // sw-BVH descriptor layout/pool + pipeline
   void traceRtBvh(VkCommandBuffer cb);          // dispatch + copy into colorImg_
   void destroySwRt();

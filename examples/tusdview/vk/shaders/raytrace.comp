@@ -743,6 +743,16 @@ void main() {
     float coatWeight = 0.0;
     float coatRoughness = 0.1;
     vec3 coatColor = vec3(1.0);
+    // OpenPBR transmission/subsurface: read here (lrtRows rows 2/4, already
+    // packed by PackRealtimePbrMaterial, src/tydra/openpbr-params.hh) even
+    // though only the cheap subsurface tint below consumes them so far --
+    // `transmission`/`transmissionColor` are also what the refraction lobe
+    // (a later pass) will read, so they're declared once alongside the rest
+    // of the material's lrt()-sourced state rather than re-fetched later.
+    float transmission = 0.0;
+    vec3 transmissionColor = vec3(1.0);
+    float subsurface = 0.0;
+    vec3 subsurfaceColor = vec3(1.0);
     if (ii.useMaterial != 0u) {
       if (mid != 0xffffffffu) {
         base = mat(mid, 0u).rgb;
@@ -762,6 +772,22 @@ void main() {
           coatWeight = lrt(mid, 6u).w;
           coatColor = lrt(mid, 6u).rgb;
           coatRoughness = lrt(mid, 11u).x;
+          transmission = lrt(mid, 2u).w;
+          transmissionColor = lrt(mid, 2u).rgb;
+          subsurface = lrt(mid, 4u).w;
+          subsurfaceColor = lrt(mid, 4u).rgb;
+          // Cheap subsurface approximation (no real BSSRDF transport in this
+          // codebase to build on): tint the diffuse albedo toward
+          // subsurfaceColor, weighted by `subsurface` and zeroed out on
+          // already-transmissive/metallic surfaces -- ported from
+          // src/external/lightrt/mtlxrender/bsdf.c's diffuse-lobe tint
+          // (the only subsurface handling that exists anywhere in this
+          // repo). Albedo-only: the existing cosine-weighted diffuse
+          // sampling PDF is unaffected, so this needs no importance-
+          // sampling changes.
+          base = mix(base,
+                     subsurfaceColor * (1.0 - metallic) * (1.0 - transmission),
+                     subsurface);
         }
       } else {
         base = vec3(0.6);
