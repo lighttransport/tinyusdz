@@ -3704,9 +3704,41 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
     }
 
-    for (const auto& rec : extracted.point_instancers) {
-      RenderPointInstancer instancer;
-      if (ConvertPointInstancer(rec.prim, &instancer)) {
+    // ConvertPointInstancer itself (reading positions/orientations/scales/
+    // velocities/ids arrays) touches no shared converter or scene state, so
+    // it runs in the worker batch; prototype-binding resolution, instance
+    // draw expansion and id/scene bookkeeping all mutate result.scene and
+    // stay serial in original record order.
+    for (size_t batch_start = 0; batch_start < extracted.point_instancers.size();
+         batch_start += mesh_workers) {
+      const size_t batch_end = std::min(batch_start + mesh_workers,
+                                        extracted.point_instancers.size());
+      const size_t n = batch_end - batch_start;
+      std::vector<RenderPointInstancer> batch_inst(n);
+      std::vector<uint8_t> batch_ok(n, 0);
+      if (n == 1) {
+        batch_ok[0] = ConvertPointInstancer(
+                          extracted.point_instancers[batch_start].prim,
+                          &batch_inst[0]) ? 1 : 0;
+      } else {
+        std::vector<std::thread> workers;
+        workers.reserve(n);
+        for (size_t bi = 0; bi < n; ++bi) {
+          workers.emplace_back([&, bi]() {
+            batch_ok[bi] = ConvertPointInstancer(
+                               extracted.point_instancers[batch_start + bi].prim,
+                               &batch_inst[bi]) ? 1 : 0;
+          });
+        }
+        for (std::thread& t : workers) t.join();
+      }
+      for (size_t bi = 0; bi < n; ++bi) {
+        const auto& rec = extracted.point_instancers[batch_start + bi];
+        RenderPointInstancer& instancer = batch_inst[bi];
+        if (!batch_ok[bi]) {
+          AddWarning("Failed to convert PointInstancer: " + rec.path);
+          continue;
+        }
         int32_t instancer_id =
             static_cast<int32_t>(result.scene.point_instancers.size());
         result.scene.point_instancer_by_path[instancer.prim_path] = instancer_id;
@@ -3735,8 +3767,6 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         }
         result.scene.point_instancers.push_back(std::move(instancer));
         AssignNodeDataId(&result.scene, rec.path, instancer_id);
-      } else {
-        AddWarning("Failed to convert PointInstancer: " + rec.path);
       }
     }
 
@@ -3782,10 +3812,38 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       DuplicatePointInstanceMeshes(&result.scene);
     }
 
-    // Convert lights
-    for (const auto& rec : extracted.lights) {
-      RenderLight light;
-      if (ConvertLight(rec.prim, &light)) {
+    // Convert lights. ConvertLight itself touches no shared converter/scene
+    // state (verified), so it runs in the worker batch; the DomeLight
+    // environment-texture lookup calls ResolveImageId, which mutates the
+    // scene-wide image dedup cache (image_id_by_key_/image_id_cache_) and
+    // result.scene.images -- that stays serial in the merge step, same as
+    // id assignment.
+    for (size_t batch_start = 0; batch_start < extracted.lights.size();
+         batch_start += mesh_workers) {
+      const size_t batch_end =
+          std::min(batch_start + mesh_workers, extracted.lights.size());
+      const size_t n = batch_end - batch_start;
+      std::vector<RenderLight> batch_light(n);
+      std::vector<uint8_t> batch_ok(n, 0);
+      if (n == 1) {
+        batch_ok[0] = ConvertLight(extracted.lights[batch_start].prim,
+                                   &batch_light[0]) ? 1 : 0;
+      } else {
+        std::vector<std::thread> workers;
+        workers.reserve(n);
+        for (size_t bi = 0; bi < n; ++bi) {
+          workers.emplace_back([&, bi]() {
+            batch_ok[bi] = ConvertLight(
+                               extracted.lights[batch_start + bi].prim,
+                               &batch_light[bi]) ? 1 : 0;
+          });
+        }
+        for (std::thread& t : workers) t.join();
+      }
+      for (size_t bi = 0; bi < n; ++bi) {
+        if (!batch_ok[bi]) continue;
+        const auto& rec = extracted.lights[batch_start + bi];
+        RenderLight& light = batch_light[bi];
         for (int i = 0; i < 16; ++i) {
           light.transform.m[i] = static_cast<float>(rec.world[i]);
         }
