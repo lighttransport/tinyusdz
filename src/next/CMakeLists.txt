@@ -296,7 +296,13 @@ if(TINYUSDZ_NEXT_FINE_LOCKS)
     if(NOT TINYUSDZ_NEXT_ENABLE_THREAD)
         message(FATAL_ERROR "TINYUSDZ_NEXT_FINE_LOCKS requires TINYUSDZ_NEXT_ENABLE_THREAD=ON")
     endif()
-    target_compile_definitions(tinyusdz_next PUBLIC TINYUSDZ_NEXT_FINE_LOCKS)
+    # PRIVATE, unlike TINYUSDZ_ENABLE_THREAD above: this only selects the
+    # PcpMutex type used inside Cache::Impl (a pimpl, src/next/pcp/cache.cc),
+    # never appears in a public header, and does not affect the layout of
+    # anything a consumer links against -- so it does not need to match
+    # between this library and its consumers the way TINYUSDZ_ENABLE_THREAD
+    # (which changes PropNameTable's member layout) does.
+    target_compile_definitions(tinyusdz_next PRIVATE TINYUSDZ_NEXT_FINE_LOCKS)
 endif()
 
 # Set include directories

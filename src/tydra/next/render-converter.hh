@@ -170,6 +170,15 @@ struct ConverterConfig {
   size_t max_render_depth = 256;
   size_t max_render_records = 0;
 
+  // Worker threads for the per-record conversion batches (mesh/points/
+  // curves/cameras/skeletons/lights/point_instancers). 0 = auto
+  // (std::thread::hardware_concurrency(), capped at 16). 1 forces fully
+  // serial conversion -- useful for deterministic/single-threaded test
+  // builds or to cap CPU usage in a server context; WASM/single-thread
+  // targets should set this to 1 explicitly rather than relying on
+  // hardware_concurrency() (which may over-report on some runtimes).
+  size_t max_worker_threads = 0;
+
   // Time code for evaluation
   double time_code = 0.0;
 
