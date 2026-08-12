@@ -3810,10 +3810,35 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
     }
 
-    // Convert cameras
-    for (const auto& rec : extracted.cameras) {
-      RenderCamera camera;
-      if (ConvertCamera(stage, rec.prim, &camera)) {
+    // Convert cameras. ConvertCamera touches no converter state beyond
+    // warnings_/last_error_ (already mutex-guarded), so batch it the same
+    // way as mesh/points/curves conversion.
+    for (size_t batch_start = 0; batch_start < extracted.cameras.size();
+         batch_start += mesh_workers) {
+      const size_t batch_end =
+          std::min(batch_start + mesh_workers, extracted.cameras.size());
+      const size_t n = batch_end - batch_start;
+      std::vector<RenderCamera> batch_camera(n);
+      std::vector<uint8_t> batch_ok(n, 0);
+      if (n == 1) {
+        batch_ok[0] = ConvertCamera(stage, extracted.cameras[batch_start].prim,
+                                    &batch_camera[0]) ? 1 : 0;
+      } else {
+        std::vector<std::thread> workers;
+        workers.reserve(n);
+        for (size_t bi = 0; bi < n; ++bi) {
+          workers.emplace_back([&, bi]() {
+            batch_ok[bi] = ConvertCamera(
+                               stage, extracted.cameras[batch_start + bi].prim,
+                               &batch_camera[bi]) ? 1 : 0;
+          });
+        }
+        for (std::thread& t : workers) t.join();
+      }
+      for (size_t bi = 0; bi < n; ++bi) {
+        if (!batch_ok[bi]) continue;
+        const auto& rec = extracted.cameras[batch_start + bi];
+        RenderCamera& camera = batch_camera[bi];
         for (int i = 0; i < 16; ++i) {
           camera.transform.m[i] = static_cast<float>(rec.world[i]);
         }
@@ -3823,10 +3848,36 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
     }
 
-    // Convert skeletons
-    for (const auto& rec : extracted.skeletons) {
-      Skeleton skeleton;
-      if (ConvertSkeleton(rec.prim, &skeleton)) {
+    // Convert skeletons. ConvertSkeleton itself (joint hierarchy + bind/rest
+    // transform computation) is the expensive part and touches no shared
+    // state, so it runs in the worker batch; the skel:animationSource
+    // ancestor walk and id/scene bookkeeping stay serial in original order.
+    for (size_t batch_start = 0; batch_start < extracted.skeletons.size();
+         batch_start += mesh_workers) {
+      const size_t batch_end =
+          std::min(batch_start + mesh_workers, extracted.skeletons.size());
+      const size_t n = batch_end - batch_start;
+      std::vector<Skeleton> batch_skel(n);
+      std::vector<uint8_t> batch_ok(n, 0);
+      if (n == 1) {
+        batch_ok[0] = ConvertSkeleton(extracted.skeletons[batch_start].prim,
+                                      &batch_skel[0]) ? 1 : 0;
+      } else {
+        std::vector<std::thread> workers;
+        workers.reserve(n);
+        for (size_t bi = 0; bi < n; ++bi) {
+          workers.emplace_back([&, bi]() {
+            batch_ok[bi] = ConvertSkeleton(
+                               extracted.skeletons[batch_start + bi].prim,
+                               &batch_skel[bi]) ? 1 : 0;
+          });
+        }
+        for (std::thread& t : workers) t.join();
+      }
+      for (size_t bi = 0; bi < n; ++bi) {
+        if (!batch_ok[bi]) continue;
+        const auto& rec = extracted.skeletons[batch_start + bi];
+        Skeleton& skeleton = batch_skel[bi];
         // skel:animationSource may be authored on the SkelRoot (or another
         // ancestor) instead of the Skeleton itself; every descendant
         // Skeleton inherits it (UsdSkel binding inheritance).
