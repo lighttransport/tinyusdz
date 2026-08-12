@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -304,7 +305,10 @@ class RenderSceneConverter {
   bool LoadTexture(const std::string& asset_path, TextureImage* out);
 
   // Get last error
-  const std::string& GetLastError() const { return last_error_; }
+  std::string GetLastError() const {
+    std::lock_guard<std::mutex> lk(state_mu_);
+    return last_error_;
+  }
 
  private:
   // Build scene hierarchy
@@ -407,6 +411,14 @@ class RenderSceneConverter {
   ConverterConfig config_;
   std::string last_error_;
   std::vector<std::string> warnings_;
+  // Guards last_error_, warnings_ and the BudgetWouldExceed bookkeeping
+  // (budget_*_ below) for the parallel per-record conversion phases (meshes
+  // today; see the mesh-conversion loop in Convert()). No-op cost on the
+  // serial phases that still call SetLastError()/AddWarning()/
+  // BudgetWouldExceed() from the main thread only.
+  mutable std::mutex state_mu_;
+  void AddWarning(std::string msg);
+  void SetLastError(std::string msg);
   const RenderScene* image_cache_scene_ = nullptr;
   // Keep only a compact path hash in the transient dedup index.  The
   // resolved path is already retained by RenderScene::images; duplicating it

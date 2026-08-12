@@ -36,6 +36,7 @@
 #include <set>
 #include <sstream>
 #include <iomanip>
+#include <thread>
 #include <unordered_set>
 
 namespace tinyusdz {
@@ -3420,7 +3421,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
             working_to_display.matrix[i];
       }
     }
-    if (!color_warning.empty()) warnings_.push_back(color_warning);
+    if (!color_warning.empty()) AddWarning(color_warning);
 
     RenderExtractOptions xopts;
     xopts.time_code = config_.time_code;
@@ -3474,7 +3475,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         unsupported.reason =
             "recognized by extraction but not converted to render geometry";
         result.scene.unsupported_renderables.push_back(unsupported);
-        warnings_.push_back("Unsupported renderable prim '" + rec.path +
+        AddWarning("Unsupported renderable prim '" + rec.path +
                             "' of type '" + rec.type_name + "'");
       }
 
@@ -3497,101 +3498,209 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
 
     // Convert meshes
+    //
+    // Each mesh converts independently of every other (ConvertRenderableMesh
+    // reads the composed stage and writes only into its own RenderMesh out-
+    // param -- verified no other prim's data or scene-wide converter state is
+    // touched); the only shared state it reaches is warnings_/last_error_/the
+    // BudgetWouldExceed counters, all funneled through AddWarning()/
+    // SetLastError()/BudgetWouldExceed() under state_mu_ above. So the actual
+    // per-mesh conversion runs on a worker pool, in batches sized to the
+    // hardware; scene bookkeeping (id assignment, mesh_by_path, node linking,
+    // geometry-retention trimming) stays serial and in original prim order so
+    // output stays byte-identical to the single-threaded path.
+    //
+    // The budget check is still made on the main thread, one mesh at a time,
+    // before it is added to a batch -- same "decide with real RSS, then do
+    // the work" ordering as the serial loop had, just batched at worker-pool
+    // granularity instead of per-mesh.
     float mesh_progress_start = 0.2f;
     float mesh_progress_end = 0.5f;
 
-    for (size_t i = 0; i < extracted.meshes.size(); ++i) {
-      const UsdPrim& mesh_prim = extracted.meshes[i].prim;
-      if (config_.progress_callback) {
-        float p = mesh_progress_start +
-                  (mesh_progress_end - mesh_progress_start) * i /
-                      std::max<size_t>(extracted.meshes.size(), 1);
-        config_.progress_callback(p, "Converting mesh: " + mesh_prim.GetName());
-      }
+    const size_t mesh_count = extracted.meshes.size();
+    const unsigned hw_threads = std::thread::hardware_concurrency();
+    const size_t mesh_workers =
+        std::max<size_t>(1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
 
-      // Cumulative budget guard: skip the rest of the geometry rather than
-      // let a scene of many individually-small meshes OOM the process.
-      if (BudgetWouldExceed(
-              BuildGeometryInfo(mesh_prim, GeometryKind::Mesh, -1)
-                  .estimated_resident_bytes,
-              "mesh conversion")) {
-        break;
+    size_t next_mesh = 0;
+    bool mesh_budget_hit = false;
+    while (next_mesh < mesh_count && !mesh_budget_hit) {
+      std::vector<size_t> batch;
+      batch.reserve(std::min(mesh_workers, mesh_count - next_mesh));
+      while (batch.size() < mesh_workers && next_mesh < mesh_count) {
+        const UsdPrim& mesh_prim = extracted.meshes[next_mesh].prim;
+        // Cumulative budget guard: skip the rest of the geometry rather than
+        // let a scene of many individually-small meshes OOM the process.
+        if (BudgetWouldExceed(
+                BuildGeometryInfo(mesh_prim, GeometryKind::Mesh, -1)
+                    .estimated_resident_bytes,
+                "mesh conversion")) {
+          mesh_budget_hit = true;
+          break;
+        }
+        if (config_.progress_callback) {
+          float p = mesh_progress_start +
+                    (mesh_progress_end - mesh_progress_start) * next_mesh /
+                        std::max<size_t>(mesh_count, 1);
+          config_.progress_callback(p,
+                                    "Converting mesh: " + mesh_prim.GetName());
+        }
+        batch.push_back(next_mesh);
+        ++next_mesh;
       }
+      if (batch.empty()) break;
 
-      RenderMesh mesh;
-      const bool converted = ConvertRenderableMesh(stage, mesh_prim, &mesh);
-      if (converted && mesh.has_alloc_failure()) {
-        // ConvertGeomPrimitive does not run ConvertMesh's alloc check.
-        warnings_.push_back("Out of memory converting prim '" +
-                            mesh_prim.GetPath().str() +
-                            "'; the prim was skipped");
-        continue;
-      }
-      if (converted) {
-        const bool analytic = mesh_prim.GetTypeName() != "Mesh";
-        if (!config_.mesh.retain_geometry &&
-            !(analytic && config_.mesh.retain_analytic_geometry)) {
-          // Retain only the small inputs still required by the later material
-          // binding and UV-selection passes. This bounds conversion memory by
-          // one source mesh instead of accumulating the whole render scene.
-          ReleaseMeshGeometry(&mesh, true,
-                              config_.mesh.retain_triangulation);
-        }
-        // Release chunk-allocation slack before retaining: thousands of small
-        // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
-        mesh.compact();
-        if (!config_.mesh.retain_geometry) {
-          ReleaseSourceMeshStaticArrays(stage, mesh_prim);
-        }
-        int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
-        result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
-        result.scene.meshes.push_back(std::move(mesh));
-        AssignNodeDataId(&result.scene, mesh_prim.GetPath().str(), mesh_id);
+      std::vector<RenderMesh> batch_mesh(batch.size());
+      std::vector<uint8_t> batch_ok(batch.size(), 0);
+      if (batch.size() == 1) {
+        const UsdPrim& mesh_prim = extracted.meshes[batch[0]].prim;
+        batch_ok[0] =
+            ConvertRenderableMesh(stage, mesh_prim, &batch_mesh[0]) ? 1 : 0;
       } else {
-        warnings_.push_back("Failed to convert renderable mesh prim: " +
-                            mesh_prim.GetPath().str());
+        std::vector<std::thread> workers;
+        workers.reserve(batch.size());
+        for (size_t bi = 0; bi < batch.size(); ++bi) {
+          workers.emplace_back([&, bi]() {
+            const UsdPrim& mesh_prim = extracted.meshes[batch[bi]].prim;
+            batch_ok[bi] =
+                ConvertRenderableMesh(stage, mesh_prim, &batch_mesh[bi]) ? 1
+                                                                         : 0;
+          });
+        }
+        for (std::thread& t : workers) t.join();
       }
-    }
 
-    for (const auto& rec : extracted.points) {
-      RenderPoints points;
-      if (ConvertPoints(stage, rec.prim, &points)) {
-        if (points.has_alloc_failure()) {
-          warnings_.push_back("Out of memory converting Points '" + rec.path +
+      for (size_t bi = 0; bi < batch.size(); ++bi) {
+        const UsdPrim& mesh_prim = extracted.meshes[batch[bi]].prim;
+        RenderMesh& mesh = batch_mesh[bi];
+        const bool converted = batch_ok[bi] != 0;
+        if (converted && mesh.has_alloc_failure()) {
+          // ConvertGeomPrimitive does not run ConvertMesh's alloc check.
+          AddWarning("Out of memory converting prim '" +
+                              mesh_prim.GetPath().str() +
                               "'; the prim was skipped");
           continue;
         }
-        int32_t points_id = static_cast<int32_t>(result.scene.points.size());
-        points.compact();
-        result.scene.points_by_path[points.prim_path] = points_id;
-        result.scene.points.push_back(std::move(points));
-        if (!config_.mesh.retain_geometry) {
-          ReleaseSourceMeshStaticArrays(stage, rec.prim);
+        if (converted) {
+          const bool analytic = mesh_prim.GetTypeName() != "Mesh";
+          if (!config_.mesh.retain_geometry &&
+              !(analytic && config_.mesh.retain_analytic_geometry)) {
+            // Retain only the small inputs still required by the later material
+            // binding and UV-selection passes. This bounds conversion memory by
+            // one source mesh instead of accumulating the whole render scene.
+            ReleaseMeshGeometry(&mesh, true,
+                                config_.mesh.retain_triangulation);
+          }
+          // Release chunk-allocation slack before retaining: thousands of small
+          // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
+          mesh.compact();
+          if (!config_.mesh.retain_geometry) {
+            ReleaseSourceMeshStaticArrays(stage, mesh_prim);
+          }
+          int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
+          result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
+          result.scene.meshes.push_back(std::move(mesh));
+          AssignNodeDataId(&result.scene, mesh_prim.GetPath().str(), mesh_id);
+        } else {
+          AddWarning("Failed to convert renderable mesh prim: " +
+                              mesh_prim.GetPath().str());
         }
-        AssignNodeDataId(&result.scene, rec.path, points_id);
-      } else {
-        warnings_.push_back("Failed to convert Points: " + rec.path);
       }
     }
 
-    for (const auto& rec : extracted.curves) {
-      RenderCurves curves;
-      if (ConvertCurves(rec.prim, &curves)) {
-        if (curves.has_alloc_failure()) {
-          warnings_.push_back("Out of memory converting curves '" + rec.path +
-                              "'; the prim was skipped");
-          continue;
-        }
-        int32_t curves_id = static_cast<int32_t>(result.scene.curves.size());
-        curves.compact();
-        result.scene.curves_by_path[curves.prim_path] = curves_id;
-        result.scene.curves.push_back(std::move(curves));
-        if (!config_.mesh.retain_geometry) {
-          ReleaseSourceMeshStaticArrays(stage, rec.prim);
-        }
-        AssignNodeDataId(&result.scene, rec.path, curves_id);
+    // Points and Curves conversion is as independent per-prim as mesh
+    // conversion (verified: ConvertPoints/ConvertCurves touch no converter
+    // state beyond warnings_/last_error_, already funneled through
+    // AddWarning()/SetLastError() under state_mu_), so batch them across the
+    // same worker pool. Bookkeeping (id assignment, *_by_path, node linking,
+    // compact/release) stays serial and in original record order.
+    for (size_t batch_start = 0; batch_start < extracted.points.size();
+         batch_start += mesh_workers) {
+      const size_t batch_end =
+          std::min(batch_start + mesh_workers, extracted.points.size());
+      const size_t n = batch_end - batch_start;
+      std::vector<RenderPoints> batch_points(n);
+      std::vector<uint8_t> batch_ok(n, 0);
+      if (n == 1) {
+        batch_ok[0] = ConvertPoints(stage, extracted.points[batch_start].prim,
+                                    &batch_points[0]) ? 1 : 0;
       } else {
-        warnings_.push_back("Failed to convert curves prim: " + rec.path);
+        std::vector<std::thread> workers;
+        workers.reserve(n);
+        for (size_t bi = 0; bi < n; ++bi) {
+          workers.emplace_back([&, bi]() {
+            batch_ok[bi] = ConvertPoints(
+                               stage, extracted.points[batch_start + bi].prim,
+                               &batch_points[bi]) ? 1 : 0;
+          });
+        }
+        for (std::thread& t : workers) t.join();
+      }
+      for (size_t bi = 0; bi < n; ++bi) {
+        const auto& rec = extracted.points[batch_start + bi];
+        RenderPoints& points = batch_points[bi];
+        if (batch_ok[bi]) {
+          if (points.has_alloc_failure()) {
+            AddWarning("Out of memory converting Points '" + rec.path +
+                                "'; the prim was skipped");
+            continue;
+          }
+          int32_t points_id = static_cast<int32_t>(result.scene.points.size());
+          points.compact();
+          result.scene.points_by_path[points.prim_path] = points_id;
+          result.scene.points.push_back(std::move(points));
+          if (!config_.mesh.retain_geometry) {
+            ReleaseSourceMeshStaticArrays(stage, rec.prim);
+          }
+          AssignNodeDataId(&result.scene, rec.path, points_id);
+        } else {
+          AddWarning("Failed to convert Points: " + rec.path);
+        }
+      }
+    }
+
+    for (size_t batch_start = 0; batch_start < extracted.curves.size();
+         batch_start += mesh_workers) {
+      const size_t batch_end =
+          std::min(batch_start + mesh_workers, extracted.curves.size());
+      const size_t n = batch_end - batch_start;
+      std::vector<RenderCurves> batch_curves(n);
+      std::vector<uint8_t> batch_ok(n, 0);
+      if (n == 1) {
+        batch_ok[0] = ConvertCurves(extracted.curves[batch_start].prim,
+                                    &batch_curves[0]) ? 1 : 0;
+      } else {
+        std::vector<std::thread> workers;
+        workers.reserve(n);
+        for (size_t bi = 0; bi < n; ++bi) {
+          workers.emplace_back([&, bi]() {
+            batch_ok[bi] = ConvertCurves(
+                               extracted.curves[batch_start + bi].prim,
+                               &batch_curves[bi]) ? 1 : 0;
+          });
+        }
+        for (std::thread& t : workers) t.join();
+      }
+      for (size_t bi = 0; bi < n; ++bi) {
+        const auto& rec = extracted.curves[batch_start + bi];
+        RenderCurves& curves = batch_curves[bi];
+        if (batch_ok[bi]) {
+          if (curves.has_alloc_failure()) {
+            AddWarning("Out of memory converting curves '" + rec.path +
+                                "'; the prim was skipped");
+            continue;
+          }
+          int32_t curves_id = static_cast<int32_t>(result.scene.curves.size());
+          curves.compact();
+          result.scene.curves_by_path[curves.prim_path] = curves_id;
+          result.scene.curves.push_back(std::move(curves));
+          if (!config_.mesh.retain_geometry) {
+            ReleaseSourceMeshStaticArrays(stage, rec.prim);
+          }
+          AssignNodeDataId(&result.scene, rec.path, curves_id);
+        } else {
+          AddWarning("Failed to convert curves prim: " + rec.path);
+        }
       }
     }
 
@@ -3602,7 +3711,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
             static_cast<int32_t>(result.scene.point_instancers.size());
         result.scene.point_instancer_by_path[instancer.prim_path] = instancer_id;
         if (!instancer.valid) {
-          warnings_.push_back("Invalid PointInstancer data at " +
+          AddWarning("Invalid PointInstancer data at " +
                               instancer.prim_path + ": " +
                               instancer.validation_error);
         }
@@ -3611,11 +3720,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
              ++proto_i) {
           if (proto_i >= instancer.prototype_node_ids.size() ||
               instancer.prototype_node_ids[proto_i] < 0) {
-            warnings_.push_back("Unresolved PointInstancer prototype at " +
+            AddWarning("Unresolved PointInstancer prototype at " +
                                 instancer.prim_path + ": " +
                                 instancer.prototype_paths[proto_i]);
           } else if (instancer.prototype_mesh_count(proto_i) == 0) {
-            warnings_.push_back("PointInstancer prototype has no meshes at " +
+            AddWarning("PointInstancer prototype has no meshes at " +
                                 instancer.prim_path + ": " +
                                 instancer.prototype_paths[proto_i]);
           }
@@ -3627,7 +3736,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         result.scene.point_instancers.push_back(std::move(instancer));
         AssignNodeDataId(&result.scene, rec.path, instancer_id);
       } else {
-        warnings_.push_back("Failed to convert PointInstancer: " + rec.path);
+        AddWarning("Failed to convert PointInstancer: " + rec.path);
       }
     }
 
@@ -3650,7 +3759,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         result.scene.material_by_path[material.prim_path] = mat_id;
         result.scene.materials.push_back(std::move(material));
       } else {
-        warnings_.push_back("Failed to convert material: " + mat_prim.GetPath().str());
+        AddWarning("Failed to convert material: " + mat_prim.GetPath().str());
       }
     }
 
@@ -3799,7 +3908,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           }
           if (remap[k] != static_cast<int32_t>(k)) identity = false;
           if (remap[k] < 0) {
-            warnings_.push_back("Mesh " + mesh.prim_path +
+            AddWarning("Mesh " + mesh.prim_path +
                                 " skel:joints token '" + token +
                                 "' not found in skeleton " + skel.prim_path);
           }
@@ -3884,7 +3993,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
       catalog.working_to_display_linear[i] = working_to_display.matrix[i];
     }
   }
-  if (!color_warning.empty()) warnings_.push_back(color_warning);
+  if (!color_warning.empty()) AddWarning(color_warning);
 
   RenderExtractOptions xopts;
   xopts.time_code = config_.time_code;
@@ -3936,7 +4045,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
       unsupported.type_name = rec.type_name;
       unsupported.reason = "recognized but not converted to render geometry";
       catalog.unsupported_renderables.push_back(std::move(unsupported));
-      warnings_.push_back("Unsupported renderable prim '" + rec.path +
+      AddWarning("Unsupported renderable prim '" + rec.path +
                           "' of type '" + rec.type_name + "'");
     }
 
@@ -3967,7 +4076,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
       catalog.material_by_path[material.prim_path] = id;
       catalog.materials.push_back(std::move(material));
     } else {
-      warnings_.push_back("Failed to convert material: " + rec.path);
+      AddWarning("Failed to convert material: " + rec.path);
     }
   }
 
@@ -4048,7 +4157,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   for (const RenderPrimRecord& rec : extracted.point_instancers) {
     RenderPointInstancer instancer;
     if (!ConvertPointInstancer(rec.prim, &instancer)) {
-      warnings_.push_back("Failed to convert PointInstancer: " + rec.path);
+      AddWarning("Failed to convert PointInstancer: " + rec.path);
       continue;
     }
     const int32_t id = static_cast<int32_t>(catalog.point_instancers.size());
@@ -4109,7 +4218,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     if (disposition == GeometryDisposition::Proxy) {
       converted = ConvertExtentProxy(prim, &mesh);
       if (!converted) {
-        warnings_.push_back("Skipping proxy without a valid extent: " +
+        AddWarning("Skipping proxy without a valid extent: " +
                             prim.GetPath().str());
         continue;
       }
@@ -4117,7 +4226,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
       converted = ConvertRenderableMesh(stage, prim, &mesh);
     }
     if (!converted || mesh.has_alloc_failure()) {
-      warnings_.push_back("Failed to convert renderable mesh prim: " +
+      AddWarning("Failed to convert renderable mesh prim: " +
                           prim.GetPath().str());
       continue;
     }
@@ -4154,7 +4263,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     }
     if (disposition != GeometryDisposition::Full) {
       if (disposition == GeometryDisposition::Proxy) {
-        warnings_.push_back("Skipping Points proxy without mesh expansion: " +
+        AddWarning("Skipping Points proxy without mesh expansion: " +
                             rec.path);
       }
       ++points_id;
@@ -4163,7 +4272,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     RenderPoints points;
     if (ConvertPoints(stage, rec.prim, &points)) {
       if (points.has_alloc_failure()) {
-        warnings_.push_back("Out of memory converting Points '" + rec.path +
+        AddWarning("Out of memory converting Points '" + rec.path +
                             "'; the prim was skipped");
         ++points_id;
         continue;
@@ -4195,7 +4304,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     }
     if (disposition != GeometryDisposition::Full) {
       if (disposition == GeometryDisposition::Proxy) {
-        warnings_.push_back("Skipping Curves proxy without mesh expansion: " +
+        AddWarning("Skipping Curves proxy without mesh expansion: " +
                             extracted.curves[i].path);
       }
       continue;
@@ -4203,7 +4312,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     RenderCurves curves;
     if (!ConvertCurves(extracted.curves[i].prim, &curves)) continue;
     if (curves.has_alloc_failure()) {
-      warnings_.push_back("Out of memory converting curves '" +
+      AddWarning("Out of memory converting curves '" +
                           extracted.curves[i].path + "'; the prim was skipped");
       continue;
     }
@@ -4674,7 +4783,7 @@ bool RenderSceneConverter::ConvertRenderableMesh(const Stage& stage,
                                                  const UsdPrim& prim,
                                                  RenderMesh* out) {
   if (!prim.IsValid() || !IsMeshRenderableTypeName(prim.GetTypeName())) {
-    last_error_ = "Invalid renderable mesh prim";
+    SetLastError("Invalid renderable mesh prim");
     return false;
   }
   return prim.GetTypeName() == "Mesh" ? ConvertMesh(stage, prim, out)
@@ -4686,7 +4795,7 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
   if (!out || !prim.IsValid() ||
       (!IsAnalyticGeomTypeName(prim.GetTypeName()) &&
        prim.GetTypeName() != "TetMesh")) {
-    last_error_ = "Invalid generated geom prim";
+    SetLastError("Invalid generated geom prim");
     return false;
   }
 
@@ -4705,7 +4814,7 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
         !ReadIntArray(prim, kIdTetVertexIndices(), config_.time_code,
                       &authored_tets) ||
         authored_tets.empty() || (authored_tets.view.size % 4) != 0) {
-      last_error_ = "Invalid TetMesh points or tetVertexIndices";
+      SetLastError("Invalid TetMesh points or tetVertexIndices");
       return false;
     }
 
@@ -4724,7 +4833,7 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
     };
     const size_t tet_count = authored_tets.view.size / 4;
     if (tet_count > (kMaxTempAllocBytes / (4 * sizeof(BoundaryFace)))) {
-      last_error_ = "TetMesh boundary extraction exceeds temporary-memory cap";
+      SetLastError("TetMesh boundary extraction exceeds temporary-memory cap");
       return false;
     }
     std::vector<BoundaryFace> faces;
@@ -4739,7 +4848,7 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
       }
       if (!valid || v[0] == v[1] || v[0] == v[2] || v[0] == v[3] ||
           v[1] == v[2] || v[1] == v[3] || v[2] == v[3]) {
-        warnings_.push_back("TetMesh '" + prim.GetPath().str() +
+        AddWarning("TetMesh '" + prim.GetPath().str() +
                             "': skipped malformed tetrahedron " +
                             std::to_string(tet));
         continue;
@@ -4768,7 +4877,7 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
       begin = end;
     }
     if (face_counts.empty()) {
-      last_error_ = "TetMesh has no valid boundary faces";
+      SetLastError("TetMesh has no valid boundary faces");
       return false;
     }
   } else if (type == "Cube") {
@@ -4790,7 +4899,7 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
       const double rb = ReadDoubleProperty(prim, "radiusBottom", 1.0);
       radius = std::max(rt, rb);
       if (std::fabs(rt - rb) > 1.0e-9) {
-        warnings_.push_back("Cylinder_1 '" + prim.GetPath().str() +
+        AddWarning("Cylinder_1 '" + prim.GetPath().str() +
                             "': tapered radii are approximated with max radius");
       }
     }
@@ -4810,7 +4919,7 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
       const double rb = ReadDoubleProperty(prim, "radiusBottom", 0.5);
       radius = std::max(rt, rb);
       if (std::fabs(rt - rb) > 1.0e-9) {
-        warnings_.push_back("Capsule_1 '" + prim.GetPath().str() +
+        AddWarning("Capsule_1 '" + prim.GetPath().str() +
                             "': asymmetric radii are approximated with max radius");
       }
     }
@@ -4823,7 +4932,7 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
         ReadDoubleProperty(prim, "length", 2.0), 1, 1, points, face_counts,
         face_indices, normals, uvs);
   } else {
-    last_error_ = "Unsupported analytic geom prim";
+    SetLastError("Unsupported analytic geom prim");
     return false;
   }
 
@@ -4909,6 +5018,13 @@ bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
   constexpr size_t kBudgetCheckStride = 256;
   constexpr size_t kBudgetCheckBytes = 8u * 1024u * 1024u;
 
+  // Callable from the parallel per-record conversion phases (e.g. mesh
+  // conversion, see ConvertMeshesParallel), so budget_*_ bookkeeping and the
+  // resulting warning are both taken under state_mu_. Locks warnings_
+  // directly rather than through AddWarning() -- AddWarning() takes the same
+  // mutex, and it is non-recursive.
+  std::lock_guard<std::mutex> lk(state_mu_);
+
   if (budget_exceeded_) return true;  // latched: stay degraded for this run
 
   budget_pending_bytes_ = SaturatingAdd(budget_pending_bytes_, estimate);
@@ -4927,9 +5043,19 @@ bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
   return true;
 }
 
+void RenderSceneConverter::AddWarning(std::string msg) {
+  std::lock_guard<std::mutex> lk(state_mu_);
+  warnings_.push_back(std::move(msg));
+}
+
+void RenderSceneConverter::SetLastError(std::string msg) {
+  std::lock_guard<std::mutex> lk(state_mu_);
+  last_error_ = std::move(msg);
+}
+
 bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out) {
   if (!out || !IsMesh(prim)) {
-    last_error_ = "Invalid mesh prim";
+    SetLastError("Invalid mesh prim");
     return false;
   }
 
@@ -4969,7 +5095,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
       // e.g. one indexed skin primvar expanded while its pair stayed
       // authored (malformed :indices). Skipping silently leaves the mesh in
       // bind pose with no hint why.
-      warnings_.push_back("Mismatched skin jointIndices/jointWeights sizes on " +
+      AddWarning("Mismatched skin jointIndices/jointWeights sizes on " +
                           prim.GetPath().str() + "; mesh renders unskinned");
     }
     if (has_skin_binding && !sb.joint_indices.empty() &&
@@ -5042,7 +5168,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
       if (influences == 0 || point_count == 0 ||
           !influence_count_valid ||
           sb.joint_indices.size() != expected_influence_count) {
-        warnings_.push_back("Ignoring malformed skin influences on " +
+        AddWarning("Ignoring malformed skin influences on " +
                             prim.GetPath().str());
       } else {
         size_t output_influences = influences;
@@ -5139,7 +5265,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
         }
       }
       if (kept.size() != bd.pointIndices.size()) {
-        warnings_.push_back("BlendShape '" + bs_prim.GetPath().str() +
+        AddWarning("BlendShape '" + bs_prim.GetPath().str() +
                             "': dropped out-of-range pointIndices entries "
                             "(with their parallel offsets)");
       }
@@ -5176,14 +5302,14 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     for (const ::tinyusdz::next::BlendShapeData::Inbetween& source :
          bd.inbetweens) {
       if (source.offsets.size() != bd.offsets.size()) {
-        warnings_.push_back("Ignoring malformed in-between '" + source.name +
+        AddWarning("Ignoring malformed in-between '" + source.name +
                             "' on " + bs_prim.GetPath().str());
         continue;
       }
       if (!source.has_weight) {
         // A weightless in-between would sit at 0.0 and collide with the base
         // shape; legacy tydra skips these too.
-        warnings_.push_back("In-between '" + source.name + "' on " +
+        AddWarning("In-between '" + source.name + "' on " +
                             bs_prim.GetPath().str() +
                             " has no authored weight; skipped");
         continue;
@@ -5209,7 +5335,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
       config_.mesh.triangulate &&
       !out->is_triangulated) {
     if (!TriangulateMesh(out) && !out->face_vertex_counts.empty()) {
-      warnings_.push_back("Failed to triangulate mesh '" + out->prim_path +
+      AddWarning("Failed to triangulate mesh '" + out->prim_path +
                           "'; skipping it to avoid conversion abort");
       return false;
     }
@@ -5233,7 +5359,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   // partial geometry (or aborting the module, as a throwing new would under
   // -fno-exceptions).
   if (out->has_alloc_failure()) {
-    warnings_.push_back("Out of memory converting mesh '" + out->prim_path +
+    AddWarning("Out of memory converting mesh '" + out->prim_path +
                         "'; the prim was skipped");
     return false;
   }
@@ -5299,7 +5425,7 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
   if (probe_overflow ||
       !ProbeAlloc(probe_bytes) ||
       BudgetWouldExceed(probe_bytes, "tangent generation")) {
-    warnings_.push_back("Out of memory computing tangents for mesh '" +
+    AddWarning("Out of memory computing tangents for mesh '" +
                         mesh->prim_path + "'; tangents skipped");
     return false;
   }
@@ -5460,7 +5586,7 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
   if (!tangent_ok || fv_tangents.size() != tri_corner_count ||
       fv_binormals.size() != tri_corner_count) {
     if (!tangent_error.empty()) {
-      warnings_.push_back("Tangent computation failed for mesh '" +
+      AddWarning("Tangent computation failed for mesh '" +
                           mesh->prim_path + "': " + tangent_error);
     }
     return false;
@@ -5581,7 +5707,7 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
     if (mesh->sanitize_dropped_faces > 0) {
       mesh->sanitize_face_remap = std::move(face_remap);
     }
-    warnings_.push_back("Mesh '" + mesh->prim_path +
+    AddWarning("Mesh '" + mesh->prim_path +
                         "': dropped invalid faces (out-of-range or negative "
                         "faceVertexIndices, or counts overrunning the index "
                         "buffer)");
@@ -5613,7 +5739,7 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
   ValueArrayRead<int32_t> face_counts;
   ReadIntArray(prim, kIdFaceVertexCounts(), config_.time_code, &face_counts);
   if (face_counts.empty()) {
-    last_error_ = "Mesh has no faceVertexCounts";
+    SetLastError("Mesh has no faceVertexCounts");
     return false;
   }
 
@@ -5626,7 +5752,7 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
   ValueArrayRead<int32_t> indices;
   ReadIntArray(prim, kIdFaceVertexIndices(), config_.time_code, &indices);
   if (indices.empty()) {
-    last_error_ = "Mesh has no faceVertexIndices";
+    SetLastError("Mesh has no faceVertexIndices");
     return false;
   }
 
@@ -5660,7 +5786,7 @@ bool RenderSceneConverter::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* 
   ValueArrayRead<float> points;
   ReadFloatArray(prim, kIdPoints(), config_.time_code, &points);
   if (points.empty()) {
-    last_error_ = "Invalid points data";
+    SetLastError("Invalid points data");
     return false;
   }
 
@@ -5849,7 +5975,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
         mesh->normals.append(normals.view.data, normals.view.size);
         mesh->normals_interp = ni;
       } else {
-        warnings_.push_back("Mesh '" + mesh->prim_path +
+        AddWarning("Mesh '" + mesh->prim_path +
                             "': authored normals element count does not match "
                             "their interpolation; ignoring (normals will be "
                             "computed)");
@@ -5908,7 +6034,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
         attr.indices.push_back(static_cast<uint32_t>(raw));
       }
       if (!idx_ok) {
-        warnings_.push_back("Mesh '" + mesh->prim_path + "': primvar '" +
+        AddWarning("Mesh '" + mesh->prim_path + "': primvar '" +
                             pv.name + "' has out-of-range indices; dropped");
         continue;
       }
@@ -5921,7 +6047,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     if (!pv.indices().empty() && builtin) {
       std::vector<float> expanded;
       if (!expand_indexed(*fdata, comps, pv.indices(), &expanded)) {
-        warnings_.push_back("Mesh '" + mesh->prim_path + "': primvar '" +
+        AddWarning("Mesh '" + mesh->prim_path + "': primvar '" +
                             pv.name + "' has out-of-range indices; dropped");
         continue;
       }
@@ -5934,7 +6060,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       const size_t elems = fdata->size() / comps;
       const Interpolation interp = resolve_interp(elems);
       if (elems != expected_elems(interp)) {
-        warnings_.push_back(
+        AddWarning(
             "Mesh '" + mesh->prim_path + "': primvar '" + pv.name +
             "' element count does not match its interpolation; dropped");
         continue;
@@ -5985,7 +6111,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       attr.indices.push_back(static_cast<uint32_t>(raw));
     }
     if (!idx_ok) {
-      warnings_.push_back("Mesh '" + mesh->prim_path + "': primvar '" +
+      AddWarning("Mesh '" + mesh->prim_path + "': primvar '" +
                           pv.name + "' has out-of-range indices; dropped");
       continue;
     }
@@ -6001,7 +6127,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
   const bool gaussian = prim.GetTypeName() == "ParticleField3DGaussianSplat";
   if (!out || !prim.IsValid() ||
       (prim.GetTypeName() != "Points" && !gaussian)) {
-    last_error_ = "Invalid Points prim";
+    SetLastError("Invalid Points prim");
     return false;
   }
 
@@ -6011,10 +6137,10 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
     if (!::tinyusdz::next::GetParticleFieldData(
             stage, prim, &particle_field, config_.time_code,
             &particle_warning)) {
-      last_error_ = "Invalid ParticleField data";
+      SetLastError("Invalid ParticleField data");
       return false;
     }
-    if (!particle_warning.empty()) warnings_.push_back(particle_warning);
+    if (!particle_warning.empty()) AddWarning(particle_warning);
   }
   ValueArrayRead<float> points;
   const char* point_property = gaussian
@@ -6022,7 +6148,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
       : "points";
   if (!ReadFloatArray(prim, point_property, config_.time_code, &points) ||
       points.empty() || (points.view.size % 3) != 0) {
-    last_error_ = "Invalid Points.points data";
+    SetLastError("Invalid Points.points data");
     return false;
   }
 
@@ -6036,7 +6162,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
         normals.view.size == out->point_count() * 3) {
       out->normals.append(normals.view.data, normals.view.size);
     } else if (normals.view.size != 0) {
-      warnings_.push_back("Points '" + out->prim_path +
+      AddWarning("Points '" + out->prim_path +
                           "': ignoring normals with mismatched element count");
     }
   }
@@ -6064,7 +6190,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
     } else if (!gaussian && (widths.view.size == 1 || widths.view.size == n)) {
       out->widths.append(widths.view.data, widths.view.size);
     } else {
-      warnings_.push_back("Points '" + out->prim_path +
+      AddWarning("Points '" + out->prim_path +
                           "': ignoring widths with mismatched element count");
     }
   }
@@ -6100,7 +6226,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
       out->colors.append(colors.view.data, colors.view.size);
       out->colors_interp = interp;
     } else {
-      warnings_.push_back("Points '" + out->prim_path +
+      AddWarning("Points '" + out->prim_path +
                           "': ignoring displayColor with mismatched element count");
     }
   }
@@ -6134,7 +6260,7 @@ bool RenderSceneConverter::ConvertPoints(const Stage& stage,
       out->opacities.append(opacities.view.data, elems);
       out->opacities_interp = interp;
     } else {
-      warnings_.push_back(
+      AddWarning(
           "Points '" + out->prim_path +
           "': ignoring displayOpacity with mismatched element count");
     }
@@ -6298,7 +6424,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       prim.IsValid() ? prim.GetTypeName() : std::string();
   if (!out || (type_name != "BasisCurves" && type_name != "NurbsCurves" &&
                type_name != "HermiteCurves")) {
-    last_error_ = "Invalid curves prim";
+    SetLastError("Invalid curves prim");
     return false;
   }
   out->is_nurbs = (type_name == "NurbsCurves");
@@ -6309,7 +6435,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
   ValueArrayRead<int32_t> counts;
   if (!ReadIntArray(prim, kIdCurveVertexCounts(), config_.time_code, &counts) ||
       counts.empty()) {
-    last_error_ = "Invalid curves.curveVertexCounts data";
+    SetLastError("Invalid curves.curveVertexCounts data");
     return false;
   }
   ValueArrayRead<float> points;
@@ -6370,20 +6496,20 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     }
   }
   if (!have_points || points.empty() || (points.view.size % 3) != 0) {
-    last_error_ = "Invalid curves.points data";
+    SetLastError("Invalid curves.points data");
     return false;
   }
 
   size_t total_cp = 0;
   for (int32_t c : counts) {
     if (c <= 0) {
-      last_error_ = "Non-positive curveVertexCounts entry";
+      SetLastError("Non-positive curveVertexCounts entry");
       return false;
     }
     total_cp += static_cast<size_t>(c);
   }
   if (total_cp != points.view.size / 3) {
-    last_error_ = "curveVertexCounts sum does not match points size";
+    SetLastError("curveVertexCounts sum does not match points size");
     return false;
   }
 
@@ -6410,7 +6536,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       } else if (tok == "catmullRom") {
         out->basis = CurveBasis::CatmullRom;
       } else {
-        warnings_.push_back("BasisCurves '" + out->prim_path +
+        AddWarning("BasisCurves '" + out->prim_path +
                             "': unsupported basis '" + tok +
                             "', treating as bezier");
       }
@@ -6431,7 +6557,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
   if (out->is_nurbs) {
     nurbs_order = ReadIntArrayCopy(prim, "order", config_.time_code);
     if (!ReadFloatsFlexible(prim, "knots", config_.time_code, &nurbs_knots)) {
-      warnings_.push_back("NurbsCurves '" + out->prim_path +
+      AddWarning("NurbsCurves '" + out->prim_path +
                           "': missing/unreadable knots; using control-polygon "
                           "passthrough");
       nurbs_data_ok = false;
@@ -6441,7 +6567,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     if (!ReadFloatsFlexible(prim, "tangents", config_.time_code,
                             &hermite_tangents) ||
         hermite_tangents.size() != points.view.size) {
-      warnings_.push_back("HermiteCurves '" + out->prim_path +
+      AddWarning("HermiteCurves '" + out->prim_path +
                           "': tangents must match points; using control-polygon "
                           "passthrough");
       hermite_tangents.clear();
@@ -6465,7 +6591,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       plan.linear = true;
       plan.periodic = (!out->is_nurbs && out->wrap == CurveWrap::Periodic);
       plan.varying_count = n;
-      warnings_.push_back("Curves '" + out->prim_path + "' curve " +
+      AddWarning("Curves '" + out->prim_path + "' curve " +
                           std::to_string(ci) + ": " + why +
                           "; using control-polygon passthrough");
     };
@@ -6611,7 +6737,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       out->widths.append(widths.view.data, m);
       out->widths_interp = Interpolation::Varying;
     } else {
-      warnings_.push_back("Curves '" + out->prim_path +
+      AddWarning("Curves '" + out->prim_path +
                           "': ignoring widths with mismatched element count");
     }
   }
@@ -6650,7 +6776,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       else if (elems == ncurves) interp = Interpolation::Uniform;
       else if (elems == varying_total) interp = Interpolation::Varying;
       else {
-        warnings_.push_back(
+        AddWarning(
             "Curves '" + out->prim_path +
             "': ignoring displayColor with mismatched element count");
         interp = Interpolation::Constant;  // expected(Constant)==1 != elems
@@ -6697,7 +6823,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       out->opacities.append(opacities.view.data, elems);
       out->opacities_interp = interp;
     } else {
-      warnings_.push_back(
+      AddWarning(
           "Curves '" + out->prim_path +
           "': ignoring displayOpacity with mismatched element count");
     }
@@ -6940,7 +7066,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
 bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
                                                  RenderPointInstancer* out) {
   if (!out || !::tinyusdz::next::IsPointInstancer(prim)) {
-    last_error_ = "Invalid PointInstancer prim";
+    SetLastError("Invalid PointInstancer prim");
     return false;
   }
 
@@ -6951,9 +7077,9 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
       config_.point_instancer.build_instance_transforms || build_draws;
   if (!ReadPointInstancerData(prim, config_.time_code, &data,
                              build_transforms)) {
-    last_error_ = data.validation_error.empty()
+    SetLastError(data.validation_error.empty()
                       ? "Failed to read PointInstancer data"
-                      : data.validation_error;
+                      : data.validation_error);
     return false;
   }
 
@@ -7008,7 +7134,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   if (BudgetWouldExceed(
           SaturatingMul(mesh->face_vertex_indices.size(), 2 * sizeof(uint32_t)),
           "triangulation")) {
-    warnings_.push_back("Mesh '" + mesh->prim_path +
+    AddWarning("Mesh '" + mesh->prim_path +
                         "' not triangulated: memory budget reached");
     return false;
   }
@@ -7034,13 +7160,13 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
     const size_t n = mesh->face_vertex_indices.size();
     if (WouldOverflowSizeMul(n, sizeof(uint32_t)) ||
         (n * sizeof(uint32_t)) > kMaxTempAllocBytes * 4u) {
-      warnings_.push_back("Mesh '" + mesh->prim_path +
+      AddWarning("Mesh '" + mesh->prim_path +
                           "' triangulated index allocation too large; skipping");
       return false;
     }
     if (!mesh->triangulated_indices.resize(n) ||
         !mesh->triangulated_face_vertex_indices.resize(n)) {
-      warnings_.push_back("Out of memory triangulating mesh '" +
+      AddWarning("Out of memory triangulating mesh '" +
                           mesh->prim_path + "'");
       return false;
     }
@@ -7058,7 +7184,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
     if (nverts >= 3) {
       size_t next_tri_count = 0;
       if (!safe::add(tri_count, size_t(nverts - 2), &next_tri_count)) {
-        warnings_.push_back("Mesh '" + mesh->prim_path +
+        AddWarning("Mesh '" + mesh->prim_path +
                             "' triangle count overflows size_t; skipping");
         return false;
       }
@@ -7067,12 +7193,12 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   }
   size_t tri_corner_count = 0;
   if (!safe::mul(tri_count, size_t(3), &tri_corner_count)) {
-    warnings_.push_back("Mesh '" + mesh->prim_path +
+    AddWarning("Mesh '" + mesh->prim_path +
                         "' triangulated corner count overflows size_t; skipping");
     return false;
   }
   if (tri_corner_count >= kMaxTriangulationCornerCount) {
-    warnings_.push_back("Mesh '" + mesh->prim_path +
+    AddWarning("Mesh '" + mesh->prim_path +
                         "' has too many triangulated corners (" +
                         std::to_string(tri_corner_count) +
                         "); skipping");
@@ -7080,14 +7206,14 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   }
   if (WouldOverflowSizeMul(tri_corner_count, sizeof(uint32_t)) ||
       (tri_corner_count * sizeof(uint32_t)) > kMaxTempAllocBytes * 4u) {
-    warnings_.push_back("Mesh '" + mesh->prim_path +
+    AddWarning("Mesh '" + mesh->prim_path +
                         "' triangulated index allocation too large; skipping");
     return false;
   }
 
   if (!mesh->triangulated_indices.reserve(tri_corner_count) ||
       !mesh->triangulated_face_vertex_indices.reserve(tri_corner_count)) {
-    warnings_.push_back("Out of memory triangulating mesh '" +
+    AddWarning("Out of memory triangulating mesh '" +
                         mesh->prim_path + "'");
     return false;
   }
@@ -7251,7 +7377,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
             if (li >= ring.size()) { local_in_range = false; break; }
           }
           if (!local_in_range) {
-            warnings_.push_back("Earcut produced out-of-range indices for face " +
+            AddWarning("Earcut produced out-of-range indices for face " +
                                 std::to_string(f) + " of " + mesh->prim_path +
                                 "; using triangle fan fallback");
             used_earcut = false;
@@ -7275,7 +7401,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
             }
           }
         } else {
-          warnings_.push_back("Earcut failed for face " + std::to_string(f) +
+          AddWarning("Earcut failed for face " + std::to_string(f) +
                               " of " + mesh->prim_path +
                               "; using triangle fan fallback");
         }
@@ -7294,7 +7420,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
       static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
 
   if (oob_faces > 0) {
-    warnings_.push_back(
+    AddWarning(
         "Mesh '" + mesh->prim_path + "': dropped " +
         std::to_string(oob_faces) +
         " face(s) whose faceVertexIndices are out of range for " +
@@ -7380,7 +7506,7 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
 
   // Initialize normals to zero
   if (!mesh->normals.resize(num_points * 3, 0.0f)) {
-    warnings_.push_back("Out of memory computing normals for mesh '" +
+    AddWarning("Out of memory computing normals for mesh '" +
                         mesh->prim_path + "'");
     return false;
   }
@@ -7604,7 +7730,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
                                            RenderMaterial* out,
                                            RenderScene* scene) {
   if (!out || !::tinyusdz::next::IsMaterial(prim)) {
-    last_error_ = "Invalid material prim";
+    SetLastError("Invalid material prim");
     return false;
   }
 
@@ -7975,7 +8101,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
       out->alpha_mode = RenderMaterial::AlphaMode::Mask;
       out->alpha_cutoff = degraded->opacity_threshold.value.x;
     }
-    warnings_.push_back(
+    AddWarning(
         "Material '" + out->prim_path +
         "' has no fully convertible surface shader; using a degraded material "
         "with " + std::to_string(recovered_count) +
@@ -8053,7 +8179,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
           }
           out->preview_surface->displacement = scalar;
         } else {
-          warnings_.push_back("Material '" + out->prim_path +
+          AddWarning("Material '" + out->prim_path +
                               "' has an unreadable Pxr Ptex displacement graph");
         }
       } else {
@@ -8416,7 +8542,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
             }
             image = std::move(loaded);
           } else if (!config_.material.allow_missing_textures) {
-            warnings_.push_back("Failed to load texture: " + tex_data.file);
+            AddWarning("Failed to load texture: " + tex_data.file);
             return false;
           }
         }
@@ -8517,7 +8643,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
 
 bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   if (!out || !IsLight(prim)) {
-    last_error_ = "Invalid light prim";
+    SetLastError("Invalid light prim");
     return false;
   }
 
@@ -8537,14 +8663,14 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
     case LightKind::PortalLight: out->type = LightType::Rect; break;
     case LightKind::PluginLight:
       out->type = LightType::Point;
-      warnings_.push_back("PluginLight '" + prim.GetPath().str() +
+      AddWarning("PluginLight '" + prim.GetPath().str() +
                           "': shader registry evaluation is unsupported; "
                           "using point light fallback");
       break;
     case LightKind::LightFilter:
     case LightKind::PluginLightFilter:
       out->type = LightType::Point;
-      warnings_.push_back("Light filter '" + prim.GetPath().str() +
+      AddWarning("Light filter '" + prim.GetPath().str() +
                           "': filter evaluation is unsupported; "
                           "using inert point light fallback");
       out->intensity = 0.0f;
@@ -8662,7 +8788,7 @@ bool RenderSceneConverter::ConvertCamera(const Stage& stage,
                                          const UsdPrim& prim,
                                          RenderCamera* out) {
   if (!out || !::tinyusdz::tydra::next::IsCamera(prim)) {
-    last_error_ = "Invalid camera prim";
+    SetLastError("Invalid camera prim");
     return false;
   }
 
@@ -8770,7 +8896,7 @@ bool RenderSceneConverter::ConvertCamera(const Stage& stage,
 
 bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
   if (!out || !::tinyusdz::next::IsSkeleton(prim)) {
-    last_error_ = "Invalid skeleton prim";
+    SetLastError("Invalid skeleton prim");
     return false;
   }
 
@@ -8799,7 +8925,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
   // no hint why). Unauthored (empty) is fine — rest derives from bind below.
   if (!skel.bindTransforms.empty() &&
       skel.bindTransforms.size() != skel.joints.size() * 16) {
-    warnings_.push_back(
+    AddWarning(
         "Skeleton " + prim.GetPath().str() + " authors " +
         std::to_string(skel.bindTransforms.size() / 16) +
         " bindTransforms for " + std::to_string(skel.joints.size()) +
@@ -8807,7 +8933,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
   }
   if (!skel.restTransforms.empty() &&
       skel.restTransforms.size() != skel.joints.size() * 16) {
-    warnings_.push_back(
+    AddWarning(
         "Skeleton " + prim.GetPath().str() + " authors " +
         std::to_string(skel.restTransforms.size() / 16) +
         " restTransforms for " + std::to_string(skel.joints.size()) +
@@ -8817,7 +8943,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
   std::vector<int> topology;
   std::string err;
   if (!::tinyusdz::next::BuildSkelTopology(skel.joints, topology, &err)) {
-    warnings_.push_back("Invalid skeleton topology for " + prim.GetPath().str() +
+    AddWarning("Invalid skeleton topology for " + prim.GetPath().str() +
                         ": " + err);
     topology.assign(skel.joints.size(), -1);
   }
@@ -8946,10 +9072,10 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
             entry.error = "Unable to load value clip '" + asset_path +
                           "' for " + prim_path +
                           (err.empty() ? std::string() : ": " + err);
-            warnings_.push_back(entry.error);
+            AddWarning(entry.error);
           }
           clip_cache.entries.emplace(asset_path, std::move(entry));
-          if (!warn.empty()) warnings_.push_back(std::move(warn));
+          if (!warn.empty()) AddWarning(std::move(warn));
         }
       }
 
@@ -8989,6 +9115,11 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
                   : AnimationChannel::TargetPath::CustomProperty;
           channel.target_prim_path = prim_path;
           channel.property_name = property;
+          if (BudgetWouldExceed(
+                  SaturatingMul(sample_times.size(), sizeof(Keyframe)),
+                  "value-clip animation baking")) {
+            break;
+          }
           channel.keyframes.reserve(sample_times.size());
 
           for (double stage_time : sample_times) {
@@ -9018,7 +9149,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
         }
       }
     } else if (!clip_error.empty()) {
-      warnings_.push_back("Invalid value clips on " + prim_path +
+      AddWarning("Invalid value clips on " + prim_path +
                           ": " + clip_error);
     }
   }
@@ -9085,12 +9216,22 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
           if (want <= kMaxSkelArrayReserve) {
             channel.array_values.reserve(want);
           }
+          // array_values is a plain std::vector<float>, not a ChunkedArray, so
+          // MemBudget can't see it allocation-by-allocation the way it sees
+          // mesh buffers. A 3000-joint rig with a long clip can still put
+          // tens of millions of floats here, so charge the whole channel
+          // against the same cumulative budget mesh conversion uses, up
+          // front, before committing to the per-sample append loop below.
+          if (BudgetWouldExceed(SaturatingMul(want, sizeof(float)),
+                                "skeletal animation baking")) {
+            return;
+          }
           // Width validation: blendShapeWeights samples must be as wide as
           // the declared blendShapes list, or weights drive the wrong shapes.
           if (target_path == AnimationChannel::TargetPath::Weights &&
               !blend_shape_order.empty() &&
               element_count != blend_shape_order.size()) {
-            warnings_.push_back(
+            AddWarning(
                 "SkelAnimation " + prim_path + " has " +
                 std::to_string(element_count) +
                 " blendShapeWeights per sample for " +
@@ -9098,7 +9239,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
                 " declared blendShapes");
           }
         } else if (element_count != expected_elements) {
-          warnings_.push_back("Skipping inconsistent SkelAnimation sample for " +
+          AddWarning("Skipping inconsistent SkelAnimation sample for " +
                               prim_path + "." + prop_name);
           continue;
         }
