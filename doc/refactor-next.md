@@ -100,6 +100,28 @@ Landed so far:
   contended prim built once (subsumes the in-flight-future dedup). Default and
   recursive policies keep READ==WRITE. Clean under ThreadSanitizer for test_pcp
   (incl. 8-thread×1000-iter concurrent queries on one shared cache).
+  **Follow-up (post-roadmap review):** the READ_LOCK/WRITE_LOCK call sites and
+  the `PcpMutex` policy selection (`pcp/cache-lock.hh`) had been written but
+  `TINYUSDZ_NEXT_FINE_LOCKS` was never exposed as a CMake `option()` — every
+  build silently fell back to the default single-exclusive-mutex policy no
+  matter what a caller intended, i.e. T1 was still live in every actual build.
+  Added the option to `src/next/CMakeLists.txt` (requires
+  `TINYUSDZ_NEXT_ENABLE_THREAD`). Turning it on for the first time also
+  surfaced two bugs the option's absence had kept latent: (1)
+  `PropNameTable::is_frozen()` had no definition at all under
+  `TINYUSDZ_ENABLE_THREAD` (only the non-threaded stub existed), so any
+  threaded build referencing it failed to link -- fixed with an atomic-load
+  read of the published snapshot pointer; (2) `test_tydra_next.cc`'s
+  `TestNameTableFreezeStability` asserted that interning a new name while
+  frozen unfreezes the table -- true under the *old* freeze() scheme, but
+  freeze() was redesigned (see the F4 bullet's "lock-free reader" note above)
+  to keep the snapshot published and let a miss fall through to the locked
+  path instead, specifically so a concurrent lock-free reader is never
+  disturbed. The test predates that redesign and was never caught because
+  `is_frozen()` was a dead stub always returning `false`. Verified with a
+  TSan build (clang, `TINYUSDZ_NEXT_ENABLE_THREAD=ON` +
+  `TINYUSDZ_NEXT_FINE_LOCKS=ON`): 9 test binaries × 3 runs, 0 races; default
+  (non-threaded) ctest suite still 35/35.
 - **Phase 9 (F3)** — `layer_stacks`/`path_table` are `std::deque` (stable
   element addresses): a PrimIndex borrows raw pointers into these tables and
   resolves node sites lock-free (`SitePath`, used cross-thread), so a `vector`
@@ -258,6 +280,12 @@ Reference implementation for hardening/verification: `../OpenUSD/pxr/`
 crate `_MmapFile`, `pcp/errors.h`). Spec reference: AOUSD Core §10 (see `doc/pcp.md`).
 
 All file:line evidence below was verified by reading the code at HEAD `59801312`.
+**It is a frozen historical snapshot, not current status** — every M/S/I item
+and T1 are marked resolved in "Landed so far" above; only read this section
+for *why* a change was made, never to decide whether something is still open.
+A later review (post-roadmap) that treated M1/M3/M4/M5/M7 as open purely
+because they appear in this table wasted a pass re-discovering they were
+already fixed — check "Landed so far" first, always.
 
 ---
 
@@ -294,9 +322,9 @@ All file:line evidence below was verified by reading the code at HEAD `59801312`
 
 | # | Problem | Evidence |
 |---|---------|----------|
-| T1 | One `std::recursive_mutex api_mu_` serializes every public cache entry point when `TINYUSDZ_ENABLE_THREAD` is ON. | `pcp/cache.cc:24,79` |
-| T2 | `LayerRegistry` holds its mutex **across file parse**, so the "parallel" layer prefetch in `PrewarmPrimIndices` parses one file at a time. | `pcp/layer-registry.cc:69-92`; `cache.cc:936-951` |
-| T3 | Race inventory if the big lock were removed: `path_table`/interning, `layer_stacks` vector reallocation under readers, `index_cache`/`sources_cache`, `site_to_indices`, deferred-payload set mutation mid-expansion (S7), instance maps, registry counters. | `pcp/cache.cc:92-121, 556-559` |
+| T1 | ~~One `std::recursive_mutex api_mu_` serializes every public cache entry point when `TINYUSDZ_ENABLE_THREAD` is ON.~~ **CLOSED** — Phase 9 F6 dropped the recursive engine mutex (plain `std::mutex` + lock-free `*_locked` internals); Phase 9 F4 added the `TINYUSDZ_NEXT_FINE_LOCKS` shared/exclusive policy on top, and the CMake option to actually turn it on landed in the post-roadmap follow-up (see the F4 bullet above) — until then the option existed in code but was unreachable, so every real build still paid the T1 cost regardless of intent. | `pcp/cache.cc:24,79` (historical) |
+| T2 | `LayerRegistry` holds its mutex **across file parse**, so the "parallel" layer prefetch in `PrewarmPrimIndices` parses one file at a time. | `pcp/layer-registry.cc:69-92`; `cache.cc:936-951` — **STATUS UNCLEAR**: Phase 9 F2 ("LayerRegistry parses outside the lock") claims this closed; not re-verified line-by-line in the post-roadmap review, worth a fresh read before relying on it. |
+| T3 | Race inventory if the big lock were removed: `path_table`/interning, `layer_stacks` vector reallocation under readers, `index_cache`/`sources_cache`, `site_to_indices`, deferred-payload set mutation mid-expansion (S7), instance maps, registry counters. | `pcp/cache.cc:92-121, 556-559` — covered by Phase 9 F3 (deque-stable addressing) and F5 (deterministic prototype assignment); TSan-clean per the F4 bullet, but see the F4 follow-up note: that TSan pass predates the CMake-wiring fix, so it never actually ran the fine-locks code path either. Re-verified in the post-roadmap review (9 binaries × 3 runs, 0 races) — see F4 bullet. |
 
 ### 1.4 Instancing
 
