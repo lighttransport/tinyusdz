@@ -57,6 +57,10 @@ void PropNameTable::freeze() {
 void PropNameTable::unfreeze() {
   std::atomic_store(&frozen_, std::shared_ptr<const FrozenIndex>());
 }
+
+bool PropNameTable::is_frozen() const {
+  return static_cast<bool>(std::atomic_load(&frozen_));
+}
 #else
 void PropNameTable::freeze() {}
 void PropNameTable::unfreeze() {}
