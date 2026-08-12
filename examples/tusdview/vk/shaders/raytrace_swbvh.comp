@@ -270,6 +270,13 @@ void main() {
         vec3 subsurfaceColor = lrt(mid, 4u).rgb;
         // Cheap subsurface approximation (see file header + Phase 1 in
         // raytrace.comp): tint diffuse albedo toward subsurfaceColor.
+        // Verified numerically at runtime on real hardware against
+        // tests/usda/tusdview-unsupported-realtime-lobes.usda -- see
+        // raytrace.comp's copy of this comment for the full write-up
+        // (this file has no texture sampling wired in yet, so a
+        // texture-connected subsurface_color/base_color, as in
+        // models/openpbr-subsurface-sphere.usda, collapses to the
+        // same default and shows no visible tint -- not a bug here).
         base = mix(base, subsurfaceColor * (1.0 - metallic) * (1.0 - transmission),
                   subsurface);
       }

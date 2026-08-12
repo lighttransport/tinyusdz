@@ -785,6 +785,23 @@ void main() {
           // repo). Albedo-only: the existing cosine-weighted diffuse
           // sampling PDF is unaffected, so this needs no importance-
           // sampling changes.
+          //
+          // Verified numerically (not just compiled) via the identical
+          // formula in raytrace_swbvh.comp -- this GPU has no hardware RT,
+          // so that's the only technique this file's own rayQueryEXT branch
+          // can be runtime-exercised through -- against
+          // tests/usda/tusdview-unsupported-realtime-lobes.usda
+          // (base_color=(0.3,0.5,0.7), subsurface_weight=0.3,
+          // transmission_weight=0.2, subsurface_color unauthored -> default
+          // (0.8,0.8,0.8)): predicted tinted albedo (0.402,0.542,0.682),
+          // rendered center-pixel channel ratio matched to within 2% (exact
+          // on G:B). An earlier attempt against
+          // models/openpbr-subsurface-sphere.usda showed no visible tint --
+          // not a bug in this formula, but that asset's base_color AND
+          // subsurface_color are both texture-connected, and neither shader
+          // samples textures for these two inputs yet, so both collapsed to
+          // RealtimePbrMaterial's identical default (0.8,0.8,0.8) and the
+          // mix was a no-op on that specific asset.
           base = mix(base,
                      subsurfaceColor * (1.0 - metallic) * (1.0 - transmission),
                      subsurface);
