@@ -4183,11 +4183,23 @@ def Xform "World"
   assert(table.size() == size_before &&
          "render-phase accessors must not intern new names");
 
-  // Sensitivity: a genuinely new name must still unfreeze -- proves this
-  // harness would catch a regression that lets any intern miss through.
-  table.intern("zzz_unregistered_probe_name_7f3a");
+  // Sensitivity: a genuinely new name must still be reachable and grow the
+  // table -- proves this harness would catch a regression that lets any
+  // intern miss through. The table itself stays frozen: a new intern only
+  // mutates the live map/deque (which the published snapshot does not
+  // alias), so the snapshot stays valid -- just incomplete -- rather than
+  // flipping frozen_ back to false, which would race a concurrent lock-free
+  // reader still walking it (see the freeze() doc comment in
+  // property-index.hh).
+  const size_t size_before_probe = table.size();
+  PropNameId probe_id = table.intern("zzz_unregistered_probe_name_7f3a");
+  assert(table.size() == size_before_probe + 1 &&
+         "new name must have been inserted");
+  assert(table.find("zzz_unregistered_probe_name_7f3a") == probe_id &&
+         "new name must be findable after interning");
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  assert(!table.is_frozen());
+  assert(table.is_frozen() &&
+         "interning a new name must not unfreeze a published snapshot");
 #endif
   table.unfreeze();
 

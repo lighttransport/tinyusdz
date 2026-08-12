@@ -284,6 +284,21 @@ if(TINYUSDZ_NEXT_ENABLE_THREAD)
     target_link_libraries(tinyusdz_next PUBLIC Threads::Threads)
 endif()
 
+# Optional fine-grained pcp::Cache locking: a std::shared_timed_mutex (pcp/
+# cache-lock.hh) so pure reads (ComposedChildNames, GetMemoryStats, IsInstance,
+# ...) take a shared lock instead of serializing behind the single exclusive
+# mutex every Cache entry point otherwise takes. The READ_LOCK/WRITE_LOCK call
+# sites in pcp/cache.cc and the cache-*.inc files were already written for
+# this; only the switch to turn it on was missing. Requires
+# TINYUSDZ_NEXT_ENABLE_THREAD (the lock macros are no-ops without it).
+option(TINYUSDZ_NEXT_FINE_LOCKS "Use shared/exclusive locking for pcp::Cache instead of one exclusive mutex (requires TINYUSDZ_NEXT_ENABLE_THREAD)" OFF)
+if(TINYUSDZ_NEXT_FINE_LOCKS)
+    if(NOT TINYUSDZ_NEXT_ENABLE_THREAD)
+        message(FATAL_ERROR "TINYUSDZ_NEXT_FINE_LOCKS requires TINYUSDZ_NEXT_ENABLE_THREAD=ON")
+    endif()
+    target_compile_definitions(tinyusdz_next PUBLIC TINYUSDZ_NEXT_FINE_LOCKS)
+endif()
+
 # Set include directories
 target_include_directories(tinyusdz_next PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
