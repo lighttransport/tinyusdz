@@ -373,6 +373,8 @@ struct RtPushC {
 // traversal + shared shading.
 struct SwRtPushC {
   float invViewProj[16];
+  float camPos[4];      // xyz + .w RenderMode
+  float lightDir[4];    // xyz = unit direction *towards* the key light
   float clearColor[4];
   uint32_t tlasNodeCount;
   uint32_t pad[3];
@@ -8108,29 +8110,60 @@ bool VulkanRenderer::createRtResources(std::string* err) {
 // as real traversal + shading are ported in.
 bool VulkanRenderer::createSwRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
-  VkDescriptorSetLayoutBinding b[2]{};
-  b[0].binding = 0;
-  b[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-  b[0].descriptorCount = 1;
-  b[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-  b[1].binding = 1;
-  b[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  b[1].descriptorCount = 1;
-  b[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  // Bindings 1,3,5,6,7,8-14 are numbered to MATCH the hardware layout
+  // (createRtResources(), same binding numbers) even though this is a wholly
+  // separate VkDescriptorSetLayout -- raytrace.comp's shared (non-#ifdef'd)
+  // shading code references bindings 1/3/6/7/8-14 by fixed number in BOTH
+  // compiled variants, so those numbers must agree between layouts for the
+  // same GLSL source to bind correctly either way. Bindings 0/2/4/15-19 are
+  // SW-technique-specific (BVH/triangle data) and free to reuse numbers the
+  // hardware layout spends on AS(0)/MeshDesc(2)/InstInfo(4)/points(15-18),
+  // since the two layouts never coexist in one pipeline.
+  VkDescriptorSetLayoutBinding b[20]{};
+  auto img = [](VkDescriptorSetLayoutBinding& x, uint32_t bnd) {
+    x.binding = bnd; x.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    x.descriptorCount = 1; x.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  };
+  auto buf = [](VkDescriptorSetLayoutBinding& x, uint32_t bnd) {
+    x.binding = bnd; x.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    x.descriptorCount = 1; x.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  };
+  auto img2 = [](VkDescriptorSetLayoutBinding& x, uint32_t bnd) {
+    x.binding = bnd; x.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    x.descriptorCount = 1; x.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  };
+  buf(b[0], 0);                       // Tlas (Node[])
+  img(b[1], 1);                       // outImg (shared binding# with HW)
+  buf(b[2], 2);                       // Blas (Node[])
+  buf(b[3], 3);                       // Mats (shared)
+  buf(b[4], 4);                       // Insts (Inst[])
+  img(b[5], 5);                       // accumImg (shared)
+  buf(b[6], 6);                       // LrtMats (shared)
+  buf(b[7], 7);                       // RtLights (shared)
+  img2(b[8], 8);                      // dome env cube (shared)
+  img2(b[9], 9);                      // prefiltered env cube (shared)
+  img2(b[10], 10);                    // BRDF LUT (shared)
+  for (uint32_t i = 11; i < 15; ++i) buf(b[i], i);  // texture table (shared)
+  buf(b[15], 15);                     // Tris (float[9]/tri)
+  buf(b[16], 16);                     // Nrms (float[9]/tri)
+  buf(b[17], 17);                     // Cols (float[12]/tri)
+  buf(b[18], 18);                     // Uv (float[6]/tri)
+  buf(b[19], 19);                     // MatId (int/tri)
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 2;
+  lci.bindingCount = 20;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &swRtSetLayout_),
            "sw-rt descriptor set layout");
 
-  VkDescriptorPoolSize ps[2]{};
-  ps[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1};
-  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
+  VkDescriptorPoolSize ps[3]{};
+  ps[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
+  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 15};
+  ps[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
   VkDescriptorPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   pci.maxSets = 1;
-  pci.poolSizeCount = 2;
+  pci.poolSizeCount = 3;
   pci.pPoolSizes = ps;
   VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &swRtPool_),
            "sw-rt descriptor pool");
@@ -8206,6 +8239,85 @@ void VulkanRenderer::destroySwRt() {
   if (swRtPipelineLayout_) { vkDestroyPipelineLayout(device_, swRtPipelineLayout_, nullptr); swRtPipelineLayout_ = VK_NULL_HANDLE; }
   if (swRtPool_) { vkDestroyDescriptorPool(device_, swRtPool_, nullptr); swRtPool_ = VK_NULL_HANDLE; swRtSet_ = VK_NULL_HANDLE; }
   if (swRtSetLayout_) { vkDestroyDescriptorSetLayout(device_, swRtSetLayout_, nullptr); swRtSetLayout_ = VK_NULL_HANDLE; }
+}
+
+// See the declaration comment (vk_renderer.hh) for why this duplicates
+// rather than shares rebuildTlas()'s material/light/texture-table build.
+void VulkanRenderer::rebuildSwMaterialLightSSBOs() {
+  if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
+  if (rtMatMem_) { vkFreeMemory(device_, rtMatMem_, nullptr); rtMatMem_ = VK_NULL_HANDLE; }
+  if (rtMatLightRtBuf_) { vkDestroyBuffer(device_, rtMatLightRtBuf_, nullptr); rtMatLightRtBuf_ = VK_NULL_HANDLE; }
+  if (rtMatLightRtMem_) { vkFreeMemory(device_, rtMatLightRtMem_, nullptr); rtMatLightRtMem_ = VK_NULL_HANDLE; }
+  if (rtLightBuf_) { vkDestroyBuffer(device_, rtLightBuf_, nullptr); rtLightBuf_ = VK_NULL_HANDLE; }
+  if (rtLightMem_) { vkFreeMemory(device_, rtLightMem_, nullptr); rtLightMem_ = VK_NULL_HANDLE; }
+  if (rtTexelBuf_) { vkDestroyBuffer(device_, rtTexelBuf_, nullptr); rtTexelBuf_ = VK_NULL_HANDLE; }
+  if (rtTexelMem_) { vkFreeMemory(device_, rtTexelMem_, nullptr); rtTexelMem_ = VK_NULL_HANDLE; }
+  if (rtTexDescBuf_) { vkDestroyBuffer(device_, rtTexDescBuf_, nullptr); rtTexDescBuf_ = VK_NULL_HANDLE; }
+  if (rtTexDescMem_) { vkFreeMemory(device_, rtTexDescMem_, nullptr); rtTexDescMem_ = VK_NULL_HANDLE; }
+  if (rtMatTexBuf_) { vkDestroyBuffer(device_, rtMatTexBuf_, nullptr); rtMatTexBuf_ = VK_NULL_HANDLE; }
+  if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
+  if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
+  if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
+
+  std::vector<float> mats = matColor_;       // 3 vec4 per material (see beginScene)
+  if (mats.empty()) mats.assign(12, 0.0f);
+  std::vector<float> lrtMats = matLightRt_;  // 14 vec4 per material (LightRT/OpenPBR)
+  if (lrtMats.empty()) lrtMats.assign(kVkLightRtOpenPBRFloats, 0.0f);
+  std::vector<float> lights = lightParams_;  // packed DrawLightCPU light records
+  if (lights.empty()) lights.assign(kVkRtLightFloats, 0.0f);
+  createHostBuffer(mats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   mats.data(), &rtMatBuf_, &rtMatMem_);
+  createHostBuffer(lrtMats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   lrtMats.data(), &rtMatLightRtBuf_, &rtMatLightRtMem_);
+  createHostBuffer(lights.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   lights.data(), &rtLightBuf_, &rtLightMem_);
+
+  HostTextureTable rtTextures;
+  BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures,
+                        &rtLightsCpu_, rtTextureBudgetBytes_);
+  auto mapEnvmap = [&](int sourceId) -> int {
+    return (sourceId >= 0 &&
+            static_cast<size_t>(sourceId) < rtTextures.sourceToTable.size())
+               ? rtTextures.sourceToTable[static_cast<size_t>(sourceId)]
+               : -1;
+  };
+  // Matches rebuildTlas()'s own ordering: lightParams_ is rewritten with the
+  // freshly-remapped envmap ids AFTER the pre-rebuild lights[] snapshot above
+  // was already uploaded, so the new mapping takes effect starting next
+  // rebuild -- same one-rebuild lag as the hardware path, not a new bug.
+  lightParams_.assign(rtLightsCpu_.size() * kVkRtLightFloats, 0.0f);
+  for (size_t i = 0; i < rtLightsCpu_.size(); ++i) {
+    PackRtLightParams(rtLightsCpu_[i], mapEnvmap(rtLightsCpu_[i].envmapTexture),
+                      &lightParams_[i * kVkRtLightFloats]);
+  }
+  const uint32_t dummyTexel = 0xffffffffu;
+  HostTextureDesc dummyTexDesc;
+  for (int& layer : dummyTexDesc.udimLayer) layer = -1;
+  if (rtTextures.matTex.empty()) rtTextures.matTex.assign(kRtMaterialTexSlots, -1);
+  if (rtTextures.matTexParam.empty())
+    rtTextures.matTexParam.assign(kRtMaterialTextureParamFloats, 0.0f);
+  createHostBuffer(rtTextures.texels.empty() ? sizeof(dummyTexel)
+                                              : rtTextures.texels.size(),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   rtTextures.texels.empty()
+                       ? static_cast<const void*>(&dummyTexel)
+                       : static_cast<const void*>(rtTextures.texels.data()),
+                   &rtTexelBuf_, &rtTexelMem_);
+  createHostBuffer(rtTextures.textures.empty()
+                       ? sizeof(dummyTexDesc)
+                       : rtTextures.textures.size() * sizeof(HostTextureDesc),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   rtTextures.textures.empty()
+                       ? static_cast<const void*>(&dummyTexDesc)
+                       : static_cast<const void*>(rtTextures.textures.data()),
+                   &rtTexDescBuf_, &rtTexDescMem_);
+  createHostBuffer(rtTextures.matTex.size() * sizeof(int),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rtTextures.matTex.data(),
+                   &rtMatTexBuf_, &rtMatTexMem_);
+  createHostBuffer(rtTextures.matTexParam.size() * sizeof(float),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   rtTextures.matTexParam.data(), &rtMatTexParamBuf_,
+                   &rtMatTexParamMem_);
 }
 
 // Rebuilds the compute-BVH scene data (triangle SoA + BLAS/TLAS + instances)
@@ -8325,29 +8437,97 @@ void VulkanRenderer::rebuildSwBvh() {
   swInstCount_ = static_cast<uint32_t>(hs.instCount);
 
 #if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
-  // Milestone-1 binding: the shared output image (rtImage_, same one
-  // traceRt()'s hardware path writes -- created by createRtImage(), which
-  // always runs, and re-runs, before the next tlasDirty_ rebuild reaches
-  // here) plus the TLAS buffer. Materials/lights/textures join once real
-  // shading is ported in (milestone 3).
+  // Same source CPU state as rebuildTlas() uploads for the hardware
+  // technique -- see rebuildSwMaterialLightSSBOs()'s declaration comment.
+  rebuildSwMaterialLightSSBOs();
+
   VkDescriptorImageInfo outImgInfo{};
   outImgInfo.imageView = rtImageView_;
   outImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  VkDescriptorImageInfo accumImgInfo{};
+  accumImgInfo.imageView = accumImageView_;
+  accumImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
   VkDescriptorBufferInfo tlasInfo{swTlasBuf_, 0, VK_WHOLE_SIZE};
-  VkWriteDescriptorSet w[2]{};
-  w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  w[0].dstSet = swRtSet_;
-  w[0].dstBinding = 0;
-  w[0].descriptorCount = 1;
-  w[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-  w[0].pImageInfo = &outImgInfo;
-  w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  w[1].dstSet = swRtSet_;
-  w[1].dstBinding = 1;
-  w[1].descriptorCount = 1;
-  w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  w[1].pBufferInfo = &tlasInfo;
-  vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
+  VkDescriptorBufferInfo blasInfo{swBlasBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo instInfo{swInstBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo matInfo{rtMatBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo lrtMatInfo{rtMatLightRtBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo lightInfo{rtLightBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorImageInfo envInfo{};
+  envInfo.sampler = sampler_;
+  envInfo.imageView = iblEnvView_ != VK_NULL_HANDLE
+                          ? iblEnvView_
+                          : (iblSpecView_ != VK_NULL_HANDLE ? iblSpecView_
+                                                            : blackCubeView_);
+  envInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkDescriptorImageInfo prefInfo{};
+  prefInfo.sampler = sampler_;
+  prefInfo.imageView = iblSpecView_ != VK_NULL_HANDLE ? iblSpecView_
+                                                      : blackCubeView_;
+  prefInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkDescriptorImageInfo lutInfo{};
+  lutInfo.sampler = sampler_;
+  lutInfo.imageView = iblLutView_ != VK_NULL_HANDLE ? iblLutView_ : blackView_;
+  lutInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  VkDescriptorBufferInfo texelInfo{rtTexelBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo texDescInfo{rtTexDescBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo matTexInfo{rtMatTexBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo matTexParamInfo{rtMatTexParamBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo swTrisInfo{swTriBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo swNrmsInfo{swNrmBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo swColsInfo{swColBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo swUvInfo{swUvBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo swMatIdInfo{swMatBuf_, 0, VK_WHOLE_SIZE};
+
+  const auto bufW = [&](VkWriteDescriptorSet& w, uint32_t bnd,
+                        const VkDescriptorBufferInfo* info) {
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = swRtSet_;
+    w.dstBinding = bnd;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    w.pBufferInfo = info;
+  };
+  const auto imgW = [&](VkWriteDescriptorSet& w, uint32_t bnd,
+                        const VkDescriptorImageInfo* info) {
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = swRtSet_;
+    w.dstBinding = bnd;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    w.pImageInfo = info;
+  };
+  const auto sampW = [&](VkWriteDescriptorSet& w, uint32_t bnd,
+                         const VkDescriptorImageInfo* info) {
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = swRtSet_;
+    w.dstBinding = bnd;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = info;
+  };
+  VkWriteDescriptorSet w[20]{};
+  bufW(w[0], 0, &tlasInfo);
+  imgW(w[1], 1, &outImgInfo);
+  bufW(w[2], 2, &blasInfo);
+  bufW(w[3], 3, &matInfo);
+  bufW(w[4], 4, &instInfo);
+  imgW(w[5], 5, &accumImgInfo);
+  bufW(w[6], 6, &lrtMatInfo);
+  bufW(w[7], 7, &lightInfo);
+  sampW(w[8], 8, &envInfo);
+  sampW(w[9], 9, &prefInfo);
+  sampW(w[10], 10, &lutInfo);
+  bufW(w[11], 11, &texelInfo);
+  bufW(w[12], 12, &texDescInfo);
+  bufW(w[13], 13, &matTexInfo);
+  bufW(w[14], 14, &matTexParamInfo);
+  bufW(w[15], 15, &swTrisInfo);
+  bufW(w[16], 16, &swNrmsInfo);
+  bufW(w[17], 17, &swColsInfo);
+  bufW(w[18], 18, &swUvInfo);
+  bufW(w[19], 19, &swMatIdInfo);
+  vkUpdateDescriptorSets(device_, 20, w, 0, nullptr);
 #endif
 
   tlasDirty_ = false;
@@ -8585,6 +8765,15 @@ void VulkanRenderer::traceRtBvh(VkCommandBuffer cb) {
   light3d::Mat4 PV = ToMat4(proj_) * ToMat4(view_);
   const light3d::Mat4 invPV = PV.inverse();
   std::memcpy(pc.invViewProj, invPV.m, sizeof(pc.invViewProj));
+  pc.camPos[0] = cameraPos_[0]; pc.camPos[1] = cameraPos_[1]; pc.camPos[2] = cameraPos_[2];
+  pc.camPos[3] = static_cast<float>(rtMode_);
+  float lx = lightDir_[0], ly = lightDir_[1], lz = lightDir_[2];
+  float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
+  if (ll <= 1.0e-12f) {
+    lx = 0.5f; ly = 0.8f; lz = 0.6f;
+    ll = std::sqrt(lx * lx + ly * ly + lz * lz);
+  }
+  pc.lightDir[0] = lx / ll; pc.lightDir[1] = ly / ll; pc.lightDir[2] = lz / ll;
   for (int i = 0; i < 4; ++i) pc.clearColor[i] = clear_[i];
   pc.tlasNodeCount = swTlasNodeCount_;
   vkCmdPushConstants(cb, swRtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
