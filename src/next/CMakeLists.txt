@@ -134,6 +134,8 @@ set(TINYUSDZ_NEXT_SOURCES
 
 # Define header files (for IDE project generation)
 set(TINYUSDZ_NEXT_HEADERS
+    execution.hh
+    execution.cc
     # Type system
     types/type-id.hh
     types/type-info.hh

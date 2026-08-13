@@ -98,6 +98,9 @@ public:
   void SetAssetReader(AssetReadCallback reader);
   bool HasAssetReader() const { return static_cast<bool>(asset_reader_); }
 
+  /// True when resolution or reads may enter application-provided code.
+  bool HasUserCallbacks() const;
+
   /// Register an explicit URI/IRI-style scheme handler (for example `https`,
   /// `studio`, or `usd-anon`). Scheme names are ASCII case-insensitive and are
   /// stored lowercase. The resolver callback receives the complete identifier.

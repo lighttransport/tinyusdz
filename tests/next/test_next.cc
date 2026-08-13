@@ -1841,6 +1841,7 @@ def Xform "Parent" {
     float x = 1.0
     float y = 2.0
 }
+
 )";
 
   LoadResult result = LoadUSDAFromString(input, std::strlen(input));
@@ -1853,6 +1854,25 @@ def Xform "Parent" {
 
   std::cout << "  USDA reorder-after-child-prim UAF regression passed!"
             << std::endl;
+}
+
+void test_hardened_session_profile() {
+  const size_t cap = size_t(64) << 20;
+  StageSessionOptions opts = MakeHardenedStageSessionOptions(cap);
+  assert(opts.load.strict_aousd_conformance);
+  assert(opts.load.max_memory == cap);
+  assert(opts.max_total_memory == cap);
+  assert(!opts.load.usdc_options.crate_options.use_mmap);
+  assert(opts.composition.error_when_asset_not_found);
+  assert(!opts.composition.usdc_use_mmap);
+  assert(!opts.resolver.allow_absolute_paths);
+  assert(!opts.resolver.allow_parent_paths);
+  assert(!opts.resolver.search_recursively);
+  assert(!opts.resolver.enable_suffix_fallback);
+  assert(opts.execution.max_threads == 1);
+  assert(opts.execution.callback_concurrency ==
+         CallbackConcurrency::Serialized);
+  assert(MakeHardenedStageSessionOptions(0).max_total_memory == 1);
 }
 
 int main() {
@@ -1876,6 +1896,7 @@ int main() {
     test_ascii_parser();
     test_usda_reader();
     test_usda_reorder_after_child_prim();
+    test_hardened_session_profile();
     test_usda_lazy_parse_policies();
     test_arc_listops();
     test_arc_layer_offset_parse();

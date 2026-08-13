@@ -14,6 +14,8 @@
 #include <map>
 #include <limits>
 #include <unordered_set>
+#include <atomic>
+#include <thread>
 
 #include "tydra/next/chunked-array.hh"
 #include "tydra/next/materialx.hh"
@@ -3145,6 +3147,25 @@ void TestConverterMemoryBudget() {
   }
 
   MemBudget::Get().InitBytes(saved_cap);
+
+  // The hardened, operation-owned cap must work without mutating the global
+  // process budget, and converter reuse must reset its accounting per run.
+  {
+    ConverterConfig cfg = MakeHardenedConverterConfig(1);
+    RenderSceneConverter conv(cfg);
+    ConvertResult first = conv.Convert(lr.stage);
+    ConvertResult second = conv.Convert(lr.stage);
+    assert(first.scene.meshes.size() < static_cast<size_t>(kMeshes));
+    assert(second.scene.meshes.size() == first.scene.meshes.size());
+    bool warned = false;
+    for (const std::string& w : first.warnings) {
+      if (w.find("Operation memory limit reached") != std::string::npos) {
+        warned = true;
+      }
+    }
+    assert(warned);
+  }
+
   std::cout << "  converter cumulative memory budget passed!\n";
 }
 
@@ -6671,6 +6692,113 @@ void TestPtexMaterialInterfaceAsset() {
   std::cout << "  Ptex material-interface asset forwarding: PASSED\n";
 }
 
+void TestParallelMaterialTextureRemapAndCallbackPolicy() {
+  std::cout << "Testing parallel material texture remap/callback policy...\n";
+  const char* usda = R"(#usda 1.0
+def Xform "World" {
+  def Material "First" {
+    token outputs:surface.connect = </World/First/S.outputs:surface>
+    def Shader "S" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor.connect = </World/First/T.outputs:rgb>
+      token outputs:surface
+    }
+    def Shader "T" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @first.png@
+      color3f outputs:rgb
+    }
+  }
+  def Material "Second" {
+    token outputs:mtlx:surface.connect = </World/Second/S.outputs:surface>
+    def Shader "S" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      color3f inputs:transmission_color.connect = </World/Second/T.outputs:rgb>
+      token outputs:surface
+    }
+    def Shader "T" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @second.png@
+      color3f outputs:rgb
+    }
+  }
+  def Material "Fallback" {
+    token outputs:surface.connect = </World/Fallback/U.outputs:surface>
+    def Shader "U" {
+      uniform token info:id = "UnsupportedSurface"
+      float inputs:future_lobe.connect = </World/Fallback/T.outputs:r>
+      token outputs:surface
+    }
+    def Shader "T" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @fallback.png@
+      float outputs:r
+    }
+  }
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+
+  ConverterConfig parallel;
+  parallel.material.load_textures = false;
+  parallel.execution.max_threads = 4;
+  parallel.execution.callback_concurrency = CallbackConcurrency::Concurrent;
+  RenderSceneConverter converter(parallel);
+  ConvertResult result = converter.Convert(loaded.stage);
+  assert(result.success);
+  assert(result.scene.images.size() == 3);
+  const RenderMaterial& second = result.scene.materials.at(
+      static_cast<size_t>(result.scene.material_by_path.at("/World/Second")));
+  assert(second.openpbr);
+  const int32_t transmission_id = second.openpbr->transmission_color.texture_id;
+  assert(transmission_id >= 0);
+  const RenderTexture& transmission =
+      result.scene.textures.at(static_cast<size_t>(transmission_id));
+  assert(result.scene.images.at(static_cast<size_t>(transmission.image_id))
+             .resolved_path == "second.png");
+
+  const RenderMaterial& fallback = result.scene.materials.at(
+      static_cast<size_t>(result.scene.material_by_path.at("/World/Fallback")));
+  const RetainedMaterialParam* future = nullptr;
+  for (const RetainedMaterialParam& param : fallback.retained_params) {
+    if (param.name == "future_lobe") future = &param;
+  }
+  assert(future && future->value.texture_id >= 0);
+  const RenderTexture& future_texture = result.scene.textures.at(
+      static_cast<size_t>(future->value.texture_id));
+  assert(result.scene.images.at(static_cast<size_t>(future_texture.image_id))
+             .resolved_path == "fallback.png");
+
+  std::atomic<int> active{0};
+  std::atomic<int> max_active{0};
+  ConverterConfig serialized = parallel;
+  serialized.material.load_textures = true;
+  serialized.execution.callback_concurrency = CallbackConcurrency::Serialized;
+  serialized.material.custom_texture_loader =
+      [&](const std::string& path, TextureImage* image) {
+        const int now = active.fetch_add(1) + 1;
+        int observed = max_active.load();
+        while (now > observed &&
+               !max_active.compare_exchange_weak(observed, now)) {
+        }
+        for (int i = 0; i < 1000; ++i) std::this_thread::yield();
+        image->resolved_path = path;
+        active.fetch_sub(1);
+        return true;
+      };
+  RenderSceneConverter serialized_converter(serialized);
+  ConvertResult serialized_result = serialized_converter.Convert(loaded.stage);
+  assert(serialized_result.success);
+  assert(max_active.load() == 1);
+
+  ConverterConfig hardened = MakeHardenedConverterConfig(size_t(64) << 20);
+  assert(hardened.execution.max_threads == 1);
+  assert(hardened.execution.max_in_flight_bytes == (size_t(64) << 20));
+  assert(hardened.max_render_records != 0);
+  std::cout << "  parallel material texture remap/callback policy: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -6751,6 +6879,7 @@ int main() {
   TestRenderColorManagement();
   TestIncrementalRenderSession();
   TestPtexMaterialInterfaceAsset();
+  TestParallelMaterialTextureRemapAndCallbackPolicy();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;
