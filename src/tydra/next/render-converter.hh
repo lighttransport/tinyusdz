@@ -405,6 +405,7 @@ class RenderSceneConverter {
   /// small meshes summing past the cap. Latches once tripped so the rest of
   /// the conversion degrades consistently rather than thrashing.
   bool BudgetWouldExceed(size_t estimate, const char* phase);
+  void ResetOperationState();
   size_t budget_accounted_bytes_ = 0;
   size_t budget_pending_bytes_ = 0;
   size_t budget_check_counter_ = 0;

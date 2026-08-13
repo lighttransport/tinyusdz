@@ -692,10 +692,23 @@ bool StageSession::OpenFile(const std::string& filename,
   if (normalized.execution.max_threads >= 0) {
     const int threads = normalized.execution.max_threads == 0
                             ? -1
-                            : normalized.execution.max_threads;
+                            : ClampExecutionThreads(
+                                  normalized.execution.max_threads);
     normalized.composition.num_threads = threads;
     normalized.load.usda_options.parse_options.num_threads = threads;
     normalized.composition.usda_parse_options.num_threads = threads;
+  }
+  if (normalized.composition.num_threads > 1) {
+    normalized.composition.num_threads =
+        ClampExecutionThreads(normalized.composition.num_threads);
+  }
+  if (normalized.load.usda_options.parse_options.num_threads > 1) {
+    normalized.load.usda_options.parse_options.num_threads =
+        ClampExecutionThreads(normalized.load.usda_options.parse_options.num_threads);
+  }
+  if (normalized.composition.usda_parse_options.num_threads > 1) {
+    normalized.composition.usda_parse_options.num_threads =
+        ClampExecutionThreads(normalized.composition.usda_parse_options.num_threads);
   }
   std::unique_ptr<Impl> next(new Impl());
   next->options = normalized;
@@ -1080,7 +1093,9 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
   // Parallel composition is opt-in via TINYUSDZ_ENABLE_THREAD so wasm builds do
   // not require Emscripten pthreads / SharedArrayBuffer by default.
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  copts.num_threads = std::thread::hardware_concurrency();
+  copts.num_threads = std::min<int>(
+      static_cast<int>(std::thread::hardware_concurrency()),
+      kMaxExecutionThreads);
   if (copts.num_threads < 1) copts.num_threads = 1;
 #else
   copts.num_threads = 1;
@@ -1109,7 +1124,7 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
     if (comp_opts->num_threads == 0) {
       copts.num_threads = 1;
     } else if (comp_opts->num_threads > 1) {
-      copts.num_threads = comp_opts->num_threads;
+      copts.num_threads = ClampExecutionThreads(comp_opts->num_threads);
     }
     copts.enable_timing = comp_opts->enable_timing || copts.enable_timing;
     if (comp_opts->payload_policy) copts.payload_policy = comp_opts->payload_policy;

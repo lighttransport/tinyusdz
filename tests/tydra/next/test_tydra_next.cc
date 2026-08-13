@@ -3148,6 +3148,22 @@ void TestConverterMemoryBudget() {
 
   MemBudget::Get().InitBytes(saved_cap);
 
+  // A converter reused across APIs must not retain a previous operation's
+  // latched budget state. Trip the global guard in Convert(), restore it, then
+  // stream the same stage through the same converter.
+  {
+    ConverterConfig cfg;
+    RenderSceneConverter conv(cfg);
+    MemBudget::Get().InitBytes(1);
+    ConvertResult limited = conv.Convert(lr.stage);
+    assert(limited.scene.meshes.size() < static_cast<size_t>(kMeshes));
+    MemBudget::Get().InitBytes(saved_cap);
+    RetainedStreamSink sink;
+    StreamConvertResult streamed = conv.ConvertToSink(lr.stage, &sink);
+    assert(streamed.success);
+    assert(streamed.mesh_count == static_cast<size_t>(kMeshes));
+  }
+
   // The hardened, operation-owned cap must work without mutating the global
   // process budget, and converter reuse must reset its accounting per run.
   {

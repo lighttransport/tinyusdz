@@ -199,14 +199,20 @@
       }
     };
 #if defined(TINYUSDZ_ENABLE_THREAD)
-    unsigned nt = options.num_threads;
+    int nt = options.num_threads;
+    if (nt < 0) {
+      nt = std::min<int>(static_cast<int>(std::thread::hardware_concurrency()),
+                         kMaxExecutionThreads);
+    }
     if (nt > 1 && fill_.size() >= 2048) {
-      if (nt > 64) nt = 64;
+      if (nt > kMaxExecutionThreads) nt = kMaxExecutionThreads;
       std::vector<std::thread> pool;
       pool.reserve(nt);
-      for (unsigned t = 0; t < nt; ++t) {
-        size_t b = fill_.size() * t / nt;
-        size_t e = fill_.size() * (t + 1) / nt;
+      for (int t = 0; t < nt; ++t) {
+        size_t b = fill_.size() * static_cast<size_t>(t) /
+                   static_cast<size_t>(nt);
+        size_t e = fill_.size() * static_cast<size_t>(t + 1) /
+                   static_cast<size_t>(nt);
         if (b < e) pool.emplace_back([&do_range, b, e]() { do_range(b, e); });
       }
       for (std::thread &th : pool) th.join();

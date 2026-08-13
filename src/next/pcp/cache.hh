@@ -18,6 +18,7 @@
 #include "load-rules.hh"
 #include "../resolver/asset-resolver.hh"
 #include "../stage/stage.hh"
+#include "../execution.hh"
 
 #include <cstdint>
 #include <functional>

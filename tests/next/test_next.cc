@@ -1873,6 +1873,9 @@ void test_hardened_session_profile() {
   assert(opts.execution.callback_concurrency ==
          CallbackConcurrency::Serialized);
   assert(MakeHardenedStageSessionOptions(0).max_total_memory == 1);
+  assert(ClampExecutionThreads(1000) == kMaxExecutionThreads);
+  TaskArena arena(1000);
+  assert(arena.max_threads() == static_cast<size_t>(kMaxExecutionThreads));
 }
 
 int main() {

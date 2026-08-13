@@ -3423,11 +3423,7 @@ void ReleaseSourceMeshStaticArrays(const Stage& stage, const UsdPrim& mesh_prim)
 
 ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
   ConvertResult result;
-  warnings_.clear();
-  budget_accounted_bytes_ = 0;
-  budget_pending_bytes_ = 0;
-  budget_check_counter_ = 0;
-  budget_exceeded_ = false;
+  ResetOperationState();
   ResetImageIdCache();
 
   // Built with -fno-exceptions: the conversion helpers report failures via
@@ -3571,10 +3567,14 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         mesh_workers = std::max<size_t>(
             1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
       } else {
-        mesh_workers = static_cast<size_t>(config_.execution.max_threads);
+        mesh_workers = std::min<size_t>(
+            static_cast<size_t>(config_.execution.max_threads),
+            static_cast<size_t>(::tinyusdz::next::kMaxExecutionThreads));
       }
     } else if (config_.max_worker_threads > 0) {
-      mesh_workers = config_.max_worker_threads;
+      mesh_workers = std::min<size_t>(
+          config_.max_worker_threads,
+          static_cast<size_t>(::tinyusdz::next::kMaxExecutionThreads));
     } else {
       const unsigned hw_threads = std::thread::hardware_concurrency();
       mesh_workers =
@@ -4138,7 +4138,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
                                                         SceneSink* sink) {
   StreamConvertResult result;
-  warnings_.clear();
+  ResetOperationState();
   ResetImageIdCache();
   if (!sink) {
     result.error = "ConvertToSink: null scene sink";
@@ -5240,6 +5240,14 @@ bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
   warnings_.push_back(std::string("Memory budget reached during ") + phase +
                       "; remaining geometry is skipped (" + why + ")");
   return true;
+}
+
+void RenderSceneConverter::ResetOperationState() {
+  warnings_.clear();
+  budget_accounted_bytes_ = 0;
+  budget_pending_bytes_ = 0;
+  budget_check_counter_ = 0;
+  budget_exceeded_ = false;
 }
 
 void RenderSceneConverter::AddWarning(std::string msg) {

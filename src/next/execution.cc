@@ -14,7 +14,10 @@ namespace tinyusdz {
 namespace next {
 
 struct TaskArena::Impl {
-  explicit Impl(size_t requested) : max_threads(std::max<size_t>(1, requested)) {
+  explicit Impl(size_t requested)
+      : max_threads(std::min<size_t>(
+            std::max<size_t>(1, requested),
+            static_cast<size_t>(kMaxExecutionThreads))) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
     workers.reserve(max_threads - 1);
     for (size_t i = 1; i < max_threads; ++i) {

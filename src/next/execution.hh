@@ -11,6 +11,12 @@
 namespace tinyusdz {
 namespace next {
 
+constexpr int kMaxExecutionThreads = 16;
+
+inline int ClampExecutionThreads(int requested) {
+  return requested > kMaxExecutionThreads ? kMaxExecutionThreads : requested;
+}
+
 enum class CallbackConcurrency : uint8_t {
   Serialized = 0,
   Concurrent
