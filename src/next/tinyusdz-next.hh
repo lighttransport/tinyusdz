@@ -21,6 +21,8 @@
 #include <memory>
 #include <vector>
 
+#include "execution.hh"
+
 // Core types
 #include "types/type-id.hh"
 #include "types/type-info.hh"
@@ -176,6 +178,9 @@ struct StageSessionOptions {
   // per-file input limit. Zero means unlimited.
   size_t max_total_memory = 0;
   CacheRetention cache_retention = CacheRetention::Full;
+  // Unified execution policy. max_threads == -1 preserves the legacy
+  // CompositionOptions/ParseOptions thread fields during migration.
+  ExecutionOptions execution;
   using ProgressCallback = std::function<bool(const ProgressEvent&)>;
   ProgressCallback progress_callback;
   using PreviewCallback = std::function<bool(const StagePreview&)>;
@@ -183,6 +188,11 @@ struct StageSessionOptions {
   // The snapshot owns a separate Stage and may safely be retained.
   PreviewCallback preview_callback;
 };
+
+/// Fail-closed preset for untrusted assets. `max_memory` is applied to both
+/// individual inputs and aggregate session residency; zero clamps to one byte
+/// instead of selecting the legacy unlimited convention.
+StageSessionOptions MakeHardenedStageSessionOptions(size_t max_memory);
 
 struct StageEditResult {
   bool success = false;

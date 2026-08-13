@@ -17,6 +17,7 @@
 #include "render-extract.hh"
 #include "scene-access.hh"
 #include "next/stage/stage.hh"
+#include "next/execution.hh"
 
 namespace tinyusdz {
 namespace next {
@@ -114,6 +115,7 @@ struct MaterialConfig {
   // Texture loader callback (optional custom loader)
   using TextureLoader = std::function<bool(const std::string& path, TextureImage* out)>;
   TextureLoader custom_texture_loader;
+
 };
 
 struct CurvesConfig {
@@ -179,6 +181,10 @@ struct ConverterConfig {
   // hardware_concurrency() (which may over-report on some runtimes).
   size_t max_worker_threads = 0;
 
+  // Unified execution policy. max_threads == -1 preserves
+  // max_worker_threads above; otherwise 0=auto, 1=serial, >1=fixed.
+  ::tinyusdz::next::ExecutionOptions execution;
+
   // Time code for evaluation
   double time_code = 0.0;
 
@@ -201,6 +207,11 @@ struct ConverterConfig {
   using CancelCallback = std::function<bool()>;
   CancelCallback cancel_callback;
 };
+
+/// Fail-closed render-conversion preset. A zero memory limit clamps to one byte
+/// instead of selecting the legacy unlimited convention. Texture callbacks
+/// remain serialized unless explicitly opted into concurrent invocation.
+ConverterConfig MakeHardenedConverterConfig(size_t max_memory);
 
 //
 // Conversion result
@@ -394,6 +405,7 @@ class RenderSceneConverter {
   /// small meshes summing past the cap. Latches once tripped so the rest of
   /// the conversion degrades consistently rather than thrashing.
   bool BudgetWouldExceed(size_t estimate, const char* phase);
+  size_t budget_accounted_bytes_ = 0;
   size_t budget_pending_bytes_ = 0;
   size_t budget_check_counter_ = 0;
   bool budget_exceeded_ = false;
@@ -435,6 +447,32 @@ class RenderSceneConverter {
   // with many textures.  FindCachedImageId verifies candidates to make hash
   // collisions harmless.
   std::unordered_multimap<uint64_t, int32_t> image_id_cache_;
+
+  // Set (RAII, see MaterialLocalScope in render-converter.cc) around a
+  // parallel materials-batch worker's ConvertMaterial() call. That call is
+  // given a per-worker LOCAL scratch RenderScene (not the shared result
+  // scene), so FindCachedImageId/RememberImageId must not touch the shared
+  // image_id_cache_/image_cache_scene_ above -- multiple workers would race
+  // on them. While set, those two methods fall back to a plain scan of the
+  // (small, freshly-empty-per-material) local scratch's own images list, and
+  // the color-config memo block in ConvertMaterial is skipped entirely (the
+  // caller pre-seeds the scratch scene's working_color_space from the
+  // already-resolved result.scene value instead). A serial merge pass then
+  // dedups/appends each worker's local images/textures into the shared scene
+  // and remaps every ShaderParam::texture_id, so output is byte-identical to
+  // the fully-serial conversion. thread_local, not a member: each worker
+  // thread needs its own scope independent of which RenderSceneConverter
+  // instance it's calling into.
+  static thread_local bool tl_material_local_scope_;
+
+  // RAII scope for tl_material_local_scope_ (nested so its ctor/dtor can
+  // touch the private flag above; a class local to a .cc member function
+  // body does NOT get implicit access to its enclosing class's private
+  // members, so this can't just live next to its one call site).
+  struct MaterialLocalScope {
+    MaterialLocalScope() { tl_material_local_scope_ = true; }
+    ~MaterialLocalScope() { tl_material_local_scope_ = false; }
+  };
 };
 
 //

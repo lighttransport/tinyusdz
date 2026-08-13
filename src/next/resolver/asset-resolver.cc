@@ -241,6 +241,15 @@ void AssetResolver::SetAssetReader(AssetReadCallback reader) {
   asset_reader_ = std::move(reader);
 }
 
+bool AssetResolver::HasUserCallbacks() const {
+  if (custom_resolver_ || asset_reader_) return true;
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  for (const auto& entry : scheme_handlers_) {
+    if (entry.second.resolver || entry.second.reader) return true;
+  }
+  return false;
+}
+
 void AssetResolver::RegisterScheme(const std::string& scheme,
                                    ResolverCallback resolver,
                                    AssetReadCallback reader) {

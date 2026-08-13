@@ -24,6 +24,33 @@
 namespace tinyusdz {
 namespace next {
 
+StageSessionOptions MakeHardenedStageSessionOptions(size_t max_memory) {
+  StageSessionOptions options;
+  // Zero must never turn a hardened request into the legacy unlimited mode.
+  max_memory = std::max<size_t>(max_memory, 1);
+  options.load.strict_aousd_conformance = true;
+  options.load.max_memory = max_memory;
+  options.load.usda_options.parse_options.strict_aousd_conformance = true;
+  options.load.usda_options.parse_options.max_file_size = max_memory;
+  options.load.usdc_options.crate_options.strict_aousd_conformance = true;
+  options.load.usdc_options.crate_options.max_memory = max_memory;
+  options.load.usdc_options.crate_options.use_mmap = false;
+  options.load.usdz_options.max_archive_size = max_memory;
+  options.load.usdz_options.max_entry_size = max_memory;
+  options.max_total_memory = max_memory;
+  options.composition.strict_aousd_conformance = true;
+  options.composition.error_when_asset_not_found = true;
+  options.composition.max_layer_memory = max_memory;
+  options.composition.usdc_use_mmap = false;
+  options.resolver.allow_absolute_paths = false;
+  options.resolver.allow_parent_paths = false;
+  options.resolver.search_recursively = false;
+  options.resolver.enable_suffix_fallback = false;
+  options.execution.max_threads = 1;
+  options.execution.callback_concurrency = CallbackConcurrency::Serialized;
+  return options;
+}
+
 namespace {
 
 // File format detection
@@ -661,10 +688,19 @@ bool StageSession::OpenFile(const std::string& filename,
                             const StageSessionOptions& options) {
   using Clock = std::chrono::steady_clock;
   const auto open_begin = Clock::now();
+  StageSessionOptions normalized = options;
+  if (normalized.execution.max_threads >= 0) {
+    const int threads = normalized.execution.max_threads == 0
+                            ? -1
+                            : normalized.execution.max_threads;
+    normalized.composition.num_threads = threads;
+    normalized.load.usda_options.parse_options.num_threads = threads;
+    normalized.composition.usda_parse_options.num_threads = threads;
+  }
   std::unique_ptr<Impl> next(new Impl());
-  next->options = options;
+  next->options = normalized;
   next->root_identifier = filename;
-  next->resolver.SetConfig(options.resolver);
+  next->resolver.SetConfig(normalized.resolver);
   if (next->resolver.GetWorkingDirectory().empty()) {
     next->resolver.SetWorkingDirectory(DirOfPath(filename));
   }
@@ -674,7 +710,7 @@ bool StageSession::OpenFile(const std::string& filename,
   }
 
   Stage root;
-  if (!LoadUSD(filename, &root, options.load, &next->warning, &next->error)) {
+  if (!LoadUSD(filename, &root, normalized.load, &next->warning, &next->error)) {
     next->RecordMessages(DiagnosticDomain::Load);
     impl_ = std::move(next);
     return false;
@@ -686,7 +722,7 @@ bool StageSession::OpenFile(const std::string& filename,
   std::string composition_identifier = filename;
   if (DetectFormatFromExtension(filename) == FileFormat::USDZ) {
     USDZReader package;
-    if (package.OpenFile(filename, EffectiveUSDZOptions(options.load))) {
+    if (package.OpenFile(filename, EffectiveUSDZOptions(normalized.load))) {
       const int root_index = package.FindRootLayer();
       if (root_index >= 0) {
         composition_identifier += "[" +
@@ -700,7 +736,7 @@ bool StageSession::OpenFile(const std::string& filename,
     return false;
   }
 
-  if (!options.compose || !StageNeedsComposition(root)) {
+  if (!normalized.compose || !StageNeedsComposition(root)) {
     next->stage.reset(new Stage(std::move(root)));
     next->revision = 1;
     next->last_changes.base_revision = 0;
@@ -720,10 +756,10 @@ bool StageSession::OpenFile(const std::string& filename,
     return true;
   }
 
-  pcp::CompositionOptions composition = options.composition;
+  pcp::CompositionOptions composition = normalized.composition;
   composition.max_layer_memory =
-      MinNonZero(composition.max_layer_memory, options.load.max_memory);
-  composition.usda_parse_options = options.load.usda_options.parse_options;
+      MinNonZero(composition.max_layer_memory, normalized.load.max_memory);
+  composition.usda_parse_options = normalized.load.usda_options.parse_options;
   std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
   auto opened = pcp::Cache::Open(next->resolver, std::move(root_layer),
                                  composition_identifier, composition);
@@ -740,7 +776,7 @@ bool StageSession::OpenFile(const std::string& filename,
     return false;
   }
   const auto stage_built = Clock::now();
-  if (options.composition.enable_timing) {
+  if (normalized.composition.enable_timing) {
     auto milliseconds = [](Clock::duration duration) {
       return std::chrono::duration<double, std::milli>(duration).count();
     };

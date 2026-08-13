@@ -2484,6 +2484,57 @@ int32_t FindJointIndex(const Skeleton& skeleton,
   return -1;
 }
 
+// The single authoritative walk over every ShaderParam a RenderMaterial owns.
+// Both parallel texture-id remapping and material-driven UV promotion use this
+// list so adding a new lobe cannot silently leave worker-local ids behind.
+template <typename Fn>
+void ForEachMaterialShaderParam(RenderMaterial* mat, Fn&& fn) {
+  if (!mat) return;
+  if (mat->preview_surface) {
+    PreviewSurfaceShader& ps = *mat->preview_surface;
+    for (ShaderParam* p :
+         {&ps.diffuse_color, &ps.emissive_color, &ps.specular_color,
+          &ps.metallic, &ps.roughness, &ps.clearcoat,
+          &ps.clearcoat_roughness, &ps.opacity, &ps.opacity_threshold,
+          &ps.ior, &ps.normal, &ps.displacement, &ps.occlusion}) {
+      fn(*p);
+    }
+  }
+  if (mat->openpbr) {
+    OpenPBRSurfaceShader& o = *mat->openpbr;
+    for (ShaderParam* p :
+         {&o.base_weight, &o.base_color, &o.base_roughness,
+          &o.base_metalness, &o.specular_weight, &o.specular_color,
+          &o.specular_roughness, &o.specular_ior, &o.specular_anisotropy,
+          &o.specular_roughness_anisotropy, &o.specular_rotation,
+          &o.transmission_weight, &o.transmission_color,
+          &o.transmission_depth,
+          &o.transmission_dispersion, &o.transmission_dispersion_scale,
+          &o.subsurface_weight, &o.subsurface_color, &o.subsurface_radius,
+          &o.coat_weight, &o.coat_color, &o.coat_roughness,
+          &o.coat_ior, &o.coat_anisotropy, &o.coat_roughness_anisotropy,
+          &o.coat_normal, &o.sheen_weight, &o.sheen_color,
+          &o.sheen_roughness,
+          &o.thin_film_weight, &o.thin_film_thickness, &o.thin_film_ior,
+          &o.emission_luminance, &o.emission_color, &o.normal, &o.opacity,
+          &o.tangent, &o.displacement}) {
+      fn(*p);
+    }
+  }
+  for (RetainedMaterialParam& retained : mat->retained_params) {
+    fn(retained.value);
+  }
+}
+
+template <typename Fn>
+void ForEachMaterialShaderParam(const RenderMaterial& mat, Fn&& fn) {
+  // The visitor does not mutate while gathering UV names. Reuse the canonical
+  // mutable field list rather than maintaining a second error-prone list.
+  ForEachMaterialShaderParam(
+      const_cast<RenderMaterial*>(&mat),
+      [&fn](ShaderParam& param) { fn(static_cast<const ShaderParam&>(param)); });
+}
+
 // Material-driven UV primvar promotion: a UsdPrimvarReader varname that the
 // mesh's own UV-set selection (MeshConfig::uv_primvar_names) did not pick only
 // survives as a generic mesh.primvars entry, which no texture consumer samples.
@@ -2508,33 +2559,7 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
         names->push_back(uv);
       }
     };
-    if (mat.preview_surface) {
-      const PreviewSurfaceShader& ps = *mat.preview_surface;
-      for (const ShaderParam* p :
-           {&ps.diffuse_color, &ps.emissive_color, &ps.specular_color,
-            &ps.metallic, &ps.roughness, &ps.clearcoat,
-            &ps.clearcoat_roughness, &ps.opacity, &ps.opacity_threshold,
-            &ps.ior, &ps.normal, &ps.displacement, &ps.occlusion}) {
-        add(*p);
-      }
-    }
-    if (mat.openpbr) {
-      const OpenPBRSurfaceShader& o = *mat.openpbr;
-      for (const ShaderParam* p :
-           {&o.base_weight, &o.base_color, &o.base_roughness,
-            &o.base_metalness, &o.specular_weight, &o.specular_color,
-            &o.specular_roughness, &o.specular_ior, &o.specular_anisotropy,
-            &o.specular_roughness_anisotropy, &o.transmission_weight,
-            &o.transmission_dispersion, &o.transmission_dispersion_scale,
-            &o.coat_weight, &o.coat_color, &o.coat_roughness,
-            &o.coat_anisotropy, &o.coat_roughness_anisotropy,
-            &o.coat_normal,
-            &o.thin_film_weight, &o.thin_film_thickness, &o.thin_film_ior,
-            &o.emission_luminance, &o.emission_color, &o.normal,
-            &o.opacity, &o.displacement}) {
-        add(*p);
-      }
-    }
+    ForEachMaterialShaderParam(mat, add);
   };
 
   for (RenderMesh& mesh : scene->meshes) {
@@ -3295,6 +3320,23 @@ std::string FindInheritedMaterialBinding(const Stage& stage,
 // Constructor / Destructor
 //
 
+ConverterConfig MakeHardenedConverterConfig(size_t max_memory) {
+  ConverterConfig config;
+  // Zero must never turn a hardened request into the legacy unlimited mode.
+  max_memory = std::max<size_t>(max_memory, 1);
+  config.max_render_depth = 256;
+  // A finite record ceiling prevents adversarial programmatic stages from
+  // turning the catalog itself into an unbounded allocation. Applications may
+  // raise it deliberately after constructing the preset.
+  config.max_render_records = 1u << 20;
+  config.animation.max_value_clip_samples = 10000;
+  config.execution.max_threads = 1;
+  config.execution.max_in_flight_bytes = max_memory;
+  config.execution.callback_concurrency =
+      ::tinyusdz::next::CallbackConcurrency::Serialized;
+  return config;
+}
+
 RenderSceneConverter::RenderSceneConverter(const ConverterConfig& config)
     : config_(config) {}
 
@@ -3382,6 +3424,10 @@ void ReleaseSourceMeshStaticArrays(const Stage& stage, const UsdPrim& mesh_prim)
 ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
   ConvertResult result;
   warnings_.clear();
+  budget_accounted_bytes_ = 0;
+  budget_pending_bytes_ = 0;
+  budget_check_counter_ = 0;
+  budget_exceeded_ = false;
   ResetImageIdCache();
 
   // Built with -fno-exceptions: the conversion helpers report failures via
@@ -3519,13 +3565,22 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 
     const size_t mesh_count = extracted.meshes.size();
     size_t mesh_workers;
-    if (config_.max_worker_threads > 0) {
+    if (config_.execution.max_threads >= 0) {
+      if (config_.execution.max_threads == 0) {
+        const unsigned hw_threads = std::thread::hardware_concurrency();
+        mesh_workers = std::max<size_t>(
+            1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
+      } else {
+        mesh_workers = static_cast<size_t>(config_.execution.max_threads);
+      }
+    } else if (config_.max_worker_threads > 0) {
       mesh_workers = config_.max_worker_threads;
     } else {
       const unsigned hw_threads = std::thread::hardware_concurrency();
       mesh_workers =
           std::max<size_t>(1, std::min<size_t>(hw_threads ? hw_threads : 4, 16));
     }
+    ::tinyusdz::next::TaskArena task_arena(mesh_workers);
 
     size_t next_mesh = 0;
     bool mesh_budget_hit = false;
@@ -3557,23 +3612,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 
       std::vector<RenderMesh> batch_mesh(batch.size());
       std::vector<uint8_t> batch_ok(batch.size(), 0);
-      if (batch.size() == 1) {
-        const UsdPrim& mesh_prim = extracted.meshes[batch[0]].prim;
-        batch_ok[0] =
-            ConvertRenderableMesh(stage, mesh_prim, &batch_mesh[0]) ? 1 : 0;
-      } else {
-        std::vector<std::thread> workers;
-        workers.reserve(batch.size());
-        for (size_t bi = 0; bi < batch.size(); ++bi) {
-          workers.emplace_back([&, bi]() {
-            const UsdPrim& mesh_prim = extracted.meshes[batch[bi]].prim;
-            batch_ok[bi] =
-                ConvertRenderableMesh(stage, mesh_prim, &batch_mesh[bi]) ? 1
-                                                                         : 0;
-          });
-        }
-        for (std::thread& t : workers) t.join();
-      }
+      task_arena.Run(batch.size(), [&](size_t bi) {
+        const UsdPrim& batch_prim = extracted.meshes[batch[bi]].prim;
+        batch_ok[bi] = ConvertRenderableMesh(stage, batch_prim,
+                                             &batch_mesh[bi]) ? 1 : 0;
+      });
 
       for (size_t bi = 0; bi < batch.size(); ++bi) {
         const UsdPrim& mesh_prim = extracted.meshes[batch[bi]].prim;
@@ -3626,21 +3669,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       const size_t n = batch_end - batch_start;
       std::vector<RenderPoints> batch_points(n);
       std::vector<uint8_t> batch_ok(n, 0);
-      if (n == 1) {
-        batch_ok[0] = ConvertPoints(stage, extracted.points[batch_start].prim,
-                                    &batch_points[0]) ? 1 : 0;
-      } else {
-        std::vector<std::thread> workers;
-        workers.reserve(n);
-        for (size_t bi = 0; bi < n; ++bi) {
-          workers.emplace_back([&, bi]() {
-            batch_ok[bi] = ConvertPoints(
-                               stage, extracted.points[batch_start + bi].prim,
-                               &batch_points[bi]) ? 1 : 0;
-          });
-        }
-        for (std::thread& t : workers) t.join();
-      }
+      task_arena.Run(n, [&](size_t bi) {
+        batch_ok[bi] = ConvertPoints(stage,
+                                     extracted.points[batch_start + bi].prim,
+                                     &batch_points[bi]) ? 1 : 0;
+      });
       for (size_t bi = 0; bi < n; ++bi) {
         const auto& rec = extracted.points[batch_start + bi];
         RenderPoints& points = batch_points[bi];
@@ -3671,21 +3704,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       const size_t n = batch_end - batch_start;
       std::vector<RenderCurves> batch_curves(n);
       std::vector<uint8_t> batch_ok(n, 0);
-      if (n == 1) {
-        batch_ok[0] = ConvertCurves(extracted.curves[batch_start].prim,
-                                    &batch_curves[0]) ? 1 : 0;
-      } else {
-        std::vector<std::thread> workers;
-        workers.reserve(n);
-        for (size_t bi = 0; bi < n; ++bi) {
-          workers.emplace_back([&, bi]() {
-            batch_ok[bi] = ConvertCurves(
-                               extracted.curves[batch_start + bi].prim,
-                               &batch_curves[bi]) ? 1 : 0;
-          });
-        }
-        for (std::thread& t : workers) t.join();
-      }
+      task_arena.Run(n, [&](size_t bi) {
+        batch_ok[bi] = ConvertCurves(
+                           extracted.curves[batch_start + bi].prim,
+                           &batch_curves[bi]) ? 1 : 0;
+      });
       for (size_t bi = 0; bi < n; ++bi) {
         const auto& rec = extracted.curves[batch_start + bi];
         RenderCurves& curves = batch_curves[bi];
@@ -3721,22 +3744,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       const size_t n = batch_end - batch_start;
       std::vector<RenderPointInstancer> batch_inst(n);
       std::vector<uint8_t> batch_ok(n, 0);
-      if (n == 1) {
-        batch_ok[0] = ConvertPointInstancer(
-                          extracted.point_instancers[batch_start].prim,
-                          &batch_inst[0]) ? 1 : 0;
-      } else {
-        std::vector<std::thread> workers;
-        workers.reserve(n);
-        for (size_t bi = 0; bi < n; ++bi) {
-          workers.emplace_back([&, bi]() {
-            batch_ok[bi] = ConvertPointInstancer(
-                               extracted.point_instancers[batch_start + bi].prim,
-                               &batch_inst[bi]) ? 1 : 0;
-          });
-        }
-        for (std::thread& t : workers) t.join();
-      }
+      task_arena.Run(n, [&](size_t bi) {
+        batch_ok[bi] = ConvertPointInstancer(
+                           extracted.point_instancers[batch_start + bi].prim,
+                           &batch_inst[bi]) ? 1 : 0;
+      });
       for (size_t bi = 0; bi < n; ++bi) {
         const auto& rec = extracted.point_instancers[batch_start + bi];
         RenderPointInstancer& instancer = batch_inst[bi];
@@ -3775,26 +3787,118 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
     }
 
-    // Convert materials
+    // Convert materials. Each ConvertMaterial call is given its own
+    // per-worker LOCAL scratch RenderScene (tl_material_local_scope_ set for
+    // the duration -- see MaterialLocalScope below), so the graph-walk/
+    // texture-registration work runs in parallel; a serial merge afterward
+    // dedups/appends each worker's local images/textures into the shared
+    // scene (in original material order, replicating exactly what the
+    // fully-serial dedup would have done) and remaps every
+    // ShaderParam::texture_id from the local scratch's numbering to the
+    // final shared numbering.
     float mat_progress_start = 0.5f;
     float mat_progress_end = 0.7f;
 
-    for (size_t i = 0; i < extracted.materials.size(); ++i) {
-      const UsdPrim& mat_prim = extracted.materials[i].prim;
-      if (config_.progress_callback) {
-        float p = mat_progress_start +
-                  (mat_progress_end - mat_progress_start) * i /
-                      std::max<size_t>(extracted.materials.size(), 1);
-        config_.progress_callback(p, "Converting material: " + mat_prim.GetName());
+    for (size_t batch_start = 0; batch_start < extracted.materials.size();
+         batch_start += mesh_workers) {
+      const size_t batch_end =
+          std::min(batch_start + mesh_workers, extracted.materials.size());
+      const size_t n = batch_end - batch_start;
+      std::vector<RenderMaterial> batch_material(n);
+      std::vector<RenderScene> batch_local_scene(n);
+      std::vector<uint8_t> batch_ok(n, 0);
+      for (size_t bi = 0; bi < n; ++bi) {
+        // Only the color-managed fields ConvertMaterial/ExtractShaderParam
+        // read are seeded; everything else on the scratch scene starts
+        // empty and is discarded after merge.
+        batch_local_scene[bi].working_color_space =
+            result.scene.working_color_space;
+        if (config_.progress_callback) {
+          const size_t i = batch_start + bi;
+          float p = mat_progress_start +
+                    (mat_progress_end - mat_progress_start) * i /
+                        std::max<size_t>(extracted.materials.size(), 1);
+          config_.progress_callback(
+              p, "Converting material: " +
+                     extracted.materials[i].prim.GetName());
+        }
+      }
+      auto convert_one = [&](size_t bi) {
+        MaterialLocalScope scope;
+        const UsdPrim& mat_prim = extracted.materials[batch_start + bi].prim;
+        batch_ok[bi] = ConvertMaterial(stage, mat_prim, &batch_material[bi],
+                                       &batch_local_scene[bi]) ? 1 : 0;
+      };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+      const bool callbacks_may_run_concurrently =
+          config_.execution.callback_concurrency ==
+          ::tinyusdz::next::CallbackConcurrency::Concurrent;
+      const bool resolver_has_callbacks =
+          config_.asset_resolver && config_.asset_resolver->HasUserCallbacks();
+      const bool material_parallel_safe =
+          callbacks_may_run_concurrently ||
+          (!config_.material.custom_texture_loader &&
+           !resolver_has_callbacks);
+      if (n == 1 || !material_parallel_safe) {
+#else
+      if (true) {
+#endif
+        for (size_t bi = 0; bi < n; ++bi) convert_one(bi);
+      } else {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+        task_arena.Run(n, convert_one);
+#endif
       }
 
-      RenderMaterial material;
-      if (ConvertMaterial(stage, mat_prim, &material, &result.scene)) {
-        int32_t mat_id = static_cast<int32_t>(result.scene.materials.size());
-        result.scene.material_by_path[material.prim_path] = mat_id;
-        result.scene.materials.push_back(std::move(material));
-      } else {
-        AddWarning("Failed to convert material: " + mat_prim.GetPath().str());
+      for (size_t bi = 0; bi < n; ++bi) {
+        const UsdPrim& mat_prim = extracted.materials[batch_start + bi].prim;
+        RenderMaterial& material = batch_material[bi];
+        RenderScene& local = batch_local_scene[bi];
+
+        // Dedup images against the shared scene (same key ConvertMaterial
+        // itself uses), in the local scratch's own append order -- this
+        // reproduces the exact sequence of "check cache, maybe append"
+        // decisions the fully-serial converter would have made.
+        std::vector<int32_t> image_remap(local.images.size(), -1);
+        for (size_t ii = 0; ii < local.images.size(); ++ii) {
+          TextureImage& img = local.images[ii];
+          const std::string resolved_path = img.resolved_path;
+          const ColorSpace cs = img.color_space;
+          int32_t id = FindCachedImageId(&result.scene, resolved_path, cs);
+          if (id < 0) {
+            id = static_cast<int32_t>(result.scene.images.size());
+            result.scene.images.push_back(std::move(img));
+            RememberImageId(&result.scene, resolved_path, cs, id);
+          }
+          image_remap[ii] = id;
+        }
+        // Textures are never deduped against each other (matches the
+        // original: every ExtractShaderParam call appends a fresh
+        // RenderTexture), just index-remapped and appended.
+        std::vector<int32_t> texture_remap(local.textures.size(), -1);
+        for (size_t ti = 0; ti < local.textures.size(); ++ti) {
+          RenderTexture& tex = local.textures[ti];
+          if (tex.image_id >= 0 &&
+              static_cast<size_t>(tex.image_id) < image_remap.size()) {
+            tex.image_id = image_remap[static_cast<size_t>(tex.image_id)];
+          }
+          texture_remap[ti] = static_cast<int32_t>(result.scene.textures.size());
+          result.scene.textures.push_back(std::move(tex));
+        }
+        ForEachMaterialShaderParam(&material, [&](ShaderParam& p) {
+          if (p.texture_id >= 0 &&
+              static_cast<size_t>(p.texture_id) < texture_remap.size()) {
+            p.texture_id = texture_remap[static_cast<size_t>(p.texture_id)];
+          }
+        });
+
+        if (batch_ok[bi]) {
+          int32_t mat_id = static_cast<int32_t>(result.scene.materials.size());
+          result.scene.material_by_path[material.prim_path] = mat_id;
+          result.scene.materials.push_back(std::move(material));
+        } else {
+          AddWarning("Failed to convert material: " + mat_prim.GetPath().str());
+        }
       }
     }
 
@@ -3830,21 +3934,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       const size_t n = batch_end - batch_start;
       std::vector<RenderLight> batch_light(n);
       std::vector<uint8_t> batch_ok(n, 0);
-      if (n == 1) {
-        batch_ok[0] = ConvertLight(extracted.lights[batch_start].prim,
-                                   &batch_light[0]) ? 1 : 0;
-      } else {
-        std::vector<std::thread> workers;
-        workers.reserve(n);
-        for (size_t bi = 0; bi < n; ++bi) {
-          workers.emplace_back([&, bi]() {
-            batch_ok[bi] = ConvertLight(
-                               extracted.lights[batch_start + bi].prim,
-                               &batch_light[bi]) ? 1 : 0;
-          });
-        }
-        for (std::thread& t : workers) t.join();
-      }
+      task_arena.Run(n, [&](size_t bi) {
+        batch_ok[bi] = ConvertLight(
+                           extracted.lights[batch_start + bi].prim,
+                           &batch_light[bi]) ? 1 : 0;
+      });
       for (size_t bi = 0; bi < n; ++bi) {
         if (!batch_ok[bi]) continue;
         const auto& rec = extracted.lights[batch_start + bi];
@@ -3883,21 +3977,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       const size_t n = batch_end - batch_start;
       std::vector<RenderCamera> batch_camera(n);
       std::vector<uint8_t> batch_ok(n, 0);
-      if (n == 1) {
-        batch_ok[0] = ConvertCamera(stage, extracted.cameras[batch_start].prim,
-                                    &batch_camera[0]) ? 1 : 0;
-      } else {
-        std::vector<std::thread> workers;
-        workers.reserve(n);
-        for (size_t bi = 0; bi < n; ++bi) {
-          workers.emplace_back([&, bi]() {
-            batch_ok[bi] = ConvertCamera(
-                               stage, extracted.cameras[batch_start + bi].prim,
-                               &batch_camera[bi]) ? 1 : 0;
-          });
-        }
-        for (std::thread& t : workers) t.join();
-      }
+      task_arena.Run(n, [&](size_t bi) {
+        batch_ok[bi] = ConvertCamera(
+                           stage, extracted.cameras[batch_start + bi].prim,
+                           &batch_camera[bi]) ? 1 : 0;
+      });
       for (size_t bi = 0; bi < n; ++bi) {
         if (!batch_ok[bi]) continue;
         const auto& rec = extracted.cameras[batch_start + bi];
@@ -3922,21 +4006,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       const size_t n = batch_end - batch_start;
       std::vector<Skeleton> batch_skel(n);
       std::vector<uint8_t> batch_ok(n, 0);
-      if (n == 1) {
-        batch_ok[0] = ConvertSkeleton(extracted.skeletons[batch_start].prim,
-                                      &batch_skel[0]) ? 1 : 0;
-      } else {
-        std::vector<std::thread> workers;
-        workers.reserve(n);
-        for (size_t bi = 0; bi < n; ++bi) {
-          workers.emplace_back([&, bi]() {
-            batch_ok[bi] = ConvertSkeleton(
-                               extracted.skeletons[batch_start + bi].prim,
-                               &batch_skel[bi]) ? 1 : 0;
-          });
-        }
-        for (std::thread& t : workers) t.join();
-      }
+      task_arena.Run(n, [&](size_t bi) {
+        batch_ok[bi] = ConvertSkeleton(
+                           extracted.skeletons[batch_start + bi].prim,
+                           &batch_skel[bi]) ? 1 : 0;
+      });
       for (size_t bi = 0; bi < n; ++bi) {
         if (!batch_ok[bi]) continue;
         const auto& rec = extracted.skeletons[batch_start + bi];
@@ -5140,6 +5214,17 @@ bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
   std::lock_guard<std::mutex> lk(state_mu_);
 
   if (budget_exceeded_) return true;  // latched: stay degraded for this run
+
+  const size_t operation_limit = config_.execution.max_in_flight_bytes;
+  if (operation_limit != 0 &&
+      (estimate > operation_limit ||
+       budget_accounted_bytes_ > operation_limit - estimate)) {
+    budget_exceeded_ = true;
+    warnings_.push_back(std::string("Operation memory limit reached during ") +
+                        phase + "; remaining geometry is skipped");
+    return true;
+  }
+  budget_accounted_bytes_ = SaturatingAdd(budget_accounted_bytes_, estimate);
 
   budget_pending_bytes_ = SaturatingAdd(budget_pending_bytes_, estimate);
   const bool due = (++budget_check_counter_ % kBudgetCheckStride == 0) ||
@@ -7812,9 +7897,22 @@ int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
   return id;
 }
 
+thread_local bool RenderSceneConverter::tl_material_local_scope_ = false;
+
 int32_t RenderSceneConverter::FindCachedImageId(
     RenderScene* scene, const std::string& resolved, ColorSpace color_space) {
   if (!scene) return -1;
+  if (tl_material_local_scope_) {
+    // Parallel-worker scratch scene: no shared cache to consult or update --
+    // just scan the local (small, freshly-empty-per-material) images list.
+    for (size_t i = 0; i < scene->images.size(); ++i) {
+      if (scene->images[i].resolved_path == resolved &&
+          scene->images[i].color_space == color_space) {
+        return static_cast<int32_t>(i);
+      }
+    }
+    return -1;
+  }
   if (image_cache_scene_ != scene) {
     image_id_cache_.clear();
     image_cache_scene_ = scene;
@@ -7848,6 +7946,7 @@ void RenderSceneConverter::RememberImageId(RenderScene* scene,
                                            ColorSpace color_space,
                                            int32_t id) {
   if (!scene) return;
+  if (tl_material_local_scope_) return;  // no shared cache to update
   if (image_cache_scene_ != scene) {
     image_id_cache_.clear();
     image_cache_scene_ = scene;
@@ -7880,7 +7979,11 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   // conversion -- yet this did a stage path lookup, token canonicalization,
   // color-space resolve and a 3x3 transform build once PER MATERIAL, writing
   // the identical result to `scene` every time.
-  if (scene && scene != color_config_scene_) {
+  // In the parallel-worker local scope, this is skipped: the caller
+  // pre-seeds the scratch scene's working_color_space (and the other fields
+  // this block would compute) from the already-resolved result.scene value,
+  // and color_config_scene_ is a shared member no worker thread may write.
+  if (scene && scene != color_config_scene_ && !tl_material_local_scope_) {
     color_config_scene_ = scene;
     ::tinyusdz::next::color_management::RenderingColorConfig color_config;
     std::string color_warning;
