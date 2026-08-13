@@ -6,12 +6,39 @@
 #include <iostream>
 #include <cassert>
 #include <cmath>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#include <vector>
+#endif
 
 #include "next/layer/layer.hh"
 #include "next/layer/prim-spec.hh"
 #include "next/layer/property-index.hh"
 
 using namespace tinyusdz::next;
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+void test_frozen_string_view_lookup_is_safe() {
+  PropNameTable& table = GetPropNameTable();
+  table.freeze();
+  constexpr int kThreads = 4;
+  constexpr int kNamesPerThread = 64;
+  std::vector<std::thread> threads;
+  for (int t = 0; t < kThreads; ++t) {
+    threads.emplace_back([&, t]() {
+      for (int i = 0; i < kNamesPerThread; ++i) {
+        const std::string name = "string_view_race_" + std::to_string(t) +
+                                 "_" + std::to_string(i);
+        const PropNameId id = table.intern(name);
+        assert(id.is_valid());
+        assert(table.find(std::string_view(name)) == id);
+      }
+    });
+  }
+  for (std::thread& thread : threads) thread.join();
+  table.unfreeze();
+}
+#endif
 
 void test_prop_name_table() {
   std::cout << "Testing PropNameTable..." << std::endl;
@@ -498,6 +525,9 @@ int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
   test_prop_name_table();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  test_frozen_string_view_lookup_is_safe();
+#endif
   test_prop_index();
   test_prim_spec();
   test_layer_builder();

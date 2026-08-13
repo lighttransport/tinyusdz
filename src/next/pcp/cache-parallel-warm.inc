@@ -52,7 +52,10 @@
     // fill pass.
     int warm_threads = options.num_threads;
     if (warm_threads < 0)
-      warm_threads = static_cast<int>(std::thread::hardware_concurrency());
+      warm_threads = std::min<int>(
+          static_cast<int>(std::thread::hardware_concurrency()),
+          kMaxExecutionThreads);
+    warm_threads = std::min(warm_threads, kMaxExecutionThreads);
     if (warm_threads > 1)
       ParallelWarmSources(root_names, warm_threads, warn, err);
 #endif
@@ -581,7 +584,11 @@
     // parallel build and reacquire it for the merge.
     std::unique_lock<PcpMutex> wlk(api_mu_);
     int nt = options.num_threads;
-    if (nt < 0) nt = static_cast<int>(std::thread::hardware_concurrency());
+    if (nt < 0) {
+      nt = std::min<int>(static_cast<int>(std::thread::hardware_concurrency()),
+                         kMaxExecutionThreads);
+    }
+    nt = std::min(nt, kMaxExecutionThreads);
     if (nt > 1) {
       // (a) Prefetch root-level reference/payload assets to warm the shared
       // registry (reduces redundant double-parses across workers).

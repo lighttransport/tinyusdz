@@ -31,6 +31,10 @@ struct FrozenLess {
     return *a.first < b;
   }
   bool operator()(const std::pair<const std::string*, uint32_t>& a,
+                  std::string_view b) const {
+    return std::string_view(*a.first) < b;
+  }
+  bool operator()(const std::pair<const std::string*, uint32_t>& a,
                   const std::pair<const std::string*, uint32_t>& b) const {
     return *a.first < *b.first;
   }
@@ -177,12 +181,18 @@ PropNameId PropNameTable::find(std::string_view name) const {
     return PropNameId{};
   };
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  if (!std::atomic_load(&frozen_)) {
-    std::shared_lock<std::shared_mutex> rlk(mu_);
-    return lookup(name);
+  if (auto idx = std::atomic_load(&frozen_)) {
+    auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
+                               FrozenLess{});
+    if (it != idx->by_name.end() && *it->first == name) {
+      return PropNameId{it->second};
+    }
   }
-#endif
+  std::shared_lock<std::shared_mutex> rlk(mu_);
   return lookup(name);
+#else
+  return lookup(name);
+#endif
 }
 
 PropNameId PropNameTable::find(const char* name) const {

@@ -9,6 +9,7 @@ project(tinyusdz_next C CXX)
 
 # Define source files
 set(TINYUSDZ_NEXT_SOURCES
+    execution.cc
     ../color-transform.cc
     # Shared SdfPathExpression parser/matcher. Kept stage-neutral so next
     # collection consumers do not need the legacy Stage representation.
@@ -135,7 +136,6 @@ set(TINYUSDZ_NEXT_SOURCES
 # Define header files (for IDE project generation)
 set(TINYUSDZ_NEXT_HEADERS
     execution.hh
-    execution.cc
     # Type system
     types/type-id.hh
     types/type-info.hh
