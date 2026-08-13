@@ -3409,7 +3409,7 @@ void ReleaseMeshGeometry(RenderMesh* mesh, bool keep_binding_inputs,
   std::vector<uint32_t>().swap(mesh->hole_faces);
 }
 
-void ReleaseSourceMeshStaticArrays(const Stage& stage, const UsdPrim& mesh_prim) {
+void ReleaseSourceMeshStaticArrays(Stage& stage, const UsdPrim& mesh_prim) {
   constexpr size_t kLowmemStaticReleaseThreshold = 1;
   stage.ReleaseStaticGeometryArraysForPrim(mesh_prim,
                                           kLowmemStaticReleaseThreshold);
@@ -3642,9 +3642,6 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           // Release chunk-allocation slack before retaining: thousands of small
           // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
           mesh.compact();
-          if (!config_.mesh.retain_geometry) {
-            ReleaseSourceMeshStaticArrays(stage, mesh_prim);
-          }
           int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
           result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
           result.scene.meshes.push_back(std::move(mesh));
@@ -3687,9 +3684,6 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           points.compact();
           result.scene.points_by_path[points.prim_path] = points_id;
           result.scene.points.push_back(std::move(points));
-          if (!config_.mesh.retain_geometry) {
-            ReleaseSourceMeshStaticArrays(stage, rec.prim);
-          }
           AssignNodeDataId(&result.scene, rec.path, points_id);
         } else {
           AddWarning("Failed to convert Points: " + rec.path);
@@ -3722,9 +3716,6 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           curves.compact();
           result.scene.curves_by_path[curves.prim_path] = curves_id;
           result.scene.curves.push_back(std::move(curves));
-          if (!config_.mesh.retain_geometry) {
-            ReleaseSourceMeshStaticArrays(stage, rec.prim);
-          }
           AssignNodeDataId(&result.scene, rec.path, curves_id);
         } else {
           AddWarning("Failed to convert curves prim: " + rec.path);
@@ -4135,7 +4126,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
   return result;
 }
 
-StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
+StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
                                                         SceneSink* sink) {
   StreamConvertResult result;
   ResetOperationState();

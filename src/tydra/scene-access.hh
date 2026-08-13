@@ -759,7 +759,10 @@ float ComputeSkinnedExtentPadding(
 ///
 /// @param[in] restPoints Rest-pose point positions
 /// @param[in] geomBindTransform Transforms rest points into skeleton space
-/// @param[in] jointXforms Per-joint transforms (skeleton-space)
+/// @param[in] jointXforms Per-joint transforms applied in skeleton bind space.
+/// The function returns through inverse(geomBindTransform). Callers targeting
+/// a mesh's current local space must therefore pre-compose the Skeleton-world /
+/// mesh-world conversion into these matrices explicitly.
 /// @param[in] jointIndices Flat array of joint indices per point
 /// @param[in] jointWeights Flat array of joint weights per point
 /// @param[in] numInfluencesPerPoint Number of influences per point

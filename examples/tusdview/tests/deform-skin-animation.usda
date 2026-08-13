@@ -75,12 +75,11 @@ def Xform "Scene"
                     1: [(1, 0, 0, 0), (1, 0, 0, 0)],
                     20: [(1, 0, 0, 0), (0.8660254, 0, 0, 0.5)]
                 }
-                # The child values are deliberately not local offsets.  They
-                # model the exporter pattern that caused the private asset to
-                # explode; ordinary rigs must retain their rest translations.
+                # Translation samples are joint-local, as required by UsdSkel.
+                # Keep the child offset stable while rotation drives the pose.
                 float3[] translations.timeSamples = {
                     1: [(0, 0, 0), (0, 2, 0)],
-                    20: [(0, 0, 0), (0, 20, 0)]
+                    20: [(0, 0, 0), (0, 2, 0)]
                 }
                 half3[] scales = [(1, 1, 1), (1, 1, 1)]
             }

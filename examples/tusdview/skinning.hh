@@ -132,8 +132,8 @@ bool BuildRtSkinnedMeshVertices(
     const std::unordered_set<int>* skipMeshes = nullptr);
 
 // One GPU-compute-skinnable mesh's per-frame inputs: the composed skinning
-// matrices (geomBind * skinMat * inv(geomBind), 16 floats each, row-major,
-// row-vector p*M — exactly what ApplySkinningToVertices applies on the CPU)
+// matrices (geomBind * skinMat * skeletonWorld * inverse(meshWorld), 16 floats
+// each, row-major, row-vector p*M — exactly what ApplySkinningToVertices uses)
 // plus a conservative posed object-space bound (union of the per-joint
 // transformed rest prototype box; the skinned mesh is a convex combination of
 // per-joint transforms, so it is contained in that union).

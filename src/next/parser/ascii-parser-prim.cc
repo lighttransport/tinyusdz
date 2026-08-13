@@ -350,10 +350,10 @@ bool AsciiParser::Impl::ParsePrimContents() {
       std::string what;
       if (!lexer_->expect(TokenType::Identifier, what)) return false;
       if (what == "nameChildren" || what == "primChildren") {
-        if (!ParseOrderList(&prim->meta().primOrder())) return false;
+        if (!ParseOrderList(&prim->meta().editPrimOrder())) return false;
         prim->meta().setPrimOrderAuthored();
       } else if (what == "properties" || what == "propertyChildren") {
-        if (!ParseOrderList(&prim->meta().propertyOrder())) return false;
+        if (!ParseOrderList(&prim->meta().editPropertyOrder())) return false;
         prim->meta().setPropertyOrderAuthored();
       } else {
         if (!ParseAttribute(PrimSpec::RelationshipListOp::Reorder,

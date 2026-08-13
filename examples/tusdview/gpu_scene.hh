@@ -186,7 +186,14 @@ struct DrawMeshCPU {
   float world[16];  // column-major (light3d::Mat4 layout), world transform
   bool animatedWorld{false};
   // USD row-vector matrix copied with the same convention as `world`.
-  float skinGeomBind[16];
+  float skinGeomBind[16]{1, 0, 0, 0, 0, 1, 0, 0,
+                         0, 0, 1, 0, 0, 0, 0, 1};
+  // Current Skeleton-prim local-to-world transform. Skinning produces points
+  // in skeleton space; the per-joint object-space matrices fold this transform
+  // in and cancel `world` before the renderer reapplies it.
+  float skinSkeletonWorld[16]{1, 0, 0, 0, 0, 1, 0, 0,
+                              0, 0, 1, 0, 0, 0, 0, 1};
+  std::string skinSkeletonPath;
   int skelId{-1};
   int skinMatrixBase{-1};  // first matrix row in DrawScene's bone texture layout
   // Optional local-space skinned point samples for dense point-joint helper
@@ -843,6 +850,8 @@ struct DrawScene {
     int matrixBase{0};
     double geomBind[16];  // primvars:skel:geomBindTransform (row-vector)
     double world[16];     // mesh world transform baked into the vertices
+    double renderWorld[16];  // transform applied by the draw after skinning
+    double skeletonWorld[16];  // Skeleton prim local-to-world transform
   };
   std::vector<NextSkelBinding> nextSkels;
 

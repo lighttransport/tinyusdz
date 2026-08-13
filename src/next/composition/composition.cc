@@ -1130,19 +1130,19 @@ void Compositor::CopyLocalOpinions(
   if (!target.meta().primOrderAuthored() &&
       (source.meta().primOrderAuthored() ||
        !source.meta().primOrder().empty())) {
-    target.meta().primOrder() = source.meta().primOrder();
+    target.meta().editPrimOrder() = source.meta().primOrder();
     target.meta().setPrimOrderAuthored();
   }
   if (!target.meta().propertyOrderAuthored() &&
       (source.meta().propertyOrderAuthored() ||
        !source.meta().propertyOrder().empty())) {
-    target.meta().propertyOrder() = source.meta().propertyOrder();
+    target.meta().editPropertyOrder() = source.meta().propertyOrder();
     target.meta().setPropertyOrderAuthored();
   }
   if (!target.meta().displayGroupOrderAuthored() &&
       (source.meta().displayGroupOrderAuthored() ||
        !source.meta().displayGroupOrder().empty())) {
-    target.meta().displayGroupOrder() = source.meta().displayGroupOrder();
+    target.meta().editDisplayGroupOrder() = source.meta().displayGroupOrder();
     target.meta().setDisplayGroupOrderAuthored();
   }
   // Registered string list-op metadata fields (apiSchemas / variantSetNames /

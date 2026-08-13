@@ -20,8 +20,8 @@
 // RT geometry buffers move device-local (see App::updateGpuSkinningFrameIfNeeded).
 //
 // Matrix convention: mats[] are the composed skinning matrices
-// (geomBind * skinMat * inv(geomBind), double-composed on the CPU, float
-// here), 16 floats each in ROW-MAJOR memory order, applied as a row-vector
+// (geomBind * skinMat * skeletonWorld * inverse(meshWorld), double-composed on
+// the CPU, float here), 16 floats each in ROW-MAJOR memory order, applied as a row-vector
 // product q = p * M -- the scalar form below indexes exactly like
 // TransformPointRow (skinning.cc).
 #extension GL_EXT_buffer_reference2 : require

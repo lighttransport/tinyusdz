@@ -328,6 +328,12 @@ void CollectMeshTransforms(const tydra::Node& node,
   }
 }
 
+void CollectNodeTransforms(const tydra::Node& node,
+                           std::unordered_map<std::string, matrix4d>* out) {
+  out->emplace(node.abs_path, node.global_matrix);
+  for (const auto& c : node.children) CollectNodeTransforms(c, out);
+}
+
 int MapWrap(tydra::UVTexture::WrapMode w) {
   switch (w) {
     case tydra::UVTexture::WrapMode::REPEAT:
@@ -2425,6 +2431,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
   dm.doubleSided = mesh.doubleSided;
   dm.normalSign = mesh.is_rightHanded ? 1.0f : -1.0f;
   SetIdentity4(dm.skinGeomBind);
+  SetIdentity4(dm.skinSkeletonWorld);
   dm.skelId = mesh.skel_id;
   if (MeshHasSkinData(mesh, nPoints)) {
     dm.jointIdx.assign(nPoints * 4, 0u);
@@ -3944,8 +3951,10 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
 
   // Mesh world transforms from the node hierarchy.
   std::unordered_map<int, matrix4d> meshXform;
+  std::unordered_map<std::string, matrix4d> nodeXform;
   for (const auto& n : rs.nodes) {
     CollectMeshTransforms(n, &meshXform);
+    CollectNodeTransforms(n, &nodeXform);
   }
 
   std::vector<int> drawTexMap;
@@ -3993,6 +4002,11 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
     auto xit = meshXform.find(static_cast<int>(m));
     if (xit != meshXform.end()) world = xit->second;
     PlaceDrawMesh(&dm, world);
+    if (dm.skelId >= 0 && static_cast<size_t>(dm.skelId) < rs.skeletons.size()) {
+      dm.skinSkeletonPath = rs.skeletons[static_cast<size_t>(dm.skelId)].abs_path;
+      auto sit = nodeXform.find(dm.skinSkeletonPath);
+      if (sit != nodeXform.end()) MatToColMajor(sit->second, dm.skinSkeletonWorld);
+    }
 
     cumulativeVertexBytes +=
         dm.vertices.size() * sizeof(DrawVertex) +
@@ -4029,6 +4043,7 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
   // Streaming state (lives for the duration of the synchronous conversion).
   std::vector<int> rsMeshToDraw;   // rs mesh index -> out->meshes index (-1 skipped)
   std::vector<bool> placed;        // per out->meshes: world applied yet?
+  std::unordered_map<std::string, matrix4d> nodeXform;
   size_t cumulativeVertexBytes = 0;
 
   tydra::RenderSceneSink sink;
@@ -4070,6 +4085,7 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
   sink.on_root_node = [&](const tydra::Node& root, size_t, void*) -> bool {
     std::unordered_map<int, matrix4d> meshXform;
     CollectMeshTransforms(root, &meshXform);
+    CollectNodeTransforms(root, &nodeXform);
     for (const auto& kv : meshXform) {
       const int rsIdx = kv.first;
       if (rsIdx < 0 || static_cast<size_t>(rsIdx) >= rsMeshToDraw.size()) continue;
@@ -4083,6 +4099,13 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
 
   // Build textures + materials from the finished scene, then finalize bounds.
   sink.on_complete = [&](const tydra::RenderScene& scene, void*) -> bool {
+    for (DrawMeshCPU& dm : out->meshes) {
+      if (dm.skelId < 0 || static_cast<size_t>(dm.skelId) >= scene.skeletons.size())
+        continue;
+      dm.skinSkeletonPath = scene.skeletons[static_cast<size_t>(dm.skelId)].abs_path;
+      auto sit = nodeXform.find(dm.skinSkeletonPath);
+      if (sit != nodeXform.end()) MatToColMajor(sit->second, dm.skinSkeletonWorld);
+    }
     std::vector<int> drawTexMap;
     BuildDrawTextures(scene, out, &drawTexMap, textureOptions);
     BuildDrawMaterials(scene, out, drawTexMap);

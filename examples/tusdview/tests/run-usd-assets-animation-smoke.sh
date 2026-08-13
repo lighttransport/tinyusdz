@@ -4,7 +4,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="${USD_ASSETS_ROOT:-}"
+ROOT="${USD_ASSETS_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)/usd-assets}"
+if [ -d "$ROOT" ]; then
+  ROOT="$(cd "$ROOT" && pwd -P)"
+fi
 OUT="${TUSDVIEW_USD_ASSETS_ANIM_OUT:-}"
 MODES="${TUSDVIEW_USD_ASSETS_ANIM_MODES:-vk-raster,tusdr-cpu}"
 TIME_A="${TUSDVIEW_USD_ASSETS_TIME_A:-0}"

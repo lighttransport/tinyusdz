@@ -4515,25 +4515,27 @@ void Gui::buildHelpers() {
 
   // UsdSkel joint hierarchy as bone line segments + a small cross per joint.
   // Draw the same animated joint hierarchy used for skinning, then apply the
-  // skinned mesh world matrix to match the rendered character placement.
+  // Skeleton prim transform to match the rendered character placement.
   if (showSkeleton_ && loaded_ && loaded_->ok) {
-    // World matrix of the mesh skinned by skeleton `si` (identity if none).
-    // Joint positions are in skeleton space. Skinning maps skinned positions
-    // back through inverse geomBind before the mesh world matrix, so the helper
-    // overlay uses the same space conversion.
+    std::unordered_map<std::string, light3d::Mat4> nodeWorlds;
+    std::function<void(const tydra::Node&)> collectNodeWorlds =
+        [&](const tydra::Node& node) {
+          light3d::Mat4 world;
+          for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+              world.m[r * 4 + c] = static_cast<float>(node.global_matrix.m[r][c]);
+          nodeWorlds.emplace(node.abs_path, world);
+          for (const tydra::Node& child : node.children) collectNodeWorlds(child);
+        };
+    for (const tydra::Node& root : loaded_->render.nodes) collectNodeWorlds(root);
+
+    // Joint positions are in skeleton space and are placed by the Skeleton
+    // prim itself. They must not inherit a bound mesh's current transform.
     auto skelWorld = [&](size_t si, bool densePointSamples) -> light3d::Mat4 {
-      for (const auto& rm : loaded_->render.meshes) {
-        if (rm.skel_id != static_cast<int>(si)) continue;
-        if (!draw_) break;
-        for (const auto& dm : draw_->meshes) {
-          if (dm.absPath == rm.abs_path) {
-            light3d::Mat4 W;
-            for (int k = 0; k < 16; ++k) W.m[k] = dm.world[k];
-            light3d::Mat4 G;
-            for (int k = 0; k < 16; ++k) G.m[k] = dm.skinGeomBind[k];
-            return densePointSamples ? (W * G) : (W * G.inverse());
-          }
-        }
+      (void)densePointSamples;
+      if (si < loaded_->render.skeletons.size()) {
+        auto it = nodeWorlds.find(loaded_->render.skeletons[si].abs_path);
+        if (it != nodeWorlds.end()) return it->second;
       }
       return light3d::Mat4::identity();
     };

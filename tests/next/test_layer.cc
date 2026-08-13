@@ -223,6 +223,28 @@ void test_layer_stats() {
   std::cout << "  Memory usage: " << stats.memory_bytes << " bytes" << std::endl;
 }
 
+void test_finalize_does_not_allocate_cold_prim_metadata() {
+  std::cout << "Testing cold metadata finalization..." << std::endl;
+
+  Layer layer;
+  LayerBuilder builder(layer);
+  builder.begin_prim("Root", "Xform");
+  builder.begin_prim("Child", "Mesh");
+  builder.end_prim();
+  builder.end_prim();
+
+  for (size_t i = 0; i < layer.prim_count(); ++i) {
+    assert(!layer.prim(static_cast<uint32_t>(i))->meta().has_ext());
+  }
+  builder.finalize();
+  for (size_t i = 0; i < layer.prim_count(); ++i) {
+    assert(!layer.prim(static_cast<uint32_t>(i))->meta().has_ext() &&
+           "read-only namespace ordering must not allocate cold metadata");
+  }
+
+  std::cout << "  Cold metadata finalization: PASSED" << std::endl;
+}
+
 void test_layer_sort_rebuilds_hierarchy() {
   std::cout << "Testing Layer sort hierarchy rebuild..." << std::endl;
 
@@ -532,6 +554,7 @@ int main() {
   test_prim_spec();
   test_layer_builder();
   test_layer_stats();
+  test_finalize_does_not_allocate_cold_prim_metadata();
   test_layer_sort_rebuilds_hierarchy();
   test_metadata();
   test_interpolation();
