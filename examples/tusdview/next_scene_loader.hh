@@ -133,7 +133,7 @@ bool BuildNextSkinningFrame(const tinyusdz::next::Stage& stage, DrawScene* draw,
 // bound would put the grid and the depth ramp somewhere else than those paths do,
 // on identical geometry. Returns false when nothing deformed.
 bool BuildNextPosedSceneBounds(
-    const tinyusdz::next::Stage& stage, const DrawScene& draw, double time,
+    const tinyusdz::next::Stage& stage, DrawScene* draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
     float outMin[3], float outMax[3]);
 

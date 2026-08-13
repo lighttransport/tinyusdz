@@ -2753,10 +2753,56 @@ void GLRenderer::buildWireProgram() {
   static const char* kWireVS =
       "#version 330 core\n"
       "layout(location=0) in vec3 aPosition;\n"
+      "layout(location=3) in uvec4 aJoint;\n"
+      "layout(location=4) in vec4 aWeight;\n"
+      "layout(location=5) in uvec2 aInfluence;\n"
+      "layout(location=8) in uvec2 aMorphOffsetCount;\n"
       "uniform mat4 uModelViewProj;\n"
       "uniform float uDepthBias;\n"
+      "uniform bool uHasMorph;\n"
+      "uniform samplerBuffer uMorphDeltaTex;\n"
+      "uniform samplerBuffer uMorphCoeffTex;\n"
+      "uniform usamplerBuffer uMorphChanTex;\n"
+      "uniform sampler2D uBoneTex;\n"
+      "uniform sampler2D uInfluenceTex;\n"
+      "uniform bool uSkinningEnabled;\n"
+      "uniform bool uExtendedSkinningEnabled;\n"
+      "uniform int uBoneTexWidth;\n"
+      "uniform int uBoneMatrixCount;\n"
+      "uniform int uInfluenceTexWidth;\n"
+      "mat4 fetchBone(uint idx){\n"
+      "  int base=int(idx)*4;\n"
+      "  return mat4(\n"
+      "    texelFetch(uBoneTex,ivec2((base+0)%uBoneTexWidth,(base+0)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+1)%uBoneTexWidth,(base+1)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+2)%uBoneTexWidth,(base+2)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+3)%uBoneTexWidth,(base+3)/uBoneTexWidth),0));\n"
+      "}\n"
       "void main(){\n"
-      "  vec4 p = uModelViewProj * vec4(aPosition, 1.0);\n"
+      "  vec3 pos=aPosition;\n"
+      "  if(uHasMorph && aMorphOffsetCount.y>0u){\n"
+      "    int base=int(aMorphOffsetCount.x), count=min(int(aMorphOffsetCount.y),256);\n"
+      "    for(int i=0;i<256;++i){ if(i>=count) break;\n"
+      "      int ch=int(texelFetch(uMorphChanTex,base+i).r);\n"
+      "      float c=texelFetch(uMorphCoeffTex,ch).r;\n"
+      "      if(abs(c)>=1e-6) pos+=c*texelFetch(uMorphDeltaTex,base+i).yzw; }\n"
+      "  }\n"
+      "  float wsum=dot(aWeight,vec4(1.0));\n"
+      "  uint maxJoint=max(max(aJoint.x,aJoint.y),max(aJoint.z,aJoint.w));\n"
+      "  if(uSkinningEnabled && uExtendedSkinningEnabled && aInfluence.y>0u && uInfluenceTexWidth>0){\n"
+      "    mat4 skin=mat4(0.0); float total=0.0; int base=int(aInfluence.x);\n"
+      "    int count=min(int(aInfluence.y),256);\n"
+      "    for(int i=0;i<256;++i){ if(i>=count) break; int n=base+i;\n"
+      "      vec4 iw=texelFetch(uInfluenceTex,ivec2(n%uInfluenceTexWidth,n/uInfluenceTexWidth),0);\n"
+      "      uint j=uint(iw.x+0.5); float w=iw.y;\n"
+      "      if(w>0.0 && int(j)<uBoneMatrixCount){skin+=fetchBone(j)*w; total+=w;} }\n"
+      "    if(total>0.0) pos=((skin/total)*vec4(pos,1.0)).xyz;\n"
+      "  } else if(uSkinningEnabled && wsum>0.0 && int(maxJoint)<uBoneMatrixCount){\n"
+      "    mat4 skin=fetchBone(aJoint.x)*aWeight.x+fetchBone(aJoint.y)*aWeight.y+\n"
+      "              fetchBone(aJoint.z)*aWeight.z+fetchBone(aJoint.w)*aWeight.w;\n"
+      "    pos=(skin*vec4(pos,1.0)).xyz;\n"
+      "  }\n"
+      "  vec4 p = uModelViewProj * vec4(pos, 1.0);\n"
       "  p.z -= uDepthBias * p.w;\n"
       "  gl_Position = p;\n"
       "}\n";
@@ -2783,6 +2829,19 @@ void GLRenderer::buildWireProgram() {
     wDepthBias_ = glGetUniformLocation(wireProgram_, "uDepthBias");
     wViewport_ = glGetUniformLocation(wireProgram_, "uViewport");
     wHalfWidth_ = glGetUniformLocation(wireProgram_, "uHalfWidth");
+    wHasMorph_ = glGetUniformLocation(wireProgram_, "uHasMorph");
+    wSkinningEnabled_ = glGetUniformLocation(wireProgram_, "uSkinningEnabled");
+    wExtendedSkinningEnabled_ =
+        glGetUniformLocation(wireProgram_, "uExtendedSkinningEnabled");
+    wBoneTexWidth_ = glGetUniformLocation(wireProgram_, "uBoneTexWidth");
+    wBoneMatrixCount_ = glGetUniformLocation(wireProgram_, "uBoneMatrixCount");
+    wInfluenceTexWidth_ = glGetUniformLocation(wireProgram_, "uInfluenceTexWidth");
+    glUseProgram(wireProgram_);
+    glUniform1i(glGetUniformLocation(wireProgram_, "uBoneTex"), 4);
+    glUniform1i(glGetUniformLocation(wireProgram_, "uInfluenceTex"), 5);
+    glUniform1i(glGetUniformLocation(wireProgram_, "uMorphDeltaTex"), 8);
+    glUniform1i(glGetUniformLocation(wireProgram_, "uMorphCoeffTex"), 9);
+    glUniform1i(glGetUniformLocation(wireProgram_, "uMorphChanTex"), 10);
   } else if (!werr.empty()) {
     fprintf(stderr, "[tusdview] wire program: %s\n", werr.c_str());
   }
@@ -2837,6 +2896,29 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
       }
       light3d::Mat4 MVP = P * V * ToMat4(mesh.world);
       glUniformMatrix4fv(wMVP_, 1, GL_FALSE, MVP.m);
+      const bool skinOn = mesh.skinned && skinningFrameEnabled_;
+      glUniform1i(wSkinningEnabled_, skinOn ? 1 : 0);
+      glUniform1i(wExtendedSkinningEnabled_,
+                  (mesh.extendedSkinned && skinningFrameEnabled_) ? 1 : 0);
+      glUniform1i(wBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+      glUniform1i(wBoneMatrixCount_, skinningFrameEnabled_ ? boneMatrixCount_ : 1);
+      glUniform1i(wInfluenceTexWidth_,
+                  (mesh.extendedSkinned && skinningFrameEnabled_)
+                      ? mesh.influenceTexWidth : 0);
+      glActiveTexture(GL_TEXTURE4);
+      glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+      glActiveTexture(GL_TEXTURE5);
+      glBindTexture(GL_TEXTURE_2D, mesh.influenceTex ? mesh.influenceTex : whiteTex_);
+      glUniform1i(wHasMorph_, mesh.hasMorph ? 1 : 0);
+      if (mesh.hasMorph) {
+        glActiveTexture(GL_TEXTURE8);
+        glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+        glActiveTexture(GL_TEXTURE9);
+        glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+        glActiveTexture(GL_TEXTURE10);
+        glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
+      }
+      glActiveTexture(GL_TEXTURE0);
       glBindVertexArray(mesh.vao);
       glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.wireEbo);  // override the VAO's tri EBO
       glDrawElements(GL_LINES, mesh.wireCount, GL_UNSIGNED_INT, nullptr);
@@ -3913,6 +3995,11 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   // Highlight overlay (wireframe, emissive orange) on the selected mesh.
   if (params.highlightMeshIndex >= 0 &&
       static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() && !wire) {
+    // drawNonMesh() leaves its own shader bound. Uniform locations below belong
+    // to the material mesh program; without rebinding it the outline was drawn
+    // by the helper shader from rest positions and all skin uniforms were
+    // ignored. This is especially visible on the Elephant pose.
+    glUseProgram(program_);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glEnable(GL_POLYGON_OFFSET_LINE);
     glPolygonOffset(-1.0f, -1.0f);
@@ -3933,6 +4020,16 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
     glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, mesh.influenceTex ? mesh.influenceTex : whiteTex_);
+    glUniform1i(uHasMorph_, mesh.hasMorph ? 1 : 0);
+    if (mesh.hasMorph) {
+      glActiveTexture(GL_TEXTURE8);
+      glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+      glActiveTexture(GL_TEXTURE9);
+      glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+      glActiveTexture(GL_TEXTURE10);
+      glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
+      glActiveTexture(GL_TEXTURE0);
+    }
     glUniform3f(uBaseColor_, 0, 0, 0);
     glUniform3fv(uEmissive_, 1, orange);
     glUniform1f(uAlpha_, 1.f);
@@ -4044,9 +4141,13 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glBindVertexArray(0);
   }
 
-  // Selection highlight lines are also used for native Points/Curves, which do
-  // not have a mesh polygon-mode overlay.
-  if (params.highlightLines && params.highlightLineVertexCount > 0 && lineProgram_) {
+  // Mesh selections already used the GPU-deformed polygon overlay above. The
+  // same params also carry CPU-built world-space lines for Vulkan (which lacks
+  // that overlay); drawing them here duplicates the highlight in rest pose for
+  // skinned/morphed meshes. Keep this line path only for native Points/Curves,
+  // represented by highlightMeshIndex < 0.
+  if (params.highlightMeshIndex < 0 && params.highlightLines &&
+      params.highlightLineVertexCount > 0 && lineProgram_) {
     glUseProgram(lineProgram_);
     const light3d::Mat4 VP = ToMat4(params.proj) * ToMat4(params.view);
     glUniformMatrix4fv(uLineVP_, 1, GL_FALSE, VP.m);

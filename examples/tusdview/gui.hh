@@ -289,6 +289,7 @@ class Gui {
   void drawProgressOverlay();  // non-modal GPU upload / RT-build progress
   void drawStageMeta();
   void drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax);
+  void cycleNavigationHelpMode();
   void drawSelectionBreadcrumbs(const char* idSuffix);
   bool framePath(const std::string& absPath);
   void handleNavigation();
@@ -388,7 +389,8 @@ class Gui {
   bool showPurposeRender_{true};
   bool showPurposeProxy_{true};
   bool showPurposeGuide_{false};
-  bool showNavHelp_{false};
+  enum class NavigationHelpMode { None, Simple, Full };
+  NavigationHelpMode navigationHelpMode_{NavigationHelpMode::None};
   bool showAbout_{false};
   bool cullEnabled_{true};  // per-mesh + per-instance frustum culling (View menu)
   // Per-frame render stats (computed in buildViewVisibilityMask + the per-instance

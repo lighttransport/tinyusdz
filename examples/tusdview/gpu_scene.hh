@@ -220,6 +220,9 @@ struct DrawMeshCPU {
   // built to avoid. boneLo < 0 = unskinned.
   float restAabbMin[3]{0, 0, 0};
   float restAabbMax[3]{0, 0, 0};
+  float posedPickAabbMin[3]{0, 0, 0};
+  float posedPickAabbMax[3]{0, 0, 0};
+  bool hasPosedPickAabb{false};
   int boneLo{-1};
   int boneHi{-1};
   bool doubleSided{false};

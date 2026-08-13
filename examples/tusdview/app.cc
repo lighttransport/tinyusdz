@@ -1107,9 +1107,9 @@ bool App::initImGui(std::string* err) {
 
 // Release a mesh's CPU geometry after it's been uploaded to the GPU. Used only
 // for the static --next preview, where the CPU copy is dead weight (no
-// animation re-pose, GPU skinning, or meaningful per-mesh pick on batched
-// geometry). Halves resident RAM for large scenes. Keeps small metadata
-// (name/purpose/world/aabb/submeshes) the GUI's visibility mask still reads.
+// animation re-pose or GPU skinning). Halves resident RAM for large scenes.
+// Keeps small metadata (name/purpose/world/aabb/submeshes): visibility and the
+// low-memory object-picking fallback both use the retained world-space bounds.
 // A mesh the RT path has to be able to re-pose: its rest vertices and skin/morph
 // attributes are the ONLY inputs to BuildNextRtDeformedVertices, so freeing them
 // would leave the ray tracer stuck on whatever pose the BLAS was built with.
@@ -3333,7 +3333,7 @@ void App::updateNextDeformFrameIfNeeded() {
   // moving rig cannot cull or LOD itself out of the frame.
   {
     float bmin[3], bmax[3];
-    if (BuildNextPosedSceneBounds(*nextStageSnapshot_, draw_, animTime_,
+    if (BuildNextPosedSceneBounds(*nextStageSnapshot_, &draw_, animTime_,
                                   gui_.blendOverrides(), bmin, bmax)) {
       for (int k = 0; k < 3; ++k) {
         draw_.aabbMin[k] = bmin[k];
