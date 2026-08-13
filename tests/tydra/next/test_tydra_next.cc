@@ -5045,6 +5045,18 @@ def Xform "World"
   assert(result.scene.meshes[static_cast<size_t>(static_mesh_id)]
              .point_count() == 0);
 
+  // Retained conversion accepts immutable Stage snapshots and must not hide a
+  // destructive cache eviction behind its const API. Eviction is explicit;
+  // ConvertToSink performs the same operation incrementally on a mutable
+  // Stage.
+  {
+    auto prim = lr.stage.GetPrimAtPath("/World/Static");
+    assert(prim.IsValid());
+    assert(prim.GetPropertyValue("points") != nullptr &&
+           "retained conversion must not mutate its source Stage");
+  }
+  lr.stage.ReleaseStaticGeometryArrays(1);
+
   // Static mesh: source arrays released from the composed stage.
   {
     auto prim = lr.stage.GetPrimAtPath("/World/Static");

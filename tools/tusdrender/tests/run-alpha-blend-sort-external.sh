@@ -10,7 +10,10 @@ SKIP=77
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TUSDRENDER="${1:-${TUSDRENDER:-$REPO_ROOT/build/tools/tusdrender/tusdrender}}"
-USD_ASSETS_ROOT="${USD_ASSETS_ROOT:-}"
+USD_ASSETS_ROOT="${USD_ASSETS_ROOT:-$REPO_ROOT/usd-assets}"
+if [ -d "$USD_ASSETS_ROOT" ]; then
+  USD_ASSETS_ROOT="$(cd "$USD_ASSETS_ROOT" && pwd -P)"
+fi
 ASSET="${ASSET:-$USD_ASSETS_ROOT/test_assets/AlphaBlendSortTest/AlphaBlendSortTest.usda}"
 
 if [ ! -x "$TUSDRENDER" ]; then

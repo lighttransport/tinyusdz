@@ -1794,11 +1794,8 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
           q.imag[0] = float(dq.imag[0]); q.imag[1] = float(dq.imag[1]);
           q.imag[2] = float(dq.imag[2]); q.real = float(dq.real);
         }
-        // Some exporters write world-space samples for every joint in the
-        // translations array. They are not valid local offsets and make a
-        // conventional skeleton tear apart. Dense point-joint rigs are the
-        // exception: their translations are the deformation samples.
-        if (anim.hasTranslations && translationOnly &&
+        // UsdSkelAnimation translations are joint-local components.
+        if (anim.hasTranslations &&
             (a + 1) * 3 <= anim.translations.size()) {
           t3[0] = anim.translations[a * 3 + 0];
           t3[1] = anim.translations[a * 3 + 1];
@@ -1887,6 +1884,24 @@ bool BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
     return false;
   }
 
+  // Bake back into the mesh's current local space. UsdSkel skinning produces
+  // skeleton-space points; the Skeleton prim and mesh may have different world
+  // transforms (Elephant's vibrator is a minimal example).
+  double meshWorldData[16], skeletonWorldData[16];
+  const tnext::UsdPrim skelPrim = stage.GetPrimAtPath(bind.skelPath);
+  if (!tydn::ComputeWorldTransform(stage, meshPrim, meshWorldData, time) ||
+      !skelPrim.IsValid() ||
+      !tydn::ComputeWorldTransform(stage, skelPrim, skeletonWorldData, time)) {
+    return false;
+  }
+  const matrix4d meshWorld = Mat4dFromArray(meshWorldData);
+  const matrix4d skeletonWorld = Mat4dFromArray(skeletonWorldData);
+  const matrix4d skeletonToMesh =
+      skeletonWorld * ::tinyusdz::inverse(meshWorld) * bind.geomBind;
+  std::vector<matrix4d> meshLocalSkin(skinMat.size());
+  for (size_t j = 0; j < skinMat.size(); ++j)
+    meshLocalSkin[j] = skinMat[j] * skeletonToMesh;
+
   std::vector<::tinyusdz::value::point3f> rest(nv), skinned;
   for (size_t i = 0; i < nv; ++i) {
     rest[i].x = dm->vertices[i].px;
@@ -1894,7 +1909,7 @@ bool BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
     rest[i].z = dm->vertices[i].pz;
   }
   std::string lerr;
-  if (!tinyusdz::tydra::SkinPointsLBS(rest, bind.geomBind, skinMat, bind.vidx,
+  if (!tinyusdz::tydra::SkinPointsLBS(rest, bind.geomBind, meshLocalSkin, bind.vidx,
                                       bind.vwgt, bind.numInfl, &skinned, &lerr) ||
       skinned.size() != nv) {
     return false;
@@ -1904,9 +1919,9 @@ bool BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   // the two disagree wherever the pose bends the surface, and the CPU and GPU
   // skinning paths must render the same image (tusdview-skinning-screenshot-diff).
   const matrix4d invGeomBind = ::tinyusdz::inverse(bind.geomBind);
-  std::vector<matrix4d> composed(skinMat.size());
-  for (size_t j = 0; j < skinMat.size(); ++j)
-    composed[j] = bind.geomBind * skinMat[j] * invGeomBind;
+  std::vector<matrix4d> composed(meshLocalSkin.size());
+  for (size_t j = 0; j < meshLocalSkin.size(); ++j)
+    composed[j] = bind.geomBind * meshLocalSkin[j] * invGeomBind;
 
   for (size_t i = 0; i < nv; ++i) {
     dm->vertices[i].px = skinned[i].x;
@@ -1956,6 +1971,8 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
                       double time, DrawMeshCPU* dm,
                       const std::vector<uint32_t>& vertexToPoint,
                       size_t numPoints, const double worldM[16],
+                      const double renderWorldM[16],
+                      const double outputSpaceWorldM[16],
                       DrawScene* draw) {
   if (!dm || dm->vertices.empty() || !draw) return false;
   const size_t nv = dm->vertices.size();
@@ -2059,6 +2076,23 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   for (int r = 0; r < 4; ++r)
     for (int c = 0; c < 4; ++c) nb.geomBind[r * 4 + c] = bind.geomBind.m[r][c];
   for (int k = 0; k < 16; ++k) nb.world[k] = worldM[k];
+  for (int k = 0; k < 16; ++k) nb.renderWorld[k] = renderWorldM[k];
+  const tnext::UsdPrim skelPrim = stage.GetPrimAtPath(bind.skelPath);
+  double skeletonStageWorld[16];
+  if (!skelPrim.IsValid() || !tydn::ComputeWorldTransform(
+          stage, skelPrim, skeletonStageWorld, time)) {
+    const double ident[16] = {1, 0, 0, 0, 0, 1, 0, 0,
+                              0, 0, 1, 0, 0, 0, 0, 1};
+    std::memcpy(nb.skeletonWorld, ident, sizeof(ident));
+  } else {
+    const matrix4d skeletonStage = Mat4dFromArray(skeletonStageWorld);
+    const matrix4d outputStage = Mat4dFromArray(outputSpaceWorldM);
+    const matrix4d skeletonOutput =
+        skeletonStage * ::tinyusdz::inverse(outputStage);
+    for (int r = 0; r < 4; ++r)
+      for (int c = 0; c < 4; ++c)
+        nb.skeletonWorld[r * 4 + c] = skeletonOutput.m[r][c];
+  }
   draw->nextSkels.push_back(std::move(nb));
   draw->boneMatrixCount = base + nj;
   return true;
@@ -2381,7 +2415,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
     if (gpuSkinning) {
       double identW[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
       gpuSkinned = SetupGpuSkinNext(stage, mp, time, &dm, vertexToPoint,
-                                    numPoints, identW, draw);
+                                    numPoints, identW, identW, pr16, draw);
     }
     if (!gpuSkinned) BakeSkinning(stage, mp, time, &dm, vertexToPoint, numPoints);
 
@@ -4098,15 +4132,18 @@ static bool ComputeNextBoneRows(const tnext::Stage& stage, const DrawScene& draw
     const std::vector<matrix4d>& sm = it->second;
     const matrix4d G = Mat4dFromArray(nb.geomBind);
     const matrix4d W = Mat4dFromArray(nb.world);
-    const matrix4d invG = ::tinyusdz::inverse(G);
+    const matrix4d R = Mat4dFromArray(nb.renderWorld);
+    const matrix4d S = Mat4dFromArray(nb.skeletonWorld);
     const matrix4d invW = ::tinyusdz::inverse(W);
+    const matrix4d invR = ::tinyusdz::inverse(R);
     const size_t nj =
         std::min(sm.size(), static_cast<size_t>(std::max(0, nb.numJoints)));
     for (size_t j = 0; j < nj; ++j) {
       const size_t row = static_cast<size_t>(nb.matrixBase) + j;
       if (row >= rows) break;
-      // Row-vector: undo the world bake, LBS in bind space, re-apply the world.
-      bones[row] = invW * (G * sm[j] * invG) * W;
+      // Vertices are world-baked by W. Undo that bake, enter skeleton bind
+      // space through G, pose the joint, then place through the Skeleton prim.
+      bones[row] = invW * G * sm[j] * S * invR;
     }
   }
 
@@ -7363,15 +7400,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     if (m.has_skin()) {
       if (opts.gpuSkinning) {
         double skinWorld[16];
+        double renderWorld[16];
+        const double ident[16] = {1, 0, 0, 0, 0, 1, 0, 0,
+                                  0, 0, 1, 0, 0, 0, 0, 1};
         if (animatedWorld) {
-          const double ident[16] = {1, 0, 0, 0, 0, 1, 0, 0,
-                                    0, 0, 1, 0, 0, 0, 0, 1};
           std::memcpy(skinWorld, ident, sizeof(skinWorld));
+          std::memcpy(renderWorld, mw16, sizeof(renderWorld));
         } else {
           std::memcpy(skinWorld, mw16, sizeof(skinWorld));
+          std::memcpy(renderWorld, ident, sizeof(renderWorld));
         }
         SetupGpuSkinNext(stage, mp, time, &loc, vertexToPoint, m.point_count(),
-                         skinWorld, draw);
+                         skinWorld, renderWorld, ident, draw);
       } else {
         cpuSkinned =
             BakeSkinning(stage, mp, time, &loc, vertexToPoint, m.point_count());
@@ -7399,7 +7439,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // position it is handed. So the deltas have to be rotated/scaled into the same
     // space, or a blendshaped mesh under a rotated or scaled parent morphs along
     // the wrong axes. Skinning already does the equivalent (its bone rows are
-    // invW * (G*sm*invG) * W); the instanced prototype path needs none of this,
+    // inverse(bakedWorld) * G * skin * skeletonWorld * inverse(renderWorld));
+    // the instanced prototype path needs none of this,
     // because its vertices stay mesh-local and each instance applies its own o2w
     // after the deform.
     const bool linIdentity =

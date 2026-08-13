@@ -119,7 +119,12 @@ void Layer::apply_namespace_ordering() {
   apply(&root_indices_, meta_.rootPrimOrder, prims_);
   for (PrimSpec& prim : prims_) {
     std::vector<uint32_t> children = prim.child_indices();
-    apply(&children, prim.meta().primOrder(), prims_);
+    // Namespace ordering is a read-only finalization pass.  Bind metadata as
+    // const so overload resolution cannot select the mutable cold-field
+    // accessor, which materializes a PrimSpecMetaExt for otherwise ordinary
+    // prims.
+    const PrimSpecMeta& meta = prim.meta();
+    apply(&children, meta.primOrder(), prims_);
     prim.clear_child_indices();
     for (uint32_t child : children) prim.add_child_index(child);
   }
@@ -263,11 +268,6 @@ void Layer::finalize() {
   }
 
   apply_namespace_ordering();
-
-  // The prim array is append-only during build and immutable after finalize:
-  // release any over-reservation so the per-layer fixed cost matches its
-  // contents (Phase 8.1 footprint trim).
-  prims_.shrink_to_fit();
 
   finalized_ = true;
 }

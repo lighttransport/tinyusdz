@@ -18,8 +18,8 @@ vk-raster	docs/CompositionPuzzles/VariantSetAndLocal3/ball_defaults.usda	0000000
 vk-raster	docs/CompositionPuzzles/VariantSetAndLocal3/puzzle_3.usda	0000000000f08f1cf7ffd8f10f0000000000
 vk-raster	docs/PrimvarInterpolation/primvar_interpolation.usda	0000008300300300f10f10f10b1000000000
 vk-raster	full_assets/CarbonFrameBike/CarbonFrameBike.usdz	870e70e87ecfe0ef58f38d00700e0907b06e
-vk-raster	full_assets/ElephantWithMonochord/SoC-ElephantWithMonochord_thumbnail.usda	0000000000000c38f38f00e0060020000000
-vk-raster	full_assets/ElephantWithMonochord/SoC-ElephantWithMonochord.usdc	0000000000000c38f38f00e0060020000000
+vk-raster	full_assets/ElephantWithMonochord/SoC-ElephantWithMonochord_thumbnail.usda	0000000600f00700700700f0060000000000
+vk-raster	full_assets/ElephantWithMonochord/SoC-ElephantWithMonochord.usdc	0000000600f00700700700f0060000000000
 vk-raster	full_assets/McUsd/McUsd_10cm.usda	000000000000000cf3ef7ef30f10c0000000
 vk-raster	full_assets/McUsd/McUsd_10cm.usdz	000000000000000cf3ef7ef30f10c0000000
 vk-raster	full_assets/McUsd/McUsd.usda	000000000000000cf3ef7ef38f10c0000000
@@ -255,7 +255,7 @@ vk-raster	test_assets/USDZ/CesiumMan/CesiumMan.usdz	0000000700700600600600e00200
 vk-raster	test_assets/USDZ/DamagedHelmet/DamagedHelmet.usdz	000000000000091ff30910d0070000000000
 vk-raster	test_assets/USDZ/InterpolationTest/InterpolationTest.usdz	0000008b38b30f38b38f38f18f10e1081000
 vk-raster	test_assets/USDZ/RiggedFigure/RiggedFigure.usdz	0000000600600600e0070060060060000000
-vk-raster	test_assets/USDZ/RiggedSimple/RiggedSimple.usdz	060060060060060060060000000000000000
+vk-raster	test_assets/USDZ/RiggedSimple/RiggedSimple.usdz	000060060060060160060060060060040000
 vk-rt	docs/CompositionPuzzles/PayloadAndReference/problem/animation.usda	0000000000f08f1cf7fff8f10f0000000000
 vk-rt	docs/CompositionPuzzles/PayloadAndReference/problem/animCache.usda	0000000000f08f1cf7fff8f10f0000000000
 vk-rt	docs/CompositionPuzzles/PayloadAndReference/problem/layout.usda	0000000000f08f1cf7fff8f10f0000000000
@@ -273,8 +273,8 @@ vk-rt	docs/CompositionPuzzles/VariantSetAndLocal3/ball_defaults.usda	0000000000f
 vk-rt	docs/CompositionPuzzles/VariantSetAndLocal3/puzzle_3.usda	0000000000f08f1cf7fff8f10f0000000000
 vk-rt	docs/PrimvarInterpolation/primvar_interpolation.usda	0000008300300300f10f10f10b1000000000
 vk-rt	full_assets/CarbonFrameBike/CarbonFrameBike.usdz	000000000000000000000000000000000000
-vk-rt	full_assets/ElephantWithMonochord/SoC-ElephantWithMonochord_thumbnail.usda	0000000000000c38f38f00e0060030080000
-vk-rt	full_assets/ElephantWithMonochord/SoC-ElephantWithMonochord.usdc	0000000000000c38f38f00e0060030080000
+vk-rt	full_assets/ElephantWithMonochord/SoC-ElephantWithMonochord_thumbnail.usda	0000000600f00700700700f0060010080000
+vk-rt	full_assets/ElephantWithMonochord/SoC-ElephantWithMonochord.usdc	0000000600f00700700700f0060010080000
 vk-rt	full_assets/McUsd/McUsd_10cm.usda	fffffffff000000460dbb6f30f1040000000
 vk-rt	full_assets/McUsd/McUsd_10cm.usdz	fffffffff000000460dbb6f30f1040000000
 vk-rt	full_assets/McUsd/McUsd.usda	fffffffff000000460dbb6f30f1040000000
@@ -510,4 +510,4 @@ vk-rt	test_assets/USDZ/CesiumMan/CesiumMan.usdz	0000000700700600600600e002002000
 vk-rt	test_assets/USDZ/DamagedHelmet/DamagedHelmet.usdz	0000000000400f1ff30f10f00f0010000000
 vk-rt	test_assets/USDZ/InterpolationTest/InterpolationTest.usdz	0000008f38f38f38f38f38f38f30e1081000
 vk-rt	test_assets/USDZ/RiggedFigure/RiggedFigure.usdz	0000000600600600e0070060060060000000
-vk-rt	test_assets/USDZ/RiggedSimple/RiggedSimple.usdz	060060060060060060060000000000000000
+vk-rt	test_assets/USDZ/RiggedSimple/RiggedSimple.usdz	000060060060060160060060060060060000

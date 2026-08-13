@@ -1100,13 +1100,6 @@ Stage::StaticGeometryReleaseStats Stage::ReleaseStaticGeometryArraysForPrim(
   return ReleasePrimStaticGeometryArrays(mutable_prim, min_array_elements);
 }
 
-Stage::StaticGeometryReleaseStats Stage::ReleaseStaticGeometryArraysForPrim(
-    const UsdPrim& prim, size_t min_array_elements) const {
-  if (!root_layer_) return {};
-  return const_cast<Stage*>(this)->ReleaseStaticGeometryArraysForPrim(
-      prim, min_array_elements);
-}
-
 // ============================================================
 // StageBuilder
 // ============================================================

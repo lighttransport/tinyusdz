@@ -931,7 +931,7 @@ bool CrateReader::Impl::BuildStage() {
           ps->meta().setPrimOrderAuthored();
           if (const std::vector<std::string>* names =
                   field.second.as_token_array()) {
-            ps->meta().primOrder() = *names;
+            ps->meta().editPrimOrder() = *names;
           }
           continue;
         }
@@ -939,14 +939,14 @@ bool CrateReader::Impl::BuildStage() {
           ps->meta().setPropertyOrderAuthored();
           if (const std::vector<std::string>* names =
                   field.second.as_token_array()) {
-            ps->meta().propertyOrder() = *names;
+            ps->meta().editPropertyOrder() = *names;
           }
           continue;
         }
         if (field.first == "displayGroupOrder") {
           if (const std::vector<std::string>* names =
                   field.second.as_token_array()) {
-            ps->meta().displayGroupOrder() = *names;
+            ps->meta().editDisplayGroupOrder() = *names;
             ps->meta().setDisplayGroupOrderAuthored();
           }
           continue;

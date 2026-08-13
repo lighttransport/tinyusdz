@@ -92,6 +92,18 @@ option(TINYUSDZ_WITH_C_API "Enable C API." ${TINYUSDZ_DEFAULT_WITH_C_API})
 option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
 set(TINYUSDZ_TEST_FIXTURE_DIR "${PROJECT_SOURCE_DIR}" CACHE PATH
     "Root directory used to resolve relative C++ test fixtures")
+# Default external USD asset corpus for regression tests.  The repository-local
+# symlink is intentionally the default so a checkout with `usd-assets` present
+# exercises the asset gates without machine-specific paths; callers can point
+# this at another corpus with -DTINYUSDZ_USD_ASSETS_ROOT=... .
+set(_tinyusdz_default_usd_assets_root "${PROJECT_SOURCE_DIR}/usd-assets")
+if(IS_DIRECTORY "${_tinyusdz_default_usd_assets_root}")
+  get_filename_component(_tinyusdz_default_usd_assets_root
+                         "${_tinyusdz_default_usd_assets_root}" REALPATH)
+endif()
+set(TINYUSDZ_USD_ASSETS_ROOT "${_tinyusdz_default_usd_assets_root}" CACHE PATH
+    "Root directory for tusdview/tusdrender USD asset regressions")
+unset(_tinyusdz_default_usd_assets_root)
 option(TINYUSDZ_BUILD_BENCHMARKS
        "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
 option(TINYUSDZ_BUILD_EXAMPLES
@@ -3459,6 +3471,7 @@ if(TINYUSDZ_BUILD_TESTS)
               "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_GOLDEN"
               "TUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error,golden_mismatch,unexpected_degradation,expectation_mismatch"
               bash "${PROJECT_SOURCE_DIR}/tests/tusdview/run-usd-assets-batch.sh"
+                   --root "${TINYUSDZ_USD_ASSETS_ROOT}"
                    --golden-kind coverage
                    --golden "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/usd-assets-goldens.tsv"
       )
@@ -3491,6 +3504,7 @@ if(TINYUSDZ_BUILD_TESTS)
                 "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_BROAD"
                 "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
                 bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh"
+                     --root "${TINYUSDZ_USD_ASSETS_ROOT}"
                      --profile usd-assets-broad
                      --require-profile-complete
                      --modes vk-raster,vk-rt,tusdr-cpu,tusdr-vk
@@ -3507,6 +3521,7 @@ if(TINYUSDZ_BUILD_TESTS)
                 "TUSDRENDER=$<TARGET_FILE:tusdrender>"
                 "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_ANIMATION"
                 "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
+                "USD_ASSETS_ROOT=${TINYUSDZ_USD_ASSETS_ROOT}"
                 bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-animation-smoke.sh"
         )
       set_tests_properties(tusdview-usd-assets-animation-smoke PROPERTIES

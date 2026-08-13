@@ -385,11 +385,6 @@ public:
   /// O(properties) rather than rescanning the whole stage per prim.
   StaticGeometryReleaseStats ReleaseStaticGeometryArraysForPrim(
       const UsdPrim& prim, size_t min_array_elements = 256);
-  /// Const overload for metadata-only processing pipelines that only need
-  /// non-owning access to the composed stage. The actual arrays are still
-  /// mutated to drop cached values.
-  StaticGeometryReleaseStats ReleaseStaticGeometryArraysForPrim(
-      const UsdPrim& prim, size_t min_array_elements = 256) const;
 
 private:
   std::unique_ptr<Layer> root_layer_;

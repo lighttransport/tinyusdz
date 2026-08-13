@@ -189,13 +189,9 @@ void BuildJointLocals(const tydra::AnimationClip* clip, int skelId, double t,
       const size_t j = static_cast<size_t>(ch.joint_id);
       animated[j] = true;
       if (ch.path == tydra::AnimationPath::Translation) {
-        // Conventional viewer rigs commonly carry world-space joint
-        // translations in the SkelAnimation array.  They are not local bone
-        // offsets and applying them here stretches/explodes the mesh.  Keep
-        // the authored rest offset for ordinary rigs; dense point-joint rigs
-        // use translation samples as their deformation data and are handled
-        // by the translationOnly path.
-        if (translationOnly) EvalSampler(smp, t, 3, &T[j * 3]);
+        // UsdSkelAnimation translations are joint-local components and replace
+        // the corresponding rest-pose component at the evaluated time.
+        EvalSampler(smp, t, 3, &T[j * 3]);
       } else if (!translationOnly && ch.path == tydra::AnimationPath::Scale) {
         EvalSampler(smp, t, 3, &S[j * 3]);
       } else if (!translationOnly && ch.path == tydra::AnimationPath::Rotation) {
@@ -467,11 +463,12 @@ bool BuildComposedSkinningMatrices(
     cit = skinCache->emplace(dm.skelId, std::move(sm)).first;
   }
   const matrix4d geomBind = MatrixFromDraw(dm.skinGeomBind);
-  const matrix4d invGeomBind = tinyusdz::inverse(geomBind);
+  const matrix4d skeletonWorld = MatrixFromDraw(dm.skinSkeletonWorld);
+  const matrix4d invMeshWorld = tinyusdz::inverse(MatrixFromDraw(dm.world));
   composed->clear();
   composed->reserve(cit->second.size());
   for (const matrix4d& m : cit->second) {
-    composed->push_back(geomBind * m * invGeomBind);
+    composed->push_back(geomBind * m * skeletonWorld * invMeshWorld);
   }
   return !composed->empty();
 }
@@ -855,11 +852,12 @@ bool BuildGpuSkinningFrame(
       cit = skinCache.emplace(dm.skelId, std::move(sm)).first;
     }
     const matrix4d geomBind = MatrixFromDraw(dm.skinGeomBind);
-    const matrix4d invGeomBind = tinyusdz::inverse(geomBind);
+    const matrix4d skeletonWorld = MatrixFromDraw(dm.skinSkeletonWorld);
+    const matrix4d invMeshWorld = tinyusdz::inverse(MatrixFromDraw(dm.world));
     std::vector<matrix4d> composed;
     composed.reserve(cit->second.size());
     for (size_t j = 0; j < cit->second.size(); ++j) {
-      matrix4d m = geomBind * cit->second[j] * invGeomBind;
+      matrix4d m = geomBind * cit->second[j] * skeletonWorld * invMeshWorld;
       composed.push_back(m);
       const int row = dm.skinMatrixBase + static_cast<int>(j);
       if (row < matrices) PackMatrix(m, row, frame);
@@ -1285,6 +1283,19 @@ bool UpdateAnimatedMeshWorlds(const tinyusdz::Stage& stage, DrawScene* draw,
       std::memcpy(dm.world, w, sizeof(w));
       changed = true;
     }
+    if (!dm.skinSkeletonPath.empty()) {
+      auto sit = worlds.find(dm.skinSkeletonPath);
+      if (sit != worlds.end()) {
+        float sw[16];
+        for (int i = 0; i < 4; ++i)
+          for (int j = 0; j < 4; ++j)
+            sw[i * 4 + j] = static_cast<float>(sit->second.m[i][j]);
+        if (std::memcmp(dm.skinSkeletonWorld, sw, sizeof(sw)) != 0) {
+          std::memcpy(dm.skinSkeletonWorld, sw, sizeof(sw));
+          changed = true;
+        }
+      }
+    }
   }
   if (changed) {
     bool has = false;
@@ -1331,7 +1342,22 @@ void DeformSkinnedMeshes(
   // Cache skinning matrices per skeleton (shared across meshes).
   std::unordered_map<int, std::vector<matrix4d>> skinCache;
 
-  for (tydra::RenderMesh& mesh : render.meshes) {
+  // Current placement spaces. SkinPointsLBS returns through inverse geomBind,
+  // but a USD skinned result is placed through the Skeleton prim, not through
+  // the mesh prim. Pre-compose the conversion back to each mesh's local space.
+  std::unordered_map<int, matrix4d> meshWorlds;
+  std::unordered_map<std::string, matrix4d> nodeWorlds;
+  std::function<void(const tydra::Node&)> collectWorlds =
+      [&](const tydra::Node& node) {
+        nodeWorlds.emplace(node.abs_path, node.global_matrix);
+        if (node.nodeType == tydra::NodeType::Mesh && node.id >= 0)
+          meshWorlds.emplace(node.id, node.global_matrix);
+        for (const tydra::Node& child : node.children) collectWorlds(child);
+      };
+  for (const tydra::Node& root : render.nodes) collectWorlds(root);
+
+  for (size_t meshIndex = 0; meshIndex < render.meshes.size(); ++meshIndex) {
+    tydra::RenderMesh& mesh = render.meshes[meshIndex];
     const bool skinned = MeshIsSkinned(mesh);
     const bool morphed = !mesh.targets.empty();
     if (!skinned && !morphed) continue;
@@ -1427,8 +1453,18 @@ void DeformSkinnedMeshes(
           }
         }
         if (cit != skinCache.end()) {
+          std::vector<matrix4d> meshLocalSkin = cit->second;
+          const auto mw = meshWorlds.find(static_cast<int>(meshIndex));
+          const auto& skel = render.skeletons[static_cast<size_t>(mesh.skel_id)];
+          const auto sw = nodeWorlds.find(skel.abs_path);
+          if (mw != meshWorlds.end() && sw != nodeWorlds.end()) {
+            const matrix4d skeletonToMesh =
+                sw->second * tinyusdz::inverse(mw->second) * jw.geomBindTransform;
+            for (size_t j = 0; j < meshLocalSkin.size(); ++j)
+              meshLocalSkin[j] = meshLocalSkin[j] * skeletonToMesh;
+          }
           std::vector<point3f> skinned_pts;
-          if (tydra::SkinPointsLBS(pts, jw.geomBindTransform, cit->second,
+          if (tydra::SkinPointsLBS(pts, jw.geomBindTransform, meshLocalSkin,
                                    jw.jointIndices, weights, infl,
                                    &skinned_pts) &&
               skinned_pts.size() == np) {

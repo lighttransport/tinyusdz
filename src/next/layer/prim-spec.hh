@@ -833,7 +833,7 @@ struct PrimSpecMeta {
     static const std::vector<std::string> kEmpty;
     return ext_ ? ext_->displayGroupOrder : kEmpty;
   }
-  std::vector<std::string> &displayGroupOrder() {
+  std::vector<std::string> &editDisplayGroupOrder() {
     ensure_ext();
     return ext_->displayGroupOrder;
   }
@@ -844,7 +844,7 @@ struct PrimSpecMeta {
     ensure_ext();
     ext_->displayGroupOrderAuthored = authored;
   }
-  std::vector<std::string> &primOrder() {
+  std::vector<std::string> &editPrimOrder() {
     ensure_ext();
     return ext_->primOrder;
   }
@@ -852,7 +852,7 @@ struct PrimSpecMeta {
     static const std::vector<std::string> kEmpty;
     return ext_ ? ext_->propertyOrder : kEmpty;
   }
-  std::vector<std::string> &propertyOrder() {
+  std::vector<std::string> &editPropertyOrder() {
     ensure_ext();
     return ext_->propertyOrder;
   }

@@ -282,11 +282,15 @@ class RenderSceneConverter {
   RenderSceneConverter& operator=(const RenderSceneConverter&) = delete;
 
   // Main conversion entry point
+  /// Read-only retained conversion. This never evicts values from `stage`, so
+  /// it is safe to use with an immutable StageSnapshot.
   ConvertResult Convert(const ::tinyusdz::next::Stage& stage);
 
-  // Low-memory conversion entry point. Only one converted geometry prim is
-  // live outside the destination sink at a time.
-  StreamConvertResult ConvertToSink(const ::tinyusdz::next::Stage& stage,
+  // Low-memory, destructive conversion entry point. Only one converted
+  // geometry prim is live outside the destination sink at a time. Static
+  // source arrays may be evicted as their last consumer completes, hence the
+  // deliberately mutable Stage reference.
+  StreamConvertResult ConvertToSink(::tinyusdz::next::Stage& stage,
                                     SceneSink* sink);
 
   // Cheap preflight and extent-only conversion for application-managed

@@ -6,9 +6,9 @@
 # modes and sane batch defaults, and forwards any extra args (--root / --limit /
 # --modes / --timeout / --out / --golden ...).
 #
-# Corpus: set USD_ASSETS_ROOT (or --root DIR). Defaults to the local
-# usd-wg/assets checkout at /mnt/disk1/work/usd-assets; the harness SKIPs if it
-# does not exist. usd-wg/assets uses '..' parent-relative references, so
+# Corpus: set USD_ASSETS_ROOT (or --root DIR). Defaults to the repository-local
+# `usd-assets` symlink; the harness SKIPs if it does not exist. usd-wg/assets
+# uses '..' parent-relative references, so
 # --allow-parent-paths is enabled for tusdview here.
 #
 # Examples:
@@ -23,7 +23,10 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-: "${USD_ASSETS_ROOT:=${USD_WG_ASSETS_DIR:-}}"
+: "${USD_ASSETS_ROOT:=${USD_WG_ASSETS_DIR:-$REPO_ROOT/usd-assets}}"
+if [ -d "$USD_ASSETS_ROOT" ]; then
+  USD_ASSETS_ROOT="$(cd "$USD_ASSETS_ROOT" && pwd -P)"
+fi
 : "${TUSDVIEW:=$REPO_ROOT/build/tusdview}"
 : "${TUSDVIEW_USD_ASSETS_MODES:=vk-raster,vk-rt}"
 : "${TUSDVIEW_USD_ASSETS_ALLOW_PARENT:=1}"

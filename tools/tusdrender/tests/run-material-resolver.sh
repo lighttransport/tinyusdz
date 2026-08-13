@@ -16,7 +16,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 TUSDRENDER="${TUSDRENDER:-$REPO_ROOT/build/tools/tusdrender/tusdrender}"
-USD_ASSETS_ROOT="${USD_ASSETS_ROOT:-}"
+USD_ASSETS_ROOT="${USD_ASSETS_ROOT:-$REPO_ROOT/usd-assets}"
+if [ -d "$USD_ASSETS_ROOT" ]; then
+  USD_ASSETS_ROOT="$(cd "$USD_ASSETS_ROOT" && pwd -P)"
+fi
 OUT_DIR="${TUSDR_MATERIAL_RESOLVER_OUT:-}"
 SIZE="${TUSDR_MATERIAL_RESOLVER_SIZE:-160x120}"
 WIDTH="${SIZE%x*}"
