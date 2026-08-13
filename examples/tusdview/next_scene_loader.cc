@@ -4178,7 +4178,7 @@ bool BuildNextSkinningFrame(const tnext::Stage& stage, DrawScene* draw,
 }
 
 bool BuildNextPosedSceneBounds(
-    const tnext::Stage& stage, const DrawScene& draw, double time,
+    const tnext::Stage& stage, DrawScene* draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
     float outMin[3], float outMax[3]) {
   // The box is taken from the POSED VERTICES, and from the same deform the ray
@@ -4189,7 +4189,8 @@ bool BuildNextPosedSceneBounds(
   // geometry differently. (A bone-box union -- 8 rest corners through each bone
   // -- was tried first and is ~10% loose on a 60-degree bend, which was visible.)
   std::vector<RtSkinnedMeshUpload> posed;
-  if (!BuildNextRtDeformedVertices(stage, draw, time, blendOverride, &posed)) {
+  if (!draw ||
+      !BuildNextRtDeformedVertices(stage, *draw, time, blendOverride, &posed)) {
     return false;
   }
   std::unordered_map<int, const std::vector<DrawVertex>*> posedByMesh;
@@ -4215,8 +4216,9 @@ bool BuildNextPosedSceneBounds(
   std::vector<matrix4d> bones;
   bool bonesReady = false, bonesOk = false;
 
-  for (size_t mi = 0; mi < draw.meshes.size(); ++mi) {
-    const DrawMeshCPU& m = draw.meshes[mi];
+  for (DrawMeshCPU& m : draw->meshes) m.hasPosedPickAabb = false;
+  for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
+    DrawMeshCPU& m = draw->meshes[mi];
     auto pit = posedByMesh.find(static_cast<int>(mi));
     if (pit != posedByMesh.end()) {
       const size_t ninst = m.instanceCount();
@@ -4235,24 +4237,36 @@ bool BuildNextPosedSceneBounds(
           }
         }
       } else {
+        size_t posedVertex = 0;
         for (const DrawVertex& v : *pit->second) {
+          float p[3];
           if (m.animatedWorld) {
-            const float p[3] = {
+            const float wp[3] = {
                 v.px * m.world[0] + v.py * m.world[4] + v.pz * m.world[8] + m.world[12],
                 v.px * m.world[1] + v.py * m.world[5] + v.pz * m.world[9] + m.world[13],
                 v.px * m.world[2] + v.py * m.world[6] + v.pz * m.world[10] + m.world[14]};
-            grow(p);
+            std::copy(wp, wp + 3, p);
           } else {
-            const float p[3] = {v.px, v.py, v.pz};
-            grow(p);
+            p[0] = v.px; p[1] = v.py; p[2] = v.pz;
           }
+          for (int k = 0; k < 3; ++k) {
+            if (posedVertex == 0)
+              m.posedPickAabbMin[k] = m.posedPickAabbMax[k] = p[k];
+            else {
+              m.posedPickAabbMin[k] = std::min(m.posedPickAabbMin[k], p[k]);
+              m.posedPickAabbMax[k] = std::max(m.posedPickAabbMax[k], p[k]);
+            }
+          }
+          ++posedVertex;
+          grow(p);
         }
+        m.hasPosedPickAabb = posedVertex != 0;
       }
       continue;
     }
     if (m.boneLo >= 0 && m.boneHi >= m.boneLo && m.vertices.empty()) {
       if (!bonesReady) {
-        bonesOk = ComputeNextBoneRows(stage, draw, time, &bones);
+        bonesOk = ComputeNextBoneRows(stage, *draw, time, &bones);
         bonesReady = true;
       }
       const float rlo[3] = {m.restAabbMin[0] - m.morphExtent[0],
@@ -7629,8 +7643,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       // from ordinary static batching so face ids are never rebased into a
       // different texture's namespace.
       const int batchIsolationId =
-          morphBatchId != 0 ? morphBatchId
-                            : (needsPtex ? ++nextMorphBatchId : 0);
+          morphBatchId != 0
+              ? morphBatchId
+              : ((needsPtex || hasSkin) ? ++nextMorphBatchId : 0);
       Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, wholeMat,
                        wholeBackMat, batchIsolationId, lightLinkBatchId,
                        animatedWorldBatchId}];
@@ -7643,6 +7658,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.purpose = purpose;
       b.dm.geometricNormal = loc.geometricNormal;
       b.dm.doubleSided = m.double_sided;
+      // Static/material batching can merge several source meshes into one draw,
+      // but the draw still needs a representative prim for viewport selection.
+      // Previously only animated/light-linked/morphed batches retained a path,
+      // making ordinary and skinned next-loader draws impossible to select.
+      if (b.dm.absPath.empty()) {
+        b.dm.absPath = loc.absPath;
+        b.dm.name = loc.name;
+      }
       if (animatedWorld && b.dm.vertices.empty()) {
         b.animatedWorld = true;
         b.dm.animatedWorld = true;
@@ -7730,8 +7753,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       bool firstGroup = true;
       for (const MaterialPair& gm : groups) {
         const int batchIsolationId =
-            morphBatchId != 0 ? morphBatchId
-                              : (needsPtex ? ++nextMorphBatchId : 0);
+            morphBatchId != 0
+                ? morphBatchId
+                : ((needsPtex || hasSkin) ? ++nextMorphBatchId : 0);
         Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, gm.first,
                          gm.second, batchIsolationId, lightLinkBatchId,
                          animatedWorldBatchId}];
@@ -7744,6 +7768,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.purpose = purpose;
         b.dm.geometricNormal = loc.geometricNormal;
         b.dm.doubleSided = m.double_sided;
+        if (b.dm.absPath.empty()) {
+          b.dm.absPath = loc.absPath;
+          b.dm.name = loc.name;
+        }
         if (animatedWorld && b.dm.vertices.empty()) {
           b.animatedWorld = true;
           b.dm.animatedWorld = true;

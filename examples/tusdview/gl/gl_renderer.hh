@@ -339,6 +339,8 @@ class GLRenderer final : public Renderer {
   // full MVP; instanced reuses the per-instance 3x4 rows (attribs 3/4/5) + view-proj.
   GLuint wireProgram_{0};
   GLint wMVP_{-1}, wWireColor_{-1}, wDepthBias_{-1}, wViewport_{-1}, wHalfWidth_{-1};
+  GLint wHasMorph_{-1}, wSkinningEnabled_{-1}, wExtendedSkinningEnabled_{-1};
+  GLint wBoneTexWidth_{-1}, wBoneMatrixCount_{-1}, wInfluenceTexWidth_{-1};
   GLuint wireInstProgram_{0};
   GLint wiViewProj_{-1}, wiWireColor_{-1}, wiDepthBias_{-1}, wiViewport_{-1}, wiHalfWidth_{-1};
 

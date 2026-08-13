@@ -612,7 +612,18 @@ void Gui::drawDockspaceAndMenu() {
         ImGui::EndMenu();
       }
       ImGui::Separator();
-      ImGui::MenuItem("Navigation help overlay", "F1", &showNavHelp_);
+      if (ImGui::BeginMenu("Navigation help")) {
+        if (ImGui::MenuItem("Full", "F1",
+                            navigationHelpMode_ == NavigationHelpMode::Full))
+          navigationHelpMode_ = NavigationHelpMode::Full;
+        if (ImGui::MenuItem("Simple", nullptr,
+                            navigationHelpMode_ == NavigationHelpMode::Simple))
+          navigationHelpMode_ = NavigationHelpMode::Simple;
+        if (ImGui::MenuItem("None", nullptr,
+                            navigationHelpMode_ == NavigationHelpMode::None))
+          navigationHelpMode_ = NavigationHelpMode::None;
+        ImGui::EndMenu();
+      }
       if (ImGui::BeginMenu("Camera")) {
         const bool haveCam = cam_ != nullptr;
         if (ImGui::MenuItem("Home", "0", false, haveCam)) homeView();
@@ -732,7 +743,8 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
-      ImGui::MenuItem("Navigation help overlay", "F1", &showNavHelp_);
+      if (ImGui::MenuItem("Cycle navigation help", "F1"))
+        cycleNavigationHelpMode();
       ImGui::Separator();
       ImGui::TextDisabled("Viewport");
       ImGui::TextUnformatted("Alt+LMB  Orbit");
@@ -2885,7 +2897,7 @@ void Gui::handleNavigation() {
   ImGuiIO& io = ImGui::GetIO();
   const bool alt = io.KeyAlt;
 
-  if (ImGui::IsKeyPressed(ImGuiKey_F1)) showNavHelp_ = !showNavHelp_;
+  if (ImGui::IsKeyPressed(ImGuiKey_F1)) cycleNavigationHelpMode();
   if (!io.WantTextInput && timeline_.hasAnimation &&
       ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
     wantTogglePlay_ = true;
@@ -3627,8 +3639,22 @@ void Gui::cullInstances() {
   cullThread_ = std::thread(&Gui::cullWorkerMain, this);
 }
 
+void Gui::cycleNavigationHelpMode() {
+  // Default None; the first F1 exposes the complete reference, then the compact
+  // drag-time feedback, then returns to an unobstructed viewport.
+  if (navigationHelpMode_ == NavigationHelpMode::None)
+    navigationHelpMode_ = NavigationHelpMode::Full;
+  else if (navigationHelpMode_ == NavigationHelpMode::Full)
+    navigationHelpMode_ = NavigationHelpMode::Simple;
+  else
+    navigationHelpMode_ = NavigationHelpMode::None;
+}
+
 void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) {
-  if (!showNavHelp_ && navMode_ == 0) return;
+  const bool full = navigationHelpMode_ == NavigationHelpMode::Full;
+  const bool simple = navigationHelpMode_ == NavigationHelpMode::Simple;
+  if (navigationHelpMode_ == NavigationHelpMode::None || (simple && navMode_ == 0))
+    return;
 
   const char* title = "Viewport navigation";
   const std::string modeLine = std::string("Mode: ") + NavModeLabel(navMode_);
@@ -3640,12 +3666,12 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
   const char* lineHistory = "Alt+Left / Alt+Right Selection back/forward";
   const char* lineFrame = "F Frame selected   A Frame all   0 Home";
   const char* lineViews = "1/Shift+1 Front/Back   3/Shift+3 Right/Left";
-  const char* lineViews2 = "7/Shift+7 Top/Bottom   5 Isometric   F1 Toggle help";
+  const char* lineViews2 = "7/Shift+7 Top/Bottom   5 Isometric   F1 Cycle help";
   const char* lineBookmarks = "Ctrl+1..3 Recall   Ctrl+Shift+1..3 Save";
 
   float maxWidth = ImGui::CalcTextSize(title).x;
   maxWidth = std::max(maxWidth, ImGui::CalcTextSize(modeLine.c_str()).x);
-  if (showNavHelp_) {
+  if (full) {
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineOrbit).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(linePan).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineDolly).x);
@@ -3660,7 +3686,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
 
   const float pad = ImGui::GetStyle().FramePadding.x * 1.2f;
   const float lineH = ImGui::GetTextLineHeightWithSpacing();
-  const int lines = showNavHelp_ ? 11 : 2;
+  const int lines = full ? 11 : 2;
   const ImVec2 pos(imageMin.x + 12.0f, imageMin.y + 12.0f);
   const ImVec2 boxSize(maxWidth + pad * 2.0f, lineH * static_cast<float>(lines) + pad * 2.0f);
 
@@ -3679,7 +3705,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
               navMode_ != 0 ? IM_COL32(255, 220, 120, 255) : IM_COL32(180, 200, 220, 255),
               modeLine.c_str());
   y += lineH;
-  if (showNavHelp_) {
+  if (full) {
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineOrbit);
     y += lineH;
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), linePan);
@@ -3755,12 +3781,14 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
   const light3d::Vec3 ro = cam_->eye();
   const light3d::Vec3 rd = light3d::normalize(farW - nearW);
 
-  // Slab test against a world-space AABB; returns true if the ray hits within
-  // [0, tMax) and never starts the search past an already-closer hit.
+  // Slab test against a world-space AABB. Return the entry distance as well: the
+  // next-loader deliberately releases static CPU triangles after GPU upload, so
+  // their retained bounds are the low-memory object-picking representation.
   const float invdx = (rd.x != 0.0f) ? 1.0f / rd.x : 1e30f;
   const float invdy = (rd.y != 0.0f) ? 1.0f / rd.y : 1e30f;
   const float invdz = (rd.z != 0.0f) ? 1.0f / rd.z : 1e30f;
-  auto hitAabb = [&](const float mn[3], const float mx[3], float tMax) -> bool {
+  auto hitAabb = [&](const float mn[3], const float mx[3], float tMax,
+                     float* tNear) -> bool {
     float t1 = (mn[0] - ro.x) * invdx, t2 = (mx[0] - ro.x) * invdx;
     float tmin = std::min(t1, t2), tmax = std::max(t1, t2);
     t1 = (mn[1] - ro.y) * invdy; t2 = (mx[1] - ro.y) * invdy;
@@ -3769,7 +3797,10 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
     t1 = (mn[2] - ro.z) * invdz; t2 = (mx[2] - ro.z) * invdz;
     tmin = std::max(tmin, std::min(t1, t2));
     tmax = std::min(tmax, std::max(t1, t2));
-    return tmax >= std::max(tmin, 0.0f) && tmin < tMax;
+    const float entry = std::max(tmin, 0.0f);
+    if (tmax < entry || entry >= tMax) return false;
+    if (tNear) *tNear = entry;
+    return true;
   };
 
   // Moller-Trumbore ray/triangle in world space.
@@ -3794,12 +3825,32 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
 
   int best = -1;
   float bestT = 1e30f;
+  int bestBounds = -1;
+  float bestBoundsT = 1e30f;
   for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
     // Skip hidden meshes (they aren't drawn, so they shouldn't be pickable).
     if (!meshVisibleForView(mi)) continue;
     const DrawMeshCPU& m = draw_->meshes[mi];
-    if (m.vertices.empty() || m.indices.size() < 3) continue;
-    if (!hitAabb(m.aabbMin, m.aabbMax, bestT)) continue;
+    const bool gpuDeformed = !m.jointIdx.empty() || !m.morphDeltaHalf.empty();
+    const float* pickMin = m.hasPosedPickAabb
+                               ? m.posedPickAabbMin
+                               : (gpuDeformed ? m.restAabbMin : m.aabbMin);
+    const float* pickMax = m.hasPosedPickAabb
+                               ? m.posedPickAabbMax
+                               : (gpuDeformed ? m.restAabbMax : m.aabbMax);
+    float boundsT = 0.0f;
+    if (!hitAabb(pickMin, pickMax, bestT, &boundsT)) continue;
+    if (boundsT < bestBoundsT) {
+      bestBoundsT = boundsT;
+      bestBounds = static_cast<int>(mi);
+    }
+
+    // Static next meshes normally arrive here after FreeMeshSurfaceCPU (and,
+    // once auxiliary upload is done, without indices too). Use the closest
+    // retained object bound instead of making selection depend on whether a CPU
+    // geometry copy happened to survive. GPU-deformed meshes also use bounds:
+    // their retained vertices are the rest pose, not the shape on screen.
+    if (m.vertices.empty() || m.indices.size() < 3 || gpuDeformed) continue;
 
     light3d::Mat4 W;
     for (int k = 0; k < 16; ++k) W.m[k] = m.world[k];
@@ -3817,7 +3868,7 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
       }
     }
   }
-  return best;
+  return best >= 0 ? best : bestBounds;
 }
 
 std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
@@ -4077,11 +4128,15 @@ void Gui::drawViewport() {
       ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(42, 48, 58, 220));
       ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(64, 72, 86, 240));
       if (ImGui::Button("?", ImVec2(buttonSize, buttonSize))) {
-        showNavHelp_ = !showNavHelp_;
+        cycleNavigationHelpMode();
       }
       navButtonHovered = ImGui::IsItemHovered();
       if (navButtonHovered) {
-        ImGui::SetTooltip("Viewport navigation");
+        const char* mode = navigationHelpMode_ == NavigationHelpMode::Full
+                               ? "full"
+                               : (navigationHelpMode_ == NavigationHelpMode::Simple
+                                      ? "simple" : "none");
+        ImGui::SetTooltip("Viewport navigation: %s (F1 cycles)", mode);
       }
       ImGui::PopStyleColor(3);
       ImGui::PopStyleVar();
