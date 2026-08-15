@@ -4911,51 +4911,41 @@ void VulkanRenderer::destroyScene() {
   destroyIblImages();
 }
 
-void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
-                                int textureCount) {
-  if (device_) vkDeviceWaitIdle(device_);
-  destroyScene();  // resets texPool_, clears texDescs_, sets whiteDesc_ = NULL
-  rtTextureTableDirty_ = true;
+void VulkanRenderer::growTextureSlots(int textureCount) {
+  const size_t n = textureCount > 0 ? static_cast<size_t>(textureCount) : 0;
+  if (n <= texDescs_.size()) return;  // never shrink: slots already hold live images
+  // resize(n, v) only initialises the NEW entries, so everything already
+  // uploaded keeps its descriptor/image/view.
+  texDescs_.resize(n, whiteDesc_);
+  texUdimArrayDescs_.resize(n, dummyArrayDesc_);
+  texSlotViews_.resize(n, whiteView_);
+  texSlotImgs_.resize(n, VK_NULL_HANDLE);
+  texSlotMems_.resize(n, VK_NULL_HANDLE);
+  texSlotBytes_.resize(n, 0);
+  texSlotWidths_.resize(n, 0);
+  texSlotHeights_.resize(n, 0);
+  texRegionUpdatable_.resize(n, 0);
+  texUdimArrayViews_.resize(n, dummyArrayView_);
+  texUdimArrayImgs_.resize(n, VK_NULL_HANDLE);
+  texUdimArrayMems_.resize(n, VK_NULL_HANDLE);
+  texIsUdim_.resize(n, 0);
+  rtTexturesCpu_.resize(n);
+}
+
+void VulkanRenderer::syncSceneResources(
+    const std::vector<DrawMaterialCPU>& materials, int textureCount) {
+  if (!device_) return;
+  // Same job GLRenderer::syncSceneResources does: make room for the texture
+  // slots and materials that streamed in after beginScene. Materials are
+  // append-only in the next loader, so repacking the whole table is safe.
+  growTextureSlots(textureCount);
   rtMaterialsCpu_ = materials;
-  rtTexturesCpu_.resize(textureCount > 0 ? static_cast<size_t>(textureCount) : 0);
+  rtTextureTableDirty_ = true;
+  updateMaterialTables(materials);
+}
 
-  // Default white texture descriptor + one white slot per texture (filled lazily).
-  whiteDesc_ = allocTexDescriptor(whiteView_);
-  blackDesc_ = allocTexDescriptor(blackView_);
-  dummyArrayDesc_ = allocTexDescriptor(dummyArrayView_);
-  dummyLutDesc_ = allocTexDescriptor(dummyLutView_);
-  blackCubeDesc_ = allocTexDescriptor(blackCubeView_);  // IBL fallback (21/22)
-  texDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, whiteDesc_);
-  texUdimArrayDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-                            dummyArrayDesc_);
-  texSlotViews_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-                       whiteView_);
-  texSlotImgs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-                      VK_NULL_HANDLE);
-  texSlotMems_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-                      VK_NULL_HANDLE);
-  texSlotBytes_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-                       0);
-  texSlotWidths_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-                        0);
-  texSlotHeights_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-                         0);
-  texRegionUpdatable_.assign(
-      textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
-  texUdimArrayViews_.assign(
-      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-      dummyArrayView_);
-  texUdimArrayImgs_.assign(
-      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-      VK_NULL_HANDLE);
-  texUdimArrayMems_.assign(
-      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-      VK_NULL_HANDLE);
-  texIsUdim_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
-  if (createUdimLookupAtlas(textureCount))
-    udimLutAtlasDesc_ = allocTexDescriptor(udimLutAtlasView_);
-  if (!udimLutAtlasDesc_) udimLutAtlasDesc_ = dummyLutDesc_;
-
+void VulkanRenderer::updateMaterialTables(
+    const std::vector<DrawMaterialCPU>& materials) {
   // RT materials SSBO: 3 vec4 (12 floats) per material -- baseColor.rgb+alpha,
   // (metallic, roughness, alphaMode, alphaCutoff), emissive.rgb+0. The raster
   // path's per-draw push constants still read the shared scalar material lanes
@@ -5024,6 +5014,54 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     materialSets_.clear();
   }
   refreshMaterialDescriptors();
+}
+
+void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
+                                int textureCount) {
+  if (device_) vkDeviceWaitIdle(device_);
+  destroyScene();  // resets texPool_, clears texDescs_, sets whiteDesc_ = NULL
+  rtTextureTableDirty_ = true;
+  rtMaterialsCpu_ = materials;
+  rtTexturesCpu_.resize(textureCount > 0 ? static_cast<size_t>(textureCount) : 0);
+
+  // Default white texture descriptor + one white slot per texture (filled lazily).
+  whiteDesc_ = allocTexDescriptor(whiteView_);
+  blackDesc_ = allocTexDescriptor(blackView_);
+  dummyArrayDesc_ = allocTexDescriptor(dummyArrayView_);
+  dummyLutDesc_ = allocTexDescriptor(dummyLutView_);
+  blackCubeDesc_ = allocTexDescriptor(blackCubeView_);  // IBL fallback (21/22)
+  texDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, whiteDesc_);
+  texUdimArrayDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                            dummyArrayDesc_);
+  texSlotViews_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                       whiteView_);
+  texSlotImgs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                      VK_NULL_HANDLE);
+  texSlotMems_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                      VK_NULL_HANDLE);
+  texSlotBytes_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                       0);
+  texSlotWidths_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                        0);
+  texSlotHeights_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                         0);
+  texRegionUpdatable_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
+  texUdimArrayViews_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+      dummyArrayView_);
+  texUdimArrayImgs_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+      VK_NULL_HANDLE);
+  texUdimArrayMems_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+      VK_NULL_HANDLE);
+  texIsUdim_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
+  if (createUdimLookupAtlas(textureCount))
+    udimLutAtlasDesc_ = allocTexDescriptor(udimLutAtlasView_);
+  if (!udimLutAtlasDesc_) udimLutAtlasDesc_ = dummyLutDesc_;
+
+  updateMaterialTables(materials);
 }
 
 void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,

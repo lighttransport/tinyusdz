@@ -45,6 +45,13 @@ class VulkanRenderer final : public Renderer {
   bool resizeHeadless(int w, int h) override;
   bool initImGui(std::string* err) override;
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
+  // Progressive/streaming loads call this as more materials and textures arrive
+  // after the initial beginScene. Without it (the base class default is a
+  // no-op, which this backend used to inherit) the texture-slot arrays stayed
+  // at their first-event size, every later uploadTexture() for a higher slot
+  // was dropped, and interactively loaded scenes rendered untextured.
+  void syncSceneResources(const std::vector<DrawMaterialCPU>& materials,
+                          int textureCount) override;
   void setLights(const std::vector<DrawLightCPU>& lights,
                  size_t meshCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
@@ -396,6 +403,12 @@ class VulkanRenderer final : public Renderer {
   bool initVulkanImGuiBackend(std::string* err);
   void destroyOffscreen();
   void destroyScene();
+  // Shared by beginScene and syncSceneResources: (re)pack the per-material CPU
+  // tables and (re)allocate + refresh the material descriptor sets.
+  void updateMaterialTables(const std::vector<DrawMaterialCPU>& materials);
+  // Grow the per-texture-slot arrays to `textureCount`, leaving already
+  // populated slots untouched (std::vector::resize only fills NEW entries).
+  void growTextureSlots(int textureCount);
 
   uint32_t findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props) const;
   // Create a host-visible buffer initialised with `data`. When `poolable` is true the
