@@ -3434,6 +3434,43 @@ bool App::sceneIsNextDeformable() const {
 // The rest pose is snapshotted on first use and restored before every re-pose, so
 // this is idempotent and can run at any time code in any order. Only deformable
 // meshes are copied. Returns true when draw_ now holds the pose at `time`.
+bool App::ensureRtTexturePayloads() {
+  // The CUDA/HIP/CPU tracers build their texture table from draw_.textures'
+  // CPU payloads (BuildHostTextureTable), but the RASTER residency streamer
+  // deliberately drops those payloads: updateTextureResidency() releases each
+  // one right after the GPU upload succeeds, and again whenever it evicts a
+  // slot, keeping only the source identity so the pixels can be re-decoded on
+  // demand ("eviction/full-res promotion re-decodes the ordinary file instead
+  // of pinning a duplicate CPU block"). So any RT build that happens AFTER the
+  // viewport has rasterized a few frames -- i.e. every interactive switch to
+  // CUDA/HIP/CPU RT, as opposed to starting up with --cuda/--hip/--cpu-rt --
+  // found the payloads gone and traced an untextured scene.
+  //
+  // Re-decode them here, on the main thread, before the tracer reads draw_.
+  // This is the same on-demand re-decode the residency streamer itself uses,
+  // so it costs a decode (not a pinned duplicate) and keeps the VRAM budget
+  // machinery untouched. Vulkan hardware ray query is unaffected: it samples
+  // the already-uploaded GPU textures rather than draw_.
+  bool decodedAny = false;
+  for (DrawTextureCPU& tex : draw_.textures) {
+    if (!tex.deferredDecode && !tex.image.data.empty()) continue;
+    if (tex.isUdim || tex.isPtex) continue;  // never released above
+    DrawTextureCPU placeholder = tex;
+    placeholder.deferredDecode = true;
+    DrawTextureCPU decoded;
+    // Full resolution (budget 0): the tracer has no LOD/streaming of its own,
+    // so a coarse mip here would be the permanent quality of the RT image.
+    TextureRuntimeOptions runtime = loadOpts_.textureOptions;
+    runtime.maxTextureSize = 0;
+    if (DecodeDeferredDrawTexture(placeholder, runtime, /*budgetBytes=*/0,
+                                  &decoded)) {
+      tex = std::move(decoded);
+      decodedAny = true;
+    }
+  }
+  return decodedAny;
+}
+
 bool App::poseNextDrawForTracer(double time) {
   if (!sceneIsNextDeformable()) return false;
   if (nextRestVerts_.empty()) {
@@ -3931,6 +3968,7 @@ bool App::renderHipViewport() {
       hipBuildStart_ = std::chrono::steady_clock::now();
       const float dispScale = gui_.displacementScale();  // read on the main thread
       poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
+      ensureRtTexturePayloads();         // ditto: re-decode raster-released texture payloads
       // The worker reads draw_ (stable while building: the re-pose below only runs
       // once the build has completed) and builds + uploads on the device
       // (hipSetDevice runs in build()).
@@ -4094,6 +4132,7 @@ bool App::renderCudaViewport() {
       cudaBuildStart_ = std::chrono::steady_clock::now();
       const float dispScale = gui_.displacementScale();  // read on the main thread
       poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
+      ensureRtTexturePayloads();         // ditto: re-decode raster-released texture payloads
       cudaBuildThread_ = std::thread([this, dispScale] {
         std::string e;
         const bool ok = cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
@@ -4194,6 +4233,7 @@ bool App::renderCpuViewport() {
       cpuBuildStarted_ = true;
       const float dispScale = gui_.displacementScale();  // read on the main thread
       poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
+      ensureRtTexturePayloads();         // ditto: re-decode raster-released texture payloads
       cpuBuildThread_ = std::thread([this, dispScale] {
         std::string e;
         const bool ok = cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
@@ -4808,6 +4848,10 @@ int App::run(const std::string& initialFile, int maxFrames,
                      : reconvApplied_;
     tl.playing = animPlaying_;
     tl.converting = reconvActive_;
+    // Must precede setTimeline(): that triggers rebuildSubsetHighlight(), which
+    // needs to know whether draw_ currently holds REST or already-POSED
+    // vertices (poseNextDrawForTracer leaves it posed after an RT build).
+    gui_.setDrawIsPosed(std::isfinite(nextTracerPosedTime_));
     gui_.setTimeline(tl);
     Gui::SkinningInfo si;
     si.requested = skinningRequested_;
@@ -5270,6 +5314,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     // The tracer builds from draw_ geometry, which the next loader hands over in
     // its REST pose (the deform lives in the GPU skin/morph channels). Pose it.
     poseNextDrawForTracer(animTime_);
+    ensureRtTexturePayloads();  // raster frames may have released them
     auto buildCudaScene = [&]() {
       BuildProgress progress;
       std::atomic<bool> monitoring{true};
@@ -5360,6 +5405,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   if (hipRt_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
     poseNextDrawForTracer(animTime_);  // as CUDA above
+    ensureRtTexturePayloads();         // as CUDA above
     // A windowed --frames run already built (and per-pose refit/rebuilt) the
     // interactive scene at this very time code: trace THAT instead of paying a
     // redundant full rebuild. This is also what lets the refit parity gate see

@@ -363,6 +363,12 @@ class App
   // they cannot be fed the way Vulkan RT is. Restores the retained rest pose
   // first, so it is idempotent across time codes. True when draw_ now holds `time`.
   bool poseNextDrawForTracer(double time);
+  // Re-decode any draw_ texture whose CPU payload the raster residency
+  // streamer released, so the CUDA/HIP/CPU tracers (which build their texture
+  // table from draw_) see real pixels instead of empty slots. Main thread;
+  // call before handing draw_ to a tracer build. Returns true if it decoded
+  // anything.
+  bool ensureRtTexturePayloads();
   // Non-GPU (ray-traced / CPU-skinned) path: when manual blendshape weights
   // change, re-bake the deformed geometry + BLAS via an async reconvert.
   void maybeReconvertForManualBlend();
