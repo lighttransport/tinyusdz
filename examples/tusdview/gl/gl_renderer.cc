@@ -4197,6 +4197,34 @@ ViewportTexHandle GLRenderer::viewportTexture() const {
   return static_cast<ViewportTexHandle>(colorTex_);
 }
 
+bool GLRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
+  // Composite an externally-traced RGBA8 image (CUDA/HIP/CPU RT) into the
+  // offscreen viewport target for this frame, mirroring
+  // VulkanRenderer::uploadViewportImage. Called instead of drawMeshes()/the
+  // raster 3D pass -- the per-frame dispatch in App::run() is either/or, so
+  // there is no concurrent write to colorTex_ from renderFrame() to guard
+  // against.
+  if (!rgba || w < 1 || h < 1) return false;
+  ensureFbo(w, h);
+  // colorTex_ is bottom-up (GL framebuffer convention; see captureViewport's
+  // flip and caps_.flipViewportV=true, which tells gui.cc to flip the display
+  // UVs to compensate). `rgba` is top-down, so flip rows going in rather than
+  // leaving the mismatch to the display-time flip, which would otherwise show
+  // this image upside down relative to the normal raster content.
+  const size_t rowBytes = static_cast<size_t>(w) * 4;
+  flippedUploadScratch_.resize(rowBytes * static_cast<size_t>(h));
+  for (int y = 0; y < h; ++y) {
+    std::memcpy(&flippedUploadScratch_[static_cast<size_t>(y) * rowBytes],
+                rgba + static_cast<size_t>(h - 1 - y) * rowBytes, rowBytes);
+  }
+  glBindTexture(GL_TEXTURE_2D, colorTex_);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                  flippedUploadScratch_.data());
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return true;
+}
+
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
 // Shared composite: draw `drawData` to the default framebuffer + swap. Used by
 // present() (live, main thread) and presentThreaded() (render thread).
