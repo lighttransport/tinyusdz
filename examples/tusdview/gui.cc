@@ -25,6 +25,7 @@
 #include "gui_stringify.hh"
 #include "imgui.h"
 #include "imgui_internal.h"  // DockBuilder*
+#include "next_scene_loader.hh"  // BuildNextRtDeformedVertices (selection-highlight re-pose)
 #include "pprint-enum.hh"
 #include "skinning.hh"
 #include "tinyusdz.hh"
@@ -956,15 +957,45 @@ void Gui::rebuildSubsetHighlight() {
   // World-space orange edge lines (for the Vulkan line-pipeline highlight).
   const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
   const float* W = m.world;  // column-major
+  // GL draws this mesh's highlight through the GPU-deformed polygon overlay
+  // (gl_renderer.cc's highlightMeshIndex path), so it naturally follows
+  // skinning. Vulkan has no wireframe pass and relies entirely on these
+  // CPU-built lines (draw_'s m.vertices are always REST pose -- GPU skinning
+  // deforms in the vertex shader without writing back to the CPU array), so
+  // they must be posed here or a skinned selection shows its frozen rest-pose
+  // silhouette over the moving mesh (visible as a mismatched wireframe net).
+  std::vector<DrawVertex> skinnedVerts;
+  const std::vector<DrawVertex>* srcVerts = &m.vertices;
+  if (nextStage_) {
+    // --next loader: there is no tydra RenderScene to re-pose from (see
+    // gpu_scene.hh's NextSkelBinding comment) -- re-pose via the retained next
+    // Stage instead, the same mechanism the CUDA/HIP/CPU RT tracers already
+    // use (BuildNextRtDeformedVertices, next_scene_loader.hh).
+    std::vector<RtSkinnedMeshUpload> posed;
+    if (BuildNextRtDeformedVertices(*nextStage_, *draw_, timeline_.applied,
+                                    nullptr, &posed)) {
+      for (const RtSkinnedMeshUpload& u : posed) {
+        if (u.meshIndex == mi) { skinnedVerts = u.vertices; srcVerts = &skinnedVerts; break; }
+      }
+    }
+  } else if (m.skelId >= 0 && m.skinMatrixBase >= 0 && !m.jointIdx.empty() && loaded_) {
+    std::unordered_map<int, std::vector<tinyusdz::value::matrix4d>> skinCache;
+    std::vector<tinyusdz::value::matrix4d> composed;
+    if (BuildComposedSkinningMatrices(loaded_->render, m, timeline_.applied,
+                                      &skinCache, &composed)) {
+      skinnedVerts = m.vertices;
+      if (ApplySkinningToVertices(m, composed, &skinnedVerts)) srcVerts = &skinnedVerts;
+    }
+  }
   auto wpos = [&](uint32_t vi, float o[3]) {
-    const DrawVertex& v = m.vertices[vi];
+    const DrawVertex& v = (*srcVerts)[vi];
     o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
     o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
     o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
   };
   const float orange[3] = {1.0f, 0.55f, 0.1f};
   highlightLinesData_.reserve(tri->size() * 2);
-  const size_t nv = m.vertices.size();
+  const size_t nv = srcVerts->size();
   for (size_t t = 0; t + 2 < tri->size(); t += 3) {
     const uint32_t a = (*tri)[t], b = (*tri)[t + 1], c = (*tri)[t + 2];
     if (a >= nv || b >= nv || c >= nv) continue;
