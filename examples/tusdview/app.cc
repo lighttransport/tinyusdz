@@ -3507,6 +3507,24 @@ bool App::ensureRtTexturePayloads() {
   return decodedAny;
 }
 
+void App::restoreNextDrawRestPose() {
+  // poseNextDrawForTracer writes POSED vertices into draw_ and leaves them
+  // there, so draw_ stops holding the rest pose the moment any CUDA/HIP/CPU RT
+  // build runs. Everything else that re-poses from draw_ (the selection
+  // wireframe via BuildNextRtDeformedVertices, bounds, picking) needs the REST
+  // pose as input, and the raster path GPU-skins from rest too -- so once no
+  // tracer owns draw_ any more, put it back. Without this the wireframe froze
+  // at whatever time code the last RT frame had posed: click -> RT -> raster ->
+  // playback left the highlight stuck on the old pose while the shaded mesh
+  // animated.
+  if (nextRestVerts_.empty()) return;
+  for (const auto& kv : nextRestVerts_) {
+    const size_t i = static_cast<size_t>(kv.first);
+    if (i < draw_.meshes.size()) draw_.meshes[i].vertices = kv.second;
+  }
+  nextTracerPosedTime_ = std::numeric_limits<double>::quiet_NaN();
+}
+
 bool App::poseNextDrawForTracer(double time) {
   if (!sceneIsNextDeformable()) return false;
   if (nextRestVerts_.empty()) {
@@ -3893,6 +3911,11 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
     hipInteractive_ = (targetOverlay == OverlayKind::HipRT);
     cudaInteractive_ = (targetOverlay == OverlayKind::CudaRT);
     cpuInteractive_ = (targetOverlay == OverlayKind::CpuRT);
+    // Leaving the tracers that pose draw_ in place: hand draw_ back to
+    // everyone else in its rest pose (see restoreNextDrawRestPose).
+    if (!hipInteractive_ && !cudaInteractive_ && !cpuInteractive_) {
+      restoreNextDrawRestPose();
+    }
     if (targetOverlay == OverlayKind::VulkanRT) renderer_->setRayTracing(true);
     activeOverlay_ = targetOverlay;
     previousTechnique_ = activeTechnique_;
@@ -3958,6 +3981,12 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
       resultOverlay = OverlayKind::None;
       resultTechnique = RenderTechnique::VulkanRaster;
     }
+  }
+  hipInteractive_ = (resultOverlay == OverlayKind::HipRT);
+  cudaInteractive_ = (resultOverlay == OverlayKind::CudaRT);
+  cpuInteractive_ = (resultOverlay == OverlayKind::CpuRT);
+  if (!hipInteractive_ && !cudaInteractive_ && !cpuInteractive_) {
+    restoreNextDrawRestPose();
   }
   previousTechnique_ = activeTechnique_;
   activeOverlay_ = resultOverlay;
@@ -4887,7 +4916,10 @@ int App::run(const std::string& initialFile, int maxFrames,
     // Must precede setTimeline(): that triggers rebuildSubsetHighlight(), which
     // needs to know whether draw_ currently holds REST or already-POSED
     // vertices (poseNextDrawForTracer leaves it posed after an RT build).
-    gui_.setDrawIsPosed(std::isfinite(nextTracerPosedTime_));
+    gui_.setDrawIsPosed(std::isfinite(nextTracerPosedTime_) &&
+                        (activeOverlay_ == OverlayKind::CudaRT ||
+                         activeOverlay_ == OverlayKind::HipRT ||
+                         activeOverlay_ == OverlayKind::CpuRT));
     gui_.setTimeline(tl);
     Gui::SkinningInfo si;
     si.requested = skinningRequested_;
