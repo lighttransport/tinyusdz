@@ -445,6 +445,12 @@ class App
   int reportCaptureWidth_{0};
   int reportCaptureHeight_{0};
   bool headless_{false};  // windowless offscreen rendering (Vulkan only)
+  // Mirrors run()'s local winW/winH (headless composite size) so
+  // createAndInitRenderer() can call setHeadlessSize() without needing them
+  // passed as parameters; kept in sync with the streamResizeW_/H_ live-resize
+  // handling in the main loop.
+  int headlessWinW_{0};
+  int headlessWinH_{0};
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)
   bool viewDirExplicit_{false};
@@ -502,6 +508,40 @@ class App
   // Trace the HIP viewport for one interactive frame (builds the scene on first
   // call). Returns false if HIP is unavailable / the build failed.
   bool renderHipViewport();
+
+  // --- Runtime backend switch (View menu Render Technique submenu / keybinding) ---
+  // Ground truth: activeTechnique_ decomposes into backend_ (which Renderer
+  // subclass owns the window) + activeOverlay_ (what draws into it this frame;
+  // see OverlayKind in renderer.hh). The request/consume handshake lives on
+  // Gui (Gui::hasTechniqueRequest()/requestedTechnique()), mirroring
+  // hasSkinningModeRequest_/requestedSkinningMode_ -- View menu items and the
+  // CPU RT keybinding (both in gui.cc) set it directly since Gui has no App
+  // back-pointer; App::run() drains + clears it once per frame (via
+  // gui_.clearActions()) and calls applyTechniqueSwitch(). App feeds the
+  // current technique back to Gui each frame (gui_.setActiveTechnique()) so
+  // the menu can show which one is checked.
+  RenderTechnique activeTechnique_{RenderTechnique::GLRaster};
+  OverlayKind activeOverlay_{OverlayKind::None};
+  RenderTechnique previousTechnique_{RenderTechnique::GLRaster};  // for the CPU-RT toggle keybinding
+  // Once a technique switch could happen at runtime, the CPU-geometry-free
+  // optimizations for non-deformable scenes (freed after a HIP/CUDA/CPU-RT
+  // build to cut RSS) must not run -- switching back to a raster window owner
+  // needs draw_'s CPU vertices for uploadScene(). Always true once run() has
+  // constructed a renderer (i.e. for the app's whole interactive lifetime);
+  // kept as an explicit flag so the tradeoff is visible at each free-site.
+  bool liveSwitchEnabled_{true};
+  // Construct + initialize a Renderer for `backend` (device preference, RT
+  // texture budget, host scene source, headless size, init()). Factored out of
+  // the startup path so the live-switch path (applyTechniqueSwitch) can reuse
+  // the exact same sequence instead of duplicating it.
+  bool createAndInitRenderer(Backend backend, std::string* err);
+  // Apply a requested technique switch: same-owner overlay changes (Vulkan
+  // raster <-> Vulkan RT) just flip renderer_->setRayTracing(); an owner change
+  // (GL <-> Vulkan) tears down and recreates renderer_ via
+  // createAndInitRenderer() and re-uploads draw_. Never crashes on failure --
+  // reverts to the prior technique and logs a warning instead. Returns false
+  // (and leaves activeTechnique_ unchanged) on failure.
+  bool applyTechniqueSwitch(RenderTechnique t);
   // Encode an RGBA8 window grab and broadcast it. `motion`=true sends a small
   // low-quality JPEG (fast, for interaction); false sends a full-resolution
   // lossless frame in streamIdleCodec_ (the stable-state refinement).

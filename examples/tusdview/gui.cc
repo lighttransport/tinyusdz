@@ -589,12 +589,32 @@ void Gui::drawDockspaceAndMenu() {
         ImGui::EndMenu();
       }
       ImGui::Separator();
-      // Ray tracing (Vulkan only; disabled when the device/build can't do it).
-      // The checkmark mirrors the renderer's actual technique.
-      const bool rtAvail = renderer_ && renderer_->rayTracingAvailable();
-      const bool rtOn = renderer_ && renderer_->rayTracingActive();
-      if (ImGui::MenuItem("Ray tracing (Vulkan)", nullptr, rtOn, rtAvail)) {
-        if (renderer_) renderer_->setRayTracing(!rtOn);
+      // Runtime backend switch: GL raster / Vulkan raster / Vulkan RT live-
+      // switchable today (Phase 1); CUDA/HIP/CPU RT entries join in later
+      // phases. Vulkan RT availability mirrors the renderer's actual support;
+      // Vulkan Raster is shown enabled whenever Vulkan was compiled in even
+      // while GL currently owns the window (a cheap capability-only probe
+      // replaces this optimistic default in a later polish pass) -- a failed
+      // switch degrades gracefully rather than crashing.
+      if (ImGui::BeginMenu("Render Technique")) {
+#if defined(HAVE_VULKAN)
+        const bool vulkanCompiled = true;
+#else
+        const bool vulkanCompiled = false;
+#endif
+        const bool vkOwner = activeTechnique_ != RenderTechnique::GLRaster;
+        const bool rtAvail = vkOwner && renderer_ && renderer_->rayTracingAvailable();
+        auto item = [&](RenderTechnique t, bool enabled) {
+          if (ImGui::MenuItem(RenderTechniqueLabel(t), nullptr,
+                              activeTechnique_ == t, enabled)) {
+            hasTechniqueRequest_ = true;
+            requestedTechnique_ = t;
+          }
+        };
+        item(RenderTechnique::GLRaster, true);
+        item(RenderTechnique::VulkanRaster, vulkanCompiled);
+        item(RenderTechnique::VulkanRT, vulkanCompiled && (vkOwner ? rtAvail : true));
+        ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("Skinning")) {
         auto item = [&](SkinningMode mode, const char* label) {
