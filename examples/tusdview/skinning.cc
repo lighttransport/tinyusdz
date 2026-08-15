@@ -405,6 +405,13 @@ void NormalizeSkinWeights(std::vector<float>* weights, size_t pointCount,
   }
 }
 
+}  // namespace
+
+// BuildComposedSkinningMatrices/ApplySkinningToVertices are declared in
+// skinning.hh (Gui::rebuildSubsetHighlight also calls them, to pose the
+// Vulkan CPU-line selection highlight -- see gui.cc), so this stretch needs
+// external linkage; everything above and below stays in the anonymous
+// namespace as internal helpers.
 matrix4d MatrixFromDraw(const float m[16]) {
   matrix4d out = matrix4d::identity();
   for (int r = 0; r < 4; ++r) {
@@ -585,6 +592,8 @@ bool ApplySkinningToVertices(const DrawMeshCPU& dm,
   });
   return true;
 }
+
+namespace {
 
 void RecomputeSmoothNormals(std::vector<DrawVertex>* verts,
                             const std::vector<uint32_t>& indices,

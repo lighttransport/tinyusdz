@@ -59,6 +59,27 @@ bool BuildSkeletonJointWorlds(const tinyusdz::tydra::RenderScene& render,
                               int skelId, double timecode,
                               std::vector<tinyusdz::value::matrix4d>* worldOut);
 
+// Per-mesh composed skinning matrices (geomBind * skinMat * skeletonWorld *
+// inverse(meshWorld), USD row-vector convention -- exactly what
+// ApplySkinningToVertices consumes), for mesh `dm` at `timecode`. `skinCache`
+// memoizes BuildSkinningMatrices per skeleton id across calls sharing one
+// cache (e.g. looping a scene's meshes for one frame); pass a fresh/empty map
+// if that reuse isn't wanted. False (composed left empty) if `dm` isn't
+// skinned or its skeleton has no matrices at `timecode`.
+bool BuildComposedSkinningMatrices(
+    const tinyusdz::tydra::RenderScene& render, const DrawMeshCPU& dm,
+    double timecode,
+    std::unordered_map<int, std::vector<tinyusdz::value::matrix4d>>* skinCache,
+    std::vector<tinyusdz::value::matrix4d>* composed);
+
+// Linear-blend-skin `dm`'s vertices (rest pose, read from *verts on input) in
+// place using `mats` (one composed matrix per joint, BuildComposedSkinningMatrices'
+// output; indexed by dm.jointIdx's absolute bone-matrix rows via dm.skinMatrixBase).
+// No-op (returns false) if `dm` carries no skin attributes matching *verts's size.
+bool ApplySkinningToVertices(const DrawMeshCPU& dm,
+                             const std::vector<tinyusdz::value::matrix4d>& mats,
+                             std::vector<DrawVertex>* verts);
+
 // Pack the per-frame GPU bone texture from `render` into `frame`, using the
 // per-mesh skin layout stored in `draw`. Also updates skinned mesh AABBs in
 // `draw`; scene bounds stay stable during playback to avoid grid/helper scale

@@ -90,7 +90,16 @@ class Gui {
   }
   void setLoadStatus(const LoadStatus& s) { loadStatus_ = s; }
   void setUploadStatus(const UploadStatus& s) { upload_ = s; }
-  void setTimeline(const TimelineInfo& t) { timeline_ = t; }
+  // Re-poses the selection-highlight wireframe (rebuildSubsetHighlight) as
+  // playback/scrub advances a skinned selection -- it is otherwise only
+  // rebuilt on selection change, so a skinned mesh's highlight would freeze
+  // at the pose it was selected at (most visibly the T-pose at frame 0)
+  // while the shaded mesh keeps animating underneath.
+  void setTimeline(const TimelineInfo& t) {
+    const bool poseChanged = t.applied != timeline_.applied;
+    timeline_ = t;
+    if (poseChanged) rebuildSubsetHighlight();
+  }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setCameraLens(const RtCameraLens& lens) { cameraLens_ = lens; }
   void setBudget(LoadControl* b) { budget_ = b; }
