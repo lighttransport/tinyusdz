@@ -274,6 +274,10 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   viewVisible_.clear();
   revealSelectionInHierarchy_ = false;
   // Start with nothing selected; the user selects via the viewport or hierarchy.
+  // Drop any highlight geometry the previous scene's selection left behind --
+  // it is in the OLD scene's world space, and the Vulkan backend would keep
+  // drawing those lines over the new scene (see clearSelection).
+  rebuildSubsetHighlight();
 }
 
 void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
@@ -1038,6 +1042,13 @@ void Gui::clearSelection() {
   inspectorCachePrim_ = nullptr;
   inspectorCachePath_.clear();
   inspectorCacheRows_.clear();
+  // Drop the highlight geometry too, exactly as selecting rebuilds it. The GL
+  // backend keys its selection overlay off highlightMeshIndex (cleared to -1
+  // above), so it stops drawing on its own -- but the Vulkan backend has no
+  // wireframe pass and draws the CPU-built world-space edge lines instead, so
+  // without this the last selection's wireframe stayed on screen forever after
+  // deselecting.
+  rebuildSubsetHighlight();
 }
 
 void Gui::setCullAsync(bool on) {
