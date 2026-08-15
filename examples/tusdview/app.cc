@@ -3717,6 +3717,153 @@ void App::renderThreadMain() {
 }
 #endif  // TUSDVIEW_ENABLE_GL_THREAD
 
+bool App::createAndInitRenderer(Backend backend, std::string* err) {
+  if (backend == Backend::GL) {
+    renderer_ = CreateGLRenderer();
+  }
+#if defined(HAVE_VULKAN)
+  else {
+    renderer_ = CreateVulkanRenderer();
+  }
+#endif
+  if (!renderer_) {
+    if (err) *err = "no renderer for requested backend";
+    return false;
+  }
+  ++rendererGeneration_;
+  renderer_->setDevicePreference(devicePreference_);
+  const size_t rtTextureBudget =
+      loadOpts_.textureOptions.textureBudgetMB > 0
+          ? static_cast<size_t>(loadOpts_.textureOptions.textureBudgetMB) *
+                1024ull * 1024ull
+          : (loadOpts_.textureGpuBudgetBytes > 0
+                 ? loadOpts_.textureGpuBudgetBytes / 4u
+                 : 0u);
+  renderer_->setRtTextureBudgetBytes(rtTextureBudget);
+  // draw_ is a stable App member (same address for the app's lifetime); the
+  // Vulkan compute-BVH RT fallback reads it lazily via BuildHostScene() when
+  // it needs to rebuild its software BVH, same data the CUDA/HIP tracers'
+  // build(draw_, ...) calls already use elsewhere in this file.
+  renderer_->setHostSceneSource(&draw_);
+  if (headless_) renderer_->setHeadlessSize(headlessWinW_, headlessWinH_);
+
+  std::string initErr;
+  if (renderer_->init(headless_ ? nullptr : window_, &initErr)) {
+    backend_ = backend;
+    return true;
+  }
+
+  if (backend == Backend::Vulkan && allowBackendFallback_ && !headless_) {
+    LOGW("Vulkan renderer init failed: %s; falling back to OpenGL.", initErr.c_str());
+    renderer_->shutdown();
+    renderer_.reset();
+    renderer_ = CreateGLRenderer();
+    std::string glErr;
+    if (!renderer_ || !renderer_->init(window_, &glErr)) {
+      if (err) *err = glErr;
+      renderer_.reset();
+      return false;
+    }
+    backend_ = Backend::GL;
+    return true;
+  }
+
+  if (err) *err = initErr;
+  renderer_.reset();
+  return false;
+}
+
+bool App::applyTechniqueSwitch(RenderTechnique t) {
+  if (t == activeTechnique_) return true;
+
+  Backend newOwner = backend_;
+  const bool ownerMandated = TechniqueRequiresOwner(t, &newOwner);
+  const Backend targetOwner = ownerMandated ? newOwner : backend_;
+  const OverlayKind targetOverlay = OverlayForTechnique(t);
+
+  if (targetOwner == backend_) {
+    // Same window owner: only the overlay changes.
+    if (targetOverlay == OverlayKind::VulkanRT) {
+      if (!renderer_ || !renderer_->rayTracingAvailable()) {
+        LOGW("Vulkan ray tracing is unavailable; staying on %s.",
+             RenderTechniqueLabel(activeTechnique_));
+        return false;
+      }
+      renderer_->setRayTracing(true);
+    } else if (activeOverlay_ == OverlayKind::VulkanRT) {
+      if (renderer_) renderer_->setRayTracing(false);
+    }
+    activeOverlay_ = targetOverlay;
+    previousTechnique_ = activeTechnique_;
+    activeTechnique_ = t;
+    return true;
+  }
+
+  // Window-owner change (GL <-> Vulkan): full teardown + rebuild + reupload.
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  if (renderThreadActive_) {
+    LOGW("Live backend switching is not supported together with --threaded; ignoring request.");
+    return false;
+  }
+#endif
+  if (!renderer_) return false;
+
+  const Backend prevOwner = backend_;
+  const RenderTechnique prevTechnique = activeTechnique_;
+  renderer_->shutdown();
+  renderer_.reset();
+
+  std::string err;
+  bool ok = createAndInitRenderer(targetOwner, &err);
+  if (!ok) {
+    LOGW("Switching to %s failed: %s; reverting to %s.",
+         RenderTechniqueLabel(t), err.c_str(), RenderTechniqueLabel(prevTechnique));
+    std::string restoreErr;
+    if (!createAndInitRenderer(prevOwner, &restoreErr)) {
+      LOGE("Failed to restore the previous renderer after a failed backend switch: %s",
+           restoreErr.c_str());
+      return false;
+    }
+  }
+
+  if (!initImGui(&err)) {
+    LOGE("ImGui init failed after backend switch: %s", err.c_str());
+    return false;
+  }
+  if (!renderer_->uploadScene(draw_, &err)) {
+    LOGW("Scene re-upload failed after backend switch: %s", err.c_str());
+  }
+
+  RenderTechnique resultTechnique;
+  OverlayKind resultOverlay;
+  if (!ok) {
+    resultTechnique = prevTechnique;
+    resultOverlay = OverlayForTechnique(prevTechnique);
+  } else if (backend_ != targetOwner) {
+    // createAndInitRenderer's own Vulkan-init-failure fallback kicked in.
+    LOGW("Requested %s unavailable; using GL raster instead.", RenderTechniqueLabel(t));
+    resultTechnique = RenderTechnique::GLRaster;
+    resultOverlay = OverlayKind::None;
+  } else {
+    resultTechnique = t;
+    resultOverlay = targetOverlay;
+  }
+
+  if (resultOverlay == OverlayKind::VulkanRT) {
+    if (renderer_->rayTracingAvailable()) {
+      renderer_->setRayTracing(true);
+    } else {
+      LOGW("Vulkan ray tracing unavailable after switch; staying on Vulkan raster.");
+      resultOverlay = OverlayKind::None;
+      resultTechnique = RenderTechnique::VulkanRaster;
+    }
+  }
+  previousTechnique_ = activeTechnique_;
+  activeOverlay_ = resultOverlay;
+  activeTechnique_ = resultTechnique;
+  return ok;
+}
+
 bool App::renderHipViewport() {
   // The initial model loads on a worker thread; wait until it has been applied on
   // the main thread (finishLoadIfReady -> applyLoaded) and draw_ holds geometry.
@@ -3792,6 +3939,9 @@ bool App::renderHipViewport() {
     if (sceneIsNextDeformable()) return true;
     // Otherwise the scene now lives entirely in the GPU BVH; reclaim the (large)
     // CPU geometry -- the interactive trace never reads draw_ geometry again.
+    // Skipped once live technique switching is enabled: switching back to a
+    // raster window owner needs draw_'s CPU vertices to re-upload the scene.
+    if (liveSwitchEnabled_) return true;
     auto rssMB = [] {
       FILE* f = std::fopen("/proc/self/statm", "r");
       if (!f) return size_t(0);
@@ -4084,6 +4234,8 @@ int App::run(const std::string& initialFile, int maxFrames,
   int winW = 0;
   int winH = 0;
   getRequestedWindowSize(&winW, &winH);
+  headlessWinW_ = winW;
+  headlessWinH_ = winH;
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // Threaded rendering applies to the windowed GL or Vulkan path (experimental;
   // includes Vulkan ray tracing). Headless keeps the inline single-threaded path.
@@ -4152,39 +4304,40 @@ int App::run(const std::string& initialFile, int maxFrames,
     ++windowGeneration_;
   }
 
-  if (backend_ == Backend::GL) {
-    renderer_ = CreateGLRenderer();
+  {
+    const size_t rtTextureBudget =
+        loadOpts_.textureOptions.textureBudgetMB > 0
+            ? static_cast<size_t>(loadOpts_.textureOptions.textureBudgetMB) *
+                  1024ull * 1024ull
+            : (loadOpts_.textureGpuBudgetBytes > 0
+                   ? loadOpts_.textureGpuBudgetBytes / 4u
+                   : 0u);
+    cudaTracer_.setTextureBudgetBytes(rtTextureBudget);
+    hipTracer_.setTextureBudgetBytes(rtTextureBudget);
   }
-#if defined(HAVE_VULKAN)
-  else {
-    renderer_ = CreateVulkanRenderer();
-  }
-#endif
-  if (!renderer_) {
-    LOGE("no renderer for requested backend");
-    return finishRun(1);
-  }
-  ++rendererGeneration_;
-  renderer_->setDevicePreference(devicePreference_);
-  const size_t rtTextureBudget =
-      loadOpts_.textureOptions.textureBudgetMB > 0
-          ? static_cast<size_t>(loadOpts_.textureOptions.textureBudgetMB) *
-                1024ull * 1024ull
-          : (loadOpts_.textureGpuBudgetBytes > 0
-                 ? loadOpts_.textureGpuBudgetBytes / 4u
-                 : 0u);
-  renderer_->setRtTextureBudgetBytes(rtTextureBudget);
-  cudaTracer_.setTextureBudgetBytes(rtTextureBudget);
-  hipTracer_.setTextureBudgetBytes(rtTextureBudget);
-  // draw_ is a stable App member (same address for the app's lifetime); the
-  // Vulkan compute-BVH RT fallback reads it lazily via BuildHostScene() when
-  // it needs to rebuild its software BVH, same data the CUDA/HIP tracers'
-  // build(draw_, ...) calls already use elsewhere in this file.
-  renderer_->setHostSceneSource(&draw_);
-  if (headless_) renderer_->setHeadlessSize(winW, winH);
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   if (renderThreadActive_) {
+    if (backend_ == Backend::GL) {
+      renderer_ = CreateGLRenderer();
+    }
+#if defined(HAVE_VULKAN)
+    else {
+      renderer_ = CreateVulkanRenderer();
+    }
+#endif
+    if (!renderer_) {
+      LOGE("no renderer for requested backend");
+      return finishRun(1);
+    }
+    ++rendererGeneration_;
+    renderer_->setDevicePreference(devicePreference_);
+    // draw_ is a stable App member (same address for the app's lifetime); the
+    // Vulkan compute-BVH RT fallback reads it lazily via BuildHostScene() when
+    // it needs to rebuild its software BVH, same data the CUDA/HIP tracers'
+    // build(draw_, ...) calls already use elsewhere in this file.
+    renderer_->setHostSceneSource(&draw_);
+    if (headless_) renderer_->setHeadlessSize(headlessWinW_, headlessWinH_);
     // Threaded: ImGui's GLFW platform init runs on the main thread; renderer_->init()
     // (device/FBO/shaders) + the ImGui render backend run on the render thread.
     // GL: release the context here so the render thread can make it current. VK has
@@ -4214,25 +4367,17 @@ int App::run(const std::string& initialFile, int maxFrames,
         LOGW("--rt requested but ray tracing is unavailable; using rasterization.");
       }
     }
+    activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
+                                                  : (rtPath_ ? RenderTechnique::VulkanRT
+                                                             : RenderTechnique::VulkanRaster);
+    activeOverlay_ = rtPath_ ? OverlayKind::VulkanRT : OverlayKind::None;
+    previousTechnique_ = activeTechnique_;
   } else
 #endif
   {
-    if (!renderer_->init(headless_ ? nullptr : window_, &err)) {
-      if (backend_ == Backend::Vulkan && allowBackendFallback_ && !headless_) {
-        LOGW("Vulkan renderer init failed: %s; falling back to OpenGL.", err.c_str());
-        renderer_->shutdown();
-        renderer_.reset();
-        backend_ = Backend::GL;
-        err.clear();
-        renderer_ = CreateGLRenderer();
-        if (!renderer_ || !renderer_->init(window_, &err)) {
-          LOGE("renderer init failed: %s", err.c_str());
-          return finishRun(1);
-        }
-      } else {
-        LOGE("renderer init failed: %s", err.c_str());
-        return finishRun(1);
-      }
+    if (!createAndInitRenderer(backend_, &err)) {
+      LOGE("renderer init failed: %s", err.c_str());
+      return finishRun(1);
     }
 
     // Activate Vulkan ray tracing if requested and supported; else stay on raster.
@@ -4250,6 +4395,11 @@ int App::run(const std::string& initialFile, int maxFrames,
              "rasterization.");
       }
     }
+    activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
+                                                  : (rtPath_ ? RenderTechnique::VulkanRT
+                                                             : RenderTechnique::VulkanRaster);
+    activeOverlay_ = rtPath_ ? OverlayKind::VulkanRT : OverlayKind::None;
+    previousTechnique_ = activeTechnique_;
 
     if (!initImGui(&err)) {
       LOGE("ImGui init failed: %s", err.c_str());
@@ -4328,6 +4478,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       if (renderer_->resizeHeadless(streamResizeW_, streamResizeH_)) {
         winW = streamResizeW_;
         winH = streamResizeH_;
+        headlessWinW_ = winW;
+        headlessWinH_ = winH;
         markStreamActivity();  // re-render at the new size
       }
       streamResizeW_ = streamResizeH_ = 0;
@@ -4401,6 +4553,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     si.effective = skinningEffective_;
     si.reason = skinningReason_;
     gui_.setSkinning(si);
+    gui_.setActiveTechnique(activeTechnique_);
 
     // Feed the GUI the current load status for the loading modal.
     Gui::LoadStatus ls;
@@ -4503,10 +4656,14 @@ int App::run(const std::string& initialFile, int maxFrames,
     const double seekTime = gui_.seekTime();
     const bool hasSkinningModeRequest = gui_.hasSkinningModeRequest();
     const SkinningMode requestedSkinningMode = gui_.requestedSkinningMode();
+    const bool hasTechniqueRequest = gui_.hasTechniqueRequest();
+    const RenderTechnique requestedTechnique = gui_.requestedTechnique();
     animLoop_ = gui_.loopPlayback();
     animSpeed_ = gui_.playSpeed();
     tessQuality_ = gui_.tessellationQuality();
     gui_.clearActions();
+
+    if (hasTechniqueRequest) applyTechniqueSwitch(requestedTechnique);
 
     if (hasSkinningModeRequest) {
       skinningRequested_ = requestedSkinningMode;

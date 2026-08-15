@@ -27,6 +27,54 @@ namespace tusdview {
 
 enum class Backend { GL, Vulkan };
 
+// User-facing render-technique selector for the runtime backend switch (View
+// menu + CPU RT keybinding). Decomposes into a window-owning Backend (which
+// Renderer subclass owns the GLFW window/GPU context) plus an OverlayKind
+// (what actually draws into it): GLRaster/VulkanRaster select the owner with
+// no overlay; VulkanRT is Renderer::setRayTracing() inside the owner's normal
+// renderFrame(); CudaRT/HipRT/CpuRT trace externally and composite via
+// uploadViewportImage() on top of whichever owner (GL or Vulkan) is active.
+enum class RenderTechnique { GLRaster, VulkanRaster, VulkanRT, CudaRT, HipRT, CpuRT };
+enum class OverlayKind { None, VulkanRT, CudaRT, HipRT, CpuRT };
+
+// GLRaster/VulkanRaster/VulkanRT mandate a specific window owner; CudaRT/
+// HipRT/CpuRT are owner-agnostic overlays that run on top of whichever owner
+// (GL or Vulkan) is already active. Returns true and sets *owner for the
+// former group; returns false (owner left as-is) for the latter.
+inline bool TechniqueRequiresOwner(RenderTechnique t, Backend* owner) {
+  switch (t) {
+    case RenderTechnique::GLRaster:
+      if (owner) *owner = Backend::GL;
+      return true;
+    case RenderTechnique::VulkanRaster:
+    case RenderTechnique::VulkanRT:
+      if (owner) *owner = Backend::Vulkan;
+      return true;
+    default:
+      return false;
+  }
+}
+inline OverlayKind OverlayForTechnique(RenderTechnique t) {
+  switch (t) {
+    case RenderTechnique::VulkanRT: return OverlayKind::VulkanRT;
+    case RenderTechnique::CudaRT: return OverlayKind::CudaRT;
+    case RenderTechnique::HipRT: return OverlayKind::HipRT;
+    case RenderTechnique::CpuRT: return OverlayKind::CpuRT;
+    default: return OverlayKind::None;
+  }
+}
+inline const char* RenderTechniqueLabel(RenderTechnique t) {
+  switch (t) {
+    case RenderTechnique::GLRaster: return "GL Raster";
+    case RenderTechnique::VulkanRaster: return "Vulkan Raster";
+    case RenderTechnique::VulkanRT: return "Vulkan RT";
+    case RenderTechnique::CudaRT: return "CUDA RT";
+    case RenderTechnique::HipRT: return "HIP RT";
+    case RenderTechnique::CpuRT: return "CPU RT";
+  }
+  return "?";
+}
+
 struct RendererDevicePreference {
   // Vulkan device selector. Empty = automatic. Non-empty accepts either a
   // physical-device index ("0", "1", ...) or a case-insensitive substring of

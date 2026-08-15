@@ -198,6 +198,11 @@ class Gui {
   void prepareSceneSwap();
   bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
+  bool hasTechniqueRequest() const { return hasTechniqueRequest_; }
+  RenderTechnique requestedTechnique() const { return requestedTechnique_; }
+  // App calls this once per frame (before building the View menu) so the menu
+  // can show which technique is currently active.
+  void setActiveTechnique(RenderTechnique t) { activeTechnique_ = t; }
   void clearActions() {
     wantOpen_ = wantReload_ = wantQuit_ = wantCancelLoad_ = false;
     wantOpenRecent_ = false;
@@ -208,6 +213,7 @@ class Gui {
     wantTogglePlay_ = wantStop_ = hasSeek_ = false;
     wantStepForward_ = wantStepBackward_ = false;
     hasSkinningModeRequest_ = false;
+    hasTechniqueRequest_ = false;
   }
 
   // Per-frame render stats (after the last renderViewportScene). Used by the
@@ -562,6 +568,14 @@ class Gui {
   SkinningInfo skinning_;
   bool hasSkinningModeRequest_{false};
   SkinningMode requestedSkinningMode_{SkinningMode::Auto};
+  // Runtime backend switch (View > Render Technique submenu + the CPU RT
+  // keybinding, both in gui.cc): mirrors hasSkinningModeRequest_ above. App
+  // has no Gui back-pointer, so the request lives here; App::run() drains it
+  // once per frame via the accessors below, applies it, then clears it in
+  // clearActions() alongside the other one-shot UI requests.
+  bool hasTechniqueRequest_{false};
+  RenderTechnique requestedTechnique_{RenderTechnique::GLRaster};
+  RenderTechnique activeTechnique_{RenderTechnique::GLRaster};  // fed back by App each frame
   bool wantTogglePlay_{false};
   bool wantStop_{false};
   bool wantStepForward_{false};
