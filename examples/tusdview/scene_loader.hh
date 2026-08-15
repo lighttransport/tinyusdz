@@ -48,6 +48,13 @@ struct LoadOptions {
   // Explicit performance controls. Zero selects the hardware-derived default.
   unsigned compositionThreads{0};
   unsigned conversionThreads{0};
+  // Runtime scheduling controls. Zero selects generic hardware/memory-derived
+  // defaults; presets and users may override every value.
+  size_t compositionOpinionBatch{0};
+  size_t instanceChunkSamples{0};
+  size_t meshConversionChunkPrims{0};
+  size_t meshConversionChunkBytes{0};
+  size_t curveParallelMinPrims{0};
   // Number of Ptex faces to materialize in the startup fallback atlas. Zero
   // preserves eager construction; remaining faces are populated on demand.
   uint32_t ptexInitialFaces{0};
@@ -80,6 +87,9 @@ struct LoadOptions {
   // Publish a bounds/camera proxy scene from next-core's namespace checkpoint
   // while authoritative opinion composition continues.
   bool progressivePreview{false};
+  // Maximum marker boxes emitted for the asynchronous composition preview.
+  // Zero selects the generic interactive default.
+  size_t previewMaxBoxes{0};
   // Optional authored camera used to prioritize mesh conversion/admission.
   // Geometry with large projected coverage in front of this camera streams
   // before off-camera detail; empty preserves deterministic stage order.

@@ -45,6 +45,7 @@
       }
     }
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
+    prof_source_hits_ = prof_source_misses_ = prof_structure_nodes_ = 0;
 #if defined(TINYUSDZ_ENABLE_THREAD)
     // Resolve independent namespace subtrees concurrently before the serial
     // structure walk. ParallelWarmSources was previously implemented but never
@@ -60,6 +61,14 @@
       ParallelWarmSources(root_names, warm_threads, warn, err);
 #endif
     const auto structure_t0 = std::chrono::steady_clock::now();
+    // Source warming has already discovered the namespace cardinality. Reserve
+    // the flattened prim vector once before the structure pass; repeated
+    // growth moves large PrimSpec objects and is especially expensive on the
+    // 300k+ node Caldera sub-scenes. Keep small scenes on Layer's normal growth
+    // path to avoid over-reserving for sparse compositions.
+    if (sources_cache.size() >= 8192) {
+      out->reserve(sources_cache.size());
+    }
     // Structure pass (serial): walk every root, fixing each prim's slot/parent/
     // child-order/instancing and recording its (slot, sources) for opinion fill.
     fill_.clear();
@@ -119,7 +128,10 @@
                   FormatMilliseconds(elapsed_ms(structure_t1 - structure_t0)) +
                   "ms compose=" + FormatMilliseconds(prof_compose_ns_ / 1e6) +
                   "ms register=" + FormatMilliseconds(prof_reg_ns_ / 1e6) +
-                  "ms flatten=" +
+                  "ms source_hits=" + UIntToStr(prof_source_hits_) +
+                  " source_misses=" + UIntToStr(prof_source_misses_) +
+                  " nodes=" + UIntToStr(prof_structure_nodes_) +
+                  " flatten=" +
                   FormatMilliseconds(elapsed_ms(flatten_t1 - fill_t1)) +
                   "ms finalize=" +
                   FormatMilliseconds(elapsed_ms(finalize_t1 - flatten_t1)) +
@@ -497,6 +509,10 @@
       if (!grew) break;
     }
     if (level.size() < 2) return;  // not enough fan-out to parallelize
+    // Source entries are borrowed through source_seed_cache rather than copied
+    // into each worker. Keep worker fanout enabled for broad production scenes:
+    // those are exactly the inputs where stopping at a 100k-entry threshold
+    // serialized the remaining namespace and dominated cold composition.
     auto t_discover = prof ? PWClock::now() : PWClock::time_point{};
 
     // Snapshot the main resolution context built by the serial discovery above.
@@ -518,10 +534,11 @@
       wp->root_identifier = root_identifier;
       // Seed the worker with the main's resolution context so its reference
       // resolution produces identical layer-stack identities (the crux of
-      // byte-identity), and ancestors are already cached (no re-resolution).
+      // byte-identity). Source entries are borrowed from the immutable main
+      // cache; only newly resolved entries are retained in the worker delta.
       wp->layer_stacks = layer_stacks;
       wp->stack_by_id = stack_by_id;
-      wp->sources_cache = sources_cache;
+      wp->source_seed_cache = &sources_cache;
       wp->nm_pool_ = nm_pool_;  // seed the mapping pool (map_idx < seed are shared)
       workers.push_back(std::move(wp));
     }
@@ -548,7 +565,9 @@
     for (auto &t : ts) t.join();
     auto t_workers = prof ? PWClock::now() : PWClock::time_point{};
 
+    size_t worker_delta_entries = 0;
     for (int t = 0; t < W; ++t) {
+      worker_delta_entries += workers[static_cast<size_t>(t)]->sources_cache.size();
       MergeSources(*workers[static_cast<size_t>(t)], seed_stack_count,
                    seed_pool_count);
       if (warn) *warn += wwarn[static_cast<size_t>(t)];
@@ -565,7 +584,8 @@
                   " discover=" + FormatMilliseconds(ms(t_start, t_discover)) +
                   "ms workers=" + FormatMilliseconds(ms(t_discover, t_workers)) +
                   "ms merge=" + FormatMilliseconds(ms(t_workers, t_merge)) +
-                  "ms cache=" + UIntToStr(sources_cache.size()));
+                  "ms cache=" + UIntToStr(sources_cache.size()) +
+                  " delta=" + UIntToStr(worker_delta_entries));
     }
   }
 #endif  // TINYUSDZ_ENABLE_THREAD

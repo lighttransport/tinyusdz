@@ -9,6 +9,7 @@
 #include "../layer/listop-field-table.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <system_error>
@@ -748,7 +749,34 @@ void Compositor::CopyLocalOpinions(
   // source (below): the source's time samples belong with that default and
   // may ride along; any other authored target default came from a STRONGER
   // spec and blocks the source's samples (see the time-sample loop).
-  std::set<PropNameId> default_filled_from_source;
+  // This is normally empty or only a handful of entries. A tree here caused
+  // node allocations during every prim/source merge on large scenes; keep a
+  // compact list and use a linear lookup for the rare time-sample check.
+  // Most source/spec merges fill no more than a few defaults. Avoid a vector
+  // allocation on every merge; spill only unusually property-heavy specs.
+  std::array<PropNameId, 8> inline_default_filled{};
+  size_t inline_default_filled_count = 0;
+  std::vector<PropNameId> overflow_default_filled;
+  auto default_was_filled_from_source = [&](PropNameId id) {
+    if (std::find(inline_default_filled.begin(),
+                  inline_default_filled.begin() +
+                      static_cast<ptrdiff_t>(inline_default_filled_count),
+                  id) != inline_default_filled.begin() +
+                              static_cast<ptrdiff_t>(inline_default_filled_count)) {
+      return true;
+    }
+    return std::find(overflow_default_filled.begin(),
+                     overflow_default_filled.end(), id) !=
+           overflow_default_filled.end();
+  };
+  auto record_default_filled = [&](PropNameId id) {
+    if (default_was_filled_from_source(id)) return;
+    if (inline_default_filled_count < inline_default_filled.size()) {
+      inline_default_filled[inline_default_filled_count++] = id;
+    } else {
+      overflow_default_filled.push_back(id);
+    }
+  };
   PropNameTable& name_table = GetPropNameTable();
   for (const auto& slot : source.properties().slots()) {
     const std::string& pname = name_table.get(slot.name_id);
@@ -798,7 +826,7 @@ void Compositor::CopyLocalOpinions(
                                                       resolved)) {
               target.set_property_value(slot.name_id, std::move(resolved));
             }
-            default_filled_from_source.insert(slot.name_id);
+            record_default_filled(slot.name_id);
           }
         }
         // Weaker has neither: the edit rides along and resolves later.
@@ -823,7 +851,7 @@ void Compositor::CopyLocalOpinions(
       if (tgt_slot->value_offset == UINT32_MAX) {
         if (const Value* sv = source.property_value(slot.name_id)) {
           target.fill_property_value_if_absent(slot.name_id, *sv);
-          default_filled_from_source.insert(slot.name_id);
+        record_default_filled(slot.name_id);
         }
       }
       compose_connections(pname);
@@ -875,7 +903,7 @@ void Compositor::CopyLocalOpinions(
     const Value* src_val = source.property_value(slot.name_id);
     if (src_val) {
       target.add_property(slot.name_id, *src_val, slot.flags);
-      default_filled_from_source.insert(slot.name_id);
+      record_default_filled(slot.name_id);
     } else {
       // No authored default: carry the typed slot across (connection-only /
       // declared-only attribute).
@@ -1049,7 +1077,7 @@ void Compositor::CopyLocalOpinions(
         // comparing VALUES let a weaker spec's samples through whenever its
         // default happened to EQUAL the stronger spec's (false positive).
         if (tslot->value_offset != UINT32_MAX &&
-            default_filled_from_source.count(ts_prop_id) == 0) {
+            !default_was_filled_from_source(ts_prop_id)) {
           continue;
         }
       }

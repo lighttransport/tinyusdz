@@ -620,6 +620,7 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
        std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                      runStart_)
            .count()},
+      {"cpu_setup_complete_seconds", streamFullConversionSeconds_},
       {"truncated", draw_.truncated || rtBuildIncomplete}};
   report["limits"] = {
       {"gpu_memory_budget_bytes", gpuMemBudgetBytes_},
@@ -1156,6 +1157,12 @@ static void FreeMeshAuxCPU(DrawMeshCPU& m) {
 static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
   FreeMeshSurfaceCPU(m);
   FreeMeshAuxCPU(m);
+}
+
+static void FreeMeshInstanceCPU(DrawMeshCPU& m) {
+  std::vector<float>().swap(m.instanceXforms);
+  std::vector<float>().swap(m.instanceColors);
+  std::vector<float>().swap(m.instanceOpacities);
 }
 
 // Aggressive free for the HIP/CUDA RT path: after the build everything lives in
@@ -2161,6 +2168,7 @@ void App::drainProgressiveLoad() {
           FreeMeshSurfaceCPU(retained);
           compactDeferredMeshAux(draw_.meshes.size() - 1);
         }
+        if (!rasterLodEnabled_) FreeMeshInstanceCPU(retained);
       }
       if (streamAuxEager_) ++nextAux_;
       if (!streamFirstUploadLogged_ && loadOpts_.timing) {
@@ -2347,16 +2355,19 @@ void App::drainProgressiveLoad() {
       gui_.setSceneMutating(false);
       if (!streamFullConversionLogged_ && loadOpts_.timing) {
         streamFullConversionLogged_ = true;
+        streamFullConversionSeconds_ =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                         runStart_)
+                .count();
         LOGI("timing: full scene converted %.3f s",
-             std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                          runStart_)
-                 .count());
+             streamFullConversionSeconds_);
         if (deferredAuxRawBytes_ > 0) {
           LOGI("memory: deferred mesh aux %.1f MiB compressed from %.1f MiB",
                static_cast<double>(deferredAuxCompressedBytes_) / (1024.0 * 1024.0),
                static_cast<double>(deferredAuxRawBytes_) / (1024.0 * 1024.0));
         }
       }
+      if (quitAfterConvert_) quitAfterFullPresent_ = true;
     } else if (event.type == ProgressiveSceneEvent::Type::Failed) {
       streamCompleteSeen_ = true;
       gui_.setSceneMutating(false);
@@ -2410,8 +2421,10 @@ void App::stepProgressiveUpload() {
   while (nextMesh_ < draw_.meshes.size()) {
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
     if (useNextLoader_ && !needsMeshCpuGeometryForRT() &&
-        !MeshIsDeformable(draw_.meshes[nextMesh_]))
+        !MeshIsDeformable(draw_.meshes[nextMesh_])) {
       FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
+      if (!rasterLodEnabled_) FreeMeshInstanceCPU(draw_.meshes[nextMesh_]);
+    }
     ++nextMesh_;
     if (elapsedMs() > uploadBudgetMs) break;
   }
@@ -2799,6 +2812,7 @@ void App::startLoadAsync(const std::string& path) {
     streamFirstUploadLogged_ = false;
     streamFirstFrameLogged_ = false;
     streamFullConversionLogged_ = false;
+    streamFullConversionSeconds_ = 0.0;
     streamFullUploadLogged_ = false;
     streamHasUsefulGeometry_ = false;
     streamAuxEager_ = gui_.wireframeMode() != 0 ||
@@ -4257,6 +4271,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   gui_.setNextStage(nextStageSnapshot_.get());
   gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
+  gui_.setLoadOptions(&loadOpts_);
   // Viewport-only capture (no docked GUI chrome) applies to any fixed-frame
   // --screenshot run, windowed or headless: a windowed run's docked "Viewport"
   // panel gets whatever fraction of the window ImGui's dock builder assigns it

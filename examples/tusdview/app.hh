@@ -144,6 +144,7 @@ class App
   const LoadOptions& loadOptions() const { return loadOpts_; }
   void setUploadBudgetMs(double ms) { uploadBudgetMs_ = ms; }
   void setQuitAfterFullUpload(bool on) { quitAfterFullUpload_ = on; }
+  void setQuitAfterConvert(bool on) { quitAfterConvert_ = on; }
 
   // Use the `next` lazy loader + tydra-next converter (flat-shaded large-scene
   // mesh preview) instead of the default Tydra path. See next_scene_loader.cc.
@@ -593,7 +594,9 @@ class App
   size_t deferredAuxRawBytes_{0};
   size_t deferredAuxCompressedBytes_{0};
   bool quitAfterFullUpload_{false};
+  bool quitAfterConvert_{false};
   bool quitAfterFullPresent_{false};
+  double streamFullConversionSeconds_{0.0};
   float streamBoundsMin_[3]{1e30f, 1e30f, 1e30f};
   float streamBoundsMax_[3]{-1e30f, -1e30f, -1e30f};
   size_t streamUploadedTriangles_{0};

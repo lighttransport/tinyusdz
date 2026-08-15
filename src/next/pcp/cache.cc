@@ -275,7 +275,25 @@ struct SrcCache {
       i = (i + 1) & mask;
     }
   }
-  bool contains(const std::string &k) { return find(k) != nullptr; }
+  const std::vector<Src> *find(const std::string &k) const {
+    if (slots_.empty()) return nullptr;
+    const uint64_t h = Hash(k);
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    for (;;) {
+      const Slot &s = slots_[i];
+      if (s.state == 0) return nullptr;
+      if (s.state == 1 && s.hash == h) {
+        const std::string &key = keys_[s.idx];
+        if (key.size() == k.size() &&
+            std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          return &vals_[s.idx];
+        }
+      }
+      i = (i + 1) & mask;
+    }
+  }
+  bool contains(const std::string &k) const { return find(k) != nullptr; }
 
   // find-or-insert; returns a reference that stays valid across later inserts.
   std::vector<Src> &get_or_create(const std::string &k) {
@@ -499,6 +517,33 @@ struct Cache::Impl {
 
   std::map<std::string, std::unique_ptr<PrimIndex>> index_cache;
   SrcCache sources_cache;  // path -> expanded sources (open-addressed, stable values)
+  // Parallel warm workers borrow the main cache as an immutable seed and keep
+  // only newly resolved entries in sources_cache. This avoids deep-copying the
+  // full source cache once per worker.
+  const SrcCache *source_seed_cache = nullptr;
+  const std::vector<Src> *FindCachedSources(const std::string &key) const {
+    if (const std::vector<Src> *local = sources_cache.find(key)) {
+      return local;
+    }
+    if (source_seed_cache) {
+      return source_seed_cache->find(key);
+    }
+    return nullptr;
+  }
+  bool HasCachedSources(const std::string &key) const {
+    return FindCachedSources(key) != nullptr;
+  }
+  std::vector<Src> &GetOrCreateCachedSources(const std::string &key) {
+    if (std::vector<Src> *local = sources_cache.find(key)) return *local;
+    if (source_seed_cache) {
+      if (const std::vector<Src> *seed = source_seed_cache->find(key)) {
+        // This path is only used when a caller is about to populate or mutate
+        // an entry that was found through the immutable seed.
+        return sources_cache.get_or_create(key) = *seed;
+      }
+    }
+    return sources_cache.get_or_create(key);
+  }
   std::set<std::string> sources_in_progress;
   // Reentrancy guard for SourcesForRelocatedContent: derives a relocate
   // arrival's CONTENT from the source's COMPOSED parent (SourcesForSite), which

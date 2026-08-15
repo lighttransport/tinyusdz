@@ -1979,7 +1979,7 @@
       return "!" + UIntToStr(stack) + ":" + path;
     };
     const std::string key = raw_key(site);
-    if (const std::vector<Src> *hit = sources_cache.find(key)) return *hit;
+    if (const std::vector<Src> *hit = FindCachedSources(key)) return *hit;
     if (!sources_in_progress.insert(key).second) return empty_sources_;
     ++isolated_reloc_depth_;
 
@@ -1996,7 +1996,7 @@
         pending.push_back(cur);
         Path parent = cur.parent();
         if (parent.is_root() || parent.empty() || parent.str() == "/") break;
-        if (sources_cache.contains(raw_key(parent.str()))) break;
+        if (HasCachedSources(raw_key(parent.str()))) break;
         cur = parent;
       }
     }
@@ -2032,7 +2032,7 @@
         }
       } else {
         const std::vector<Src> &psrc =
-            sources_cache.get_or_create(raw_key(parent.str()));
+            GetOrCreateCachedSources(raw_key(parent.str()));
         // raw_stack/raw_site suppresses BOTH departure and arrival for the
         // matching source; use it ONLY for the leaf (whose departure we cancel)
         // -- intermediate ancestors keep arrival handling so their `over` and
@@ -2055,7 +2055,7 @@
           }
         }
       }
-      std::vector<Src> &slot = sources_cache.get_or_create(raw_key(p.str()));
+      std::vector<Src> &slot = GetOrCreateCachedSources(raw_key(p.str()));
       slot = ExpandList(base, p.str(), warn, err);
       result = &slot;
     }
@@ -2081,7 +2081,7 @@
   const std::vector<Src> &SourcesForSite(uint32_t stack, const Path &path,
                                          std::string *warn, std::string *err) {
     const std::string key = SourcesKey(stack, path.str());
-    if (const std::vector<Src> *hit = sources_cache.find(key)) return *hit;
+    if (const std::vector<Src> *hit = FindCachedSources(key)) return *hit;
     if (!sources_in_progress.insert(key).second) return empty_sources_;
 
     // Collect the uncached ancestor chain (leaf -> topmost uncached), then
@@ -2094,7 +2094,7 @@
         pending.push_back(cur);
         Path parent = cur.parent();
         if (parent.is_root() || parent.empty() || parent.str() == "/") break;
-        if (sources_cache.contains(SourcesKey(stack, parent.str()))) break;
+        if (HasCachedSources(SourcesKey(stack, parent.str()))) break;
         cur = parent;
       }
     }
@@ -2127,13 +2127,13 @@
         }
       } else {
         const std::vector<Src> &psrc =
-            sources_cache.get_or_create(SourcesKey(stack, parent.str()));
+            GetOrCreateCachedSources(SourcesKey(stack, parent.str()));
         base = DeriveChildSources(psrc, p.name(), p.str(), warn, err);
       }
 
       // SrcCache element refs are stable across later inserts (deque-backed),
       // and pending[0] (the queried leaf) is filled last, so this captures it.
-      std::vector<Src> &slot = sources_cache.get_or_create(key_i);
+      std::vector<Src> &slot = GetOrCreateCachedSources(key_i);
       slot = ExpandList(base, p.str(), warn, err);
       result = &slot;
     }

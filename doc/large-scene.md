@@ -163,6 +163,30 @@ file is resolved + parsed exactly once and shared across every prim that
 references it — essential for the tens of thousands of repeated prefab
 references in Caldera.
 
+For cold-load profiling across Caldera districts, use
+`examples/tusdview/tests/run-caldera-matrix.sh`. It defaults to the main
+super-terrain, two season sub-scenes, chem factory, hotel, capital cliffs, and
+phosphate-mine cliffs, and writes a TSV summary while keeping the dataset
+outside the repository:
+
+```sh
+CALDERA_ROOT=/mnt/disk1/data/caldera \
+  TIMEOUT_SECS=180 \
+  examples/tusdview/tests/run-caldera-matrix.sh
+```
+
+Set `SCENES_FILE` to a newline-delimited custom scene list. The harness forces
+payload deferral and disables the preview cache, and reports early preview,
+composition, render-prim collection, geometry estimation, first useful frame,
+and full-upload timings separately.
+
+To inventory every USD layer, including generated geometry and support layers,
+run `examples/tusdview/tests/run-caldera-inventory.sh`. It performs bounded,
+parallel parse-only probes and writes one TSV row per file with its class,
+parse time, peak RSS, and parsed stage bytes. Use the inventory to select
+composed-root candidates for the full viewer matrix; leaf geometry files are
+measured for parser cost but are not misleadingly treated as standalone scenes.
+
 ### 2.4 `..`-relative paths
 
 `CompositionGraphOptions::allow_parent_relative_paths` (added in this work)
@@ -498,6 +522,14 @@ ISLAND=<asset-root>/island/usd/island.usda
   --lowmem --memstat "$ISLAND"
 ```
 
+For interactive prefab timing, use
+`examples/tusdview/tests/run-large-scene-prefab-benchmark.sh`. It reports both
+the first useful frame and the full upload/presentation marker from `--timing`.
+The benchmark is opt-in because production scene assets are external.
+Set `PAYLOAD_MODE=defer PREVIEW_CACHE=off` for cold-load measurements; override
+`COMPOSE_THREADS` and `CONVERT_THREADS` when comparing CPU scaling across
+district sub-scenes.
+
 For comparisons between commits/branches:
 
 - Keep both runs on the same payload mode (`--defer-payloads` vs `--load-payloads`).
@@ -622,7 +654,7 @@ These measurements promote one district to `districtLod = "full"` in a stronger
 wrapper layer and leave the other 44 districts at their authored `proxy` LOD.
 The input tree is `<asset-root>/caldera` (10,496,782,370 bytes, about 10.50
 GB, including all USD and texture assets). Each run used `--load-payloads`,
-`--large-scene-profile caldera`, one headless Vulkan frame at time 1, and
+`--large-scene-profile balanced`, one headless Vulkan frame at time 1, and
 `--timing`. `Extract` is the sum of next-core extraction/collection phases;
 `Load total` is the finalize total; `Upload` and `Present` are from
 `TUSDVIEW_TIME_UPLOAD=1 TUSDVIEW_TIME_FRAME=1`.
@@ -678,7 +710,7 @@ def Xform "world" {
 
 This preserves the authored world transform while allowing the viewer or a
 streaming scheduler to load/convert each child independently. The following
-comparison used `--next --load-payloads --large-scene-profile caldera`, one
+comparison used `--next --load-payloads --large-scene-profile balanced`, one
 headless Vulkan frame, and the same timing flags as the table above. The
 software Vulkan backend was used because the NVIDIA driver was unavailable.
 
@@ -913,7 +945,7 @@ conservative draw/VRAM budgets, and print the resolved settings at startup.
 `auto` only applies a profile when the input path clearly names Caldera, Island
 or Moana, or ALab; otherwise it resolves to `off`.
 
-Explicit CLI flags win. For example, `--large-scene-profile island
+Explicit CLI flags win. For example, `--large-scene-profile instance-heavy
 --max-gpu-mem 6 --raster-lod-full-px 32` keeps the Island preset but uses the
 user's GPU budget and LOD threshold. Profiles do **not** enable texture resize or
 BCn/compressed texture paths; those remain controlled only by
@@ -1200,7 +1232,7 @@ ALAB=<asset-root>/alab/_merged_ALab/entry.usda \
   bash examples/tusdview/tests/run-large-scene-profiles.sh
 
 # The full-payload run (weld + texture cap), per scene:
-/usr/bin/time -v ./build/tusdview --headless --large-scene-profile alab \
+/usr/bin/time -v ./build/tusdview --headless --large-scene-profile procedural-heavy \
   --load-payloads --frames 1 --screenshot alab.ppm \
   <asset-root>/alab/_merged_ALab/entry.usda
 # watch: 'next: weld N vertices from M points (Kx)'

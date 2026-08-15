@@ -1281,8 +1281,20 @@ def Mesh "FromSub" {
   }
 
   StageSnapshot retained_preview;
+  StageSnapshot retained_early_preview;
+  int early_preview_calls = 0;
   int preview_calls = 0;
   StageSessionOptions options;
+  options.early_preview_callback = [&](const StagePreview& preview) {
+    ++early_preview_calls;
+    assert(!preview.namespace_complete);
+    assert(!preview.spatial_subset);
+    assert(!preview.authoritative);
+    assert(preview.snapshot);
+    assert(preview.snapshot->GetPrimAtPath("/Root").IsValid());
+    retained_early_preview = preview.snapshot;
+    return true;
+  };
   options.preview_callback = [&](const StagePreview& preview) {
     ++preview_calls;
     assert(!preview.namespace_complete);
@@ -1305,6 +1317,8 @@ def Mesh "FromSub" {
 
   StageSession session;
   assert(session.OpenFile(root_path, options));
+  assert(early_preview_calls == 1);
+  assert(retained_early_preview);
   assert(preview_calls == 1);
   assert(retained_preview);
   const Value* final_value =

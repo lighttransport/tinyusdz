@@ -43,6 +43,10 @@ struct RenderPrimRecord {
   std::string purpose = "default";
   std::string material_path;
   std::string native_prototype;
+  // True when this prim or any transform ancestor has time-varying xform
+  // opinions. The extractor carries this down its traversal so consumers do
+  // not repeatedly walk the same ancestry for every mesh.
+  bool animated_world = false;
   double local[16];
   double world[16];
 };

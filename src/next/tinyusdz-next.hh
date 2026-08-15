@@ -184,6 +184,10 @@ struct StageSessionOptions {
   using ProgressCallback = std::function<bool(const ProgressEvent&)>;
   ProgressCallback progress_callback;
   using PreviewCallback = std::function<bool(const StagePreview&)>;
+  // Invoked after the root layer is parsed but before PCP composition. The
+  // stage is the authored root layer only, so consumers must treat it as a
+  // latency-only preview and wait for the authoritative callback below.
+  PreviewCallback early_preview_callback;
   // Invoked synchronously on the loading thread during initial composition.
   // The snapshot owns a separate Stage and may safely be retained.
   PreviewCallback preview_callback;

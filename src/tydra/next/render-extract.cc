@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "next/schema/geom-point-instancer.hh"
+#include "next/schema/geom-xform.hh"
 #include "next/schema/usd-shade.hh"
 #include "scene-access.hh"
 
@@ -135,6 +136,7 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& root,
     // IsActive() walks all ancestors. Carry the accumulated state instead so
     // a deep hierarchy remains O(number of prims), not O(depth squared).
     bool active = true;
+    bool animated_world = false;
   };
 
   std::vector<Frame> stack;
@@ -163,6 +165,9 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& root,
     rec.path = prim.GetPath().str();
     rec.type_name = prim.GetTypeName();
     rec.purpose = PurposeForPrim(prim, frame.purpose);
+    rec.animated_world =
+        frame.animated_world ||
+        ::tinyusdz::next::UsdGeomXform(prim).HasAnimatedTransform();
     const std::string local_material =
         ::tinyusdz::next::GetBoundMaterialPath(prim);
     const std::string nearest_material =
@@ -215,6 +220,7 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& root,
         child_frame.depth = frame.depth + 1;
         child_frame.active = options.include_inactive ||
                              (frame.active && child_prim.GetMeta().active);
+        child_frame.animated_world = rec.animated_world;
         stack.push_back(std::move(child_frame));
       }
     }

@@ -331,11 +331,11 @@ preview instead.
 # deferred-payload overview first. Payload roots with authored extents use them;
 # otherwise compact marker boxes preserve the composed spatial distribution.
 # The automatic profile also postpones DomeLight IBL precompute.
-./build_ninja/tusdview --headless --large-scene-profile island \
+./build_ninja/tusdview --headless --large-scene-profile instance-heavy \
   --frames 8 --screenshot island.ppm /path/to/island.usda
 
 # Explicit complete/offline-quality load (higher latency and memory):
-./build_ninja/tusdview --headless --large-scene-profile island \
+./build_ninja/tusdview --headless --large-scene-profile instance-heavy \
   --load-payloads --dome-ibl high --frames 1 --screenshot island-full.ppm \
   /path/to/island.usda
 
@@ -343,6 +343,69 @@ preview instead.
 CALDERA=/path/to/caldera.usda ISLAND=/path/to/island.usda ALAB=/path/to/alab.usda \
   bash examples/tusdview/tests/run-large-scene-profiles.sh
 # Use TUSDVIEW_SCENE_TIMEOUT=10m (default) to bound each large-scene run.
+
+# Interactive prefab benchmark (first useful frame + full upload):
+SCENE=/path/to/caldera/map_source/prefabs/.../st_main.usd \
+  bash examples/tusdview/tests/run-large-scene-prefab-benchmark.sh
+
+# NVIDIA hardware-accelerated GL under Xvfb (not llvmpipe):
+GPU_ACCEL=nvidia SCENE=/path/to/caldera/map_source/prefabs/.../st_main.usd \
+  PROFILE=balanced ENDPOINT=upload FULL_FIDELITY=1 \
+  bash examples/tusdview/tests/run-large-scene-prefab-benchmark.sh
+
+The benchmark log separates render-data setup into composition, stage
+traversal, non-mesh extraction, render-prim collection, geometry estimation,
+mesh conversion/flattening/batching, and finalization. `first geometry
+produced` and `full scene uploaded and presented` include the backend upload
+path. With `GPU_ACCEL=nvidia`, the harness applies the PRIME/GLVND variables
+described below and the log must report an NVIDIA renderer; otherwise the run
+is not a hardware-GL measurement.
+
+Measured on NVIDIA GeForce RTX 5060 Ti (16 GiB), driver 610.57.04, Xvfb,
+OpenGL, deferred payloads, and eight compose/conversion workers:
+
+| Entry scene | Compose | Stage/extract/setup | Mesh convert/batch | Full CPU conversion | Full upload/present | Peak RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| Caldera `chem_factory_01.usd` | 15.27 s | 4.97 s | 7.03 s | 29.72 s | 29.84 s | 4.14 GiB |
+| Caldera `superterrrain/st_main.usd` (full fidelity) | 70.72 s | 35.0 s | 50.12 s | 158.08 s | 159.21 s | 17.8 GiB |
+| Island `island.usda` (deferred root) | 0.012 s | 0.003 s | 0.001 s | 0.369 s | 0.546 s | 166 MiB |
+| ALab `entry.usda` (deferred root) | 0.433 s | 0.085 s | 0.041 s | 0.969 s | 1.036 s | 256 MiB |
+
+The Island and ALab deferred-root values measure lazy entry-layer setup, not
+full-payload conversion. Caldera's setup before mesh conversion is about 4.97
+s, while mesh conversion/batching is 7.03 s. GPU upload/presentation adds
+about 0.12 s after CPU conversion for this deferred-payload case.
+
+The subsequent generic batching optimization caches inherited back-purpose
+material bindings by parent path, avoiding repeated ancestor walks for sibling
+meshes. A repeat hardware-GL Caldera run with `--compose-opinion-batch 1024`
+measured 6.89 s mesh conversion/batching, 27.72 s full CPU conversion, 27.91 s
+full upload/presentation, and 4.07 GiB peak RSS. This is a cold-process single
+run; use repeated runs when comparing small differences.
+
+Batch selection then moved from ordered-map lookup to a hashed composite key,
+while a separate encounter-order list preserves deterministic draw ordering.
+The follow-up hardware run measured 6.83 s mesh conversion/batching, 27.35 s
+full CPU conversion, 27.60 s full upload/presentation, and 4.07 GiB peak RSS.
+
+The exact Caldera `superterrrain/st_main.usd` root is a materially larger
+workload: 2,175,050 composed prims and 851,543 mesh records, ultimately
+collapsing to 39 guide-purpose draws. Its cold full-fidelity path is therefore
+not yet under the 20-second target; the dominant next targets are opinion
+composition (41.16 s inside the stage build) and conversion of the large mesh
+record set (50.12 s). The loader now skips conversion when the generic geometry
+preflight reports zero resident bytes, and avoids duplicate child-name
+composition for instanceable prims; this run showed that the Caldera records
+all have nonzero estimates, so those guards do not materially change this
+scene's result.
+
+The mesh-path follow-up also caches inherited animated-transform state during
+render extraction and uses an exact plain-static batching path for meshes with
+no authored feature streams. On the same cold run this reduced mesh
+convert/flatten/batch from 50.12 s to 48.95 s; 27,075 meshes used the plain
+path and 824,468 still required feature handling. Larger conversion waves and
+16 workers were tested as generic overrides, but remained about 46–49 s, so
+the next optimization should target the dominant feature path itself.
 
 # Production Island matrix with schema-validated JSON reports. This is also a
 # CTest entry that cleanly skips when ISLAND_USD is absent. Override the default
@@ -353,12 +416,12 @@ ISLAND_CAPTURE_SIZES=320x200 ISLAND_CAPTURE_BACKENDS=vk \
 
 # Interactive large-scene profiles persist their compact composition preview.
 # Force a cold rebuild when validating preview generation, or disable it:
-./build_ninja/tusdview --large-scene-profile island \
+./build_ninja/tusdview --large-scene-profile instance-heavy \
   --preview-cache refresh /path/to/island.usda
-./build_ninja/tusdview --large-scene-profile island \
+./build_ninja/tusdview --large-scene-profile instance-heavy \
   --preview-cache off /path/to/island.usda
 # Optional storage controls (default limit: 8 GiB):
-./build_ninja/tusdview --large-scene-profile island \
+./build_ninja/tusdview --large-scene-profile instance-heavy \
   --preview-cache-dir /fast/cache --preview-cache-max-gb 4 /path/to/island.usda
 
 # OpenGL (needs a window/context) on a headless host — wrap in a virtual X server
@@ -383,14 +446,38 @@ authoritative composed stage replaces it when background composition finishes.
 Use `--timing` to report cache validation/load/store time separately from
 composition and first useful frame.
 
-For interactive Caldera loads, the profile camera also drives conversion order.
+Interactive loads use the content-name-agnostic `balanced` workload preset by
+default. `instance-heavy` favors repeated prototypes and bounded Ptex startup;
+`procedural-heavy` favors curves/points and asynchronous texture setup. No
+dataset path or prim name selects policy. Use `--large-scene-profile off` to
+restore ordinary behavior; headless and fixed-frame runs remain unchanged
+unless a preset is explicitly requested.
+
+All scheduling policy remains overrideable. The CLI exposes
+`--compose-opinion-batch`, `--instance-chunk-samples`,
+`--mesh-convert-chunk-prims`, `--mesh-convert-chunk-mb`, and
+`--curve-parallel-min-prims`, in addition to the composition/conversion thread
+counts. Zero selects a hardware/budget-derived value. The Scene panel's
+**Load scheduling** section exposes the same values; changes apply on
+File > Reload. Explicit CLI values initialize those GUI controls.
+
+The viewer also publishes a bounded raw-root preview before the authoritative
+PCP namespace build. On the Caldera `st_main.usd` prefab this cold preview was
+about 0.3 s; the authoritative stage then replaces it when composition
+finishes. The preview cache remains the fast path for repeated opens (about
+1.9 s including cache validation). Use the benchmark's
+`PREVIEW_CACHE=refresh` to populate the cache deliberately. Very large
+prefabs may exceed the host memory budget with `--load-payloads`; use the
+default deferred payload mode for interactive inspection.
+
+An explicitly selected USD camera can also drive conversion order.
 Leaf meshes without extents inherit the nearest model/district extent for this
 ranking; conservative in-view bounds are converted before off-camera and
 unbounded fallback work. Interactive material batches are limited to 512K
 vertices, allowing those camera-relevant results to upload incrementally instead
 of waiting for a multi-million-triangle scene-wide batch.
 
-The interactive ALab profile starts with a bounded refinement tier because its
+The interactive `procedural-heavy` preset starts with a bounded refinement tier because its
 complete texture and baked-procedural working set exceeds typical GPU memory.
 Payloads are initially deferred. When loaded, Curves are tessellated minimally
 and sampled as complete strands (up to 64 curve prims and 100,000 strands), so
