@@ -78,6 +78,7 @@ set(TUSDVIEW_SOURCES
     rt_scene_build.cc
     cuda/cuda_raytracer.cc
     hip/hip_raytracer.cc
+    cpu/cpu_raytracer.cc
     lod_stream.cc)
 
 set(TUSDVIEW_COMMON_SOURCES
@@ -496,6 +497,17 @@ if(NOT TARGET tydra_next)
                    ${CMAKE_BINARY_DIR}/tusdview_tydra_next_build)
 endif()
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE tinyusdz_next tydra_next)
+
+# CPU RT (cpu/cpu_raytracer.cc): reuse the vendored lightrt_c BVH library
+# (src/external/lightrt/lightrt_c_tri.*) via the same CMake target
+# tools/tusdrender already defines, instead of duplicating that build. The
+# add_subdirectory also configures the tusdrender executable as a harmless
+# side effect (the guard makes this idempotent when both are built together).
+if(NOT TARGET lightrt_c)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/tools/tusdrender
+                   ${CMAKE_BINARY_DIR}/tusdview_lightrt_c_build)
+endif()
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightrt_c)
 
 if(UNIX AND NOT APPLE)
   find_package(X11 REQUIRED)

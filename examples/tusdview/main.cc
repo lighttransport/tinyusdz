@@ -217,6 +217,7 @@ int main(int argc, char** argv) {
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   std::string cudaCacheDir;   // --cuda-cache-dir: override compiled PTX cache
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
+  bool wantCpuRt = false;     // --cpu-rt: CPU (lightrt_c) ray tracer
   int rtSamples = 1;          // --rt-samples: AA supersamples for the CUDA/HIP path
   long long rtMaxInstances = 16000000;  // --max-instances: CUDA/HIP instance cap (0=off)
   bool lodStream = false;     // --lod-stream: view-dependent district LOD (needs --next)
@@ -693,6 +694,8 @@ int main(int argc, char** argv) {
       }
     } else if (std::strcmp(argv[i], "--hip") == 0) {
       wantHip = true;
+    } else if (std::strcmp(argv[i], "--cpu-rt") == 0) {
+      wantCpuRt = true;
     } else if (std::strcmp(argv[i], "--rt-samples") == 0 && i + 1 < argc) {
       rtSamples = std::atoi(argv[++i]);
       if (rtSamples < 1) rtSamples = 1;
@@ -1169,7 +1172,7 @@ int main(int argc, char** argv) {
 
   if ((quitAfterFullUpload || quitAfterConvert) &&
       (backend != tusdview::Backend::GL || !useNextLoader || threaded || headless ||
-       wantRt || wantCuda || wantHip)) {
+       wantRt || wantCuda || wantHip || wantCpuRt)) {
     LOGE("--quit-after-full-upload/--quit-after-convert requires interactive "
          "non-threaded OpenGL with --next");
     return 1;
@@ -1467,6 +1470,7 @@ int main(int argc, char** argv) {
   app.setCudaRt(wantCuda);
   app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);
+  app.setCpuRt(wantCpuRt);
   app.setRtSamples(rtSamples);
   app.setRenderReport(renderReport);
   app.setCheckpointOutput(checkpointEvery, checkpointPattern);

@@ -620,6 +620,7 @@ void Gui::drawDockspaceAndMenu() {
         item(RenderTechnique::VulkanRT, vulkanCompiled && (vkOwner ? rtAvail : true));
         item(RenderTechnique::CudaRT, cudaAvailable_);
         item(RenderTechnique::HipRT, hipAvailable_);
+        item(RenderTechnique::CpuRT, true);  // always available, no device to probe
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("Skinning")) {
@@ -2998,6 +2999,11 @@ void Gui::handleNavigation() {
     // forward/backward movement with a right-handed mouse.
     if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
       wireCycle_ = (wireCycle_ + 1) % 3;
+    }
+    // CPU RT: dedicated keybinding, toggles on/off (App restores whichever
+    // technique was active before).
+    if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R)) {
+      wantToggleCpuRt_ = true;
     }
     // Walk/fly without changing the orbit relationship: both camera eye and
     // pivot translate, so repeated movement passes cleanly through world origin.

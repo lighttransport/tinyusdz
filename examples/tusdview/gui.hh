@@ -200,6 +200,11 @@ class Gui {
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   bool hasTechniqueRequest() const { return hasTechniqueRequest_; }
   RenderTechnique requestedTechnique() const { return requestedTechnique_; }
+  // The "R" keybinding (Gui::handleNavigation): toggle CPU RT on/off, restoring
+  // whatever technique was active before. App::run() owns the toggle logic
+  // (it tracks previousTechnique_); this is a one-shot request flag, mirroring
+  // wantTogglePlay_ below.
+  bool wantToggleCpuRt() const { return wantToggleCpuRt_; }
   // App calls this once per frame (before building the View menu) so the menu
   // can show which technique is currently active.
   void setActiveTechnique(RenderTechnique t) { activeTechnique_ = t; }
@@ -221,6 +226,7 @@ class Gui {
     wantStepForward_ = wantStepBackward_ = false;
     hasSkinningModeRequest_ = false;
     hasTechniqueRequest_ = false;
+    wantToggleCpuRt_ = false;
   }
 
   // Per-frame render stats (after the last renderViewportScene). Used by the
@@ -585,6 +591,7 @@ class Gui {
   RenderTechnique activeTechnique_{RenderTechnique::GLRaster};  // fed back by App each frame
   bool cudaAvailable_{true};
   bool hipAvailable_{true};
+  bool wantToggleCpuRt_{false};
   bool wantTogglePlay_{false};
   bool wantStop_{false};
   bool wantStepForward_{false};
