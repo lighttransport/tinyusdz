@@ -197,14 +197,39 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   std::vector<uint8_t> lg, le;
   std::vector<int> lm, lmb, lf, ldomj;
   bool anyBackMaterial = false;
+  // Most next-loader meshes are world-baked at load time (m.world == identity,
+  // the transform already folded into `vertices`), but `animatedWorld` meshes
+  // (see gpu_scene.hh) keep a REAL per-frame world matrix on top of a fixed
+  // local-space vertex buffer -- the raster GPU vertex shader always applies
+  // it, so RT/CUDA/HIP/CPU tracers (which read this flattened copy, not the
+  // GPU buffers) must too, or an animated-world mesh renders at its stale
+  // local-space position/orientation instead of its actual posed placement.
+  const float* W = m.world;
+  const bool worldIsIdentity =
+      W[0] == 1.0f && W[1] == 0.0f && W[2] == 0.0f && W[3] == 0.0f &&
+      W[4] == 0.0f && W[5] == 1.0f && W[6] == 0.0f && W[7] == 0.0f &&
+      W[8] == 0.0f && W[9] == 0.0f && W[10] == 1.0f && W[11] == 0.0f &&
+      W[12] == 0.0f && W[13] == 0.0f && W[14] == 0.0f && W[15] == 1.0f;
   for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
     float wp[9], wn[9], wc[12], wuv[6], wuv1[6], winfl[3], wdomw[3];
     int domJoint = -1;
     for (int k = 0; k < 3; ++k) {
       const uint32_t vidx = m.indices[t + k];
       const DrawVertex& vtx = m.vertices[vidx];
-      wp[k * 3 + 0] = vtx.px; wp[k * 3 + 1] = vtx.py; wp[k * 3 + 2] = vtx.pz;
-      wn[k * 3 + 0] = vtx.nx; wn[k * 3 + 1] = vtx.ny; wn[k * 3 + 2] = vtx.nz;
+      if (worldIsIdentity) {
+        wp[k * 3 + 0] = vtx.px; wp[k * 3 + 1] = vtx.py; wp[k * 3 + 2] = vtx.pz;
+        wn[k * 3 + 0] = vtx.nx; wn[k * 3 + 1] = vtx.ny; wn[k * 3 + 2] = vtx.nz;
+      } else {
+        wp[k * 3 + 0] = W[0] * vtx.px + W[4] * vtx.py + W[8] * vtx.pz + W[12];
+        wp[k * 3 + 1] = W[1] * vtx.px + W[5] * vtx.py + W[9] * vtx.pz + W[13];
+        wp[k * 3 + 2] = W[2] * vtx.px + W[6] * vtx.py + W[10] * vtx.pz + W[14];
+        // Direction vector: linear 3x3 part only (no translation). Ignores the
+        // inverse-transpose correction for non-uniform scale, matching the
+        // simplification already used for point normals a few lines above.
+        wn[k * 3 + 0] = W[0] * vtx.nx + W[4] * vtx.ny + W[8] * vtx.nz;
+        wn[k * 3 + 1] = W[1] * vtx.nx + W[5] * vtx.ny + W[9] * vtx.nz;
+        wn[k * 3 + 2] = W[2] * vtx.nx + W[6] * vtx.ny + W[10] * vtx.nz;
+      }
       wuv[k * 2 + 0] = vtx.u; wuv[k * 2 + 1] = vtx.v;
       wuv1[k * 2 + 0] = hasUV1 ? m.uv1[vidx * 2 + 0] : 0.0f;
       wuv1[k * 2 + 1] = hasUV1 ? m.uv1[vidx * 2 + 1] : 0.0f;
