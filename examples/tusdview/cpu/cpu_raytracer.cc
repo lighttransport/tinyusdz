@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "lightrt_c_tri.h"
+#include "lightrt_mtlx_bridge.hh"  // kRtMaterialTexSlots
 
 namespace tusdview {
 
@@ -61,6 +62,66 @@ inline void Interp9(const float* base9, float u, float v, float out[3]) {
   const float w = 1.0f - u - v;
   for (int c = 0; c < 3; ++c) {
     out[c] = w * base9[c] + u * base9[3 + c] + v * base9[6 + c];
+  }
+}
+
+// Same convention as Interp9 but for HostScene::uv/uv1 (2 floats/vertex).
+inline void Interp6(const float* base6, float u, float v, float out[2]) {
+  const float w = 1.0f - u - v;
+  for (int c = 0; c < 2; ++c) {
+    out[c] = w * base6[c] + u * base6[2 + c] + v * base6[4 + c];
+  }
+}
+
+// Bilinear-sample an ordinary (non-UDIM, non-Ptex) RGBA8 HostTextureDesc at
+// its base mip. `u`/`v` are wrapped per desc.wrapS/wrapT (0 = repeat, anything
+// else = clamp, matching the raster/RT kernels' convention). No sRGB decode:
+// texels are used as-is, consistent with this tracer's un-color-managed
+// flat shading (CudaRayTracer/HipRayTracer decode in their GPU kernel, which
+// this first cut doesn't replicate).
+inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
+                                  const std::vector<uint8_t>& texels, int texId,
+                                  float u, float v, float out[3]) {
+  if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) {
+    out[0] = out[1] = out[2] = 1.0f;
+    return;
+  }
+  const HostTextureDesc& d = textures[static_cast<size_t>(texId)];
+  if (d.isUdim || d.isPtex || d.width <= 0 || d.height <= 0) {
+    out[0] = out[1] = out[2] = 1.0f;
+    return;
+  }
+  auto wrap = [](float x, int mode, int size) -> float {
+    if (mode == 0) {  // repeat
+      x = x - std::floor(x);
+    } else {  // clamp
+      x = std::clamp(x, 0.0f, 1.0f);
+    }
+    return x * static_cast<float>(size) - 0.5f;
+  };
+  const float fx = wrap(u, d.wrapS, d.width);
+  const float fy = wrap(1.0f - v, d.wrapT, d.height);  // texel row 0 = top (v=0 at top for glTF-style UVs)
+  const int x0 = static_cast<int>(std::floor(fx));
+  const int y0 = static_cast<int>(std::floor(fy));
+  const float tx = fx - static_cast<float>(x0);
+  const float ty = fy - static_cast<float>(y0);
+  auto texel = [&](int x, int y, float rgb[3]) {
+    x = ((x % d.width) + d.width) % d.width;
+    y = ((y % d.height) + d.height) % d.height;
+    const size_t idx = static_cast<size_t>(d.offset) +
+                       (static_cast<size_t>(y) * d.width + x) * 4;
+    if (idx + 2 >= texels.size()) { rgb[0] = rgb[1] = rgb[2] = 1.0f; return; }
+    rgb[0] = texels[idx + 0] / 255.0f;
+    rgb[1] = texels[idx + 1] / 255.0f;
+    rgb[2] = texels[idx + 2] / 255.0f;
+  };
+  float c00[3], c10[3], c01[3], c11[3];
+  texel(x0, y0, c00); texel(x0 + 1, y0, c10);
+  texel(x0, y0 + 1, c01); texel(x0 + 1, y0 + 1, c11);
+  for (int c = 0; c < 3; ++c) {
+    const float top = c00[c] * (1 - tx) + c10[c] * tx;
+    const float bot = c01[c] * (1 - tx) + c11[c] * tx;
+    out[c] = top * (1 - ty) + bot * ty;
   }
 }
 
@@ -170,6 +231,21 @@ bool CpuRayTracer::trace(const float invViewProj[16], const float /*viewProj*/[1
             base[0] = hs_.matBase[static_cast<size_t>(matId) * 3 + 0];
             base[1] = hs_.matBase[static_cast<size_t>(matId) * 3 + 1];
             base[2] = hs_.matBase[static_cast<size_t>(matId) * 3 + 2];
+          }
+          // Base-color texture (matTex slot 0), UV set 0. No other semantic
+          // slots (metallic/roughness/normal/emissive/opacity) yet -- a first
+          // cut, replacing the flat constant fallback with the sampled texel
+          // when the material has one.
+          if (matId >= 0 && !hs_.matTex.empty() &&
+              static_cast<size_t>(matId) * kRtMaterialTexSlots < hs_.matTex.size()) {
+            const int baseTex = hs_.matTex[static_cast<size_t>(matId) * kRtMaterialTexSlots + 0];
+            if (baseTex >= 0 && tri * 6 + 5 < hs_.uv.size()) {
+              float uv[2];
+              Interp6(&hs_.uv[static_cast<size_t>(tri) * 6], hit.u, hit.v, uv);
+              float texCol[3];
+              SampleTextureBilinear(hs_.textures, hs_.texels, baseTex, uv[0], uv[1], texCol);
+              base[0] *= texCol[0]; base[1] *= texCol[1]; base[2] *= texCol[2];
+            }
           }
           const float diff = std::max(0.0f, nrm[0] * lightDirN[0] + nrm[1] * lightDirN[1] +
                                                 nrm[2] * lightDirN[2]);
