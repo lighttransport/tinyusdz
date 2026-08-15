@@ -4971,6 +4971,15 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
     }
     updateGpuSkinningFrameIfNeeded();
+    // Keep the camera's auto-clip scene bounds in step with the CURRENT pose.
+    // updateGpuSkinningFrameIfNeeded() (via updateNextDeformFrameIfNeeded's
+    // BuildNextPosedSceneBounds) refreshes draw_.aabbMin/aabbMax every frame
+    // the --next loader's animation advances, but camera_.setSceneBounds()
+    // was previously only called once at load time -- so an animated pose
+    // that grows past the load-time (e.g. rest/first-frame) bounding sphere
+    // had its sceneRadius_/sceneCenter_ (and therefore the auto near/far
+    // planes) frozen at the stale box, clipping the mesh as it moved past it.
+    if (draw_.hasBounds) camera_.setSceneBounds(draw_.aabbMin, draw_.aabbMax);
 
     // Render after same-frame action consumption but before ImGui submit. The
     // viewport window already emitted ImGui::Image with the texture handle; both
