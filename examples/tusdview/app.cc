@@ -951,7 +951,13 @@ App::~App() {
   if (mcp_) mcp_->stop();
 #endif
   cancelAndJoinLoad();  // must run before members the worker writes into are destroyed
-  if (hipBuildThread_.joinable()) hipBuildThread_.join();  // finish any in-flight RT build
+  // Finish any in-flight RT build: std::thread's destructor calls
+  // std::terminate() if it is destroyed still joinable (e.g. a headless
+  // --frames run that exits before a background HIP/CUDA/CPU RT build
+  // finishes), so every *BuildThread_ member must be joined here.
+  if (hipBuildThread_.joinable()) hipBuildThread_.join();
+  if (cudaBuildThread_.joinable()) cudaBuildThread_.join();
+  if (cpuBuildThread_.joinable()) cpuBuildThread_.join();
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   if (renderThreadActive_) {
     joinRenderThread();  // the render thread runs renderer_->shutdown() on its context
