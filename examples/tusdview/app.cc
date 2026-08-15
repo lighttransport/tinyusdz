@@ -104,6 +104,24 @@ void ReleaseOrdinaryTexturePayload(DrawTextureCPU* texture) {
   texture->compressed.mips.shrink_to_fit();
 }
 
+// True when a texture's pixels can be recovered later by re-decoding its source
+// asset (DecodeDeferredDrawTexture). Everything that drops a CPU payload below
+// assumes that is always possible, but it is not: DecodeDeferredDrawTextureImpl
+// re-opens assetIdentifier as a standalone file, so a texture embedded in a
+// USDZ *archive* has nothing to re-open and its pixels are gone for good once
+// released. That silently broke the CUDA/HIP/CPU tracers, which build their
+// texture table from these same draw_.textures payloads: after the interactive
+// loader had streamed and released them, an RT build saw "1 source texture(s),
+// 0 descriptor(s)" and traced an untextured (flat grey) scene.
+bool TextureCanRedecodeFromSource(const DrawTextureCPU& texture) {
+  if (texture.assetIdentifier.empty() || texture.isUdim || texture.isPtex) {
+    return false;
+  }
+  std::error_code ec;
+  const bool exists = std::filesystem::exists(texture.assetIdentifier, ec);
+  return exists && !ec;
+}
+
 }  // anonymous namespace
 
 std::vector<int> App::selectedTextureSlots() const {
@@ -225,8 +243,11 @@ void App::updateTextureResidency() {
         // The backend has consumed or retained what it needs. Keep only source
         // identity and sampling metadata in the application; eviction/full-res
         // promotion re-decodes the ordinary file instead of pinning a duplicate
-        // CPU block/raw payload for every resident texture.
-        ReleaseOrdinaryTexturePayload(&draw_.textures[ready.slot]);
+        // CPU block/raw payload for every resident texture -- but only when
+        // that re-decode is actually possible (see TextureCanRedecodeFromSource).
+        if (TextureCanRedecodeFromSource(draw_.textures[ready.slot])) {
+          ReleaseOrdinaryTexturePayload(&draw_.textures[ready.slot]);
+        }
       }
       loadCtrl_.texturesDone.fetch_add(1);
     }
@@ -244,7 +265,13 @@ void App::updateTextureResidency() {
     for (int slot : selected) {
       TextureResidencySlot& state = textureResidency_[static_cast<size_t>(slot)];
       ++state.generation;
-      if (state.residentBytes > 0) {
+      // Releasing sets deferredDecode so the pixels come back on demand; a
+      // texture that cannot be re-decoded (archive-embedded, see
+      // TextureCanRedecodeFromSource) would instead be lost for good, so it
+      // stays resident.
+      if (state.residentBytes > 0 &&
+          TextureCanRedecodeFromSource(
+              draw_.textures[static_cast<size_t>(slot)])) {
         postGpu([this, slot] { renderer_->evictTexture(slot); });
         ++textureEvictions_;
         DrawTextureCPU& texture = draw_.textures[static_cast<size_t>(slot)];
@@ -392,9 +419,17 @@ void App::updateTextureResidency() {
     evictionCandidates.reserve(textureResidency_.size());
     for (size_t i = 0; i < textureResidency_.size(); ++i) {
       const TextureResidencySlot& state = textureResidency_[i];
+      // Protect textures that cannot be re-decoded from their source
+      // (archive-embedded; see TextureCanRedecodeFromSource) the same way an
+      // explicitly selected one is: evicting them would drop pixels nothing
+      // can bring back.
+      const bool protectedSlot =
+          selectedMask[i] != 0 ||
+          (i < draw_.textures.size() &&
+           !TextureCanRedecodeFromSource(draw_.textures[i]));
       evictionCandidates.push_back(TextureEvictionCandidate{
           i, std::chrono::duration<double>(now - state.lastWanted).count(),
-          state.residentBytes, selectedMask[i] != 0,
+          state.residentBytes, protectedSlot,
           state.state == TextureResidencyState::Decoding});
     }
     const size_t victimIndex = ChooseTextureEvictionVictim(
@@ -2284,7 +2319,8 @@ void App::drainProgressiveLoad() {
       // in the interactive scene. Ptex/UDIM/native streaming carriers retain
       // their specialized source state for page updates.
       if (!draw_.textures[slot].isUdim && !draw_.textures[slot].isPtex &&
-          !draw_.textures[slot].compressedFinal) {
+          !draw_.textures[slot].compressedFinal &&
+          TextureCanRedecodeFromSource(draw_.textures[slot])) {
         ReleaseOrdinaryTexturePayload(&draw_.textures[slot]);
       }
       if (loadOpts_.timing &&
