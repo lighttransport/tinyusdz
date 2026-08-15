@@ -190,6 +190,49 @@ cost clustering on the silhouette. `--mode depth` gives a correct near→far ram
 UV gradient, and `--mode material-id` is a single uniform color (suzanne is one
 material, so one id) — all correct.
 
+## Runtime backend switch (Render Technique) + CPU RT
+
+**View ▸ Render Technique** switches the active render technique live, without
+restarting: GL Raster, Vulkan Raster, Vulkan RT, CUDA RT, HIP RT, CPU RT. GL⇄Vulkan
+tears down and rebuilds the `Renderer` and re-uploads the scene from `draw_`;
+Vulkan Raster⇄Vulkan RT is a same-instance `setRayTracing()` toggle (no reupload);
+CUDA RT/HIP RT/CPU RT trace externally into an RGBA8 buffer and composite it over
+whichever window owner (GL or Vulkan) is active via `Renderer::uploadViewportImage()`
+— both `GLRenderer` and `VulkanRenderer` implement it, so any of the three overlay
+techniques works under either owner. A switch that fails (unavailable device,
+Vulkan RT unsupported, `--threaded`/`TUSDVIEW_ENABLE_GL_THREAD` active) logs a
+warning and reverts to the previous technique; it never crashes. CUDA/HIP menu
+entries gray out only *after* a failed switch attempt (`App::cudaProbe_`/
+`hipProbe_`), not proactively at startup — both tracers' `init()` compiles an
+NVRTC/hiprtc kernel, which is too slow to probe speculatively.
+
+`--cuda` / `--hip` without `--headless` now drive the viewport interactively
+(build once, retrace on the orbit camera) instead of only writing a one-shot
+screenshot; the screenshot path is unchanged for `--headless --screenshot`.
+
+**CPU RT** (`--cpu-rt`, or `R` while the viewport is hovered — toggles it on/off,
+restoring the prior technique) is a new backend, `examples/tusdview/cpu/
+cpu_raytracer.{hh,cc}`. It reuses `BuildHostScene()` (`rt_scene_build.hh`, the
+same DrawScene→world-space-triangle-soup flattener the CUDA/HIP tracers already
+use) and builds one BVH over the result with the vendored `lightrt_c` library
+(`src/external/lightrt/lightrt_c_tri.*`) — the same CMake target
+`tools/tusdrender` already defines, linked into `tusdview` via a guarded
+`add_subdirectory`. Tracing runs on a `std::thread` pool, one sample per pixel,
+flat Lambertian + a hard shadow ray (Normals/MaterialId/Depth AOVs also
+supported); there is no refit (unlike HIP, `lightrt_c_tri` has no per-vertex BVH
+refit API), so a deformable scene's re-pose always rebuilds — the same
+simplification `CudaRayTracer` already accepts. **Known limitations (v1):** no
+textures/materials (flat/vertex-color shading only), no progressive
+accumulation (each frame is a fresh 1-sample trace), and no headless one-shot
+`--cpu-rt --screenshot` path yet (a headless run falls back to the normal
+raster screenshot).
+
+```sh
+./build/tusdview model.usda                    # GL raster; View > Render Technique to switch live
+./build/tusdview --cpu-rt model.usda            # start on CPU RT; R toggles it off/on
+./build/tusdview --backend vk --cuda model.usda # interactive windowed CUDA RT
+```
+
 ## Subdivision surfaces
 
 tusdview can request Tydra's conversion-time subdivision surface refinement for
