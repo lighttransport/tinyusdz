@@ -8835,6 +8835,15 @@ void VulkanRenderer::setRayTracing(bool enable) {
     const auto start = std::chrono::steady_clock::now();
     const bool ok = needsHwInit ? createRtResources(&error)
                                 : createSwRtResources(&error);
+    // The RT storage/accumulation images are (re)created by createRtImage(),
+    // which can only write their descriptors once rtSet_ exists -- and rtSet_
+    // is created here, by createRtResources(). Enabling RT at STARTUP happens
+    // before the viewport is sized, so createRtImage() runs afterwards and
+    // binds them; enabling it at RUNTIME is the reverse order -- the images
+    // already exist (created with rtSet_ still null, so never bound), and
+    // nothing recreated them afterwards. The trace then wrote through stale
+    // bindings and the viewport stayed black. Re-run createRtImage() here so
+    // both orders end up with the descriptors pointing at the live images.
     if (!ok) {
       LOGW("ray tracing initialization failed: %s", error.c_str());
       destroyRt();  // tears down both technique's resources (see destroySwRt())
@@ -8843,6 +8852,7 @@ void VulkanRenderer::setRayTracing(bool enable) {
       caps_.supportsRayTracing = false;
       want = false;
     } else {
+      createRtImage();  // see the ordering note above
       rtInitMs_ = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - start)
                       .count();
