@@ -1040,6 +1040,14 @@ bool App::initWindow(std::string* err) {
   autoDetectUiScale();  // before getRequestedWindowSize (windowScale_ feeds it)
 
   if (backend_ == Backend::GL) {
+    // GLFW window hints are STICKY: the Vulkan branch below sets
+    // GLFW_CLIENT_API = GLFW_NO_API, and that persists for every later
+    // glfwCreateWindow. Harmless while only one window is ever created, but the
+    // runtime GL<->Vulkan technique switch recreates it -- without putting the
+    // hint back, a "GL" window came up with no GL context at all, glad loaded
+    // nothing, and the first GL call in GLRenderer::init() jumped through a
+    // null pointer (SIGSEGV at address 0).
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
     // Request 4.1 core (the highest macOS supports) so the GPU-tessellation
     // displacement path is available; fall back to 3.3 below if creation fails.
     // 4.1 core is a strict superset of 3.3 core, so all existing shaders run as-is.
@@ -3934,25 +3942,54 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
 
   const Backend prevOwner = backend_;
   const RenderTechnique prevTechnique = activeTechnique_;
-  renderer_->shutdown();
+
+  // A GLFW window is created for ONE client API: GL needs GLFW_OPENGL_API, and
+  // the Vulkan path asks for GLFW_NO_API (no GL context exists at all). So the
+  // window cannot simply be handed to the other backend -- GLRenderer::init()
+  // on a NO_API window found every GL entry point null (glad had nothing to
+  // load) and jumped through a null pointer on the first call. Recreate the
+  // window whenever the required client API differs.
+  //
+  // The ImGui *context* belongs to App (App::initImGui creates it once, with
+  // the fonts/style/ini); each renderer owns only the two ImGui BACKENDS
+  // (platform + renderer), set up in Renderer::initImGui and torn down by
+  // Renderer::shutdown. So the rebuild re-inits the backends and must NOT call
+  // App::initImGui again -- that would create a second context.
+  const bool haveWindow = !headless_ && window_ != nullptr;
+  const int wantApi = (targetOwner == Backend::GL) ? GLFW_OPENGL_API : GLFW_NO_API;
+  const bool needWindowRecreate =
+      haveWindow && glfwGetWindowAttrib(window_, GLFW_CLIENT_API) != wantApi;
+
+  renderer_->shutdown();  // also tears down this renderer's ImGui backends
   renderer_.reset();
 
   std::string err;
-  bool ok = createAndInitRenderer(targetOwner, &err);
+  auto buildFor = [&](Backend owner, std::string* e) -> bool {
+    if (needWindowRecreate) {
+      // Preserve the current window geometry across the recreate.
+      int w = 0, h = 0;
+      glfwGetWindowSize(window_, &w, &h);
+      glfwDestroyWindow(window_);
+      window_ = nullptr;
+      backend_ = owner;  // initWindow picks its client-API hints from backend_
+      if (w > 0 && h > 0) setWindowSize(w, h);
+      if (!initWindow(e)) return false;
+      ++windowGeneration_;
+    }
+    if (!createAndInitRenderer(owner, e)) return false;
+    return renderer_->initImGui(e);
+  };
+
+  bool ok = buildFor(targetOwner, &err);
   if (!ok) {
     LOGW("Switching to %s failed: %s; reverting to %s.",
          RenderTechniqueLabel(t), err.c_str(), RenderTechniqueLabel(prevTechnique));
     std::string restoreErr;
-    if (!createAndInitRenderer(prevOwner, &restoreErr)) {
+    if (!buildFor(prevOwner, &restoreErr)) {
       LOGE("Failed to restore the previous renderer after a failed backend switch: %s",
            restoreErr.c_str());
       return false;
     }
-  }
-
-  if (!initImGui(&err)) {
-    LOGE("ImGui init failed after backend switch: %s", err.c_str());
-    return false;
   }
   if (!renderer_->uploadScene(draw_, &err)) {
     LOGW("Scene re-upload failed after backend switch: %s", err.c_str());
