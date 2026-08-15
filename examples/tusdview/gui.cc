@@ -966,6 +966,13 @@ void Gui::rebuildSubsetHighlight() {
   // silhouette over the moving mesh (visible as a mismatched wireframe net).
   std::vector<DrawVertex> skinnedVerts;
   const std::vector<DrawVertex>* srcVerts = &m.vertices;
+  // True when srcVerts is already final WORLD-space (BuildNextRtDeformedVertices'
+  // bone rows bake in the mesh's world transform, unlike ApplySkinningToVertices'
+  // composed matrices below, which end in inverse(meshWorld) so their result is
+  // still object-space, meant to go through the normal `W *` multiply). Applying
+  // W to an already-world-space source double-transforms it -- visible as an
+  // oversized, offset wireframe net relative to the correctly-posed shaded mesh.
+  bool alreadyWorldSpace = false;
   if (nextStage_) {
     // --next loader: there is no tydra RenderScene to re-pose from (see
     // gpu_scene.hh's NextSkelBinding comment) -- re-pose via the retained next
@@ -975,7 +982,12 @@ void Gui::rebuildSubsetHighlight() {
     if (BuildNextRtDeformedVertices(*nextStage_, *draw_, timeline_.applied,
                                     nullptr, &posed)) {
       for (const RtSkinnedMeshUpload& u : posed) {
-        if (u.meshIndex == mi) { skinnedVerts = u.vertices; srcVerts = &skinnedVerts; break; }
+        if (u.meshIndex == mi) {
+          skinnedVerts = u.vertices;
+          srcVerts = &skinnedVerts;
+          alreadyWorldSpace = true;
+          break;
+        }
       }
     }
   } else if (m.skelId >= 0 && m.skinMatrixBase >= 0 && !m.jointIdx.empty() && loaded_) {
@@ -989,6 +1001,10 @@ void Gui::rebuildSubsetHighlight() {
   }
   auto wpos = [&](uint32_t vi, float o[3]) {
     const DrawVertex& v = (*srcVerts)[vi];
+    if (alreadyWorldSpace) {
+      o[0] = v.px; o[1] = v.py; o[2] = v.pz;
+      return;
+    }
     o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
     o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
     o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
