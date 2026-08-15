@@ -4611,13 +4611,19 @@ void Gui::buildHelpers() {
         addLine(xs[xi], ys[yi], zs[0], xs[xi], ys[yi], zs[1], r, g, b);
   };
 
-  // Grid/axes extent from scene bounds.
+  // Grid/axes extent from scene bounds. A 1:1 extent (half == the subject's
+  // own footprint) reads as a tight platform ending right at its feet rather
+  // than ground extending into the distance -- most visible on a small,
+  // human-scale subject (e.g. a ~1.7-unit-tall character got a 4x4 unit
+  // grid). Pad with a flat margin (proportionally large for small scenes,
+  // a small fraction of a big one) and floor at 5 units so even a tiny scene
+  // still shows a reasonable amount of ground.
   float half = 10.0f;
   if (draw_ && draw_->hasBounds) {
     float ex = 0.0f;
     for (int i = 0; i < 3; ++i)
       ex = std::max(ex, draw_->aabbMax[i] - draw_->aabbMin[i]);
-    if (ex > 1e-3f) half = std::max(1.0f, std::ceil(ex));
+    if (ex > 1e-3f) half = std::max(5.0f, std::ceil(ex) + 3.0f);
   }
 
   if (showGrid_) {
