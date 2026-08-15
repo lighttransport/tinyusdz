@@ -203,6 +203,13 @@ class Gui {
   // App calls this once per frame (before building the View menu) so the menu
   // can show which technique is currently active.
   void setActiveTechnique(RenderTechnique t) { activeTechnique_ = t; }
+  // Lazy CUDA/HIP capability cache (App::cudaProbe_/hipProbe_), fed each frame
+  // so the menu can gray out an item once a switch attempt has proven the
+  // device unavailable. Optimistic (true) until then -- no startup probing.
+  void setTechniqueAvailability(bool cudaOk, bool hipOk) {
+    cudaAvailable_ = cudaOk;
+    hipAvailable_ = hipOk;
+  }
   void clearActions() {
     wantOpen_ = wantReload_ = wantQuit_ = wantCancelLoad_ = false;
     wantOpenRecent_ = false;
@@ -576,6 +583,8 @@ class Gui {
   bool hasTechniqueRequest_{false};
   RenderTechnique requestedTechnique_{RenderTechnique::GLRaster};
   RenderTechnique activeTechnique_{RenderTechnique::GLRaster};  // fed back by App each frame
+  bool cudaAvailable_{true};
+  bool hipAvailable_{true};
   bool wantTogglePlay_{false};
   bool wantStop_{false};
   bool wantStepForward_{false};

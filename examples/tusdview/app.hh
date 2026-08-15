@@ -509,6 +509,30 @@ class App
   // call). Returns false if HIP is unavailable / the build failed.
   bool renderHipViewport();
 
+  // True for a windowed --cuda run: mirrors hipInteractive_ (see above), driving
+  // the viewport with CudaRayTracer instead. CudaRayTracer has no refit path
+  // (unlike HipRayTracer), so a deformable scene's re-pose always rebuilds.
+  bool cudaInteractive_{false};
+  bool cudaInteractiveBuilt_{false};
+  int cudaBuildAnnounceFrames_{0};
+  std::thread cudaBuildThread_;
+  bool cudaBuildStarted_{false};
+  std::atomic<bool> cudaBuildDone_{false};
+  std::atomic<bool> cudaBuildOk_{false};
+  std::string cudaBuildErr_;
+  BuildProgress cudaBuildProgress_;
+  std::chrono::steady_clock::time_point cudaBuildStart_;
+  // Trace the CUDA viewport for one interactive frame (builds the scene on first
+  // call). Returns false if CUDA is unavailable / the build failed.
+  bool renderCudaViewport();
+  // Lazy, cached CUDA/HIP device-availability probe: init() compiles NVRTC/
+  // hiprtc kernels, so it must not run speculatively at startup or on every
+  // menu-open -- only once, on first switch attempt, then cached for the
+  // menu's enabled/grayed-out state.
+  enum class ProbeState { Unknown, Available, Unavailable };
+  ProbeState cudaProbe_{ProbeState::Unknown};
+  ProbeState hipProbe_{ProbeState::Unknown};
+
   // --- Runtime backend switch (View menu Render Technique submenu / keybinding) ---
   // Ground truth: activeTechnique_ decomposes into backend_ (which Renderer
   // subclass owns the window) + activeOverlay_ (what draws into it this frame;

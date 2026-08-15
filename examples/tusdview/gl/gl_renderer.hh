@@ -53,6 +53,7 @@ class GLRenderer final : public Renderer {
   void newFrame() override;
   void renderFrame(const RenderFrameParams& params) override;
   ViewportTexHandle viewportTexture() const override;
+  bool uploadViewportImage(const uint8_t* rgba, int w, int h) override;
   void present() override;
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   void presentThreaded(ImDrawData* drawData, int fbW, int fbH) override;
@@ -413,6 +414,8 @@ class GLRenderer final : public Renderer {
   // Offscreen target
   GLuint fbo_{0}, colorTex_{0}, depthRbo_{0};
   int vpW_{0}, vpH_{0};
+  // Row-flip scratch for uploadViewportImage (CUDA/HIP/CPU RT overlay).
+  std::vector<uint8_t> flippedUploadScratch_;
 
   struct GLTexture {
     GLuint tex2d{0};

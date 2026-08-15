@@ -3782,17 +3782,30 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
   const OverlayKind targetOverlay = OverlayForTechnique(t);
 
   if (targetOwner == backend_) {
-    // Same window owner: only the overlay changes.
+    // Same window owner: only the overlay changes. Exactly one of
+    // {VulkanRT, CudaRT, HipRT, CpuRT} (or none) is live at a time, so
+    // entering one first turns off whichever was active.
     if (targetOverlay == OverlayKind::VulkanRT) {
       if (!renderer_ || !renderer_->rayTracingAvailable()) {
         LOGW("Vulkan ray tracing is unavailable; staying on %s.",
              RenderTechniqueLabel(activeTechnique_));
         return false;
       }
-      renderer_->setRayTracing(true);
-    } else if (activeOverlay_ == OverlayKind::VulkanRT) {
+    } else if (targetOverlay == OverlayKind::CudaRT && cudaProbe_ == ProbeState::Unavailable) {
+      LOGW("CUDA ray tracing is unavailable on this machine; staying on %s.",
+           RenderTechniqueLabel(activeTechnique_));
+      return false;
+    } else if (targetOverlay == OverlayKind::HipRT && hipProbe_ == ProbeState::Unavailable) {
+      LOGW("HIP ray tracing is unavailable on this machine; staying on %s.",
+           RenderTechniqueLabel(activeTechnique_));
+      return false;
+    }
+    if (activeOverlay_ == OverlayKind::VulkanRT && targetOverlay != OverlayKind::VulkanRT) {
       if (renderer_) renderer_->setRayTracing(false);
     }
+    hipInteractive_ = (targetOverlay == OverlayKind::HipRT);
+    cudaInteractive_ = (targetOverlay == OverlayKind::CudaRT);
+    if (targetOverlay == OverlayKind::VulkanRT) renderer_->setRayTracing(true);
     activeOverlay_ = targetOverlay;
     previousTechnique_ = activeTechnique_;
     activeTechnique_ = t;
@@ -4029,6 +4042,118 @@ bool App::renderHipViewport() {
   return true;
 }
 
+bool App::renderCudaViewport() {
+  // Mirrors renderHipViewport() above; see its comments for the overall shape
+  // (background build with a progress overlay, then per-frame trace ->
+  // uploadViewportImage). CudaRayTracer has no refit path, so a deformable
+  // scene's re-pose always calls build() again (a full rebuild), unlike HIP's
+  // refit-when-possible fast path.
+  if (loadActive_ || draw_.empty()) {
+    int vw = 0, vh = 0;
+    gui_.viewportPixelSize(&vw, &vh);
+    if (vw > 0 && vh > 0) {
+      std::vector<uint8_t> clearPx(static_cast<size_t>(vw) * vh * 4);
+      for (size_t i = 0; i + 3 < clearPx.size(); i += 4) {
+        clearPx[i] = 31; clearPx[i + 1] = 31; clearPx[i + 2] = 33; clearPx[i + 3] = 255;
+      }
+      renderer_->uploadViewportImage(clearPx.data(), vw, vh);
+    }
+    return true;
+  }
+
+  if (!cudaInteractiveBuilt_) {
+    if (cudaBuildAnnounceFrames_ < 2) {
+      ++cudaBuildAnnounceFrames_;
+      return true;
+    }
+    if (!cudaBuildStarted_) {
+      std::string cerr;
+      if (!cudaTracer_.init(&cerr)) {
+        LOGW("CUDA ray tracing unavailable: %s; viewport stays blank.", cerr.c_str());
+        cudaInteractive_ = false;  // give up; avoid retrying every frame
+        cudaProbe_ = ProbeState::Unavailable;
+        return false;
+      }
+      cudaProbe_ = ProbeState::Available;
+      cudaBuildStarted_ = true;
+      cudaBuildStart_ = std::chrono::steady_clock::now();
+      const float dispScale = gui_.displacementScale();  // read on the main thread
+      poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
+      cudaBuildThread_ = std::thread([this, dispScale] {
+        std::string e;
+        const bool ok = cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
+                                          dispScale, &cudaBuildProgress_);
+        cudaBuildErr_ = e;
+        cudaBuildOk_.store(ok, std::memory_order_release);
+        cudaBuildDone_.store(true, std::memory_order_release);
+      });
+      return true;
+    }
+    if (!cudaBuildDone_.load(std::memory_order_acquire)) {
+      return true;  // still building -> overlay shows live progress
+    }
+    if (cudaBuildThread_.joinable()) cudaBuildThread_.join();
+    if (!cudaBuildOk_.load(std::memory_order_acquire)) {
+      LOGW("CUDA ray tracing build failed: %s", cudaBuildErr_.c_str());
+      cudaInteractive_ = false;
+      return false;
+    }
+    cudaInteractiveBuilt_ = true;
+    LOGI("CUDA interactive: %zu tris%s on %s", cudaTracer_.triangleCount(),
+         cudaTracer_.truncated() ? " [truncated]" : "", cudaTracer_.deviceName());
+    // Unlike HIP, the CUDA tracer keeps no refit map, so there is nothing to
+    // reclaim/retain here either way -- draw_'s CPU geometry is left alone
+    // (liveSwitchEnabled_ requires it survive for a raster switch-back anyway).
+  }
+
+  if (sceneIsNextDeformable() && animTime_ != nextTracerPosedTime_) {
+    if (poseNextDrawForTracer(animTime_)) {
+      std::string e;
+      const float dispScale = gui_.displacementScale();
+      if (!cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e, dispScale)) {
+        LOGW("CUDA re-pose rebuild failed: %s", e.c_str());
+      }
+    }
+  }
+
+  int w = 0, h = 0;
+  gui_.viewportPixelSize(&w, &h);
+  if (w < 1 || h < 1) return true;  // viewport not laid out yet this frame
+
+  camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
+  const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
+  const light3d::Mat4 inv = pv.inverse();
+  const light3d::Vec3 eye = camera_.eye();
+  const float camPos[3] = {eye.x, eye.y, eye.z};
+  float lightDir[3];
+  CopyPreviewLightDir(draw_, lightDir);
+  const float clear[3] = {0.12f, 0.12f, 0.13f};
+  const int rmode = static_cast<int>(gui_.renderMode());
+  float depthScale = 1.0f;
+  float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
+  if (draw_.hasBounds) {
+    const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
+    const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
+    const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
+    depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+    for (int i = 0; i < 3; ++i) {
+      sceneMin[i] = draw_.aabbMin[i];
+      sceneExtent[i] = std::max(1e-4f, draw_.aabbMax[i] - draw_.aabbMin[i]);
+    }
+  }
+
+  std::vector<uint8_t> rgba;
+  std::string cerr;
+  if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
+                        sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
+                        &cameraLens_)) {
+    renderer_->uploadViewportImage(rgba.data(), w, h);
+  } else {
+    LOGW("CUDA ray trace failed: %s", cerr.c_str());
+  }
+  return true;
+}
+
 void App::markStreamActivity() {
   streamLastActivity_ = std::chrono::steady_clock::now();
   streamHiQSent_ = false;
@@ -4251,8 +4376,17 @@ int App::run(const std::string& initialFile, int maxFrames,
   // on huge instanced scenes like Moana Island) and render single-threaded so the
   // HIP launch + the colorImg_ upload happen on one thread.
   hipInteractive_ = hipRt_ && !headless_;
+  // Windowed --cuda: same shape as --hip above, driven by CudaRayTracer.
+  cudaInteractive_ = cudaRt_ && !headless_;
+  if (cudaInteractive_) activeOverlay_ = OverlayKind::CudaRT;
+  else if (hipInteractive_) activeOverlay_ = OverlayKind::HipRT;
+  if (cudaInteractive_ || hipInteractive_) {
+    activeTechnique_ = cudaInteractive_ ? RenderTechnique::CudaRT : RenderTechnique::HipRT;
+    previousTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
+                                                    : RenderTechnique::VulkanRaster;
+  }
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
-  if (hipInteractive_) renderThreadActive_ = false;
+  if (hipInteractive_ || cudaInteractive_) renderThreadActive_ = false;
   // Streaming captures the composited window + encodes inline each frame; run
   // single-threaded so the capture/encode happen on the context-owning thread.
   if (streamHttpPort_ > 0) renderThreadActive_ = false;
@@ -4367,11 +4501,15 @@ int App::run(const std::string& initialFile, int maxFrames,
         LOGW("--rt requested but ray tracing is unavailable; using rasterization.");
       }
     }
-    activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                  : (rtPath_ ? RenderTechnique::VulkanRT
-                                                             : RenderTechnique::VulkanRaster);
-    activeOverlay_ = rtPath_ ? OverlayKind::VulkanRT : OverlayKind::None;
-    previousTechnique_ = activeTechnique_;
+    // Windowed --cuda/--hip already seeded activeTechnique_/activeOverlay_
+    // above (before the renderer existed); don't clobber that here.
+    if (!cudaInteractive_ && !hipInteractive_) {
+      activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
+                                                    : (rtPath_ ? RenderTechnique::VulkanRT
+                                                               : RenderTechnique::VulkanRaster);
+      activeOverlay_ = rtPath_ ? OverlayKind::VulkanRT : OverlayKind::None;
+      previousTechnique_ = activeTechnique_;
+    }
   } else
 #endif
   {
@@ -4395,11 +4533,15 @@ int App::run(const std::string& initialFile, int maxFrames,
              "rasterization.");
       }
     }
-    activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                  : (rtPath_ ? RenderTechnique::VulkanRT
-                                                             : RenderTechnique::VulkanRaster);
-    activeOverlay_ = rtPath_ ? OverlayKind::VulkanRT : OverlayKind::None;
-    previousTechnique_ = activeTechnique_;
+    // Windowed --cuda/--hip already seeded activeTechnique_/activeOverlay_
+    // above (before the renderer existed); don't clobber that here.
+    if (!cudaInteractive_ && !hipInteractive_) {
+      activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
+                                                    : (rtPath_ ? RenderTechnique::VulkanRT
+                                                               : RenderTechnique::VulkanRaster);
+      activeOverlay_ = rtPath_ ? OverlayKind::VulkanRT : OverlayKind::None;
+      previousTechnique_ = activeTechnique_;
+    }
 
     if (!initImGui(&err)) {
       LOGE("ImGui init failed: %s", err.c_str());
@@ -4554,6 +4696,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     si.reason = skinningReason_;
     gui_.setSkinning(si);
     gui_.setActiveTechnique(activeTechnique_);
+    gui_.setTechniqueAvailability(cudaProbe_ != ProbeState::Unavailable,
+                                  hipProbe_ != ProbeState::Unavailable);
 
     // Feed the GUI the current load status for the loading modal.
     Gui::LoadStatus ls;
@@ -4730,9 +4874,25 @@ int App::run(const std::string& initialFile, int maxFrames,
     {
       // Skip the raster scene draw (and its instance culling) when the RT path
       // owns the screenshot -- only the cheap ImGui composite needs to run.
-      // Windowed --hip traces the viewport with the HIP path instead of raster.
+      // Windowed --hip/--cuda (or a live switch to HipRT/CudaRT) traces the
+      // viewport with the HIP/CUDA path instead of raster.
       if (hipInteractive_) {
-        renderHipViewport();
+        if (!renderHipViewport()) {
+          // Device unavailable / build failed: renderHipViewport() already
+          // cleared hipInteractive_ -- sync the technique state (menu, probe
+          // cache) so this doesn't keep getting offered/retried.
+          hipProbe_ = ProbeState::Unavailable;
+          activeOverlay_ = OverlayKind::None;
+          activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
+                                                        : RenderTechnique::VulkanRaster;
+        }
+      } else if (cudaInteractive_) {
+        if (!renderCudaViewport()) {
+          cudaProbe_ = ProbeState::Unavailable;
+          activeOverlay_ = OverlayKind::None;
+          activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
+                                                        : RenderTechnique::VulkanRaster;
+        }
       } else if (!rtOwnsScreenshot_ &&
                  !(quitAfterFullUpload_ && streamFirstFrameLogged_ &&
                    loadActive_)) {
