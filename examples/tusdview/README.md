@@ -165,27 +165,50 @@ displays it with an ImGui docking UI.
   (Vulkan ray query, CUDA) intersect real triangles, so the displacement is baked
   into the geometry before the BLAS/TLAS is built. Geometric normals are used on
   displaced surfaces so the new detail shades correctly.
-- **Three render techniques** — OpenGL raster, **Vulkan raster** (baseline), and
-  **Vulkan ray tracing (ray query)**. RT is enabled only when the GPU exposes
-  `VK_KHR_acceleration_structure` + `VK_KHR_ray_query` (+ `bufferDeviceAddress`)
-  and the project was built with an RT-capable `glslangValidator`; otherwise the
-  viewer transparently falls back to Vulkan rasterization. The RT path builds a
-  BLAS per mesh + a TLAS, then a compute shader (`vk/shaders/raytrace.comp`)
-  traces primary + shadow rays with `rayQueryEXT` into a storage image that is
-  copied into the displayed target. Shading evaluates the shared GGX/coat
-  material constants, authored USD lights, DomeLight IBL, and per-light
-  visibility rays. Toggle it from
-  **View ▸ Ray tracing (Vulkan)** (greyed out when unsupported) or start in RT
-  with `--rt`. RT uses a ray-tracer-friendly conversion (no single-index dedup;
-  `build_vertex_indices=false`); displacement is baked into the traced geometry.
-  RT samples the six semantic material textures, including separate opacity,
-  UV1/transforms, compressed-only sources, and sparse UDIMs; full ordinary,
-  compressed, and UDIM mip chains use ray-footprint/projected-triangle LOD with
-  trilinear filtering. Alpha-mask texels are rejected during traversal. Varying
-  displayOpacity and material constants are also supported, including per-face
-  materials bound through GeomSubsets.
-  Helper lines, grid/axes, skeletons, volumes, and selection highlights are
-  composited over the traced image without recreating the renderer.
+- **Runtime backend switch** — six render techniques, switchable **live, without
+  restarting**, from **View ▸ Render Technique** (or their startup CLI flags):
+  GL Raster, Vulkan Raster, Vulkan RT, CUDA RT, HIP RT, and CPU RT. GL raster and
+  Vulkan raster are window owners (switching between them tears down and rebuilds
+  the renderer, then re-uploads the scene); Vulkan RT is a same-instance toggle on
+  the Vulkan renderer (no reupload); CUDA RT, HIP RT, and CPU RT trace externally
+  and composite the result over whichever window owner is active. A failed switch
+  (e.g. CUDA RT with no NVIDIA GPU present) logs a warning and reverts to the
+  previous technique instead of crashing; CUDA/HIP entries gray out in the menu
+  once a switch attempt has proven the device unavailable. **CPU RT** has its own
+  dedicated keybinding, **`R`** (viewport hovered), which toggles it on/off and
+  restores whichever technique was active before.
+  - **Vulkan ray tracing (ray query)** is enabled only when the GPU exposes
+    `VK_KHR_acceleration_structure` + `VK_KHR_ray_query` (+ `bufferDeviceAddress`)
+    and the project was built with an RT-capable `glslangValidator`; otherwise the
+    viewer transparently falls back to Vulkan rasterization. The RT path builds a
+    BLAS per mesh + a TLAS, then a compute shader (`vk/shaders/raytrace.comp`)
+    traces primary + shadow rays with `rayQueryEXT` into a storage image that is
+    copied into the displayed target. Shading evaluates the shared GGX/coat
+    material constants, authored USD lights, DomeLight IBL, and per-light
+    visibility rays. Start in RT with `--rt`. RT uses a ray-tracer-friendly
+    conversion (no single-index dedup; `build_vertex_indices=false`); displacement
+    is baked into the traced geometry. RT samples the six semantic material
+    textures, including separate opacity, UV1/transforms, compressed-only
+    sources, and sparse UDIMs; full ordinary, compressed, and UDIM mip chains use
+    ray-footprint/projected-triangle LOD with trilinear filtering. Alpha-mask
+    texels are rejected during traversal. Varying displayOpacity and material
+    constants are also supported, including per-face materials bound through
+    GeomSubsets. Helper lines, grid/axes, skeletons, volumes, and selection
+    highlights are composited over the traced image without recreating the
+    renderer.
+  - **CUDA RT** / **HIP RT** flatten the scene to world-space triangles (instances
+    expanded) and path-trace it (primary + one shadow ray) on the CUDA driver API
+    (via cuew, NVRTC-compiled at runtime) or HIP/ROCm (via hipew, hiprtc). `--cuda`
+    / `--hip` without `--headless` now drive the viewport **interactively** (build
+    once, retrace on the orbit camera) instead of only writing a one-shot
+    screenshot — that one-shot path is still used for `--headless --screenshot`.
+  - **CPU RT** (`--cpu-rt`) flattens the scene the same way (reusing the CUDA/HIP
+    tracers' `BuildHostScene` flattener) and traces it on CPU worker threads with
+    the vendored `lightrt_c` BVH library (also used by `tools/tusdrender`), one
+    sample per pixel with flat Lambertian + hard-shadow shading (no textures/
+    materials yet — a first cut, not a full path tracer). No headless one-shot
+    path yet; a headless `--cpu-rt` run falls back to the normal raster
+    screenshot.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive
