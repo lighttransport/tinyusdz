@@ -966,13 +966,16 @@ void Gui::rebuildSubsetHighlight() {
   // silhouette over the moving mesh (visible as a mismatched wireframe net).
   std::vector<DrawVertex> skinnedVerts;
   const std::vector<DrawVertex>* srcVerts = &m.vertices;
-  // True when srcVerts is already final WORLD-space (BuildNextRtDeformedVertices'
-  // bone rows bake in the mesh's world transform, unlike ApplySkinningToVertices'
-  // composed matrices below, which end in inverse(meshWorld) so their result is
-  // still object-space, meant to go through the normal `W *` multiply). Applying
-  // W to an already-world-space source double-transforms it -- visible as an
-  // oversized, offset wireframe net relative to the correctly-posed shaded mesh.
-  bool alreadyWorldSpace = false;
+  // Both re-pose paths below produce OBJECT-space vertices that still need the
+  // normal `W *` multiply below -- confirmed empirically against
+  // BuildHostScene (rt_scene_build.cc), which needed the identical fix: its
+  // mesh flatten read draw_'s (already BuildNextRtDeformedVertices-posed)
+  // vertices directly with no world multiply, silently wrong for any mesh
+  // with a non-identity world (animatedWorld meshes: gpu_scene.hh's `world`
+  // field is a real per-frame transform, not just a load-time bake-in
+  // placeholder). Skipping the multiply here equally double-counts or
+  // under-counts depending on the mesh, visible as an oversized/offset or
+  // wrongly-shaped wireframe net relative to the correctly-posed shaded mesh.
   if (nextStage_) {
     // --next loader: there is no tydra RenderScene to re-pose from (see
     // gpu_scene.hh's NextSkelBinding comment) -- re-pose via the retained next
@@ -985,7 +988,6 @@ void Gui::rebuildSubsetHighlight() {
         if (u.meshIndex == mi) {
           skinnedVerts = u.vertices;
           srcVerts = &skinnedVerts;
-          alreadyWorldSpace = true;
           break;
         }
       }
@@ -1001,10 +1003,6 @@ void Gui::rebuildSubsetHighlight() {
   }
   auto wpos = [&](uint32_t vi, float o[3]) {
     const DrawVertex& v = (*srcVerts)[vi];
-    if (alreadyWorldSpace) {
-      o[0] = v.px; o[1] = v.py; o[2] = v.pz;
-      return;
-    }
     o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
     o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
     o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
