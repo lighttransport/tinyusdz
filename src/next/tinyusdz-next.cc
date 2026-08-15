@@ -729,6 +729,20 @@ bool StageSession::OpenFile(const std::string& filename,
     return false;
   }
   const auto root_loaded = Clock::now();
+  if (normalized.early_preview_callback) {
+    StagePreview preview;
+    preview.snapshot.revision = 0;
+    preview.snapshot.stage =
+        std::shared_ptr<const Stage>(new Stage(root.Clone()));
+    preview.namespace_complete = false;
+    preview.spatial_subset = false;
+    preview.authoritative = false;
+    if (!normalized.early_preview_callback(preview)) {
+      next->error = "stage early preview callback cancelled";
+      impl_ = std::move(next);
+      return false;
+    }
+  }
   // Composition arcs in a package are relative to its root entry, not to the
   // directory containing the .usdz file. Keep the public root identifier as the
   // filename, but anchor the composition cache at package.usdz[root.usd].

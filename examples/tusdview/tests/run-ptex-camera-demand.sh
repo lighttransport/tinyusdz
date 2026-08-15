@@ -59,7 +59,7 @@ EOF
 log="$out/run.log"
 if ! env TUSDVIEW_PTEX_FORCE_RESIDENCY=1 timeout 60s \
     "$viewer" --headless --backend vk --next \
-    --large-scene-profile island --ptex-initial-faces 1 --ptex-cache-mb 4 \
+    --large-scene-profile instance-heavy --ptex-initial-faces 1 --ptex-cache-mb 4 \
     --frames 4 --size 192x128 --camera /Camera \
     --screenshot "$out/result.png" --render-report "$out/report.json" \
     "$out/scene.usda" >"$log" 2>&1; then

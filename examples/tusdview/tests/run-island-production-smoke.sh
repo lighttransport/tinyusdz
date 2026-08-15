@@ -25,7 +25,7 @@ fi
 
 mkdir -p "$out_dir"
 common=(--next --frames 2 --load-payloads --texture-compress auto
-        --large-scene-profile island --timing --no-grid --vram-budget 12)
+        --large-scene-profile instance-heavy --timing --no-grid --vram-budget 12)
 if [[ -n "$camera" ]]; then common+=(--camera "$camera"); fi
 
 run_capture() {

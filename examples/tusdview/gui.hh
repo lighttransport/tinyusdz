@@ -94,6 +94,7 @@ class Gui {
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setCameraLens(const RtCameraLens& lens) { cameraLens_ = lens; }
   void setBudget(LoadControl* b) { budget_ = b; }
+  void setLoadOptions(LoadOptions* options) { loadOptions_ = options; }
   void setShowGrid(bool on) { showGrid_ = on; }
   void setShowSkeleton(bool on) { showSkeleton_ = on; }
   // Fixed-frame headless captures have no interactive UI. Give the render
@@ -574,6 +575,7 @@ class Gui {
   LoadStatus loadStatus_;
   UploadStatus upload_;
   LoadControl* budget_{nullptr};
+  LoadOptions* loadOptions_{nullptr};
 };
 
 }  // namespace tusdview

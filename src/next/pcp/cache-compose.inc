@@ -112,7 +112,15 @@
       // renames from its target-remap map (ancestor stacks' relocates, carried
       // through the arc, are kept). Falls back to the full map when the stack
       // authored no relocates.
-      const NamespaceMapping s_target_map = ArcOnlyMapping(s);
+      // Relocates are uncommon, while this loop runs for every composed prim
+      // source. Do not copy the source mapping (and its pair vector) merely to
+      // discover that there is nothing to strip.
+      const NamespaceMapping *s_target_map = &Mapping(s.map_idx);
+      NamespaceMapping arc_only_storage;
+      if (!layer_stacks[s.stack_idx].relocates.empty()) {
+        arc_only_storage = ArcOnlyMapping(s);
+        s_target_map = &arc_only_storage;
+      }
 
       for (const SpecRef &sr : specs) {
         const PrimSpec *spec = sr.spec;
@@ -146,8 +154,16 @@
         // (site-local) namespace into the composed namespace, so a referenced
         // asset's internal targets (e.g. material:binding, .connect) resolve to
         // their flattened paths. Identity for local opinions. The time offset
-        // composes the arc's offset with the spec layer's sublayer offset.
-        const LayerOffset spec_off = s.offset.Compose(sr.layer_offset);
+      // composes the arc's offset with the spec layer's sublayer offset.
+      const LayerOffset spec_off = s.offset.Compose(sr.layer_offset);
+      const bool remap_opinion_targets = !s_target_map->pairs.empty();
+      if (!remap_opinion_targets) {
+        // Most local opinions do not cross an arc or relocation. Avoid
+        // constructing a per-property std::function/string remapper for this
+        // overwhelmingly common case.
+        Compositor::CopyLocalOpinions(*out, *spec, spec_off.offset,
+                                      spec_off.scale);
+      } else {
         Compositor::CopyLocalOpinions(
             *out, *spec, spec_off.offset, spec_off.scale,
             [&](const std::string &p) {
@@ -159,7 +175,7 @@
               if (s.arc_kind == ArcType::Variant) {
                 return Mapping(s.map_idx).Apply(p);
               }
-              std::string r = s_target_map.ApplyTarget(p);
+              std::string r = s_target_map->ApplyTarget(p);
               if (!r.empty() || s.arc_kind != ArcType::Inherit || !s.arc_chain)
                 return r;
               // A connection/relationship target authored in an inherited local
@@ -207,6 +223,7 @@
               }
               return r;
             });
+      }
         snapshot_pre_clip_props();
       }
     }

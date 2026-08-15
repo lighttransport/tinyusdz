@@ -80,6 +80,8 @@
       if (!key.empty() && (key[0] == '@' || key[0] == '!')) {
         return;
       }
+      // The worker cache is a local delta over the shared immutable seed, so
+      // entries already present in the main cache are not copied back.
       if (sources_cache.contains(key)) return;
       // The worker Impl is discarded right after this merge and warms subtrees
       // disjoint from the other workers (shared seeded keys are skipped above),

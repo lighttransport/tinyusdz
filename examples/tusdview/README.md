@@ -310,8 +310,8 @@ cmake --build build -j16 --target tusdview
 ./build/tusdview --no-composition scene.usda        # root layer only (no arcs)
 
 # Large-scene startup preview cache (interactive large-scene profiles):
-./build/tusdview --large-scene-profile island scene.usda
-./build/tusdview --large-scene-profile island --preview-cache refresh scene.usda
+./build/tusdview --large-scene-profile instance-heavy scene.usda
+./build/tusdview --large-scene-profile instance-heavy --preview-cache refresh scene.usda
 ./build/tusdview --preview-cache off scene.usda
 ./build/tusdview --preview-cache-dir /fast/cache --preview-cache-max-gb 4 scene.usda
 

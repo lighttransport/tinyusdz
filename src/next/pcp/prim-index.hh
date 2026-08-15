@@ -200,6 +200,10 @@ struct CompositionOptions {
   bool apply_list_ops = true;
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
                                    // -1 => auto (hardware_concurrency when threads exist)
+  // Number of independent prim-opinion records claimed per parallel fill job.
+  // Zero selects the library default. Smaller values improve load balance;
+  // larger values reduce scheduler/atomic overhead.
+  size_t opinion_batch_size = 0;
 
   // Per-layer file/input memory cap for layers loaded by the compositor
   // (sublayers, references, payloads). 0 = no limit.

@@ -33,15 +33,15 @@
 
 namespace {
 
-enum class LargeSceneProfile { Off, Auto, Caldera, Island, ALab };
+enum class LargeSceneProfile { Off, Auto, Balanced, InstanceHeavy, ProceduralHeavy };
 
 const char* ProfileName(LargeSceneProfile p) {
   switch (p) {
     case LargeSceneProfile::Off: return "off";
     case LargeSceneProfile::Auto: return "auto";
-    case LargeSceneProfile::Caldera: return "caldera";
-    case LargeSceneProfile::Island: return "island";
-    case LargeSceneProfile::ALab: return "alab";
+    case LargeSceneProfile::Balanced: return "balanced";
+    case LargeSceneProfile::InstanceHeavy: return "instance-heavy";
+    case LargeSceneProfile::ProceduralHeavy: return "procedural-heavy";
   }
   return "off";
 }
@@ -59,24 +59,11 @@ bool ParseProfile(const char* s, LargeSceneProfile* out) {
   const std::string v = LowerCopy(s);
   if (v == "off") *out = LargeSceneProfile::Off;
   else if (v == "auto") *out = LargeSceneProfile::Auto;
-  else if (v == "caldera") *out = LargeSceneProfile::Caldera;
-  else if (v == "island") *out = LargeSceneProfile::Island;
-  else if (v == "alab") *out = LargeSceneProfile::ALab;
+  else if (v == "balanced") *out = LargeSceneProfile::Balanced;
+  else if (v == "instance-heavy") *out = LargeSceneProfile::InstanceHeavy;
+  else if (v == "procedural-heavy") *out = LargeSceneProfile::ProceduralHeavy;
   else return false;
   return true;
-}
-
-LargeSceneProfile DetectProfileFromPath(const std::string& path) {
-  const std::string p = LowerCopy(path);
-  if (p.find("caldera") != std::string::npos) return LargeSceneProfile::Caldera;
-  if (p.find("island") != std::string::npos ||
-      p.find("moana") != std::string::npos) return LargeSceneProfile::Island;
-  if (p.find("alab") != std::string::npos ||
-      p.find("animal_logic") != std::string::npos ||
-      p.find("animal-logic") != std::string::npos) {
-    return LargeSceneProfile::ALab;
-  }
-  return LargeSceneProfile::Off;
 }
 
 std::uint64_t ParseByteCount(const std::string& text) {
@@ -187,6 +174,7 @@ int main(int argc, char** argv) {
   float rasterLodFullPx = 0.0f; // 0 => keep App default
   float rasterLodCullPx = -1.0f;// <0 => keep App default
   LargeSceneProfile largeSceneProfile = LargeSceneProfile::Off;
+  bool largeSceneProfileExplicit = false;
   tusdview::PreviewCacheMode previewCacheMode =
       tusdview::PreviewCacheMode::Auto;
   bool previewCacheExplicit = false;
@@ -205,16 +193,23 @@ int main(int argc, char** argv) {
   bool useNextExplicit = false;
   bool lodMaxMemExplicit = false;
   bool lodMaxVramExplicit = false;
-  bool allowParentPathsExplicit = false;
   bool maxAssetBytesExplicit = false;
   std::uint64_t maxAssetReadBytes = 0;
   double timeBudget = 0.0;    // 0 = unlimited
   unsigned compositionThreads = 0;
   unsigned conversionThreads = 0;
+  size_t compositionOpinionBatch = 0;
+  size_t instanceChunkSamples = 0;
+  size_t meshConversionChunkPrims = 0;
+  size_t meshConversionChunkMB = 0;
+  size_t curveParallelMinPrims = 0;
   double uploadBudgetMs = 8.0;
   size_t streamBufferMB = 64;
+  size_t previewMaxBoxes = 0;
   bool timing = false;
   bool quitAfterFullUpload = false;
+  bool quitAfterConvert = false;
+  bool fullFidelity = false;
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
   tusdview::RendererDevicePreference devicePreference;
@@ -383,14 +378,18 @@ int main(int argc, char** argv) {
       rasterLodCullExplicit = true;
     } else if (std::strcmp(argv[i], "--large-scene-profile") == 0 && (i + 1) < argc) {
       if (!ParseProfile(argv[++i], &largeSceneProfile)) {
-        LOGE("--large-scene-profile must be off, auto, caldera, island, or alab");
+        LOGE("--large-scene-profile must be off, auto, balanced, "
+             "instance-heavy, or procedural-heavy");
         return 1;
       }
+      largeSceneProfileExplicit = true;
     } else if (std::strncmp(argv[i], "--large-scene-profile=", 22) == 0) {
       if (!ParseProfile(argv[i] + 22, &largeSceneProfile)) {
-        LOGE("--large-scene-profile must be off, auto, caldera, island, or alab");
+        LOGE("--large-scene-profile must be off, auto, balanced, "
+             "instance-heavy, or procedural-heavy");
         return 1;
       }
+      largeSceneProfileExplicit = true;
     } else if (std::strcmp(argv[i], "--preview-cache") == 0) {
       if ((i + 1) >= argc) {
         LOGE("--preview-cache requires auto, off, or refresh");
@@ -427,14 +426,42 @@ int main(int argc, char** argv) {
       compositionThreads = static_cast<unsigned>(std::max(1, std::atoi(argv[++i])));
     } else if (std::strcmp(argv[i], "--convert-threads") == 0 && (i + 1) < argc) {
       conversionThreads = static_cast<unsigned>(std::max(1, std::atoi(argv[++i])));
+    } else if (std::strcmp(argv[i], "--compose-opinion-batch") == 0 &&
+               (i + 1) < argc) {
+      compositionOpinionBatch = static_cast<size_t>(
+          std::strtoull(argv[++i], nullptr, 10));
+    } else if (std::strcmp(argv[i], "--instance-chunk-samples") == 0 &&
+               (i + 1) < argc) {
+      instanceChunkSamples = static_cast<size_t>(
+          std::strtoull(argv[++i], nullptr, 10));
+    } else if (std::strcmp(argv[i], "--mesh-convert-chunk-prims") == 0 &&
+               (i + 1) < argc) {
+      meshConversionChunkPrims = static_cast<size_t>(
+          std::strtoull(argv[++i], nullptr, 10));
+    } else if (std::strcmp(argv[i], "--mesh-convert-chunk-mb") == 0 &&
+               (i + 1) < argc) {
+      meshConversionChunkMB = static_cast<size_t>(
+          std::strtoull(argv[++i], nullptr, 10));
+    } else if (std::strcmp(argv[i], "--curve-parallel-min-prims") == 0 &&
+               (i + 1) < argc) {
+      curveParallelMinPrims = static_cast<size_t>(
+          std::strtoull(argv[++i], nullptr, 10));
     } else if (std::strcmp(argv[i], "--upload-budget-ms") == 0 && (i + 1) < argc) {
       uploadBudgetMs = std::clamp(std::atof(argv[++i]), 1.0, 33.0);
     } else if (std::strcmp(argv[i], "--stream-buffer-mb") == 0 &&
                (i + 1) < argc) {
       streamBufferMB = static_cast<size_t>(
           std::clamp(std::atoi(argv[++i]), 4, 1024));
+    } else if (std::strcmp(argv[i], "--preview-boxes") == 0 &&
+               (i + 1) < argc) {
+      previewMaxBoxes = static_cast<size_t>(
+          std::strtoull(argv[++i], nullptr, 10));
     } else if (std::strcmp(argv[i], "--quit-after-full-upload") == 0) {
       quitAfterFullUpload = true;
+    } else if (std::strcmp(argv[i], "--quit-after-convert") == 0) {
+      quitAfterConvert = true;
+    } else if (std::strcmp(argv[i], "--full-fidelity") == 0) {
+      fullFidelity = true;
     } else if (std::strcmp(argv[i], "--timing") == 0) {
       timing = true;
     } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
@@ -508,7 +535,6 @@ int main(int argc, char** argv) {
       deferReferences = true;
     } else if (std::strcmp(argv[i], "--allow-parent-paths") == 0) {
       allowParentPaths = true;
-      allowParentPathsExplicit = true;
     } else if (std::strcmp(argv[i], "--texture-max-size") == 0 && (i + 1) < argc) {
       textureOptions.maxTextureSize = std::atoi(argv[++i]);
       if (textureOptions.maxTextureSize < 0) {
@@ -817,7 +843,7 @@ int main(int argc, char** argv) {
           "(Halton sub-pixel jitter; default 1 = off).\n"
           "  --max-instances N  Cap the --cuda/--hip 2-level-BVH instance count "
           "(default 16M; 0 = unlimited). Bounds the host BVH build for massively "
-          "instanced scenes (e.g. Moana Island).\n"
+          "very large instanced scenes.\n"
           "  --max-tris N  Cap triangles in the CUDA/HIP software RT scene.\n"
           "  --time-budget SECONDS  Stop the headless run after this wall-time budget.\n"
           "  --size WxH    Set the render/window size. Overrides the startup config.\n"
@@ -827,7 +853,7 @@ int main(int argc, char** argv) {
           "  --max-mem G / --max-vram G  Host / GPU GiB budgets for --lod-stream "
           "(0 = auto, 50%%).\n"
           "  --camera NAME Frame a named USD Camera instead of "
-          "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
+          "auto-fitting the whole scene (useful for vast scenes).\n"
           "  --camera-conform MODE  Filmback policy: fit, crop, horizontal, "
           "vertical, or none (default: fit).\n"
           "  --view-dir X,Y,Z  Set the normalized world-space eye-to-target "
@@ -839,8 +865,8 @@ int main(int argc, char** argv) {
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
           "  --no-skeleton Hide skeleton helper overlays (useful for AOV comparisons).\n"
           "  --dome-ibl off|low|high  Control DomeLight IBL precomputation.\n"
-          "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
-          "Vulkan realtime preset for public large scenes. Profiles set existing "
+          "  --large-scene-profile off|auto|balanced|instance-heavy|"
+          "procedural-heavy  Select a generic Vulkan workload preset. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
           "compression behavior is changed.\n"
           "  --preview-cache auto|off|refresh  Reuse or rebuild a validated "
@@ -849,11 +875,26 @@ int main(int argc, char** argv) {
           "  --preview-cache-max-gb N  Preview-cache size cap (default 8 GiB).\n"
           "  --compose-threads N  Composition worker count (default: hardware, capped).\n"
           "  --convert-threads N  Geometry conversion worker count.\n"
+          "  --compose-opinion-batch N  Prim opinions claimed per composition "
+          "worker job (0=auto).\n"
+          "  --instance-chunk-samples N  Point-instancer placements per "
+          "streaming chunk (0=auto).\n"
+          "  --mesh-convert-chunk-prims N  Source meshes per conversion wave "
+          "(0=auto).\n"
+          "  --mesh-convert-chunk-mb N  Estimated geometry per conversion wave "
+          "(0=auto).\n"
+          "  --curve-parallel-min-prims N  Minimum curves prims for parallel "
+          "conversion (0=auto).\n"
           "  --upload-budget-ms N  Interactive upload slice, 1..33 ms.\n"
           "  --stream-buffer-mb N  Bounded CPU geometry queue for interactive "
           "OpenGL streaming (default 64 MiB).\n"
+          "  --preview-boxes N  Composition preview marker boxes (0=auto).\n"
           "  --quit-after-full-upload  Exit after progressive conversion, upload, "
           "and one complete present.\n"
+          "  --quit-after-convert  Exit when complete CPU renderer data has been "
+          "produced; excludes final upload/presentation latency.\n"
+          "  --full-fidelity  Disable profile geometry/curve admission caps while "
+          "retaining security and payload-policy controls.\n"
           "  --timing             Print detailed load/conversion timing.\n"
           "  --vram-budget G  GPU memory the large-scene budgets may plan "
           "against (GiB). Default: probed from the device. Everything else "
@@ -905,9 +946,9 @@ int main(int argc, char** argv) {
           "  --ptex-cache-mb N  Mutable physical page cache per Ptex texture "
           "(1..4096 MiB).\n"
           "  --curve-preview-prims N  Convert at most N Curves prims (0 = all; "
-          "interactive ALab default 64).\n"
+          "preset limit when enabled).\n"
           "  --curve-preview-strands N  Retain at most N complete curve strands "
-          "(0 = all; interactive ALab default 100000).\n"
+          "(0 = all; presets may provide a limit).\n"
           "  --subdivision-level N  Scene-wide conversion-time subdivision "
           "surface refinement level (0 = off). Applies only to meshes whose USD "
           "subdivisionScheme is not none.\n"
@@ -972,14 +1013,26 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  if (quitAfterFullUpload && maxFrames >= 0) {
-    LOGE("--quit-after-full-upload cannot be combined with --frames");
+  if ((quitAfterFullUpload || quitAfterConvert) && maxFrames >= 0) {
+    LOGE("--quit-after-full-upload/--quit-after-convert cannot be combined with --frames");
     return 1;
   }
 
   LargeSceneProfile effectiveProfile = largeSceneProfile;
+  // Large production assets should receive the interactive streaming budget
+  // even when opened directly from the command line. Keep `--large-scene-
+  // profile off` as an explicit escape hatch, and retain the old opt-in
+  // behavior for headless/fixed-frame captures where deterministic full-load
+  // behavior is more important than first-frame latency.
+  const bool automaticInteractiveProfile =
+      !largeSceneProfileExplicit && !headless && maxFrames < 0;
+  if (automaticInteractiveProfile) {
+    effectiveProfile = LargeSceneProfile::Auto;
+  }
   if (effectiveProfile == LargeSceneProfile::Auto) {
-    effectiveProfile = DetectProfileFromPath(file);
+    // Auto is deliberately content-name agnostic. Use the conservative generic
+    // preset; users can select a workload preset before opening or via CLI.
+    effectiveProfile = LargeSceneProfile::Balanced;
   }
   // Every large-scene budget -- --max-gpu-mem, the texture edge/byte caps, the
   // upload-staging cap, the proxy threshold -- descends from these two numbers.
@@ -1038,24 +1091,22 @@ int main(int argc, char** argv) {
     if (!rtLodBandExplicit) rtLodBand = 0.25f;
     if (!maxAssetBytesExplicit) maxAssetReadBytes = 2ull * 1024ull * 1024ull * 1024ull;
     if (!domeIblExplicit) textureOptions.domeIbl = 0;
-    if (effectiveProfile == LargeSceneProfile::Caldera) {
+    if (effectiveProfile == LargeSceneProfile::Balanced) {
       if (!maxTrisExplicit) maxTris = 40000000;
       if (!maxGpuMemExplicit) maxGpuMemGiB = targetVramGiB;
       if (!maxDrawMeshesExplicit) maxDrawMeshes = 80000;
       if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
       if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
-      if (cameraName.empty()) cameraName = "phospate_mine_overview";
-    } else if (effectiveProfile == LargeSceneProfile::Island) {
+    } else if (effectiveProfile == LargeSceneProfile::InstanceHeavy) {
       if (!maxGpuMemExplicit) maxGpuMemGiB = targetVramGiB;
       if (!maxDrawMeshesExplicit) maxDrawMeshes = 20000;
       if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
       if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
-    } else if (effectiveProfile == LargeSceneProfile::ALab) {
+    } else if (effectiveProfile == LargeSceneProfile::ProceduralHeavy) {
       if (!maxGpuMemExplicit) maxGpuMemGiB = targetVramGiB;
       if (!maxDrawMeshesExplicit) maxDrawMeshes = 50000;
       if (!rasterLodFullExplicit) rasterLodFullPx = 36.0f;
       if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
-      if (!allowParentPathsExplicit) allowParentPaths = true;
     } else {
       if (!maxGpuMemExplicit) maxGpuMemGiB = targetVramGiB;
       if (!maxDrawMeshesExplicit) maxDrawMeshes = 40000;
@@ -1070,6 +1121,17 @@ int main(int argc, char** argv) {
       if (!lodMaxMemExplicit) lodMaxMem = targetHostGiB;
       if (!lodMaxVramExplicit) lodMaxVram = targetVramGiB;
     }
+  }
+  if (fullFidelity) {
+    // Fidelity mode admits every selected-payload render primitive. View-based
+    // LOD/culling needs a retained CPU copy of every instance transform; leave
+    // it off unless explicitly requested so the renderer can release that copy
+    // immediately after upload while still drawing every authored instance.
+    maxDrawMeshes = 0;
+    maxTris = 0;
+    maxGpuMemGiB = 0.0;
+    if (!rasterLodExplicit) rasterLod = false;
+    if (!rtLodExplicit) rtLod = false;
   }
   if (maxAssetReadBytes > 0) {
     tinyusdz::security_policy::SetMaxAssetReadBytes(
@@ -1105,11 +1167,11 @@ int main(int argc, char** argv) {
   }
 #endif
 
-  if (quitAfterFullUpload &&
+  if ((quitAfterFullUpload || quitAfterConvert) &&
       (backend != tusdview::Backend::GL || !useNextLoader || threaded || headless ||
        wantRt || wantCuda || wantHip)) {
-    LOGE("--quit-after-full-upload requires interactive non-threaded OpenGL "
-         "with --next");
+    LOGE("--quit-after-full-upload/--quit-after-convert requires interactive "
+         "non-threaded OpenGL with --next");
     return 1;
   }
 
@@ -1130,12 +1192,9 @@ int main(int argc, char** argv) {
          rasterLod ? "on" : "off", rasterLodFullPx, rasterLodCullPx,
          rtLod ? "on" : "off", rtLodFullPx, rtLodCullPx,
          maxGpuMemGiB, maxDrawMeshes, maxTris);
-    if (effectiveProfile == LargeSceneProfile::ALab && allowParentPaths) {
-      LOGI("large-scene-profile alab: parent-relative composition paths allowed");
-    }
-    if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
+    if (!fullFidelity && effectiveProfile == LargeSceneProfile::ProceduralHeavy && !headless &&
         maxFrames < 0) {
-      LOGI("large-scene-profile alab: interactive preview textures<=%d px, "
+      LOGI("large-scene-profile procedural-heavy: interactive preview textures<=%d px, "
            "compression=%s, mips=%s, curves<=64 prims/100000 strands",
            maxTextureSizeExplicit ? textureOptions.maxTextureSize : 512,
            textureCompressionExplicit ? "explicit" : "auto",
@@ -1237,8 +1296,16 @@ int main(int argc, char** argv) {
     lo.composition = !noComposition;
     lo.compositionThreads = compositionThreads;
     lo.conversionThreads = conversionThreads;
+    lo.compositionOpinionBatch = compositionOpinionBatch;
+    lo.instanceChunkSamples = instanceChunkSamples;
+    lo.meshConversionChunkPrims = meshConversionChunkPrims;
+    lo.meshConversionChunkBytes = meshConversionChunkMB * 1024ull * 1024ull;
+    lo.curveParallelMinPrims = curveParallelMinPrims;
+    // Full-fidelity runs measure/produce authoritative render data directly;
+    // the proxy handoff would add an extra renderer scene transition before the
+    // result is usable. Ordinary interactive presets retain the early preview.
     lo.progressivePreview = effectiveProfile != LargeSceneProfile::Off &&
-                            !headless && maxFrames < 0;
+                            !headless && maxFrames < 0 && !fullFidelity;
     lo.previewCache.mode = previewCacheExplicit
                                ? previewCacheMode
                                : (effectiveProfile != LargeSceneProfile::Off
@@ -1248,20 +1315,20 @@ int main(int argc, char** argv) {
     lo.previewCache.maxBytes = static_cast<size_t>(
         previewCacheMaxGiB * 1024.0 * 1024.0 * 1024.0);
     lo.previewCache.timing = timing;
-    // Island startup is dominated by eager Ptex fallback construction. Keep a
+    // Instance-heavy startup can be dominated by eager Ptex fallback construction. Keep a
     // bounded representative set and stream the remaining faces on demand.
-    if (effectiveProfile == LargeSceneProfile::Island) {
+    if (effectiveProfile == LargeSceneProfile::InstanceHeavy) {
       // Keep startup bounded; admitted meshes enqueue their remaining source
       // faces for physical-cache streaming after the first usable frame.
       lo.ptexInitialFaces = 16;
       lo.ptexPhysicalCacheBytes = 8ull * 1024ull * 1024ull;
       lo.curveTessellationSegments = 2;
-      if (maxDrawMeshes > 0) {
+      if (maxDrawMeshes > 0 && !automaticInteractiveProfile) {
         lo.maxMeshConversions = static_cast<size_t>(maxDrawMeshes);
       }
-    } else if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
+    } else if (effectiveProfile == LargeSceneProfile::ProceduralHeavy && !headless &&
                maxFrames < 0) {
-      // ALab's baked procedurals and texture set exceed ordinary workstation
+      // Baked procedurals and large texture sets can exceed ordinary workstation
       // VRAM. Start with a shaded, topology-valid preview; explicit/headless
       // production runs keep the requested quality settings.
       lo.curveTessellationSegments = 1;
@@ -1277,14 +1344,17 @@ int main(int argc, char** argv) {
     if (curvePreviewStrands) lo.maxCurveStrands = *curvePreviewStrands;
     lo.timing = timing;
     lo.streamBufferBytes = streamBufferMB * 1024ull * 1024ull;
+    lo.previewMaxBoxes = previewMaxBoxes;
     // Keep the next loader bounded even without a named large-scene profile.
     // Profiles may tighten these values below, but ordinary preview/headless
     // loads must not fall back to unlimited composition or GPU staging.
     lo.maxMemoryBytes = static_cast<size_t>(targetBudget.host_limit);
-    lo.gpuGeometryBudgetBytes = static_cast<size_t>(
-        maxGpuMemExplicit && maxGpuMemGiB > 0.0
-            ? maxGpuMemGiB * double(tinyusdz::tydra::next::GiB(1))
-            : double(targetBudget.gpu_geometry_limit));
+    lo.gpuGeometryBudgetBytes = fullFidelity
+        ? 0
+        : static_cast<size_t>(
+              maxGpuMemExplicit && maxGpuMemGiB > 0.0
+                  ? maxGpuMemGiB * double(tinyusdz::tydra::next::GiB(1))
+                  : double(targetBudget.gpu_geometry_limit));
     lo.uploadStagingBytes =
         static_cast<size_t>(targetBudget.upload_staging_limit);
     if (config.status == tusdview::ConfigLoadStatus::Loaded) {
@@ -1305,6 +1375,11 @@ int main(int argc, char** argv) {
     lo.deferReferences = deferReferences;
     lo.allowParentRelativePaths = allowParentPaths;
     lo.textureOptions = textureOptions;
+    if (fullFidelity) {
+      lo.maxMeshConversions = 0;
+      lo.maxCurvePrims = 0;
+      lo.maxCurveStrands = 0;
+    }
     // Default: skip the expensive CPU mip-generation + BCn-compression pipeline
     // whenever the decoded (uncompressed) textures fit comfortably in half the
     // device VRAM. The loader treats half the texture budget as its "comfortable
@@ -1317,7 +1392,7 @@ int main(int argc, char** argv) {
     lo.textureGpuBudgetBytes = vramCapacity;
     lo.textureCompressionExplicit = textureCompressionExplicit;
     lo.textureMipsExplicit = mipsExplicit;
-    if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
+    if (effectiveProfile == LargeSceneProfile::ProceduralHeavy && !headless &&
         maxFrames < 0) {
       if (!maxTextureSizeExplicit) lo.textureOptions.maxTextureSize = 512;
       if (!textureCompressionExplicit) {
@@ -1350,6 +1425,7 @@ int main(int argc, char** argv) {
   }
   app.setUploadBudgetMs(uploadBudgetMs);
   app.setQuitAfterFullUpload(quitAfterFullUpload);
+  app.setQuitAfterConvert(quitAfterConvert);
   app.setLoadBudget(static_cast<std::size_t>(maxTris < 0 ? 0 : maxTris), timeBudget);
   app.setGpuBudget(
       maxGpuMemGiB > 0.0 ? static_cast<std::size_t>(maxGpuMemGiB * 1024.0 *

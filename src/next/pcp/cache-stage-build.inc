@@ -21,6 +21,9 @@
   mutable uint64_t prof_sources_ns_ = 0;
   mutable uint64_t prof_compose_ns_ = 0;
   mutable uint64_t prof_reg_ns_ = 0;
+  mutable uint64_t prof_source_hits_ = 0;
+  mutable uint64_t prof_source_misses_ = 0;
+  mutable uint64_t prof_structure_nodes_ = 0;
 
   void BuildStage(Layer *out, const BuildStageWork &root_work,
                   std::string *warn, std::string *err) {
@@ -46,7 +49,16 @@
       // Parallel warm keys stack-0 sources directly by the composed path.
       // Avoid SourcesKey's path-string copy on the overwhelmingly common hit;
       // retain the full resolver for an unwarmed/mutated miss.
-      const std::vector<Src>* cached_srcs = sources_cache.find(w.src_path.str());
+      const std::vector<Src>* cached_srcs =
+          FindCachedSources(w.src_path.str());
+      if (prof) {
+        if (cached_srcs) {
+          ++prof_source_hits_;
+        } else {
+          ++prof_source_misses_;
+        }
+        ++prof_structure_nodes_;
+      }
       const std::vector<Src> &srcs = cached_srcs
                                          ? *cached_srcs
                                          : SourcesForPath(w.src_path, warn, err);
@@ -59,7 +71,8 @@
       // does not change the tree the walk produces.
       PrimSpec spec(w.out_path.name());
       spec.set_path(w.out_path);
-      std::vector<std::string> children = ComposeChildNames(srcs);
+      std::vector<std::string> children;
+      bool children_filtered = false;
       // pxr instancing rule: descendants of an instanceable prim compose ONLY
       // from the instance's key-defining arcs (direct references/payloads and
       // implied classes) — "overrides on descendent prims are ignored". Local
@@ -79,8 +92,13 @@
         if (!shared_srcs.empty()) {
           subtree_filtered = true;
           children = ComposeChildNames(shared_srcs);
+          children_filtered = true;
         }
       }
+      // Preserve the unfiltered child set when the instanceable source list has
+      // no shareable mapped sources.  In the common non-instanceable case this
+      // also avoids constructing and then potentially replacing the vector.
+      if (!children_filtered) children = ComposeChildNames(srcs);
       auto ps2 = prof ? ProfClock::now() : ProfClock::time_point{};
       if (prof) {
         prof_sources_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ps1 - ps0).count();
@@ -138,7 +156,7 @@
           if (!sources_cache.contains(ck)) {
             std::vector<Src> base =
                 DeriveChildSources(shared_srcs, cn, child.str(), warn, err);
-            sources_cache.get_or_create(ck) = ExpandList(base, child.str(), warn, err);
+            GetOrCreateCachedSources(ck) = ExpandList(base, child.str(), warn, err);
           }
         }
       }

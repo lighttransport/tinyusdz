@@ -105,7 +105,7 @@
   }
 
   // Build a compact hierarchy containing only bound/camera endpoints and their
-  // ancestors. A full Layer::Clone duplicates every PrimSpec (137k on Island)
+  // ancestors. A full Layer::Clone duplicates every PrimSpec in a large scene
   // and defeated the checkpoint's latency goal even though its values were
   // cheap shared backing.
   Layer BuildPreviewLayer(const Layer &structure) {
@@ -206,14 +206,27 @@
     }
     if (nt > 1 && fill_.size() >= 2048) {
       if (nt > kMaxExecutionThreads) nt = kMaxExecutionThreads;
+      // Namespace order clusters heavy mesh/material prims. Static contiguous
+      // partitions leave workers idle when one district contains most of the
+      // authored properties, so claim modest batches dynamically instead.
+      const size_t opinion_batch = options.opinion_batch_size != 0
+                                       ? options.opinion_batch_size
+                                       : std::max<size_t>(
+                                             1, fill_.size() /
+                                                    (static_cast<size_t>(nt) *
+                                                     static_cast<size_t>(32)));
+      std::atomic<size_t> next{0};
       std::vector<std::thread> pool;
       pool.reserve(nt);
       for (int t = 0; t < nt; ++t) {
-        size_t b = fill_.size() * static_cast<size_t>(t) /
-                   static_cast<size_t>(nt);
-        size_t e = fill_.size() * static_cast<size_t>(t + 1) /
-                   static_cast<size_t>(nt);
-        if (b < e) pool.emplace_back([&do_range, b, e]() { do_range(b, e); });
+        pool.emplace_back([&]() {
+          for (;;) {
+            const size_t b = next.fetch_add(opinion_batch,
+                                            std::memory_order_relaxed);
+            if (b >= fill_.size()) break;
+            do_range(b, std::min(fill_.size(), b + opinion_batch));
+          }
+        });
       }
       for (std::thread &th : pool) th.join();
       return;

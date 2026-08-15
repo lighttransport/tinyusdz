@@ -242,7 +242,7 @@ run_asset_pass() {
     # --max-gpu-mem is DERIVED from the device's VRAM (half of it, floor 8 GiB),
     # so assert that a positive budget was resolved, not a number that only holds
     # on a 16 GiB card.
-    for expected in "large-scene-profile island resolved" "backend=vk" \
+    for expected in "large-scene-profile instance-heavy resolved" "backend=vk" \
                     "--next=on" "--raster-lod=on" "--rt-lod=on" \
                     "--max-gpu-mem=[1-9][0-9]*\.[0-9]"; do
       if ! echo "$log" | grep -Eq -- "$expected"; then
@@ -306,7 +306,7 @@ rc=$?
 # 5) Large-scene realtime profile wiring. Uses the same tiny fixture so CI does
 #    not need Caldera/Island/ALab, but exercises the preset resolver, --next,
 #    Vulkan headless rendering, raster LOD defaults, and startup diagnostics.
-run_pass profile --large-scene-profile island
+run_pass profile --large-scene-profile instance-heavy
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc

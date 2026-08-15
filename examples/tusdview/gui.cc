@@ -2889,6 +2889,48 @@ void Gui::drawStats() {
       ImGui::TextDisabled("Applies to the next load (File > Reload).");
     }
   }
+  if (loadOptions_) {
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Load scheduling")) {
+      int composeThreads = static_cast<int>(loadOptions_->compositionThreads);
+      if (ImGui::InputInt("Composition threads (0=auto)", &composeThreads)) {
+        loadOptions_->compositionThreads =
+            static_cast<unsigned>(std::max(0, composeThreads));
+      }
+      int convertThreads = static_cast<int>(loadOptions_->conversionThreads);
+      if (ImGui::InputInt("Conversion threads (0=auto)", &convertThreads)) {
+        loadOptions_->conversionThreads =
+            static_cast<unsigned>(std::max(0, convertThreads));
+      }
+      int opinionBatch = static_cast<int>(loadOptions_->compositionOpinionBatch);
+      if (ImGui::InputInt("Opinion batch (0=auto)", &opinionBatch)) {
+        loadOptions_->compositionOpinionBatch =
+            static_cast<size_t>(std::max(0, opinionBatch));
+      }
+      int instanceChunk = static_cast<int>(loadOptions_->instanceChunkSamples);
+      if (ImGui::InputInt("Instance chunk samples (0=auto)", &instanceChunk)) {
+        loadOptions_->instanceChunkSamples =
+            static_cast<size_t>(std::max(0, instanceChunk));
+      }
+      int meshChunk = static_cast<int>(loadOptions_->meshConversionChunkPrims);
+      if (ImGui::InputInt("Mesh chunk prims (0=auto)", &meshChunk)) {
+        loadOptions_->meshConversionChunkPrims =
+            static_cast<size_t>(std::max(0, meshChunk));
+      }
+      int meshChunkMB = static_cast<int>(
+          loadOptions_->meshConversionChunkBytes / (1024ull * 1024ull));
+      if (ImGui::InputInt("Mesh chunk memory MB (0=auto)", &meshChunkMB)) {
+        loadOptions_->meshConversionChunkBytes =
+            static_cast<size_t>(std::max(0, meshChunkMB)) * 1024ull * 1024ull;
+      }
+      int curveMin = static_cast<int>(loadOptions_->curveParallelMinPrims);
+      if (ImGui::InputInt("Parallel curves minimum (0=auto)", &curveMin)) {
+        loadOptions_->curveParallelMinPrims =
+            static_cast<size_t>(std::max(0, curveMin));
+      }
+      ImGui::TextDisabled("Applies to the next load (File > Reload). CLI values initialize these controls.");
+    }
+  }
   ImGui::End();
 }
 
