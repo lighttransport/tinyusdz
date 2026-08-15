@@ -363,6 +363,11 @@ class App
   // they cannot be fed the way Vulkan RT is. Restores the retained rest pose
   // first, so it is idempotent across time codes. True when draw_ now holds `time`.
   bool poseNextDrawForTracer(double time);
+  // Undo poseNextDrawForTracer: put draw_ back to the retained rest pose and
+  // clear nextTracerPosedTime_. Call whenever no draw_-posing tracer
+  // (CUDA/HIP/CPU RT) owns draw_ any more, so the rest-pose invariant every
+  // other consumer relies on holds again.
+  void restoreNextDrawRestPose();
   // Re-decode any draw_ texture whose CPU payload the raster residency
   // streamer released, so the CUDA/HIP/CPU tracers (which build their texture
   // table from draw_) see real pixels instead of empty slots. Main thread;
