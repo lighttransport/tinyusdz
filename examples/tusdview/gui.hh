@@ -217,6 +217,11 @@ class Gui {
   // App calls this once per frame (before building the View menu) so the menu
   // can show which technique is currently active.
   void setActiveTechnique(RenderTechnique t) { activeTechnique_ = t; }
+  // True once App::poseNextDrawForTracer has written POSED vertices back into
+  // draw_ for a CUDA/HIP/CPU RT build. The selection-highlight re-pose must
+  // then NOT deform draw_ again (it would double-deform); see
+  // rebuildSubsetHighlight. Fed by App each frame from nextTracerPosedTime_.
+  void setDrawIsPosed(bool posed) { drawIsPosed_ = posed; }
   // Lazy CUDA/HIP capability cache (App::cudaProbe_/hipProbe_), fed each frame
   // so the menu can gray out an item once a switch attempt has proven the
   // device unavailable. Optimistic (true) until then -- no startup probing.
@@ -600,6 +605,7 @@ class Gui {
   RenderTechnique activeTechnique_{RenderTechnique::GLRaster};  // fed back by App each frame
   bool cudaAvailable_{true};
   bool hipAvailable_{true};
+  bool drawIsPosed_{false};
   bool wantToggleCpuRt_{false};
   bool wantTogglePlay_{false};
   bool wantStop_{false};

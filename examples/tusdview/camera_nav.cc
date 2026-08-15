@@ -130,18 +130,25 @@ float OrbitCamera::nearPlane() const {
 
 float OrbitCamera::farPlane() const {
   if (!autoClip_) return farClip_;
-  // Floored at 5 units so the far plane always reaches past the ground grid,
-  // which pads out to at least the same 5-unit radius for a small scene
-  // (Gui::renderViewportScene's helper-lines extent) -- without this a small
-  // subject (e.g. a ~1.7-unit-tall character) could get a far plane tighter
-  // than the grid it is standing on, clipping the grid a few rows out from
-  // the subject instead of letting it extend to a visible horizon.
-  const float r = std::max(sceneRadius_ > 1e-4f ? sceneRadius_ : 1.0f, 5.0f);
+  const float r = sceneRadius_ > 1e-4f ? sceneRadius_ : 1.0f;
+  float distant;
   if (haveSceneBounds_) {
-    const float farthest = light3d::length(eye() - sceneCenter_) + r;
-    return std::max(farthest * 1.05f, nearPlane() * 2.0f);
+    distant = (light3d::length(eye() - sceneCenter_) + r) * 1.05f;
+  } else {
+    distant = std::max(distance_ + r * 3.0f, distance_ * 2.0f);
   }
-  return std::max(distance_ + r * 3.0f, distance_ * 2.0f);
+  // The ground grid and world axes are drawn around the WORLD ORIGIN and are
+  // deliberately padded out beyond the subject's own bounds (see the helper
+  // extent in Gui::renderViewportScene), so on a small subject they reach well
+  // past the scene bounding sphere -- a far plane derived from that sphere
+  // alone sliced the grid off a few rows out from the subject instead of
+  // letting it run to a horizon. Extend to cover them when they are shown.
+  // Left at 0 (no effect, so the tight bounds-aware range is preserved for
+  // depth precision) when there is nothing extra to reach.
+  if (helperRadius_ > 0.0f) {
+    distant = std::max(distant, (light3d::length(eye()) + helperRadius_) * 1.05f);
+  }
+  return std::max(distant, nearPlane() * 2.0f);
 }
 
 void OrbitCamera::setFovYDeg(float deg) {

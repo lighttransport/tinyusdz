@@ -976,7 +976,14 @@ void Gui::rebuildSubsetHighlight() {
   // placeholder). Skipping the multiply here equally double-counts or
   // under-counts depending on the mesh, visible as an oversized/offset or
   // wrongly-shaped wireframe net relative to the correctly-posed shaded mesh.
-  if (nextStage_) {
+  if (drawIsPosed_) {
+    // App::poseNextDrawForTracer already wrote the pose at this time code
+    // straight into draw_ for a CUDA/HIP/CPU RT build, so m.vertices IS the
+    // posed geometry -- deforming it again below would double-deform it (the
+    // "wireframe breaks after an RT render" case: draw_ stays posed after the
+    // tracer runs, and every later highlight rebuild compounded another pose
+    // on top). Leave srcVerts pointing at m.vertices.
+  } else if (nextStage_) {
     // --next loader: there is no tydra RenderScene to re-pose from (see
     // gpu_scene.hh's NextSkelBinding comment) -- re-pose via the retained next
     // Stage instead, the same mechanism the CUDA/HIP/CPU RT tracers already
@@ -4624,6 +4631,14 @@ void Gui::buildHelpers() {
     for (int i = 0; i < 3; ++i)
       ex = std::max(ex, draw_->aabbMax[i] - draw_->aabbMin[i]);
     if (ex > 1e-3f) half = std::max(5.0f, std::ceil(ex) + 3.0f);
+  }
+  // Auto-clip's far plane is derived from the SUBJECT's bounding sphere, which
+  // on a small subject is much tighter than this (deliberately padded) helper
+  // extent -- tell the camera how far the helpers actually reach so it does not
+  // slice the grid off. The grid is a square of half-extent `half` centred on
+  // the world origin, so its farthest point is the corner at half*sqrt(2).
+  if (cam_) {
+    cam_->setHelperRadius((showGrid_ || showAxes_) ? half * 1.4143f : 0.0f);
   }
 
   if (showGrid_) {

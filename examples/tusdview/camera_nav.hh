@@ -40,6 +40,12 @@ class OrbitCamera {
   void setAspectOverride(float aspect);
   void setAutoClip(bool on) { autoClip_ = on; }
   void setClipPlanes(float nearPlane, float farPlane);
+  // World-origin-centred radius of the debug helpers (ground grid / axes) that
+  // auto-clip's far plane must still reach; 0 = none. Those helpers are padded
+  // out beyond the subject's own bounds, so on a small subject a far plane
+  // derived from the scene bounding sphere alone clips them. Fed by the GUI
+  // from the extent it actually draws them at.
+  void setHelperRadius(float r) { helperRadius_ = (r > 0.0f) ? r : 0.0f; }
 
   // World up axis: 1 = +Y (default), 2 = +Z. Used so Z-up USD scenes display
   // upright and navigation/grid orient correctly.
@@ -136,6 +142,7 @@ class OrbitCamera {
   light3d::Vec3 sceneCenter_{0.0f, 0.0f, 0.0f};
   bool haveSceneBounds_{false};
   bool autoClip_{true};
+  float helperRadius_{0.0f};  // grid/axes reach for auto-clip (0 = none)
   float nearClip_{0.01f};
   float farClip_{10000.0f};
   float orbitSensitivity_{1.0f};
