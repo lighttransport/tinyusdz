@@ -74,11 +74,13 @@ inline void Interp6(const float* base6, float u, float v, float out[2]) {
 }
 
 // Bilinear-sample an ordinary (non-UDIM, non-Ptex) RGBA8 HostTextureDesc at
-// its base mip. `u`/`v` are wrapped per desc.wrapS/wrapT (0 = repeat, anything
-// else = clamp, matching the raster/RT kernels' convention). No sRGB decode:
-// texels are used as-is, consistent with this tracer's un-color-managed
-// flat shading (CudaRayTracer/HipRayTracer decode in their GPU kernel, which
-// this first cut doesn't replicate).
+// its base mip. Deliberately mirrors sampleTexLevel/wrapCoord in
+// raytracer_kernel_src.txt (the CUDA/HIP kernel) so CPU RT matches the GPU
+// tracers: same wrap-mode encoding (0 and 3 = clamp, 2 = mirror, everything
+// else = repeat), same [0,1] -> [0, size-1] mapping with clamp-to-edge on the
+// upper neighbour, and NO V flip -- HostScene::uv already carries the
+// convention the kernel samples with. No sRGB decode: texels are used as-is,
+// consistent with this tracer's un-color-managed flat shading.
 inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
                                   const std::vector<uint8_t>& texels, int texId,
                                   float u, float v, float out[3]) {
@@ -91,23 +93,26 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
     out[0] = out[1] = out[2] = 1.0f;
     return;
   }
-  auto wrap = [](float x, int mode, int size) -> float {
-    if (mode == 0) {  // repeat
-      x = x - std::floor(x);
-    } else {  // clamp
-      x = std::clamp(x, 0.0f, 1.0f);
+  auto wrapCoord = [](float x, int mode) -> float {
+    if (mode == 0 || mode == 3) return std::clamp(x, 0.0f, 1.0f);  // clamp
+    if (mode == 2) {                                               // mirror
+      const float t = std::floor(x);
+      const float f = x - t;
+      return (static_cast<int>(t) & 1) ? (1.0f - f) : f;
     }
-    return x * static_cast<float>(size) - 0.5f;
+    return x - std::floor(x);  // repeat
   };
-  const float fx = wrap(u, d.wrapS, d.width);
-  const float fy = wrap(1.0f - v, d.wrapT, d.height);  // texel row 0 = top (v=0 at top for glTF-style UVs)
-  const int x0 = static_cast<int>(std::floor(fx));
-  const int y0 = static_cast<int>(std::floor(fy));
-  const float tx = fx - static_cast<float>(x0);
-  const float ty = fy - static_cast<float>(y0);
+  const float su = wrapCoord(u, d.wrapS) * static_cast<float>(d.width - 1);
+  const float sv = wrapCoord(v, d.wrapT) * static_cast<float>(d.height - 1);
+  const int x0 = static_cast<int>(std::floor(su));
+  const int y0 = static_cast<int>(std::floor(sv));
+  const int x1 = (x0 + 1 < d.width) ? (x0 + 1) : (d.width - 1);
+  const int y1 = (y0 + 1 < d.height) ? (y0 + 1) : (d.height - 1);
+  const float tx = su - static_cast<float>(x0);
+  const float ty = sv - static_cast<float>(y0);
   auto texel = [&](int x, int y, float rgb[3]) {
-    x = ((x % d.width) + d.width) % d.width;
-    y = ((y % d.height) + d.height) % d.height;
+    x = std::clamp(x, 0, d.width - 1);
+    y = std::clamp(y, 0, d.height - 1);
     const size_t idx = static_cast<size_t>(d.offset) +
                        (static_cast<size_t>(y) * d.width + x) * 4;
     if (idx + 2 >= texels.size()) { rgb[0] = rgb[1] = rgb[2] = 1.0f; return; }
@@ -116,8 +121,8 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
     rgb[2] = texels[idx + 2] / 255.0f;
   };
   float c00[3], c10[3], c01[3], c11[3];
-  texel(x0, y0, c00); texel(x0 + 1, y0, c10);
-  texel(x0, y0 + 1, c01); texel(x0 + 1, y0 + 1, c11);
+  texel(x0, y0, c00); texel(x1, y0, c10);
+  texel(x0, y1, c01); texel(x1, y1, c11);
   for (int c = 0; c < 3; ++c) {
     const float top = c00[c] * (1 - tx) + c10[c] * tx;
     const float bot = c01[c] * (1 - tx) + c11[c] * tx;
