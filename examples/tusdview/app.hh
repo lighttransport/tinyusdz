@@ -25,6 +25,7 @@
 #include "frame_packet.hh"
 
 #include "camera_nav.hh"
+#include "cpu/cpu_raytracer.hh"
 #include "cuda/cuda_raytracer.hh"
 #include "gpu_scene.hh"
 #include "hip/hip_raytracer.hh"
@@ -184,6 +185,10 @@ class App
   }
   // --hip: trace the screenshot with the HIP/ROCm BVH ray tracer (hipew runtime).
   void setHipRt(bool on) { hipRt_ = on; }
+  // --cpu-rt: trace with the CPU (lightrt_c) ray tracer. Windowed: interactive,
+  // same shape as --hip/--cuda. Headless + --screenshot: a one-shot trace (no
+  // device-async upload step needed, so it's simpler than CUDA/HIP's path).
+  void setCpuRt(bool on) { cpuRt_ = on; }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
   // Write a stable machine-readable summary when run() exits.
@@ -452,6 +457,7 @@ class App
   int headlessWinW_{0};
   int headlessWinH_{0};
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
+  bool cpuRt_{false};     // --cpu-rt: CPU (lightrt_c) ray tracer
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)
   bool viewDirExplicit_{false};
   float viewDir_[3]{0.0f, 0.0f, -1.0f};  // normalized eye-to-target direction
@@ -532,6 +538,23 @@ class App
   enum class ProbeState { Unknown, Available, Unavailable };
   ProbeState cudaProbe_{ProbeState::Unknown};
   ProbeState hipProbe_{ProbeState::Unknown};
+
+  // CPU RT (the "R" keybinding / --cpu-rt / View > Render Technique > CPU RT).
+  // Always available (no device to probe), so unlike cudaInteractive_/
+  // hipInteractive_ there is no *Probe_ gate. Same background-build shape as
+  // HIP/CUDA (BuildHostScene + a lightrt_c BVH can take a while on big
+  // scenes).
+  CpuRayTracer cpuTracer_;
+  bool cpuInteractive_{false};
+  bool cpuInteractiveBuilt_{false};
+  int cpuBuildAnnounceFrames_{0};
+  std::thread cpuBuildThread_;
+  bool cpuBuildStarted_{false};
+  std::atomic<bool> cpuBuildDone_{false};
+  std::atomic<bool> cpuBuildOk_{false};
+  std::string cpuBuildErr_;
+  BuildProgress cpuBuildProgress_;
+  bool renderCpuViewport();
 
   // --- Runtime backend switch (View menu Render Technique submenu / keybinding) ---
   // Ground truth: activeTechnique_ decomposes into backend_ (which Renderer

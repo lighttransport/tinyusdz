@@ -2199,7 +2199,11 @@ if(TINYUSDZ_BUILD_TOOLS)
   # tusddiff uses the Tydra diff-and-compare API.
   if(TINYUSDZ_WITH_TYDRA)
     add_subdirectory(tools/tusddiff)
-    add_subdirectory(tools/tusdrender)
+    # examples/tusdview (added earlier when TINYUSDZ_BUILD_GUI_VIEWER is also
+    # ON) may have already pulled this in for its lightrt_c CPU RT backend.
+    if(NOT TARGET tusdrender)
+      add_subdirectory(tools/tusdrender)
+    endif()
   endif()
 endif()
 

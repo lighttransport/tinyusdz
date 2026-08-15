@@ -3077,7 +3077,15 @@ bool App::wantsNextGpuSkinning() const {
 }
 
 bool App::needsMeshCpuGeometryForRT() const {
-  if (cudaRt_ || hipRt_) return true;
+  // Once a live technique switch is possible (liveSwitchEnabled_, always true
+  // -- see its declaration), any RT technique (CUDA/HIP/CPU) may be requested
+  // later at runtime (View menu / the CPU RT keybinding) even when no *Rt_
+  // CLI flag was passed at startup, and CpuRayTracer::build() always reads
+  // draw_ directly (BuildHostScene has no GPU-resident fallback) -- so this
+  // geometry must always survive now, superseding the narrower cudaRt_/
+  // hipRt_-only check this function used before the switch feature existed.
+  if (liveSwitchEnabled_) return true;
+  if (cudaRt_ || hipRt_ || cpuRt_) return true;
   // rtPath_ is set as soon as --rt is requested and some RT technique is
   // available (checked at renderer init, before setRayTracing() has
   // necessarily run yet -- see the two rtPath_ = true; sites) -- so this is
@@ -3805,6 +3813,7 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
     }
     hipInteractive_ = (targetOverlay == OverlayKind::HipRT);
     cudaInteractive_ = (targetOverlay == OverlayKind::CudaRT);
+    cpuInteractive_ = (targetOverlay == OverlayKind::CpuRT);
     if (targetOverlay == OverlayKind::VulkanRT) renderer_->setRayTracing(true);
     activeOverlay_ = targetOverlay;
     previousTechnique_ = activeTechnique_;
@@ -4154,6 +4163,103 @@ bool App::renderCudaViewport() {
   return true;
 }
 
+bool App::renderCpuViewport() {
+  // Mirrors renderCudaViewport() above (CPU tracer has no device to probe, so
+  // it never fails past its own build() call -- there is no cpuProbe_ gate).
+  if (loadActive_ || draw_.empty()) {
+    int vw = 0, vh = 0;
+    gui_.viewportPixelSize(&vw, &vh);
+    if (vw > 0 && vh > 0) {
+      std::vector<uint8_t> clearPx(static_cast<size_t>(vw) * vh * 4);
+      for (size_t i = 0; i + 3 < clearPx.size(); i += 4) {
+        clearPx[i] = 31; clearPx[i + 1] = 31; clearPx[i + 2] = 33; clearPx[i + 3] = 255;
+      }
+      renderer_->uploadViewportImage(clearPx.data(), vw, vh);
+    }
+    return true;
+  }
+
+  if (!cpuInteractiveBuilt_) {
+    if (cpuBuildAnnounceFrames_ < 2) {
+      ++cpuBuildAnnounceFrames_;
+      return true;
+    }
+    if (!cpuBuildStarted_) {
+      cpuBuildStarted_ = true;
+      const float dispScale = gui_.displacementScale();  // read on the main thread
+      poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
+      cpuBuildThread_ = std::thread([this, dispScale] {
+        std::string e;
+        const bool ok = cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
+                                         dispScale, &cpuBuildProgress_);
+        cpuBuildErr_ = e;
+        cpuBuildOk_.store(ok, std::memory_order_release);
+        cpuBuildDone_.store(true, std::memory_order_release);
+      });
+      return true;
+    }
+    if (!cpuBuildDone_.load(std::memory_order_acquire)) {
+      return true;  // still building -> overlay shows live progress
+    }
+    if (cpuBuildThread_.joinable()) cpuBuildThread_.join();
+    if (!cpuBuildOk_.load(std::memory_order_acquire)) {
+      LOGW("CPU ray tracing build failed: %s", cpuBuildErr_.c_str());
+      cpuInteractive_ = false;
+      return false;
+    }
+    cpuInteractiveBuilt_ = true;
+    LOGI("CPU interactive: %zu tris%s on %s", cpuTracer_.triangleCount(),
+         cpuTracer_.truncated() ? " [truncated]" : "", cpuTracer_.deviceName());
+  }
+
+  if (sceneIsNextDeformable() && animTime_ != nextTracerPosedTime_) {
+    if (poseNextDrawForTracer(animTime_)) {
+      std::string e;
+      const float dispScale = gui_.displacementScale();
+      if (!cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e, dispScale)) {
+        LOGW("CPU re-pose rebuild failed: %s", e.c_str());
+      }
+    }
+  }
+
+  int w = 0, h = 0;
+  gui_.viewportPixelSize(&w, &h);
+  if (w < 1 || h < 1) return true;  // viewport not laid out yet this frame
+
+  camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
+  const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
+  const light3d::Mat4 inv = pv.inverse();
+  const light3d::Vec3 eye = camera_.eye();
+  const float camPos[3] = {eye.x, eye.y, eye.z};
+  float lightDir[3];
+  CopyPreviewLightDir(draw_, lightDir);
+  const float clear[3] = {0.12f, 0.12f, 0.13f};
+  const int rmode = static_cast<int>(gui_.renderMode());
+  float depthScale = 1.0f;
+  float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
+  if (draw_.hasBounds) {
+    const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
+    const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
+    const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
+    depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+    for (int i = 0; i < 3; ++i) {
+      sceneMin[i] = draw_.aabbMin[i];
+      sceneExtent[i] = std::max(1e-4f, draw_.aabbMax[i] - draw_.aabbMin[i]);
+    }
+  }
+
+  std::vector<uint8_t> rgba;
+  std::string cerr;
+  if (cpuTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
+                       sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
+                       &cameraLens_)) {
+    renderer_->uploadViewportImage(rgba.data(), w, h);
+  } else {
+    LOGW("CPU ray trace failed: %s", cerr.c_str());
+  }
+  return true;
+}
+
 void App::markStreamActivity() {
   streamLastActivity_ = std::chrono::steady_clock::now();
   streamHiQSent_ = false;
@@ -4378,15 +4484,22 @@ int App::run(const std::string& initialFile, int maxFrames,
   hipInteractive_ = hipRt_ && !headless_;
   // Windowed --cuda: same shape as --hip above, driven by CudaRayTracer.
   cudaInteractive_ = cudaRt_ && !headless_;
+  // Windowed --cpu-rt: same shape, driven by CpuRayTracer. No headless
+  // one-shot path yet (unlike CUDA/HIP's post-loop screenshot trace) -- a
+  // headless --cpu-rt run just falls through to the normal raster screenshot.
+  cpuInteractive_ = cpuRt_ && !headless_;
   if (cudaInteractive_) activeOverlay_ = OverlayKind::CudaRT;
   else if (hipInteractive_) activeOverlay_ = OverlayKind::HipRT;
-  if (cudaInteractive_ || hipInteractive_) {
-    activeTechnique_ = cudaInteractive_ ? RenderTechnique::CudaRT : RenderTechnique::HipRT;
+  else if (cpuInteractive_) activeOverlay_ = OverlayKind::CpuRT;
+  if (cudaInteractive_ || hipInteractive_ || cpuInteractive_) {
+    activeTechnique_ = cudaInteractive_ ? RenderTechnique::CudaRT
+                       : hipInteractive_ ? RenderTechnique::HipRT
+                                         : RenderTechnique::CpuRT;
     previousTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
                                                     : RenderTechnique::VulkanRaster;
   }
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
-  if (hipInteractive_ || cudaInteractive_) renderThreadActive_ = false;
+  if (hipInteractive_ || cudaInteractive_ || cpuInteractive_) renderThreadActive_ = false;
   // Streaming captures the composited window + encodes inline each frame; run
   // single-threaded so the capture/encode happen on the context-owning thread.
   if (streamHttpPort_ > 0) renderThreadActive_ = false;
@@ -4503,7 +4616,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     }
     // Windowed --cuda/--hip already seeded activeTechnique_/activeOverlay_
     // above (before the renderer existed); don't clobber that here.
-    if (!cudaInteractive_ && !hipInteractive_) {
+    if (!cudaInteractive_ && !hipInteractive_ && !cpuInteractive_) {
       activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
                                                     : (rtPath_ ? RenderTechnique::VulkanRT
                                                                : RenderTechnique::VulkanRaster);
@@ -4535,7 +4648,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     }
     // Windowed --cuda/--hip already seeded activeTechnique_/activeOverlay_
     // above (before the renderer existed); don't clobber that here.
-    if (!cudaInteractive_ && !hipInteractive_) {
+    if (!cudaInteractive_ && !hipInteractive_ && !cpuInteractive_) {
       activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
                                                     : (rtPath_ ? RenderTechnique::VulkanRT
                                                                : RenderTechnique::VulkanRaster);
@@ -4802,12 +4915,18 @@ int App::run(const std::string& initialFile, int maxFrames,
     const SkinningMode requestedSkinningMode = gui_.requestedSkinningMode();
     const bool hasTechniqueRequest = gui_.hasTechniqueRequest();
     const RenderTechnique requestedTechnique = gui_.requestedTechnique();
+    const bool wantToggleCpuRt = gui_.wantToggleCpuRt();
     animLoop_ = gui_.loopPlayback();
     animSpeed_ = gui_.playSpeed();
     tessQuality_ = gui_.tessellationQuality();
     gui_.clearActions();
 
     if (hasTechniqueRequest) applyTechniqueSwitch(requestedTechnique);
+    if (wantToggleCpuRt) {
+      applyTechniqueSwitch(activeTechnique_ == RenderTechnique::CpuRT
+                                ? previousTechnique_
+                                : RenderTechnique::CpuRT);
+    }
 
     if (hasSkinningModeRequest) {
       skinningRequested_ = requestedSkinningMode;
@@ -4889,6 +5008,12 @@ int App::run(const std::string& initialFile, int maxFrames,
       } else if (cudaInteractive_) {
         if (!renderCudaViewport()) {
           cudaProbe_ = ProbeState::Unavailable;
+          activeOverlay_ = OverlayKind::None;
+          activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
+                                                        : RenderTechnique::VulkanRaster;
+        }
+      } else if (cpuInteractive_) {
+        if (!renderCpuViewport()) {
           activeOverlay_ = OverlayKind::None;
           activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
                                                         : RenderTechnique::VulkanRaster;
