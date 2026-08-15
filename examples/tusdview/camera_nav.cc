@@ -130,7 +130,13 @@ float OrbitCamera::nearPlane() const {
 
 float OrbitCamera::farPlane() const {
   if (!autoClip_) return farClip_;
-  const float r = sceneRadius_ > 1e-4f ? sceneRadius_ : 1.0f;
+  // Floored at 5 units so the far plane always reaches past the ground grid,
+  // which pads out to at least the same 5-unit radius for a small scene
+  // (Gui::renderViewportScene's helper-lines extent) -- without this a small
+  // subject (e.g. a ~1.7-unit-tall character) could get a far plane tighter
+  // than the grid it is standing on, clipping the grid a few rows out from
+  // the subject instead of letting it extend to a visible horizon.
+  const float r = std::max(sceneRadius_ > 1e-4f ? sceneRadius_ : 1.0f, 5.0f);
   if (haveSceneBounds_) {
     const float farthest = light3d::length(eye() - sceneCenter_) + r;
     return std::max(farthest * 1.05f, nearPlane() * 2.0f);
