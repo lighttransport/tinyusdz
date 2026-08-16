@@ -3928,6 +3928,7 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
     activeOverlay_ = targetOverlay;
     previousTechnique_ = activeTechnique_;
     activeTechnique_ = t;
+    gui_.setRenderer(renderer_.get());
     return true;
   }
 
@@ -3988,6 +3989,7 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
     if (!buildFor(prevOwner, &restoreErr)) {
       LOGE("Failed to restore the previous renderer after a failed backend switch: %s",
            restoreErr.c_str());
+      gui_.setRenderer(renderer_.get());
       return false;
     }
   }
@@ -4028,6 +4030,12 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
   previousTechnique_ = activeTechnique_;
   activeOverlay_ = resultOverlay;
   activeTechnique_ = resultTechnique;
+  // renderer_ is a brand-new object after an owner change; Gui still holds the
+  // pointer it was given by gui_.frame() earlier THIS frame and would use it
+  // again in renderViewportScene() below (use-after-free -- observed as
+  // "free(): invalid pointer" inside VulkanRenderer::renderFrame, and as a
+  // SIGSEGV on other drivers). Hand over the new one.
+  gui_.setRenderer(renderer_.get());
   return ok;
 }
 
@@ -5036,6 +5044,18 @@ int App::run(const std::string& initialFile, int maxFrames,
       for (const StreamNav& c : streamServer_->takeInput()) applyNavCommand(c);
     }
 
+    // Backend switches requested during the PREVIOUS frame are applied here, in
+    // the gap between ImGui frames. Doing it mid-frame (where the request is
+    // consumed) tears down the ImGui renderer backend after ImGui::NewFrame()
+    // has already run: the draw data would then be built by one backend and
+    // submitted to another, whose per-frame device objects were never created
+    // and whose ImTextureIDs mean nothing -- observed as a SIGSEGV inside
+    // ImGui_ImplOpenGL3_RenderDrawData when switching Vulkan -> GL.
+    if (hasPendingTechnique_) {
+      hasPendingTechnique_ = false;
+      applyTechniqueSwitch(pendingTechnique_);
+    }
+
     // In threaded GL, newFrame() is a GL op that runs on the render thread (just
     // before it draws the packet); the main thread only builds ImGui + the packet.
     if (!renderThreadActive_) renderer_->newFrame();
@@ -5076,11 +5096,16 @@ int App::run(const std::string& initialFile, int maxFrames,
     tessQuality_ = gui_.tessellationQuality();
     gui_.clearActions();
 
-    if (hasTechniqueRequest) applyTechniqueSwitch(requestedTechnique);
+    // Queue only -- see the apply site at the top of the next iteration.
+    if (hasTechniqueRequest) {
+      pendingTechnique_ = requestedTechnique;
+      hasPendingTechnique_ = true;
+    }
     if (wantToggleCpuRt) {
-      applyTechniqueSwitch(activeTechnique_ == RenderTechnique::CpuRT
-                                ? previousTechnique_
-                                : RenderTechnique::CpuRT);
+      pendingTechnique_ = (activeTechnique_ == RenderTechnique::CpuRT)
+                              ? previousTechnique_
+                              : RenderTechnique::CpuRT;
+      hasPendingTechnique_ = true;
     }
 
     if (hasSkinningModeRequest) {

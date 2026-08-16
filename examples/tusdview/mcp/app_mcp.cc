@@ -459,7 +459,7 @@ json App::mcpScreenshot(const json& args, std::string& err) {
 json App::mcpInput(const json& args, std::string& err) {
   const std::string key = args.value("key", std::string());
   if (key.empty()) {
-    err = "input: 'key' is required (e.g. v|w|s|f|a|r|0|1|3|5|7)";
+    err = "input: 'key' is required (e.g. v|w|s|f|a|r|G|V|0|1|3|5|7)";
     return json::object();
   }
   std::string action;
@@ -490,6 +490,14 @@ json App::mcpInput(const json& args, std::string& err) {
   } else if (key == "7") {
     camera_.setPreset(CameraViewPreset::Top);
     action = "top";
+  } else if (key == "G" || key == "V") {
+    // Scriptable window-owner switch (GL raster / Vulkan raster), so the
+    // GL<->Vulkan teardown+rebuild path is reachable from a test harness.
+    // Applied immediately, like 'r' above (this drain runs after present, i.e.
+    // between ImGui frames -- the switch must never land mid-frame).
+    applyTechniqueSwitch(key == "G" ? RenderTechnique::GLRaster
+                                    : RenderTechnique::VulkanRaster);
+    action = std::string("technique=") + RenderTechniqueLabel(activeTechnique_);
   } else if (key == "r") {
     // Same toggle the viewport 'r' keybinding drives: into CPU RT, or back to
     // whatever technique was active before. Applied immediately (the MCP tool
@@ -501,7 +509,7 @@ json App::mcpInput(const json& args, std::string& err) {
     applyTechniqueSwitch(want);
     action = std::string("technique=") + RenderTechniqueLabel(activeTechnique_);
   } else {
-    err = "input: unhandled key '" + key + "' (v|w|s|f|a|r|0|1|3|5|7)";
+    err = "input: unhandled key '" + key + "' (v|w|s|f|a|r|G|V|0|1|3|5|7)";
     return json::object();
   }
   return json{{"key", key}, {"action", action}, {"wireframe", gui_.wireframeMode()}};
