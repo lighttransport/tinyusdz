@@ -55,15 +55,24 @@ void PropNameTable::freeze() {
     }
     std::sort(idx->by_name.begin(), idx->by_name.end(), FrozenLess{});
   }
-  std::atomic_store(&frozen_, std::shared_ptr<const FrozenIndex>(idx));
+  {
+    // Retain the snapshot for the table's lifetime so the raw pointer readers
+    // publish below can never dangle, then publish with a release store so a
+    // reader that acquires the pointer sees a fully-built index.
+    std::unique_lock<std::shared_mutex> wlk(mu_);
+    published_.push_back(idx);
+  }
+  frozen_ptr_.store(idx.get(), std::memory_order_release);
 }
 
 void PropNameTable::unfreeze() {
-  std::atomic_store(&frozen_, std::shared_ptr<const FrozenIndex>());
+  // Retire the pointer only. The snapshot itself stays alive in published_:
+  // a reader may have loaded it a moment ago and still be walking it.
+  frozen_ptr_.store(nullptr, std::memory_order_release);
 }
 
 bool PropNameTable::is_frozen() const {
-  return static_cast<bool>(std::atomic_load(&frozen_));
+  return frozen_ptr_.load(std::memory_order_acquire) != nullptr;
 }
 #else
 void PropNameTable::freeze() {}
@@ -78,7 +87,7 @@ PropNameId PropNameTable::intern(const std::string& name) {
   // A MISS falls through to the locked path below and inserts into the live
   // map — which the snapshot does not alias, so lock-free readers are
   // untouched and the snapshot stays valid (just missing this one name).
-  if (auto idx = std::atomic_load(&frozen_)) {
+  if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
                                FrozenLess{});
     if (it != idx->by_name.end() && *it->first == name) {
@@ -125,7 +134,7 @@ const std::string& PropNameTable::get(PropNameId id) const {
   // Lock-free when the id is covered by the published snapshot. The deque
   // elements it points at never relocate, so the reference stays valid even if
   // another thread interns concurrently.
-  if (auto idx = std::atomic_load(&frozen_)) {
+  if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     if (id.id < idx->by_id.size()) return *idx->by_id[id.id];
   }
   {
@@ -146,7 +155,7 @@ PropNameId PropNameTable::find(const std::string& name) const {
   // rwlock cache-line contention that dominated multi-thread rendering. A miss
   // still has to consult the live map (a name may have been interned after the
   // snapshot was published).
-  if (auto idx = std::atomic_load(&frozen_)) {
+  if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
                                FrozenLess{});
     if (it != idx->by_name.end() && *it->first == name) {
@@ -181,7 +190,7 @@ PropNameId PropNameTable::find(std::string_view name) const {
     return PropNameId{};
   };
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  if (auto idx = std::atomic_load(&frozen_)) {
+  if (const FrozenIndex* idx = frozen_ptr_.load(std::memory_order_acquire)) {
     auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
                                FrozenLess{});
     if (it != idx->by_name.end() && *it->first == name) {
