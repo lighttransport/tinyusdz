@@ -3310,8 +3310,11 @@ if(TINYUSDZ_BUILD_TESTS)
                 "TUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
                 bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
         )
+      # 900 s to match the loader-parity cases below, which do comparable work.
+      # 300 s was enough only while a failed backend probe let most cases be
+      # skipped; a full GL run over every mode and family measures ~436 s.
       set_tests_properties("${_test_name}" PROPERTIES
-                           SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "tusdview"
+                           SKIP_RETURN_CODE 77 TIMEOUT 900 LABELS "tusdview"
                            RESOURCE_LOCK tusdview_semantic_gpu)
     endforeach()
 
