@@ -524,6 +524,21 @@ uint64_t QueryDeviceLocalVramBytes() {
 
 VulkanRenderer::~VulkanRenderer() { shutdown(); }
 
+// Like findMemoryType, but reports "no such heap" instead of falling back to
+// type 0 -- the caller needs to know whether the properties were really met.
+uint32_t VulkanRenderer::findMemoryTypeOrInvalid(uint32_t typeBits,
+                                                VkMemoryPropertyFlags props) const {
+  VkPhysicalDeviceMemoryProperties mp;
+  vkGetPhysicalDeviceMemoryProperties(phys_, &mp);
+  for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+    if ((typeBits & (1u << i)) &&
+        (mp.memoryTypes[i].propertyFlags & props) == props) {
+      return i;
+    }
+  }
+  return UINT32_MAX;
+}
+
 uint32_t VulkanRenderer::findMemoryType(uint32_t typeBits,
                                         VkMemoryPropertyFlags props) const {
   VkPhysicalDeviceMemoryProperties mp;
@@ -4532,9 +4547,36 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
 
   VkMemoryRequirements req;
   vkGetBufferMemoryRequirements(device_, *buf, &req);
-  const uint32_t memType = findMemoryType(
+  // Vertex/index data is re-fetched by the GPU every frame. Plain
+  // HOST_VISIBLE|HOST_COHERENT memory is system RAM on a discrete GPU, so that
+  // fetch crosses PCIe on every draw -- measured at 86ms for a 3.8M-triangle
+  // scene (a ~50M tri/s ceiling) versus 2ms once the same buffers are
+  // device-local. Prefer a heap that is DEVICE_LOCAL *and* host-visible
+  // (ReBAR, or integrated GPUs where all memory qualifies): that keeps the
+  // buffers in VRAM while preserving the persistent mapping the CPU-skinning
+  // and instance-rewrite paths depend on.
+  //
+  // Without ReBAR the device-local host-visible heap is typically only 256MB,
+  // so allocation from it can fail on a large scene. Every failure falls back
+  // to plain host memory (the old behaviour) for that buffer, and the first
+  // failure latches devLocalHostExhausted_ so later buffers stop retrying a
+  // heap that is known to be full. TUSDVIEW_VBO_HOST=1 forces the old path.
+  static const bool forceHostVbo = std::getenv("TUSDVIEW_VBO_HOST") != nullptr;
+  const uint32_t hostType = findMemoryType(
       req.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  uint32_t memType = hostType;
+  bool devLocalTried = false;
+  if (!forceHostVbo && !devLocalHostExhausted_) {
+    const uint32_t devLocalType = findMemoryTypeOrInvalid(
+        req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (devLocalType != UINT32_MAX) {
+      memType = devLocalType;
+      devLocalTried = true;
+    }
+  }
 
   if (poolable) {
     // Sub-allocate from a shared block. *mem stays VK_NULL_HANDLE so the existing
@@ -4544,8 +4586,14 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
     VkDeviceMemory blockMem;
     VkDeviceSize off;
     void* mapped;
-    if (!poolSubAlloc(req.size, req.alignment, memType, deviceAddress, &blockMem, &off,
-                      &mapped)) {
+    bool sub = poolSubAlloc(req.size, req.alignment, memType, deviceAddress,
+                            &blockMem, &off, &mapped);
+    if (!sub && devLocalTried) {
+      devLocalHostExhausted_ = true;  // stop retrying a full device-local heap
+      sub = poolSubAlloc(req.size, req.alignment, hostType, deviceAddress,
+                         &blockMem, &off, &mapped);
+    }
+    if (!sub) {
       vkDestroyBuffer(device_, *buf, nullptr);
       *buf = VK_NULL_HANDLE;
       return false;
@@ -4568,7 +4616,13 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
   fi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
   fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
   if (deviceAddress) ai.pNext = &fi;
-  if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) {
+  VkResult allocRes = vkAllocateMemory(device_, &ai, nullptr, mem);
+  if (allocRes != VK_SUCCESS && devLocalTried) {
+    devLocalHostExhausted_ = true;  // stop retrying a full device-local heap
+    ai.memoryTypeIndex = hostType;
+    allocRes = vkAllocateMemory(device_, &ai, nullptr, mem);
+  }
+  if (allocRes != VK_SUCCESS) {
     vkDestroyBuffer(device_, *buf, nullptr);
     *buf = VK_NULL_HANDLE;
     return false;
@@ -9907,8 +9961,42 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   // Split-timer (TUSDVIEW_TIME_PRESENT): the previous frame's GPU cost surfaces as
   // the fence wait here (1 frame in flight); everything after is CPU record + submit.
   static const bool timePresent = std::getenv("TUSDVIEW_TIME_PRESENT") != nullptr;
+  static const bool timeGpu = std::getenv("TUSDVIEW_TIME_GPU") != nullptr;
   const auto tw0 = std::chrono::steady_clock::now();
   vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+
+  // Per-pass GPU timing. The fence above already retired the previous submit, so
+  // its four timestamps are readable with no extra wait.
+  if (timeGpu) {
+    if (!gpuQueryPool_) {
+      VkPhysicalDeviceProperties tsProps{};
+      vkGetPhysicalDeviceProperties(phys_, &tsProps);
+      gpuTimestampPeriodNs_ = double(tsProps.limits.timestampPeriod);
+      VkQueryPoolCreateInfo qci{};
+      qci.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+      qci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+      qci.queryCount = 4;
+      if (gpuTimestampPeriodNs_ <= 0.0 ||
+          vkCreateQueryPool(device_, &qci, nullptr, &gpuQueryPool_) != VK_SUCCESS) {
+        gpuQueryPool_ = VK_NULL_HANDLE;
+        LOGE("[vk] TUSDVIEW_TIME_GPU: timestamp query pool unavailable");
+      }
+    }
+    if (gpuQueryPool_ && gpuQueriesPending_) {
+      uint64_t ts[4] = {0, 0, 0, 0};
+      if (vkGetQueryPoolResults(device_, gpuQueryPool_, 0, 4, sizeof(ts), ts,
+                                sizeof(uint64_t),
+                                VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+        const double toMs = gpuTimestampPeriodNs_ * 1e-6;
+        std::fprintf(stderr,
+                     "[gpu] pre-main(shadow+copies)=%.2fms  main-offscreen=%.2fms  "
+                     "swap+imgui=%.2fms  total=%.2fms\n",
+                     double(ts[1] - ts[0]) * toMs, double(ts[2] - ts[1]) * toMs,
+                     double(ts[3] - ts[2]) * toMs, double(ts[3] - ts[0]) * toMs);
+      }
+      gpuQueriesPending_ = false;
+    }
+  }
   for (const NonMeshChunkUpload& upload : nonMeshChunkUploads_[frame_]) {
     if (upload.buf) vkDestroyBuffer(device_, upload.buf, nullptr);
     if (upload.mem) vkFreeMemory(device_, upload.mem, nullptr);
@@ -9972,6 +10060,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   VkCommandBufferBeginInfo bi{};
   bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   vkBeginCommandBuffer(cb, &bi);
+  uint64_t dbgDraws = 0, dbgIndices = 0;   // TUSDVIEW_TIME_GPU submitted-geometry tally
+  gpuQueriesArmed_ = false;
+  if (timeGpu && gpuQueryPool_) {
+    vkCmdResetQueryPool(cb, gpuQueryPool_, 0, 4);
+    vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, gpuQueryPool_, 0);
+  }
 
   // Refresh the device-local instance mirror from the cull's host writes (queued in
   // updateInstanceVisibility). Outside any render pass; the in-flight fence already
@@ -10281,6 +10375,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     rp.renderArea.extent = {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_)};
     rp.clearValueCount = 2;
     rp.pClearValues = clears;
+    if (timeGpu && gpuQueryPool_) {
+      vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, gpuQueryPool_, 1);
+    }
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
     // Y-flipped viewport so the offscreen image is upright (top-left origin).
@@ -10568,6 +10665,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         } else {
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
         }
+        ++dbgDraws;
+        dbgIndices += sub.indexCount;
         }
       }
     }
@@ -10703,6 +10802,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                 &highlightLineMem_[frame_], &highlightLineCap_[frame_],
                 linePipelineNoDepth_, VP.m);
     vkCmdEndRenderPass(cb);
+    if (timeGpu && gpuQueryPool_) {
+      vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, gpuQueryPool_, 2);
+      gpuQueriesArmed_ = true;  // slots 1 and 2 recorded; the set is complete
+    }
   }
 
   // ---- Swapchain pass: ImGui ----
@@ -10718,6 +10821,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
   ImGui_ImplVulkan_RenderDrawData(drawData, cb);
   vkCmdEndRenderPass(cb);
+  if (timeGpu && gpuQueryPool_ && gpuQueriesArmed_) {
+    vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, gpuQueryPool_, 3);
+    gpuQueriesPending_ = true;  // read back after next frame's fence wait
+    std::fprintf(stderr, "[gpu] submitted: %llu draws, %llu tris, viewport %dx%d\n",
+                 (unsigned long long)dbgDraws,
+                 (unsigned long long)(dbgIndices / 3), vpW_, vpH_);
+  }
 
   vkEndCommandBuffer(cb);
 
@@ -11098,6 +11208,7 @@ void VulkanRenderer::shutdown() {
   if (shadowPipeline_) { vkDestroyPipeline(device_, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
   if (instShadowPipeline_) { vkDestroyPipeline(device_, instShadowPipeline_, nullptr); instShadowPipeline_ = VK_NULL_HANDLE; }
   if (translucentPipeline_) { vkDestroyPipeline(device_, translucentPipeline_, nullptr); translucentPipeline_ = VK_NULL_HANDLE; }
+  if (gpuQueryPool_) { vkDestroyQueryPool(device_, gpuQueryPool_, nullptr); gpuQueryPool_ = VK_NULL_HANDLE; }
   if (tessPipeline_) { vkDestroyPipeline(device_, tessPipeline_, nullptr); tessPipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
   if (instPipeline_) { vkDestroyPipeline(device_, instPipeline_, nullptr); instPipeline_ = VK_NULL_HANDLE; }

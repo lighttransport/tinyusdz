@@ -635,6 +635,27 @@ xvfb-run -a env \
 Startup logs print `renderer`, `GPU`, and `API` for both OpenGL and Vulkan, so a
 headless run can reject llvmpipe without requiring `glxinfo`.
 
+## Vulkan raster profiling
+
+`TUSDVIEW_TIME_GPU=1` prints a per-pass GPU breakdown from timestamp queries,
+plus the geometry actually submitted, once per frame:
+
+```
+[gpu] pre-main(shadow+copies)=0.00ms  main-offscreen=1.95ms  swap+imgui=0.07ms  total=2.02ms
+[gpu] submitted: 3 draws, 3812328 tris, viewport 1371x876
+```
+
+It pairs with the CPU-side timers `TUSDVIEW_TIME_FRAME` (whole present) and
+`TUSDVIEW_TIME_PRESENT` (previous-frame GPU wait vs CPU record+submit). All
+three are off unless set, and cost nothing when off.
+
+Mesh vertex/index buffers are allocated from a heap that is `DEVICE_LOCAL` as
+well as host-visible (ReBAR, or an integrated GPU) so that per-frame vertex
+fetch reads VRAM rather than crossing PCIe -- worth 86ms -> 2ms on a 3.8M
+triangle scene. When that heap is absent or full, allocation silently falls
+back to plain host memory per buffer. `TUSDVIEW_VBO_HOST=1` forces the host-only
+path, which is the A/B lever for confirming a suspected vertex-fetch stall.
+
 The variables used by the viewer test harnesses have narrower meanings:
 
 | Variable | Consumer | Meaning |

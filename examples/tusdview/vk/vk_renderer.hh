@@ -410,6 +410,11 @@ class VulkanRenderer final : public Renderer {
   // populated slots untouched (std::vector::resize only fills NEW entries).
   void growTextureSlots(int textureCount);
 
+  uint32_t findMemoryTypeOrInvalid(uint32_t typeBits,
+                                  VkMemoryPropertyFlags props) const;
+  // Latched once a device-local host-visible allocation fails (small BAR full),
+  // so later buffers go straight to plain host memory. See createHostBuffer.
+  bool devLocalHostExhausted_{false};
   uint32_t findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props) const;
   // Create a host-visible buffer initialised with `data`. When `poolable` is true the
   // backing memory is sub-allocated from a few large shared blocks (set *mem =
@@ -851,6 +856,15 @@ class VulkanRenderer final : public Renderer {
   VkCommandBuffer cmd_[kFramesInFlight]{};
   VkSemaphore imageAvailable_[kFramesInFlight]{};  // acquire->render, per frame-in-flight
   VkFence inFlight_[kFramesInFlight]{};            // render-done fence, per frame-in-flight
+
+  // TUSDVIEW_TIME_GPU: per-pass GPU timing. Four timestamps per frame -- command
+  // buffer start, main offscreen pass start, main pass end, frame end -- read back
+  // one frame later (after the in-flight fence, so the results are ready without
+  // an extra stall). Off unless the env var is set; no cost otherwise.
+  VkQueryPool gpuQueryPool_{VK_NULL_HANDLE};
+  double gpuTimestampPeriodNs_{0.0};
+  bool gpuQueriesArmed_{false};   // this frame recorded a full set of 4
+  bool gpuQueriesPending_{false}; // the previous submit has results to read
   // Present-wait semaphore, ONE PER SWAPCHAIN IMAGE (not per frame): vkQueuePresentKHR
   // has no fence, so a present's wait semaphore must not be reused until that image is
   // acquired again -- reusing a per-frame semaphore across images corrupts the queue
