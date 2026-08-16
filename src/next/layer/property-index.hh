@@ -159,10 +159,20 @@ private:
     std::vector<std::pair<const std::string*, uint32_t>> by_name;
     std::vector<const std::string*> by_id;
   };
-  // shared_ptr so a reader that grabbed the snapshot keeps it alive across an
-  // unfreeze()/re-freeze(). Accessed via std::atomic_load/store (the free
-  // functions, so this stays C++11/14-compatible like the rest of the module).
-  std::shared_ptr<const FrozenIndex> frozen_;
+  // Published lock-free as a RAW pointer, NOT via std::atomic_load on a
+  // shared_ptr. libstdc++ implements the shared_ptr atomic free functions with
+  // _Sp_locker, which serializes on one of 16 global mutexes chosen by the
+  // ADDRESS of the shared_ptr -- and this table is a singleton, so every thread
+  // hashed to the same mutex and every property-name lookup in every worker
+  // serialized on it. On Moana island isCoral that cost ~24% of load
+  // (_Sp_locker ctor+dtor inclusive) and showed up as futex traffic.
+  //
+  // Lifetime: every snapshot ever published is retained in published_ until the
+  // table dies, so a reader that loaded the pointer can never see it freed --
+  // including across unfreeze()/re-freeze(). freeze() is called twice in the
+  // whole codebase, so this retains a couple of MB, not an unbounded set.
+  std::atomic<const FrozenIndex*> frozen_ptr_{nullptr};
+  std::vector<std::shared_ptr<const FrozenIndex>> published_;  // guarded by mu_
 #endif
 };
 
