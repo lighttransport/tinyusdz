@@ -163,7 +163,7 @@ def main():
 
     def backend_available(log):
         if which == "rt":
-            return ("Vulkan ray tracing (ray query) enabled" in log and
+            return ("Vulkan ray tracing enabled (hardware ray query)" in log and
                     "ray tracing is unavailable" not in log)
         if which == "cuda":
             return "CUDA RT wrote" in log

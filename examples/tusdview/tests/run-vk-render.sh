@@ -229,7 +229,7 @@ run_asset_pass() {
     return $SKIP
   fi
   if [ "$label" = rt ] &&
-     ! echo "$log" | grep -Fq "Vulkan ray tracing (ray query) enabled."; then
+     ! echo "$log" | grep -Fq "Vulkan ray tracing enabled (hardware ray query)."; then
     echo "SKIP: Vulkan ray query unavailable; raster fallback is not an RT pass"
     return $SKIP
   fi
