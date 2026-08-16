@@ -461,6 +461,10 @@ class VulkanRenderer final : public Renderer {
                                      const void* data, VkBuffer* buf,
                                      VkDeviceMemory* mem, bool deviceAddress);
   void freeDevicePool();
+  // Static-buffer size floor for the device-local pool; hardware dependent, so
+  // probed once on first use. See the definition for the measurements.
+  VkDeviceSize deviceLocalFloorBytes();
+  VkDeviceSize deviceLocalFloorBytes_{0};  // 0 = not yet probed
   // Staging copies for the above, batched: endOneShot does a full vkQueueWaitIdle,
   // so one submit per buffer would stall the streaming upload path once per mesh.
   // Flushed on a byte threshold, before any BLAS build, and before each frame.
