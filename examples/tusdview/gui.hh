@@ -217,6 +217,12 @@ class Gui {
   // App calls this once per frame (before building the View menu) so the menu
   // can show which technique is currently active.
   void setActiveTechnique(RenderTechnique t) { activeTechnique_ = t; }
+  // Gui caches the Renderer* handed to frame() and uses it later in the same
+  // frame (renderViewportScene, viewport image, caps queries). A runtime
+  // backend switch destroys and recreates that renderer BETWEEN those two
+  // points, so the switch must hand over the new pointer or the rest of the
+  // frame runs on freed memory.
+  void setRenderer(Renderer* renderer) { renderer_ = renderer; }
   // True once App::poseNextDrawForTracer has written POSED vertices back into
   // draw_ for a CUDA/HIP/CPU RT build. The selection-highlight re-pose must
   // then NOT deform draw_ again (it would double-deform); see

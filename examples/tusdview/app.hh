@@ -600,6 +600,10 @@ class App
   // reverts to the prior technique and logs a warning instead. Returns false
   // (and leaves activeTechnique_ unchanged) on failure.
   bool applyTechniqueSwitch(RenderTechnique t);
+  // Backend switch deferred to the frame boundary (applied before the next
+  // ImGui::NewFrame); see App::run().
+  RenderTechnique pendingTechnique_{RenderTechnique::GLRaster};
+  bool hasPendingTechnique_{false};
   // Encode an RGBA8 window grab and broadcast it. `motion`=true sends a small
   // low-quality JPEG (fast, for interaction); false sends a full-resolution
   // lossless frame in streamIdleCodec_ (the stable-state refinement).
