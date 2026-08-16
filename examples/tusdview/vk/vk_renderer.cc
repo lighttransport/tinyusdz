@@ -4523,6 +4523,117 @@ bool VulkanRenderer::poolSubAlloc(VkDeviceSize size, VkDeviceSize align,
   return true;
 }
 
+// Device-local sibling of poolSubAlloc: no vkMapMemory (the memory is not
+// host-visible), so callers stage their data in through a copy.
+bool VulkanRenderer::deviceSubAlloc(VkDeviceSize size, VkDeviceSize align,
+                                    uint32_t memoryTypeIndex, bool deviceAddress,
+                                    VkDeviceMemory* outMem, VkDeviceSize* outOffset) {
+  if (align == 0) align = 1;
+  for (HostMemBlock& b : deviceBlocks_) {
+    if (b.memoryTypeIndex != memoryTypeIndex || b.deviceAddress != deviceAddress)
+      continue;
+    const VkDeviceSize off = (b.used + align - 1) & ~(align - 1);
+    if (off + size <= b.size) {
+      b.used = off + size;
+      *outMem = b.mem;
+      *outOffset = off;
+      return true;
+    }
+  }
+  HostMemBlock nb;
+  nb.memoryTypeIndex = memoryTypeIndex;
+  nb.deviceAddress = deviceAddress;
+  nb.size = std::max<VkDeviceSize>(kHostBlockBytes, (size + align - 1) & ~(align - 1));
+  VkMemoryAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  ai.allocationSize = nb.size;
+  ai.memoryTypeIndex = memoryTypeIndex;
+  VkMemoryAllocateFlagsInfo fi{};
+  fi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+  fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+  if (deviceAddress) ai.pNext = &fi;
+  if (vkAllocateMemory(device_, &ai, nullptr, &nb.mem) != VK_SUCCESS) return false;
+  nb.used = size;
+  *outMem = nb.mem;
+  *outOffset = 0;
+  deviceBlocks_.push_back(nb);
+  return true;
+}
+
+// Submit every queued staging copy as ONE command buffer. endOneShot stalls the
+// queue, so batching is what keeps per-mesh uploads off the critical path.
+void VulkanRenderer::flushPendingUploads() {
+  if (pendingUploads_.empty()) return;
+  VkCommandBuffer cb = beginOneShot();
+  for (const PendingBufferUpload& u : pendingUploads_) {
+    VkBufferCopy c{0, 0, u.size};
+    vkCmdCopyBuffer(cb, u.staging, u.dst, 1, &c);
+  }
+  endOneShot(cb);
+  for (const PendingBufferUpload& u : pendingUploads_) {
+    if (u.staging) vkDestroyBuffer(device_, u.staging, nullptr);
+    if (u.stagingMem) vkFreeMemory(device_, u.stagingMem, nullptr);
+  }
+  pendingUploads_.clear();
+  pendingUploadBytes_ = 0;
+}
+
+// True DEVICE_LOCAL buffer, block-pooled, filled through a batched staging copy.
+// *mem is left null: the pool owns the memory (freeDevicePool releases it), which
+// matches how the host pool already interacts with the per-buffer cleanup paths.
+bool VulkanRenderer::createDeviceLocalPooledBuffer(VkDeviceSize size,
+                                                   VkBufferUsageFlags usage,
+                                                   const void* data, VkBuffer* buf,
+                                                   VkDeviceMemory* mem,
+                                                   bool deviceAddress) {
+  if (size == 0) return false;
+  VkBufferCreateInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bi.size = size;
+  bi.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+             (deviceAddress ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0);
+  bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  if (vkCreateBuffer(device_, &bi, nullptr, buf) != VK_SUCCESS) return false;
+  VkMemoryRequirements req;
+  vkGetBufferMemoryRequirements(device_, *buf, &req);
+  const uint32_t devType = findMemoryTypeOrInvalid(
+      req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  VkDeviceMemory blockMem = VK_NULL_HANDLE;
+  VkDeviceSize off = 0;
+  if (devType == UINT32_MAX ||
+      !deviceSubAlloc(req.size, req.alignment, devType, deviceAddress, &blockMem,
+                      &off)) {
+    vkDestroyBuffer(device_, *buf, nullptr);
+    *buf = VK_NULL_HANDLE;
+    return false;  // caller falls back to the host path
+  }
+  vkBindBufferMemory(device_, *buf, blockMem, off);
+  // Staging source: plain host memory (createHostBuffer keeps TRANSFER_SRC-only
+  // buffers off the device-local heap), queued for a batched copy.
+  VkBuffer stg = VK_NULL_HANDLE;
+  VkDeviceMemory stgMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, &stg, &stgMem)) {
+    vkDestroyBuffer(device_, *buf, nullptr);
+    *buf = VK_NULL_HANDLE;
+    return false;
+  }
+  ++devLocalBufCount_;
+  devLocalBufBytes_ += size;
+  pendingUploads_.push_back({stg, stgMem, *buf, size});
+  pendingUploadBytes_ += size;
+  static constexpr VkDeviceSize kUploadFlushBytes = 64ull * 1024 * 1024;
+  if (pendingUploadBytes_ >= kUploadFlushBytes) flushPendingUploads();
+  *mem = VK_NULL_HANDLE;
+  return true;
+}
+
+void VulkanRenderer::freeDevicePool() {
+  for (HostMemBlock& b : deviceBlocks_) {
+    if (b.mem) vkFreeMemory(device_, b.mem, nullptr);
+  }
+  deviceBlocks_.clear();
+}
+
 void VulkanRenderer::freeHostPool() {
   for (HostMemBlock& b : hostBlocks_) {
     if (b.mapped) vkUnmapMemory(device_, b.mem);
@@ -4537,6 +4648,35 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
                                       bool poolable, void** mappedOut) {
   static const bool timeit = std::getenv("TUSDVIEW_TIME_UPLOAD") != nullptr;
   double ta = timeit ? NowS() : 0;
+
+  // Static mesh geometry (poolable, GPU-read, no persistent mapping) belongs in
+  // true device-local memory: it is never rewritten after upload, so it needs no
+  // host visibility at all and should not depend on a ReBAR-style heap. Buffers
+  // that hand back a mapped pointer (per-frame instance transforms/colors) and
+  // dynamic meshes (CPU skinning, GPU morph) stay host-visible. Decided before
+  // the buffer is created so the device-local path does not pay for a throwaway
+  // VkBuffer -- with thousands of small static buffers per scene that doubling
+  // is measurable on load.
+  {
+    static const bool forceHost = std::getenv("TUSDVIEW_VBO_HOST") != nullptr;
+    const VkBufferUsageFlags kGpuRead =
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    // Only bulk geometry is worth the staged copy. Device-local residency pays
+    // off in proportion to how many bytes the GPU re-fetches per frame, while
+    // the cost (an extra buffer + staging buffer + copy) is per BUFFER. Scenes
+    // made of many small meshes -- CarbonFrameBike is 3272 buffers averaging
+    // 4.8KB -- otherwise pay that cost thousands of times for a fetch saving
+    // too small to measure, which doubled its load time in testing.
+    static constexpr VkDeviceSize kDeviceLocalMinBytes = 256ull * 1024;
+    if (poolable && mappedOut == nullptr && !forceHost && (usage & kGpuRead) &&
+        size >= kDeviceLocalMinBytes &&
+        createDeviceLocalPooledBuffer(size, usage, data, buf, mem, deviceAddress)) {
+      return true;
+    }
+  }
+
   VkBufferCreateInfo bi{};
   bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bi.size = size;
@@ -4561,13 +4701,25 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
   // to plain host memory (the old behaviour) for that buffer, and the first
   // failure latches devLocalHostExhausted_ so later buffers stop retrying a
   // heap that is known to be full. TUSDVIEW_VBO_HOST=1 forces the old path.
+  // Only buffers the GPU re-reads are worth BAR space. A pure TRANSFER_SRC
+  // staging buffer is written once by the CPU and read once by a copy, so
+  // device-local memory buys it nothing -- and it would actively hurt: texture
+  // uploads run to hundreds of MB, so on a non-ReBAR device they would exhaust
+  // the small BAR heap, latch devLocalHostExhausted_, and push the mesh buffers
+  // that actually needed it back onto the slow path.
+  const VkBufferUsageFlags kGpuResident =
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+      VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+  const bool gpuResident = (usage & kGpuResident) != 0;
+
   static const bool forceHostVbo = std::getenv("TUSDVIEW_VBO_HOST") != nullptr;
   const uint32_t hostType = findMemoryType(
       req.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
   uint32_t memType = hostType;
   bool devLocalTried = false;
-  if (!forceHostVbo && !devLocalHostExhausted_) {
+  if (gpuResident && !forceHostVbo && !devLocalHostExhausted_) {
     const uint32_t devLocalType = findMemoryTypeOrInvalid(
         req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
@@ -4815,7 +4967,9 @@ void VulkanRenderer::destroyScene() {
   // All pooled per-mesh buffers were destroyed in the loop above; release the shared
   // host-memory blocks they sub-allocated from (their per-buffer *Mem was NULL, so the
   // vkFreeMemory calls above were no-ops).
+  flushPendingUploads();  // release any staging buffers still queued
   freeHostPool();
+  freeDevicePool();
   matColor_.clear();
   matLightRt_.clear();
   lightParams_.clear();
@@ -6505,6 +6659,9 @@ bool VulkanRenderer::meshHasBoundMaterial(const VkMeshGPU& m) const {
 }
 
 void VulkanRenderer::buildBlas(VkMeshGPU& m) {
+  // The BLAS reads this mesh's vertex/index buffers, so any queued staging copy
+  // filling them must have landed first.
+  flushPendingUploads();
   if (m.blas != VK_NULL_HANDLE || m.indexCount < 3 || !pfnCreateAS_) return;
 
   VkAccelerationStructureGeometryKHR geom{};
@@ -9955,6 +10112,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   // thread needs no glfwGetFramebufferSize. 0 on the single-threaded path.
   if (fbW > 0 && fbH > 0) { winFbW_ = fbW; winFbH_ = fbH; }
 
+  // Geometry uploaded since the last frame may still be sitting in staging.
+  flushPendingUploads();
+
   bool rtFrame = rtActive_ && rtSupported_ && hasParams_ && offscreenFb_ &&
                        rtImage_ && (!meshes_.empty() || !nativePoints_.empty());
 
@@ -10824,9 +10984,14 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   if (timeGpu && gpuQueryPool_ && gpuQueriesArmed_) {
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, gpuQueryPool_, 3);
     gpuQueriesPending_ = true;  // read back after next frame's fence wait
-    std::fprintf(stderr, "[gpu] submitted: %llu draws, %llu tris, viewport %dx%d\n",
+    std::fprintf(stderr,
+                 "[gpu] submitted: %llu draws, %llu tris, viewport %dx%d; "
+                 "device-local pool: %llu buffers, %.1f MiB in %zu blocks\n",
                  (unsigned long long)dbgDraws,
-                 (unsigned long long)(dbgIndices / 3), vpW_, vpH_);
+                 (unsigned long long)(dbgIndices / 3), vpW_, vpH_,
+                 (unsigned long long)devLocalBufCount_,
+                 double(devLocalBufBytes_) / (1024.0 * 1024.0),
+                 deviceBlocks_.size());
   }
 
   vkEndCommandBuffer(cb);
