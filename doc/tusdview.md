@@ -309,21 +309,72 @@ With `TINYUSDZ_WITH_TEXTOOLS=ON` (default; see
 tir/texcomp/texpipe/envmap libraries:
 
 - Texture resize (`--texture-max-size`, `--texture-budget-mb`) runs through
-  `tir` (sRGB-aware, premultiplied-alpha filtering) instead of stb. The viewer
-  defaults to a 4096-texel longest edge; `--texture-max-size 0` restores source
-  size.
+  `tir` (sRGB-aware, premultiplied-alpha filtering) instead of stb.
 - Adaptive GPU block compression (`--texture-compress auto`, using `texcomp`
   and selecting a supported BC/ASTC/ETC2 format; `--texture-compress off`
   disables it) and content-aware CPU mip chains (`--texture-mips on`, via
   `texpipe`: sRGB-correct filtering, alpha-coverage preservation for Mask
   materials, normal-map renormalization, variance-aware roughness-channel
-  minification, wrap-mode-aware filter edges) are **skipped by default when the
-  decoded textures fit within half the device VRAM** (e.g. a 640 MB set on a
-  16 GB card). Ordinary scenes keep uncompressed RGBA8 resident without the CPU
-  conversion cost; only sets exceeding ~VRAM/2 (or an explicit
-  `--texture-compress` / `--texture-mips` flag) pay for compression and mips.
-  GL uploads the precomputed levels instead of `glGenerateMipmap`; Vulkan gains
-  real mip chains (it previously sampled only level 0).
+  minification, wrap-mode-aware filter edges). GL uploads the precomputed
+  levels instead of `glGenerateMipmap`; Vulkan gains real mip chains (it
+  previously sampled only level 0). Whether resize and compression run at all
+  is governed by `--texture-fit`, below.
+
+### `--texture-fit`: how hard to work to fit GPU memory
+
+Shrinking and block-compressing textures is by far the most expensive part of a
+texture-heavy load -- ALab `alab_set01` spent **362 s of a 395 s load** encoding
+507 textures (2028 MB -> 507 MB BC7) on a card with 13 GiB free. Skipping just
+the compression takes that scene to a 116 s load (texture stage 362 s -> 73 s,
+the remainder being the mip chains, which are still built -- see below). It is only
+worth paying when the scene would not otherwise fit, so the viewer compares the
+scene's estimated resident footprint (**geometry + decoded textures**, since both
+share the device) against a threshold:
+
+```
+--texture-fit modest|default|aggressive|never|always|<N>[KMG]
+```
+
+| value | threshold | behaviour |
+| --- | --- | --- |
+| `modest` | 33% of VRAM | leave textures alone only when clearly small |
+| `default` | 66% of VRAM | the default |
+| `aggressive` | 90% of VRAM | process only when nearly full |
+| `never` | unbounded | never resize/compress |
+| `always` | 0 | always resize/compress (pre-policy behaviour) |
+| `<N>G` | absolute | fixed threshold, ignores card size |
+
+Fractions are of total VRAM **capacity**, not currently-free VRAM, so the same
+scene decides the same way on the same card regardless of what else is running;
+`--vram-budget G` rehearses a different card. Fractional thresholds are
+additionally clamped to 60% of the host memory limit, because decoded textures
+are resident in host RAM while loading (`never`/`always`/absolute are explicit
+user intent and are not clamped).
+
+Under a threshold policy the decoder's longest-edge cap is left **off** and the
+byte budget becomes the only limiter: its live residency accounting shrinks an
+individual image only if the running total actually crosses the threshold, so a
+scene that fits is never touched. A resolution floor keeps that budget soft --
+a scene that crosses it mid-decode goes blurrier rather than losing textures.
+`--texture-fit never` zeroes both the cap and the budget, which is also the
+precondition that re-enables the KTX2 zero-copy passthrough. `--full-fidelity`
+implies `never` unless `--texture-fit` is given explicitly.
+
+**Mip generation deliberately does not follow this policy.** It keeps a narrow
+budget of its own (25% of resident VRAM), because skipping mips makes every
+later frame sample minified textures at full resolution and thrashes the texture
+cache -- widening the two together once took the texture-semantic AOV suite from
+52 s to over 300 s. Compression and resize are load-time costs; missing mips are
+a per-frame cost forever.
+
+Every load prints the decision, so it is diagnosable from a log:
+
+```
+next: texture-fit=default (66% of VRAM) 507 textures, 2028.0 MiB decoded +
+  827.2 MiB geometry = 2855.2 MiB vs 10765.3 MiB threshold (VRAM 16311.0 MiB,
+  comfort 1920.0 MiB); skip compression, keep mips; decoder max_edge=0,
+  0 downscaled
+```
 - `--dome-ibl off|low|high` (default high) bakes DomeLight split-sum IBL at
   load via the `envmap` library from the HDR float envmap (EXR half/float and
   Radiance HDR decode correctly now): GGX-prefiltered specular cube chain,

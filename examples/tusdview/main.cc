@@ -262,6 +262,8 @@ int main(int argc, char** argv) {
   textureOptions.generateMips = true;
   bool domeIblExplicit = false;
   bool maxTextureSizeExplicit = false;
+  tinyusdz::tydra::next::TextureFit textureFit{};  // Default (2/3 of VRAM)
+  bool textureFitExplicit = false;
   bool textureBudgetExplicit = false;
   bool textureCompressionExplicit = false;
   bool mipsExplicit = false;
@@ -590,6 +592,20 @@ int main(int argc, char** argv) {
         return 1;
       }
       subdivisionPrimLevels[prim] = level;
+    } else if (std::strcmp(argv[i], "--texture-fit") == 0 && (i + 1) < argc) {
+      if (!tinyusdz::tydra::next::ParseTextureFit(argv[++i], &textureFit)) {
+        LOGE("--texture-fit must be modest|default|aggressive|never|always or a "
+             "byte threshold like 4G");
+        return 1;
+      }
+      textureFitExplicit = true;
+    } else if (std::strncmp(argv[i], "--texture-fit=", 14) == 0) {
+      if (!tinyusdz::tydra::next::ParseTextureFit(argv[i] + 14, &textureFit)) {
+        LOGE("--texture-fit must be modest|default|aggressive|never|always or a "
+             "byte threshold like 4G");
+        return 1;
+      }
+      textureFitExplicit = true;
     } else if (std::strcmp(argv[i], "--texture-compress") == 0 && (i + 1) < argc) {
       textureCompressionExplicit = true;
       const char* mode = argv[++i];
@@ -942,6 +958,14 @@ int main(int argc, char** argv) {
           "exceeds N texels (default 4096; 0 = keep source size).\n"
           "  --texture-budget-mb N  Best-effort decoded texture memory budget "
           "for viewer uploads (0 = unlimited).\n"
+          "  --texture-fit modest|default|aggressive|never|always|<N>G  How "
+          "eagerly to shrink/block-compress textures so the scene fits GPU "
+          "memory. The scene is left untouched when its estimated resident size "
+          "(geometry + textures) stays under 1/3 (modest), 2/3 (default), or "
+          "90%% (aggressive) of VRAM capacity, or under an explicit threshold "
+          "such as 4G. 'never' never shrinks or compresses (and re-enables the "
+          "KTX2 zero-copy passthrough); 'always' always does. Mip generation is "
+          "governed separately. --vram-budget rehearses a different card.\n"
           "  --async-texture-decode  Decode ordinary filesystem textures from "
           "camera-prioritized background workers.\n"
           "  --ptex-initial-faces N  Decode only the first N Ptex faces for the "
@@ -1069,16 +1093,69 @@ int main(int argc, char** argv) {
   // this also prevents a large source image set from peaking before the
   // draw-side residency pass runs. Explicit command-line values win,
   // including an explicit zero.
+  // "Full fidelity" has always meant "do not degrade the asset", and texture
+  // shrink/compress is a degradation -- so it implies --texture-fit never
+  // unless the user asked for something specific. Must precede the derivation
+  // below, which consumes textureFit.
+  if (fullFidelity && !textureFitExplicit) {
+    textureFit.policy = tinyusdz::tydra::next::TextureFitPolicy::Never;
+  }
+  const tinyusdz::tydra::next::TextureBudget derivedTextureBudget =
+      tinyusdz::tydra::next::DeriveTextureBudget(targetBudget);
+  // The "comfort" budget (25% of resident VRAM) is what the mip decision keeps
+  // using. It must NOT follow --texture-fit: widening the mip skip makes every
+  // later frame sample minified textures at full resolution, which thrashes the
+  // texture cache (it once took the texture-semantic AOV suite from 52 s to
+  // over 300 s). Only compression and resize follow the policy.
+  const uint64_t textureComfortBytes = derivedTextureBudget.budget_bytes;
+  uint64_t textureFitThreshold =
+      tinyusdz::tydra::next::TextureFitThresholdBytes(textureFit, vramCapacity);
+  // The threshold is a fraction of VRAM, but the decoded set is resident in
+  // HOST memory while loading. On a big card with a small host (24 GiB GPU,
+  // 16 GiB RAM) an aggressive policy would otherwise authorise ~21 GiB of host
+  // allocation. Clamp, and say so.
   {
-    const tinyusdz::tydra::next::TextureBudget textureBudget =
-        tinyusdz::tydra::next::DeriveTextureBudget(targetBudget);
-    if (!maxTextureSizeExplicit && textureBudget.max_edge > 0) {
-      textureOptions.maxTextureSize =
-          static_cast<int>(textureBudget.max_edge);
+    const uint64_t hostClamp =
+        tinyusdz::tydra::next::Percent(targetBudget.host_limit, 60);
+    // Only the fraction-of-VRAM policies are clamped. `never` and `always` are
+    // explicit user intent -- "never" must mean never, or the escape hatch is
+    // not one -- and `absolute` is already a number the user chose.
+    const bool clampable =
+        textureFit.policy == tinyusdz::tydra::next::TextureFitPolicy::Modest ||
+        textureFit.policy == tinyusdz::tydra::next::TextureFitPolicy::Default ||
+        textureFit.policy == tinyusdz::tydra::next::TextureFitPolicy::Aggressive;
+    if (clampable && hostClamp > 0 && textureFitThreshold > hostClamp) {
+      LOGI("texture-fit: threshold %.1f GiB clamped to %.1f GiB by host memory",
+           double(textureFitThreshold) / double(tinyusdz::tydra::next::GiB(1)),
+           double(hostClamp) / double(tinyusdz::tydra::next::GiB(1)));
+      textureFitThreshold = hostClamp;
     }
-    if (!textureBudgetExplicit && textureBudget.budget_bytes > 0) {
-      textureOptions.textureBudgetMB = static_cast<int>(
-          textureBudget.budget_bytes / (1024ull * 1024ull));
+  }
+  {
+    using tinyusdz::tydra::next::TextureFitPolicy;
+    if (textureFit.policy == TextureFitPolicy::Always) {
+      // Pre-policy behaviour: hard 2048 edge cap + 25% byte budget.
+      if (!maxTextureSizeExplicit && derivedTextureBudget.max_edge > 0) {
+        textureOptions.maxTextureSize =
+            static_cast<int>(derivedTextureBudget.max_edge);
+      }
+      if (!textureBudgetExplicit && derivedTextureBudget.budget_bytes > 0) {
+        textureOptions.textureBudgetMB = static_cast<int>(
+            derivedTextureBudget.budget_bytes / (1024ull * 1024ull));
+      }
+    } else {
+      // Threshold policies (and `never`) leave the edge uncapped: the decoder's
+      // live byte budget shrinks individual images only if the running total
+      // actually crosses the threshold, so a scene that fits is never touched.
+      // Zeroing BOTH (never) is also the precondition that re-enables the KTX2
+      // zero-copy passthrough in TryKeepCompressedTexture.
+      if (!maxTextureSizeExplicit) textureOptions.maxTextureSize = 0;
+      if (!textureBudgetExplicit) {
+        textureOptions.textureBudgetMB =
+            (textureFit.policy == TextureFitPolicy::Never)
+                ? 0
+                : static_cast<int>(textureFitThreshold / (1024ull * 1024ull));
+      }
     }
   }
   if (effectiveProfile != LargeSceneProfile::Off) {
@@ -1393,11 +1470,18 @@ int main(int argc, char** argv) {
     // --texture-compress / --texture-mips / --texture-budget-mb override this.
     lo.optimizeTextureUpload = useNextLoader;
     lo.textureGpuBudgetBytes = vramCapacity;
+    lo.textureFit = textureFit;
+    lo.textureFitThresholdBytes = static_cast<size_t>(textureFitThreshold);
+    lo.textureComfortBytes = static_cast<size_t>(textureComfortBytes);
+    lo.textureBudgetExplicit = textureBudgetExplicit;
     lo.textureCompressionExplicit = textureCompressionExplicit;
     lo.textureMipsExplicit = mipsExplicit;
     if (effectiveProfile == LargeSceneProfile::ProceduralHeavy && !headless &&
         maxFrames < 0) {
-      if (!maxTextureSizeExplicit) lo.textureOptions.maxTextureSize = 512;
+      // An explicit --texture-fit outranks a profile's implicit texture cap
+      // (but never an explicit --texture-max-size).
+      if (!maxTextureSizeExplicit && !textureFitExplicit)
+        lo.textureOptions.maxTextureSize = 512;
       if (!textureCompressionExplicit) {
         lo.textureOptions.compression =
             tusdview::TextureCompressionMode::Auto;

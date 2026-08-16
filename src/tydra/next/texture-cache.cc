@@ -313,19 +313,37 @@ bool TextureDecoder::AttachBudgetLease(DecodedImage* image, bool srgb) {
 
   const uint64_t resident =
       budget_state_->resident.load(std::memory_order_relaxed);
-  if (budget_state_->limit == 0 || resident >= budget_state_->limit ||
-      bytes == 0) {
-    return false;
-  }
-  const uint64_t remaining = budget_state_->limit - resident;
-  const double ratio = std::sqrt(double(remaining) / double(bytes));
+  const uint64_t limit = budget_state_->get_limit();
+  if (limit == 0 || bytes == 0) return false;
+  // Already at or past the cap: with a resolution floor configured the image is
+  // still admitted (shrunk to the floor) rather than dropped, so a scene that
+  // crosses the budget mid-decode goes blurry instead of losing textures.
+  const uint64_t remaining = resident >= limit ? 0 : limit - resident;
+  if (remaining == 0 && options_.min_edge == 0) return false;
+  const double ratio =
+      remaining == 0 ? 0.0 : std::sqrt(double(remaining) / double(bytes));
   uint32_t w = 0;
   uint32_t h = 0;
   ScaledExtent(*image, std::min(1.0, ratio), &w, &h);
+  if (options_.min_edge > 0) {
+    // Never shrink below the floor; ScaledExtent can round a small ratio down
+    // to a degenerate extent.
+    const uint32_t longest = (std::max)(image->width, image->height);
+    const uint32_t floor_edge = (std::min)(options_.min_edge, longest);
+    if ((std::max)(w, h) < floor_edge) {
+      const double up = double(floor_edge) / double((std::max)(longest, 1u));
+      ScaledExtent(*image, (std::min)(1.0, up), &w, &h);
+    }
+  }
+  if (w == 0 || h == 0) return false;
   if (!ResizeDecoded(image, w, h, srgb)) return false;
   ++downscaled_;
   bytes = image->byte_size();
-  if (!budget_state_->try_add(bytes)) return false;
+  if (!budget_state_->try_add(bytes)) {
+    if (options_.min_edge == 0) return false;
+    // Soft budget: admit it over the cap rather than lose the texture.
+    budget_state_->resident.fetch_add(bytes, std::memory_order_relaxed);
+  }
   image->budget_lease =
       std::make_shared<::tinyusdz::next::TextureBudgetLease>(
           budget_state_, bytes);

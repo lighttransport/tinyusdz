@@ -14,7 +14,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "gpu_scene.hh"  // DrawScene
+#include "gpu_scene.hh"
+#include "tydra/next/resource-budget.hh"  // TextureFit
 #include "preview_cache.hh"
 #include "io-util.hh"  // tinyusdz::io::MMapFileHandle
 #include "layer.hh"
@@ -81,6 +82,15 @@ struct LoadOptions {
   size_t textureGpuBudgetBytes{0};
   bool textureCompressionExplicit{false};
   bool textureMipsExplicit{false};
+  bool textureBudgetExplicit{false};
+  // --texture-fit: resident-byte threshold (geometry + decoded textures) under
+  // which textures are left unshrunk and uncompressed. 0 == "always process"
+  // (the pre-policy behaviour); UINT64 max == "never process".
+  tinyusdz::tydra::next::TextureFit textureFit{};
+  size_t textureFitThresholdBytes{0};
+  // 25% of resident VRAM, INDEPENDENT of --texture-fit. Gates mip generation
+  // only; see the comment where it is consumed in next_scene_loader.cc.
+  size_t textureComfortBytes{0};
   // Optional source-mesh conversion cap for large-scene preview profiles.
   // Remaining prims stay unmaterialized instead of paying CPU conversion cost.
   size_t maxMeshConversions{0};

@@ -36,7 +36,11 @@ struct TextureBudgetState {
   explicit TextureBudgetState(uint64_t limit_bytes) : limit(limit_bytes) {}
 
   bool try_add(uint64_t bytes) {
-    if (limit == 0) {
+    // Read the limit ONCE per attempt: it is retunable at runtime (see
+    // set_limit), so re-reading it inside the CAS loop could compare against
+    // two different limits within one decision.
+    const uint64_t cap = limit.load(std::memory_order_relaxed);
+    if (cap == 0) {  // 0 == unbounded (track residency only)
       uint64_t old = resident.load(std::memory_order_relaxed);
       for (;;) {
         if (bytes > (std::numeric_limits<uint64_t>::max)() - old) return false;
@@ -49,7 +53,7 @@ struct TextureBudgetState {
     }
     uint64_t old = resident.load(std::memory_order_relaxed);
     for (;;) {
-      if (old > limit || bytes > limit - old) return false;
+      if (old > cap || bytes > cap - old) return false;
       if (resident.compare_exchange_weak(old, old + bytes,
                                          std::memory_order_relaxed,
                                          std::memory_order_relaxed)) {
@@ -62,7 +66,15 @@ struct TextureBudgetState {
     resident.fetch_sub(bytes, std::memory_order_relaxed);
   }
 
-  uint64_t limit = 0;
+  // Retune the cap while decoding is in flight. Leases already taken stay
+  // valid and simply count against the new cap. NOTE: 0 means UNBOUNDED, not
+  // "nothing fits" -- callers narrowing the cap must floor it above zero.
+  void set_limit(uint64_t bytes) {
+    limit.store(bytes, std::memory_order_relaxed);
+  }
+  uint64_t get_limit() const { return limit.load(std::memory_order_relaxed); }
+
+  std::atomic<uint64_t> limit{0};
   std::atomic<uint64_t> resident{0};
 };
 
@@ -108,6 +120,13 @@ struct TextureDecodeOptions {
   uint64_t budget_bytes = 0;
   /// Conservative encoded source-image byte ceiling. 0 = no ceiling.
   uint64_t max_source_bytes = 0;
+  /// Resolution floor, in texels, for budget-driven shrinking. When non-zero
+  /// the byte budget becomes SOFT: an image that still will not fit after being
+  /// shrunk to this floor is admitted anyway (over-subscribing the budget)
+  /// rather than failing to decode. Without it, a scene that crosses the budget
+  /// mid-decode loses textures entirely -- a visible correctness regression --
+  /// where a floor degrades it to "blurrier". 0 = hard budget (decode fails).
+  uint32_t min_edge = 0;
   /// Expand every image to 4 channels. Consumers whose GPU texture format is
   /// RGBA8 want this; a CPU sampler that honours the source channel count
   /// should turn it off rather than pay for a synthetic alpha channel.
@@ -147,6 +166,12 @@ class TextureDecoder {
   }
   /// How many images were shrunk by the size cap or the byte budget.
   uint64_t downscaled_count() const { return downscaled_; }
+
+  /// Retune the resident byte budget mid-decode. Used when a better estimate of
+  /// the non-texture footprint (e.g. geometry) becomes known after decoding has
+  /// already started. 0 = unbounded, so narrow with care.
+  void SetBudgetBytes(uint64_t bytes) { budget_state_->set_limit(bytes); }
+  uint64_t budget_bytes() const { return budget_state_->get_limit(); }
 
   const TextureDecodeOptions& options() const { return options_; }
 
