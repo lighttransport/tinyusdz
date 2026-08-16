@@ -492,7 +492,15 @@ class App
   float rtLodCullPx_{2.0f};
   float rtLodBandFrac_{0.25f};  // stochastic crossfade half-width (fraction of fullPx)
   bool rasterLodEnabled_{false};       // --raster-lod (optimization B)
-  float rasterLodFullPx_{48.0f};
+  // Screen size at/above which an instance keeps its real geometry; below it (down
+  // to rasterLodCullPx_) it is drawn as a box proxy. This was 48px, which proxied
+  // clearly-visible geometry: on Moana island isDunesB the vegetation turned into
+  // white boxes. The quality cliff sits between 16 and 48 -- 4, 8 and 16 all render
+  // that scene identically (21445786 tris, 6.4ms vs 1154ms unculled) while 48 drops
+  // to 5655 proxies and visible blocks. 8 keeps a wide margin below the cliff; use
+  // --raster-lod-full-px 4 for quality-critical work (isCoral is baseline-identical
+  // at 4, marginally blockier at 8).
+  float rasterLodFullPx_{8.0f};
   float rasterLodCullPx_{1.5f};
   bool lodHaveLast_{false};
   bool lodArmedOnce_{false};

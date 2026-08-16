@@ -635,6 +635,41 @@ xvfb-run -a env \
 Startup logs print `renderer`, `GPU`, and `API` for both OpenGL and Vulkan, so a
 headless run can reject llvmpipe without requiring `glxinfo`.
 
+## Instance-heavy scenes and raster LOD
+
+Scenes built from millions of small instances are limited by per-instance
+geometry throughput, not by shading or memory placement. Two Moana island
+elements at 1920x1080, Vulkan raster:
+
+| Element | Instances | Drawn tris/frame | Frame |
+| --- | ---: | ---: | ---: |
+| `isCoral` | 3,495,916 | 442,645,322 | 136ms |
+| `isDunesB` | 19,830,239 | 9,091,066,066 | 1154ms |
+
+Nothing is culled at those framings (`instances N/N visible`), and isCoral's
+frame time is flat from 480x270 to 1920x1080, confirming it is not
+fragment-bound. isDunesB sustains ~7.9 B tris/s and isCoral ~3.3 B tris/s --
+the GPU is working efficiently, the scenes are simply asking for too much.
+isCoral is the slower of the two per triangle because its instances are
+smaller (126 tris each versus 458), so per-instance cost dominates.
+
+`--raster-lod` is the lever: it keeps instances at or above
+`--raster-lod-full-px` in real geometry, draws a box proxy down to
+`--raster-lod-cull-px`, and culls below that.
+
+| isDunesB | Frame | Quality |
+| --- | ---: | --- |
+| no LOD | 1154ms | reference |
+| `--raster-lod-full-px 48` (old default) | 0.99ms | vegetation becomes white boxes |
+| `--raster-lod-full-px 4`, `8` or `16` | 6.4ms | visually faithful |
+
+The default is 8. The quality cliff is between 16 and 48: 4, 8 and 16 all
+render isDunesB identically (21,445,786 tris), while 48 collapses it to 5,655
+proxies. isCoral is baseline-identical at 4 (0.80ms) and marginally blockier at
+8 (0.51ms), so use `--raster-lod-full-px 4` for quality-critical work. Lowering
+the value is the safe direction -- it draws more real geometry, costing speed
+rather than fidelity.
+
 ## Vulkan raster profiling
 
 `TUSDVIEW_TIME_GPU=1` prints a per-pass GPU breakdown from timestamp queries,
