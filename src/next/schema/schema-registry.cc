@@ -42,8 +42,8 @@ bool HasAppliedSchema(const PrimSpec& prim, const std::string& schema) {
 bool MatchDefinitionName(const PrimSpec& prim,
                          const SchemaPropertyDefinition& def,
                          const std::string& property_name) {
-  const std::string marker = "__INSTANCE__";
-  const size_t marker_pos = def.name.find(marker);
+  static const std::string marker = "__INSTANCE__";
+  const size_t marker_pos = def.instance_marker_pos;
   if (marker_pos == std::string::npos) return def.name == property_name;
   for (const std::string& applied : prim.meta().apiSchemas()) {
     const std::string prefix = def.schema_type + ":";
@@ -114,6 +114,7 @@ SchemaRegistry::SchemaRegistry() {
     d.type_name = type;
     d.fallback = std::move(fallback);
     d.has_fallback = true;
+    d.instance_marker_pos = d.name.find("__INSTANCE__");
     properties_.push_back(std::move(d));
   };
   auto declare = [&](const char* schema, const char* name, const char* type) {
@@ -121,6 +122,7 @@ SchemaRegistry::SchemaRegistry() {
     d.schema_type = schema;
     d.name = name;
     d.type_name = type;
+    d.instance_marker_pos = d.name.find("__INSTANCE__");
     properties_.push_back(std::move(d));
   };
 
@@ -437,21 +439,38 @@ SchemaRegistry::SchemaRegistry() {
 
 const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
     const PrimSpec& prim, const std::string& property_name) const {
-  std::vector<std::string> schemas;
-  std::string current = prim.type_name();
-  while (!current.empty()) {
-    schemas.push_back(current);
-    auto it = std::find_if(parents_.begin(), parents_.end(),
-                           [&](const auto& p) { return p.first == current; });
-    if (it == parents_.end()) break;
-    current = it->second;
+  // Ancestry chain as POINTERS into strings the registry (or the prim) already
+  // owns. This used to build a std::vector<std::string> and copy every type
+  // name into it on every call; FindProperty is called for essentially every
+  // property of every prim, so that allocation alone was a measurable share of
+  // a material-heavy load. Chains are a handful of entries deep -- the array
+  // covers far more than any registered schema needs, and a chain that somehow
+  // exceeded it simply stops extending (the same answer the old loop gave when
+  // it ran out of parents).
+  const std::string* schemas[16];
+  size_t schema_count = 0;
+  const std::string* current = &prim.type_name();
+  while (current && !current->empty() && schema_count < 16) {
+    schemas[schema_count++] = current;
+    const std::string* next = nullptr;
+    for (const auto& p : parents_) {
+      if (p.first == *current) {
+        next = &p.second;
+        break;
+      }
+    }
+    if (!next) break;
+    current = next;
   }
+  auto in_chain = [&](const std::string& schema_type) {
+    for (size_t i = 0; i < schema_count; ++i) {
+      if (*schemas[i] == schema_type) return true;
+    }
+    return false;
+  };
   for (const SchemaPropertyDefinition& def : properties_) {
     if (!MatchDefinitionName(prim, def, property_name)) continue;
-    if (std::find(schemas.begin(), schemas.end(), def.schema_type) !=
-        schemas.end()) {
-      return &def;
-    }
+    if (in_chain(def.schema_type)) return &def;
     if (HasAppliedSchema(prim, def.schema_type)) return &def;
   }
   return nullptr;
