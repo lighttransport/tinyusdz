@@ -692,7 +692,7 @@ run() {
     "$@"
   fi
 }
-ran=0; fail=0; vk_software=0
+ran=0; fail=0; vk_software=0; degraded=0
 declare -A backend_available=()
 declare -A backend_unavailable=()
 GL_RUN=()
@@ -736,6 +736,7 @@ case_run() {
       fail=1
     else
       backend_unavailable[$backend_key]=1
+      degraded=1
       if [ "$run_rc" -eq 124 ] || [ "$run_rc" -eq 137 ]; then
         echo "SKIP: $tag backend probe timed out; skipping its remaining cases"
       else
@@ -886,4 +887,13 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
 done
 [ "$ran" -gt 0 ] || exit "$SKIP"
 [ "$fail" -eq 0 ] || exit 1
+# A backend that dropped out part way through must NOT report a green pass: it
+# ran some cases and silently abandoned the rest, which reads as coverage that
+# was never actually exercised. Report it as skipped so CTest says so. (This
+# suite once "passed" in 52 s that way, while a full GL run needs ~436 s.)
+if [ "$degraded" -ne 0 ]; then
+  echo "SKIP: a backend became unavailable part way through; $ran case(s) ran, "\
+       "the rest were abandoned -- not reporting this as a pass"
+  exit "$SKIP"
+fi
 echo 'PASS: requested semantic material AOVs, coat/occlusion response, loader comparisons, and USDZ texture parity'
