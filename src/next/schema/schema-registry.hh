@@ -5,6 +5,7 @@
 
 #include "../layer/prim-spec.hh"
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,12 @@ struct SchemaPropertyDefinition {
   std::string type_name;
   Value fallback;
   bool has_fallback = false;
+  // Offset of the "__INSTANCE__" placeholder in `name`, or npos when the name
+  // is literal. Fixed for the lifetime of the definition, so it is computed
+  // once at registration: FindProperty walks every definition on every call,
+  // and re-running name.find("__INSTANCE__") there made that substring search
+  // one of the hottest operations in a material-heavy load.
+  std::size_t instance_marker_pos = std::string::npos;
 };
 
 /// Compact built-in prim-definition registry shared by stage population,
