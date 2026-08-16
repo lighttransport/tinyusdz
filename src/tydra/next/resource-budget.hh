@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
+#include <string>
 
 namespace tinyusdz {
 namespace tydra {
@@ -133,6 +135,106 @@ inline TextureBudget DeriveTextureBudget(const ResourceBudget& budget) {
       break;
   }
   return texture;
+}
+
+
+// ---------------------------------------------------------------------------
+// Texture-fit policy
+//
+// How eagerly the viewer should spend CPU time shrinking and block-compressing
+// textures so a scene fits on the GPU. The threshold is compared against the
+// scene's whole estimated resident footprint (geometry + decoded textures),
+// because both share the device.
+//
+// This is a RESIDENCY axis and is deliberately separate from
+// ResourceBudget::quality, which is a FIDELITY axis ("a 4K albedo is wasted on
+// a proxy-quality overview no matter how much VRAM is free"). Conflating them
+// would make "never shrink" also mean "render at proxy quality".
+//
+// The fractions are of total VRAM *capacity*, not currently-free VRAM, so the
+// same scene decides the same way on the same card regardless of what else is
+// running. --vram-budget rehearses a different capacity.
+enum class TextureFitPolicy : uint8_t {
+  Modest,      // leave textures alone only when clearly small (1/3)
+  Default,     // 2/3
+  Aggressive,  // 90%
+  Never,       // never shrink/compress: assume it fits
+  Always,      // always shrink/compress
+  Absolute,    // explicit byte threshold
+};
+
+struct TextureFit {
+  TextureFitPolicy policy = TextureFitPolicy::Default;
+  uint64_t absolute_bytes = 0;  // Absolute only
+};
+
+// "modest"|"default"|"aggressive"|"never"|"always"|"<N>[KMG]".
+// Suffixes match tusdview's ParseByteCount. Returns false on anything else.
+inline bool ParseTextureFit(const std::string& text, TextureFit* out) {
+  if (!out || text.empty()) return false;
+  if (text == "modest") { *out = {TextureFitPolicy::Modest, 0}; return true; }
+  if (text == "default") { *out = {TextureFitPolicy::Default, 0}; return true; }
+  if (text == "aggressive") { *out = {TextureFitPolicy::Aggressive, 0}; return true; }
+  if (text == "never") { *out = {TextureFitPolicy::Never, 0}; return true; }
+  if (text == "always") { *out = {TextureFitPolicy::Always, 0}; return true; }
+  std::string v = text;
+  uint64_t mul = 1;
+  const char suffix = v.back();
+  if (suffix == 'k' || suffix == 'K') { mul = 1024ull; v.pop_back(); }
+  else if (suffix == 'm' || suffix == 'M') { mul = 1024ull * 1024ull; v.pop_back(); }
+  else if (suffix == 'g' || suffix == 'G') { mul = 1024ull * 1024ull * 1024ull; v.pop_back(); }
+  if (v.empty()) return false;
+  for (char c : v) {
+    if (c < '0' || c > '9') return false;
+  }
+  const uint64_t n = std::strtoull(v.c_str(), nullptr, 10);
+  if (n == 0) return false;
+  *out = {TextureFitPolicy::Absolute, n * mul};
+  return true;
+}
+
+// Resident-byte threshold the scene must stay under to be left alone.
+// Never -> "everything fits"; Always -> "nothing fits".
+inline uint64_t TextureFitThresholdBytes(const TextureFit& fit,
+                                         uint64_t vram_capacity) {
+  switch (fit.policy) {
+    case TextureFitPolicy::Never:
+      return (std::numeric_limits<uint64_t>::max)();
+    case TextureFitPolicy::Always:
+      return 0;
+    case TextureFitPolicy::Absolute:
+      return fit.absolute_bytes;
+    case TextureFitPolicy::Modest:
+      return Percent(vram_capacity, 33);
+    case TextureFitPolicy::Aggressive:
+      return Percent(vram_capacity, 90);
+    case TextureFitPolicy::Default:
+    default:
+      return Percent(vram_capacity, 66);
+  }
+}
+
+inline const char* TextureFitName(const TextureFit& fit) {
+  switch (fit.policy) {
+    case TextureFitPolicy::Modest: return "modest";
+    case TextureFitPolicy::Aggressive: return "aggressive";
+    case TextureFitPolicy::Never: return "never";
+    case TextureFitPolicy::Always: return "always";
+    case TextureFitPolicy::Absolute: return "absolute";
+    case TextureFitPolicy::Default:
+    default: return "default";
+  }
+}
+
+// Percentage the policy resolves to, for logging. 0 for the non-fractional
+// policies (their name already says what they do).
+inline uint32_t TextureFitPercent(const TextureFit& fit) {
+  switch (fit.policy) {
+    case TextureFitPolicy::Modest: return 33;
+    case TextureFitPolicy::Aggressive: return 90;
+    case TextureFitPolicy::Default: return 66;
+    default: return 0;
+  }
 }
 
 }  // namespace next

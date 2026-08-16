@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <atomic>
+#include <thread>
+
 #include "mesh_build.hh"
 
 #include "displacement_bake.hh"
@@ -1136,12 +1139,42 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
   // full-channel format (BC7/ASTC/ETC2) instead. FinalizeDrawTextures re-runs
   // this (idempotent).
   ClassifyTextureUsage(out);
-  size_t n = 0, raw = 0, comp = 0;
-  for (DrawTextureCPU& tex : out->textures) {
-    if (tex.isPtex) continue;
-    if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
+  // Block compression dominates a texture-heavy load: ALab alab_set01 spent
+  // 362 s of a 395 s load here, encoding 507 textures (2028 MB -> 507 MB BC7)
+  // one at a time. EncodeBCn writes only into its own texture's buffer and
+  // keeps no shared or static state, so the encode is embarrassingly parallel.
+  // Texture sizes vary by orders of magnitude, so hand out indices atomically
+  // rather than splitting the range statically -- a static split leaves workers
+  // that drew the 4K pages running long after the rest have finished.
+  const size_t texCount = out->textures.size();
+  auto encodeOne = [&opt](DrawTextureCPU& tex) {
+    if (tex.isPtex) return;
+    if (tex.compressedFinal) return;  // kept-compressed KTX2 -- already final
     tex.requestedCompressed = true;
     CompressTexture(&tex, opt.compression, opt.caps, tex.isNormalMap);
+  };
+  const unsigned hw = std::thread::hardware_concurrency();
+  const size_t workers = std::min<size_t>(hw ? hw : 1u, texCount);
+  if (workers <= 1) {
+    for (DrawTextureCPU& tex : out->textures) encodeOne(tex);
+  } else {
+    std::atomic<size_t> nextTex{0};
+    std::vector<std::thread> ts;
+    ts.reserve(workers);
+    for (size_t w = 0; w < workers; ++w) {
+      ts.emplace_back([&]() {
+        for (;;) {
+          const size_t i = nextTex.fetch_add(1, std::memory_order_relaxed);
+          if (i >= texCount) break;
+          encodeOne(out->textures[i]);
+        }
+      });
+    }
+    for (std::thread& t : ts) t.join();
+  }
+  size_t n = 0, raw = 0, comp = 0;
+  for (const DrawTextureCPU& tex : out->textures) {
+    if (tex.isPtex || tex.compressedFinal) continue;
     if (!tex.compressed.data.empty()) {
       ++n;
       raw += tex.image.data.size();

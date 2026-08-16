@@ -5575,6 +5575,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       opts.textureOptions.textureBudgetMB > 0
           ? uint64_t(opts.textureOptions.textureBudgetMB) * 1024ull * 1024ull
           : 0ull;
+  // Under a --texture-fit threshold the edge cap is off and the byte budget is
+  // the only limiter, so a scene that crosses it mid-decode would otherwise
+  // fail individual decodes -- i.e. lose textures. A resolution floor makes the
+  // budget soft: over-subscribe rather than drop, so the failure mode is
+  // "blurrier", never "missing".
+  texOpts.min_edge = opts.textureFitThresholdBytes > 0 ? 64u : 0u;
   tinyusdz::next::USDZReader usdzArchive;
   if (path.size() >= 5 && path.compare(path.size() - 5, 5, ".usdz") == 0 &&
       usdzArchive.OpenFile(path)) {
@@ -7399,6 +7405,34 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
          static_cast<double>(estimatedGeometryBytes) / (1024.0 * 1024.0),
          estimateOverflow ? ", aggregate overflow" : "");
   }
+  // Stage B of the --texture-fit budget. The decoder was built (far above) with
+  // the full threshold because the geometry footprint was not yet known; now it
+  // is, and geometry shares the device with textures, so tighten the live
+  // budget to what is left. Leases already taken stay valid and simply count
+  // against the smaller cap. Mesh materials -- nearly all textures in a mesh
+  // scene -- resolve after this point, so this lands before the bulk of decode.
+  if (opts.textureFitThresholdBytes > 0 && !opts.textureBudgetExplicit &&
+      texCache.decoder &&
+      opts.textureFitThresholdBytes !=
+          (std::numeric_limits<size_t>::max)()) {
+    const size_t threshold = opts.textureFitThresholdBytes;
+    size_t remaining = estimatedGeometryBytes >= threshold
+                           ? 0
+                           : threshold - estimatedGeometryBytes;
+    // NOTE: 0 means UNBOUNDED to the budget state, not "nothing fits" -- a
+    // literal zero here would invert the intent and disable the limiter
+    // entirely. Floor it well above zero instead.
+    const size_t kFloor = 64ull * 1024ull * 1024ull;
+    if (remaining < kFloor) remaining = kFloor;
+    texCache.decoder->SetBudgetBytes(uint64_t(remaining));
+    if (timing) {
+      LOGI("next timing: texture-fit budget %.1f MiB -> %.1f MiB after %.1f MiB "
+           "geometry",
+           double(threshold) / (1024.0 * 1024.0),
+           double(remaining) / (1024.0 * 1024.0),
+           double(estimatedGeometryBytes) / (1024.0 * 1024.0));
+    }
+  }
   // Deferred payloads and an aggregate estimate above the GPU budget are both
   // normal for large scenes. Conversion is still safe in parallel because
   // work is bounded by the per-wave byte limit and all results are consumed in
@@ -8481,32 +8515,87 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       decodedTextureBytes += imageBytes(tex.image);
     }
   }
-  const size_t textureBudgetBytes = opts.textureOptions.textureBudgetMB > 0
-                                        ? static_cast<size_t>(opts.textureOptions.textureBudgetMB) *
-                                              1024ull * 1024ull
-                                        : opts.textureGpuBudgetBytes;
-  // Use half the available texture budget as the "comfortably resident"
-  // threshold. This leaves room for geometry, framebuffers, and future
-  // texture refinement while avoiding a costly CPU encode for small scenes.
-  const bool texturesFitComfortably =
-      opts.optimizeTextureUpload && textureBudgetBytes > 0 &&
-      decodedTextureBytes <= textureBudgetBytes / 2u;
+  // --texture-fit decides whether the scene is left alone. CPU block
+  // compression is the single most expensive stage of a texture-heavy load
+  // (ALab alab_set01: 362 s of a 395 s load, 507 textures 2028 MB -> 507 MB,
+  // still 156 s once threaded), so it is only worth paying when the scene would
+  // not otherwise fit. Geometry and textures share the device, so both go on
+  // the scales.
+  const size_t vramCapacityBytes = opts.textureGpuBudgetBytes;
+  const size_t fitThreshold = opts.textureFitThresholdBytes;
+  const size_t residentEstimate =
+      (estimatedGeometryBytes > (std::numeric_limits<size_t>::max)() -
+                                    decodedTextureBytes)
+          ? (std::numeric_limits<size_t>::max)()
+          : estimatedGeometryBytes + decodedTextureBytes;
+  // fitThreshold: 0 == "always process", SIZE_MAX == "never process".
+  const bool sceneFitsInVram = opts.optimizeTextureUpload && fitThreshold > 0 &&
+                               residentEstimate <= fitThreshold;
+  // The mip decision deliberately does NOT follow --texture-fit. It keeps the
+  // narrow 25%-of-VRAM comfort budget, because skipping mips makes every later
+  // frame sample minified textures at full resolution and thrashes the texture
+  // cache -- widening this once took the texture-semantic AOV suite from 52 s to
+  // over 300 s. textureComfortBytes is derived independently of the policy for
+  // exactly this reason; do not "simplify" it to textureBudgetMB, which now
+  // carries the (much larger) policy threshold.
+  const size_t comfortBytes =
+      opts.textureComfortBytes > 0
+          ? opts.textureComfortBytes
+          : (opts.textureOptions.textureBudgetMB > 0
+                 ? static_cast<size_t>(opts.textureOptions.textureBudgetMB) *
+                       1024ull * 1024ull
+                 : opts.textureGpuBudgetBytes);
+  const bool alwaysProcess =
+      opts.textureFit.policy ==
+      tinyusdz::tydra::next::TextureFitPolicy::Always;
+  const bool texturesFitComfortably = opts.optimizeTextureUpload &&
+                                      !alwaysProcess && comfortBytes > 0 &&
+                                      decodedTextureBytes <= comfortBytes / 2u;
   const bool skipCompression =
-      texturesFitComfortably && !opts.textureCompressionExplicit &&
+      (texturesFitComfortably || sceneFitsInVram) &&
+      !opts.textureCompressionExplicit &&
       opts.textureOptions.compression == TextureCompressionMode::Auto;
   const bool skipMips = texturesFitComfortably && !opts.textureMipsExplicit;
   TextureRuntimeOptions processingOptions = opts.textureOptions;
   if (skipCompression) processingOptions.compression = TextureCompressionMode::Off;
   if (skipMips) processingOptions.generateMips = false;
-  if (skipCompression || skipMips) {
-    ClassifyTextureUsage(draw);
-    LOGI("next: skipping CPU texture processing (%zu textures, %.1f MiB "
-         "decoded; budget %.1f MiB)%s%s",
+  if (skipCompression || skipMips) ClassifyTextureUsage(draw);
+  {
+    // Printed unconditionally: the decision was previously invisible unless
+    // something was skipped, which made it undiagnosable from a log.
+    const uint32_t pct =
+        tinyusdz::tydra::next::TextureFitPercent(opts.textureFit);
+    char fitLabel[64];
+    if (pct > 0) {
+      std::snprintf(fitLabel, sizeof(fitLabel), "%s (%u%% of VRAM)",
+                    tinyusdz::tydra::next::TextureFitName(opts.textureFit), pct);
+    } else {
+      std::snprintf(fitLabel, sizeof(fitLabel), "%s",
+                    tinyusdz::tydra::next::TextureFitName(opts.textureFit));
+    }
+    char thresholdBuf[64];
+    if (fitThreshold == (std::numeric_limits<size_t>::max)()) {
+      std::snprintf(thresholdBuf, sizeof(thresholdBuf), "unbounded");
+    } else {
+      std::snprintf(thresholdBuf, sizeof(thresholdBuf), "%.1f MiB",
+                    double(fitThreshold) / (1024.0 * 1024.0));
+    }
+    LOGI("next: texture-fit=%s %zu textures, %.1f MiB decoded + %.1f MiB "
+         "geometry = %.1f MiB vs %s threshold (VRAM %.1f MiB, comfort %.1f MiB)"
+         "; %s compression, %s mips; decoder max_edge=%u, %llu downscaled%s",
+         fitLabel,
          draw->textures.size(),
          double(decodedTextureBytes) / (1024.0 * 1024.0),
-         double(textureBudgetBytes) / (1024.0 * 1024.0),
-         skipCompression ? ", compression" : "",
-         skipMips ? ", mips" : "");
+         double(estimatedGeometryBytes) / (1024.0 * 1024.0),
+         double(residentEstimate) / (1024.0 * 1024.0), thresholdBuf,
+         double(vramCapacityBytes) / (1024.0 * 1024.0),
+         double(comfortBytes) / (1024.0 * 1024.0),
+         skipCompression ? "skip" : "keep", skipMips ? "skip" : "keep",
+         texCache.decoder ? texCache.decoder->options().max_edge : 0u,
+         static_cast<unsigned long long>(
+             texCache.decoder ? texCache.decoder->downscaled_count() : 0ull),
+         texCache.deferOrdinary ? " [deferred decode: totals not yet final]"
+                                : "");
   }
   if (texCache.deferOrdinary) {
     // Classify normal/alpha/packed-map usage while material slot indices are

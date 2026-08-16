@@ -2795,6 +2795,19 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-vram-budget PROPERTIES SKIP_RETURN_CODE 77)
 
+      # --texture-fit must actually decide whether textures are shrunk and
+      # block-compressed. That decision previously had no coverage at all: a
+      # regression either way showed up only as a slow or needlessly degraded
+      # large-scene load. Headless + tiny scene; skips without Vulkan.
+      add_test(
+        NAME tusdview-texture-fit
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-texture-fit.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-texture-fit"
+        )
+      set_tests_properties(tusdview-texture-fit PROPERTIES SKIP_RETURN_CODE 77)
+
       # A non-instanced blendshape mesh must animate on the default --next loader.
       # Morph used to be built only for instanced prototypes, so a plain
       # SkelRoot -> Mesh blendshape rendered frozen at its rest pose. Headless
