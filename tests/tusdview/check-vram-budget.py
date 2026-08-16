@@ -39,11 +39,22 @@ def Xform "World" {
 
 def run(binary, scene, work, extra):
     out = os.path.join(work, "vram.ppm")
-    cmd = [binary, "--headless", "--large-scene-profile", "island",
+    cmd = [binary, "--headless", "--large-scene-profile", "balanced",
            "--frames", "1", "--screenshot", out] + extra + [scene]
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        timeout=600)
-    return r.stdout.decode(errors="replace")
+    text = r.stdout.decode(errors="replace")
+    # An argument the viewer rejects is a bug in THIS test, not an absent GPU.
+    # The profile was named "island" until it was renamed to "balanced"; the
+    # test kept passing the old name, the viewer exited 1, no Vulkan banner was
+    # printed, and the caller below reported "no Vulkan device available" -- so
+    # this test silently skipped instead of checking anything. Fail loudly on a
+    # rejected argument so the next rename cannot hide the same way.
+    if "[tusdview][error] --" in text:
+        print("FAIL: tusdview rejected an argument from this test -- the test "
+              "is out of date, not the environment:\n" + text[:600])
+        sys.exit(1)
+    return text
 
 
 def budget_line(log):
