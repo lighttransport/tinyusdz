@@ -658,12 +658,35 @@ PCIe on every draw, which cost 86ms versus 2ms on a 3.8M triangle scene. Buffers
 get there two ways.
 
 Static mesh geometry (never rewritten after upload -- not CPU-skinned, no GPU
-morph, no persistent mapping) at least 256KB goes into a **device-local pool**:
+morph, no persistent mapping) above a size floor goes into a **device-local
+pool**:
 block sub-allocated like the host pool, because one `vkAllocateMemory` per
 buffer reproduces the allocation storm pooling exists to prevent, and filled by
 staging copies batched into a single submit, because `endOneShot` stalls the
-queue. The 256KB floor keeps scenes built from many small meshes from paying a
-per-buffer staged copy for a fetch saving too small to measure.
+queue. The floor keeps scenes built from many small meshes from paying a per-buffer
+staged copy for a fetch saving too small to measure. It is hardware dependent
+and probed once:
+
+| Device | Floor | Why |
+| --- | --- | --- |
+| host-visible VRAM heap present (ReBAR, integrated) | 256KB | Buffers under the floor still reach VRAM via that heap, so the floor only picks the mechanism. |
+| no such heap (small BAR) | 64KB | Under the floor means system RAM, so the floor decides how much geometry is resident at all. |
+
+Measured on Moana island `elements/isCoral` (13638 draws), sweeping
+`TUSDVIEW_VBO_DEVLOCAL_MIN_KB`. With ReBAR, frame time is flat for every floor
+from 256KB to 0 while floor=0 triples load time (34.3s -> 122.3s, 151932
+buffers). Rehearsing a small-BAR card with `TUSDVIEW_VBO_NO_REBAR=1`, the same
+scene gives 295.7ms at 256KB (the host-only path is 372ms), 165.4ms at 64KB,
+163.6ms at 16KB and 148.5ms at 4KB -- the knee is 64KB, worth 1.8x for +0.9s of
+load where 4KB costs +10s for another 10%.
+
+`TUSDVIEW_VBO_DEVLOCAL_MIN_KB` overrides the floor (in KiB) and
+`TUSDVIEW_VBO_NO_REBAR=1` rehearses a card without a host-visible VRAM heap;
+both exist for sweeps like the one above.
+
+Absolute frame times drift between sessions with GPU clock state -- the same
+build measured isCoral at 79ms and 138ms on different runs -- so compare a
+device-local and host-only pair measured back to back, not across sessions.
 
 Everything else -- dynamic meshes, persistently mapped instance buffers, and
 static buffers below the floor -- stays host-visible, but prefers a heap that is

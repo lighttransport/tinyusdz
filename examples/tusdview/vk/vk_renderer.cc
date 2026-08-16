@@ -4523,6 +4523,49 @@ bool VulkanRenderer::poolSubAlloc(VkDeviceSize size, VkDeviceSize align,
   return true;
 }
 
+// Smallest static buffer worth routing through the device-local pool.
+//
+// The right floor depends on whether the device exposes a host-visible
+// DEVICE_LOCAL heap (ReBAR, or an integrated GPU). With one, buffers below the
+// floor still land in VRAM via that heap, so the floor only picks the mechanism
+// and can stay high to keep load cheap: on isCoral (Moana island) frame time was
+// flat at 79-82ms for every floor from 256KB down to 0, while floor=0 tripled
+// load time (34.3s -> 122.3s) building 151932 buffers.
+//
+// Without that heap, everything under the floor falls back to system RAM and
+// the floor decides how much geometry is VRAM-resident at all. The same scene
+// rehearsed with TUSDVIEW_VBO_NO_REBAR: 256KB gave 295.7ms (barely better than
+// the 372ms host-only path), 64KB 165.4ms, 16KB 163.6ms, 4KB 148.5ms. The knee
+// is 64KB -- 1.8x for +0.9s of load, where 4KB costs +10s for another 10%.
+//
+// TUSDVIEW_VBO_DEVLOCAL_MIN_KB overrides both.
+VkDeviceSize VulkanRenderer::deviceLocalFloorBytes() {
+  if (deviceLocalFloorBytes_ != 0) return deviceLocalFloorBytes_;
+  if (const char* e = std::getenv("TUSDVIEW_VBO_DEVLOCAL_MIN_KB")) {
+    const VkDeviceSize kb = static_cast<VkDeviceSize>(std::strtoull(e, nullptr, 10));
+    deviceLocalFloorBytes_ = kb * 1024u;
+    if (deviceLocalFloorBytes_ == 0) deviceLocalFloorBytes_ = 1;  // 0 = "everything"
+    return deviceLocalFloorBytes_;
+  }
+  static const bool noRebarEnv = std::getenv("TUSDVIEW_VBO_NO_REBAR") != nullptr;
+  bool hostVisibleVram = false;
+  if (!noRebarEnv && phys_) {
+    VkPhysicalDeviceMemoryProperties mp;
+    vkGetPhysicalDeviceMemoryProperties(phys_, &mp);
+    const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+      if ((mp.memoryTypes[i].propertyFlags & want) == want) {
+        hostVisibleVram = true;
+        break;
+      }
+    }
+  }
+  deviceLocalFloorBytes_ = hostVisibleVram ? (256u * 1024u) : (64u * 1024u);
+  return deviceLocalFloorBytes_;
+}
+
 // Device-local sibling of poolSubAlloc: no vkMapMemory (the memory is not
 // host-visible), so callers stage their data in through a copy.
 bool VulkanRenderer::deviceSubAlloc(VkDeviceSize size, VkDeviceSize align,
@@ -4669,7 +4712,7 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
     // made of many small meshes -- CarbonFrameBike is 3272 buffers averaging
     // 4.8KB -- otherwise pay that cost thousands of times for a fetch saving
     // too small to measure, which doubled its load time in testing.
-    static constexpr VkDeviceSize kDeviceLocalMinBytes = 256ull * 1024;
+    const VkDeviceSize kDeviceLocalMinBytes = deviceLocalFloorBytes();
     if (poolable && mappedOut == nullptr && !forceHost && (usage & kGpuRead) &&
         size >= kDeviceLocalMinBytes &&
         createDeviceLocalPooledBuffer(size, usage, data, buf, mem, deviceAddress)) {
@@ -4719,7 +4762,11 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
   uint32_t memType = hostType;
   bool devLocalTried = false;
-  if (gpuResident && !forceHostVbo && !devLocalHostExhausted_) {
+  // TUSDVIEW_VBO_NO_REBAR=1 rehearses a card without a host-visible VRAM heap
+  // (small-BAR): the device-local pool still applies, but everything below its
+  // floor falls back to system RAM, as it would on that hardware.
+  static const bool noRebar = std::getenv("TUSDVIEW_VBO_NO_REBAR") != nullptr;
+  if (gpuResident && !noRebar && !forceHostVbo && !devLocalHostExhausted_) {
     const uint32_t devLocalType = findMemoryTypeOrInvalid(
         req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
