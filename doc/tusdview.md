@@ -649,12 +649,30 @@ It pairs with the CPU-side timers `TUSDVIEW_TIME_FRAME` (whole present) and
 `TUSDVIEW_TIME_PRESENT` (previous-frame GPU wait vs CPU record+submit). All
 three are off unless set, and cost nothing when off.
 
-Mesh vertex/index buffers are allocated from a heap that is `DEVICE_LOCAL` as
-well as host-visible (ReBAR, or an integrated GPU) so that per-frame vertex
-fetch reads VRAM rather than crossing PCIe -- worth 86ms -> 2ms on a 3.8M
-triangle scene. When that heap is absent or full, allocation silently falls
-back to plain host memory per buffer. `TUSDVIEW_VBO_HOST=1` forces the host-only
-path, which is the A/B lever for confirming a suspected vertex-fetch stall.
+The `submitted:` line counts the non-instanced mesh loop only; geometry drawn by
+the instanced pass is not tallied, so an instanced scene can legitimately report
+very few triangles.
+
+Mesh geometry must live in VRAM: per-frame vertex fetch from host memory crosses
+PCIe on every draw, which cost 86ms versus 2ms on a 3.8M triangle scene. Buffers
+get there two ways.
+
+Static mesh geometry (never rewritten after upload -- not CPU-skinned, no GPU
+morph, no persistent mapping) at least 256KB goes into a **device-local pool**:
+block sub-allocated like the host pool, because one `vkAllocateMemory` per
+buffer reproduces the allocation storm pooling exists to prevent, and filled by
+staging copies batched into a single submit, because `endOneShot` stalls the
+queue. The 256KB floor keeps scenes built from many small meshes from paying a
+per-buffer staged copy for a fetch saving too small to measure.
+
+Everything else -- dynamic meshes, persistently mapped instance buffers, and
+static buffers below the floor -- stays host-visible, but prefers a heap that is
+`DEVICE_LOCAL` as well as host-visible (ReBAR, or an integrated GPU) so it still
+lands in VRAM where possible. Pure `TRANSFER_SRC` staging buffers are excluded
+from that preference: they are read once, and a large texture upload would
+otherwise exhaust a small BAR heap and push real geometry back onto the slow
+path. `TUSDVIEW_VBO_HOST=1` forces everything host-only, the A/B lever for
+confirming a suspected vertex-fetch stall.
 
 The variables used by the viewer test harnesses have narrower meanings:
 

@@ -443,6 +443,36 @@ class VulkanRenderer final : public Renderer {
   bool poolSubAlloc(VkDeviceSize size, VkDeviceSize align, uint32_t memoryTypeIndex,
                     bool deviceAddress, VkDeviceMemory* outMem, VkDeviceSize* outOffset,
                     void** outMapped);
+
+  // ---- Device-local pool (static mesh geometry) ----
+  // Static mesh buffers are never re-mapped after upload, so they can live in true
+  // DEVICE_LOCAL memory rather than depending on a host-visible VRAM heap (ReBAR).
+  // Same block sub-allocation as hostBlocks_ -- one vkAllocateMemory per static
+  // mesh buffer would reproduce the allocation storm that pooling exists to avoid
+  // (Moana island: 83801 prototypes) -- but with no mapping, since the data is
+  // staged in through a copy instead.
+  std::vector<HostMemBlock> deviceBlocks_;  // .mapped stays null
+  uint64_t devLocalBufCount_{0};   // reported by TUSDVIEW_TIME_GPU
+  VkDeviceSize devLocalBufBytes_{0};
+  bool deviceSubAlloc(VkDeviceSize size, VkDeviceSize align, uint32_t memoryTypeIndex,
+                      bool deviceAddress, VkDeviceMemory* outMem,
+                      VkDeviceSize* outOffset);
+  bool createDeviceLocalPooledBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                                     const void* data, VkBuffer* buf,
+                                     VkDeviceMemory* mem, bool deviceAddress);
+  void freeDevicePool();
+  // Staging copies for the above, batched: endOneShot does a full vkQueueWaitIdle,
+  // so one submit per buffer would stall the streaming upload path once per mesh.
+  // Flushed on a byte threshold, before any BLAS build, and before each frame.
+  struct PendingBufferUpload {
+    VkBuffer staging{VK_NULL_HANDLE};
+    VkDeviceMemory stagingMem{VK_NULL_HANDLE};
+    VkBuffer dst{VK_NULL_HANDLE};
+    VkDeviceSize size{0};
+  };
+  std::vector<PendingBufferUpload> pendingUploads_;
+  VkDeviceSize pendingUploadBytes_{0};
+  void flushPendingUploads();
   void freeHostPool();  // unmap + free every block (after buffers are destroyed)
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView,
