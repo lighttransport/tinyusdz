@@ -29,13 +29,24 @@ elif [ -x "$REPO_ROOT/build_ninja/tusdview" ]; then BIN="$REPO_ROOT/build_ninja/
 else BIN="$REPO_ROOT/build/tusdview"; fi
 if [ ! -x "$BIN" ]; then echo "SKIP: tusdview not found ($BIN)"; exit "$SKIP"; fi
 
-# The assertion is about GPU texture sampling. Preflight the selected Vulkan
-# installation so a mixed/unstable device enumeration cannot run one loader on
-# a software adapter and the other loader on a different adapter.
+# The assertion is about GPU texture sampling, so a software-only Vulkan
+# installation cannot answer it. Skip only when software is the ONLY option:
+# this used to skip whenever llvmpipe/lavapipe was merely PRESENT, which on any
+# machine that has Mesa installed alongside a real GPU meant the test never ran
+# at all -- it reported "software Vulkan" on a discrete NVIDIA card. The render
+# itself is still checked below against the device tusdview actually selected,
+# which is the authoritative test.
 if command -v vulkaninfo >/dev/null 2>&1 &&
-   vulkaninfo --summary 2>/dev/null | grep -Eqi 'llvmpipe|lavapipe|softpipe|deviceType.*CPU'; then
-  echo "SKIP: software Vulkan cannot validate texture sampling"
-  exit "$SKIP"
+   command -v timeout >/dev/null 2>&1 &&
+   timeout 10s vulkaninfo --summary >/tmp/mbi-vulkaninfo.$$ 2>&1; then
+  if grep -q 'PHYSICAL_DEVICE_TYPE_CPU' /tmp/mbi-vulkaninfo.$$ &&
+     ! grep -Eq 'PHYSICAL_DEVICE_TYPE_(DISCRETE|INTEGRATED|VIRTUAL)_GPU' \
+       /tmp/mbi-vulkaninfo.$$; then
+    rm -f /tmp/mbi-vulkaninfo.$$
+    echo "SKIP: software-only Vulkan cannot validate texture sampling"
+    exit "$SKIP"
+  fi
+  rm -f /tmp/mbi-vulkaninfo.$$
 fi
 
 ASSET="${1:-$REPO_ROOT/models/tusdview-material-binding-inheritance.usda}"

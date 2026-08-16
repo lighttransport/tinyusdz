@@ -811,7 +811,7 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     case "$backend" in
       gl) args=("$BIN" --backend gl "${loader_args[@]}"); tag=gl$loader_suffix; marker='render stats';;
       vk-raster) args=("$BIN" --headless --backend vk "${loader_args[@]}"); tag=vk-raster$loader_suffix; marker='render stats';;
-      vk-rt) [ "$vk_software" = 0 ] || { echo 'SKIP: Vulkan RT on software Vulkan'; continue; }; args=("$BIN" --headless --backend vk --rt "${loader_args[@]}"); tag=vk-rt$loader_suffix; marker='Vulkan ray tracing (ray query) enabled';;
+      vk-rt) [ "$vk_software" = 0 ] || { echo 'SKIP: Vulkan RT on software Vulkan'; continue; }; args=("$BIN" --headless --backend vk --rt "${loader_args[@]}"); tag=vk-rt$loader_suffix; marker='Vulkan ray tracing enabled (hardware ray query)';;
       cuda) args=("$BIN" --headless --cuda "${loader_args[@]}"); tag=cuda$loader_suffix; marker='CUDA RT wrote';;
       hip) args=("$BIN" --headless --hip "${loader_args[@]}"); tag=hip$loader_suffix; marker='HIP RT wrote';;
       *) echo "unknown backend: $backend" >&2; exit 2;;
