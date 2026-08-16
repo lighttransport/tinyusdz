@@ -6006,7 +6006,21 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   // re-mapped after upload: CPU skinning refills the vbo (updateMeshVertices) and
   // GPU morph re-maps coeff/delta buffers, so dynamic meshes keep per-buffer memory.
   const bool dyn = gm.skinned || sm.morphChannelCount > 0;
+  // `pool` gates the buffers that are RE-MAPPED after upload (vkMapMemory at
+  // offset 0 needs a dedicated allocation, not a slice of a shared block):
+  // vbo/vboDisp, rewritten per pose by CPU skinning and the RT deform, and
+  // influenceVbo, mapped where it is filled.
   const bool pool = !dyn;
+  // Every other per-mesh buffer is written once at upload and never mapped
+  // again, so it can be pooled even on a dynamic mesh. This used to follow
+  // `pool`, which made a skinned mesh give its INDEX buffer (and joints,
+  // weights, uv1, morph tables, ...) a dedicated vkAllocateMemory. Caldera is
+  // 15612 skinned meshes, so that was ~10 allocations each and ~156k live
+  // allocations; the driver's free path is O(live allocations), so teardown ran
+  // at 240 ms per mesh -- about an hour -- with vkFreeMemory alone measured at
+  // 22 ms per call. Pooling these makes the count ~2 per mesh, and because the
+  // cost is quadratic in the count the saving is far more than 5x.
+  const bool poolStatic = true;
 
   // When RT is supported the vertex/index buffers double as BLAS build input and
   // SSBOs read by the ray-query shader (device addresses).
@@ -6050,13 +6064,13 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
       (skinAddressable ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
   if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(uint32_t), skinUsage, joints,
-                        &gm.jointVbo, &gm.jointVboMem, skinAddressable, pool)) {
+                        &gm.jointVbo, &gm.jointVboMem, skinAddressable, poolStatic)) {
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
     return;
   }
   if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(float), skinUsage, weights,
-                        &gm.weightVbo, &gm.weightVboMem, skinAddressable, pool)) {
+                        &gm.weightVbo, &gm.weightVboMem, skinAddressable, poolStatic)) {
     vkDestroyBuffer(device_, gm.jointVbo, nullptr);
     vkFreeMemory(device_, gm.jointVboMem, nullptr);
     vkDestroyBuffer(device_, gm.vbo, nullptr);
@@ -6095,9 +6109,9 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
         (rtSupported_ ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
     createHostBuffer(uv1.size() * sizeof(float), auxUsage, uv1.data(),
-                     &gm.uv1Vbo, &gm.uv1VboMem, rtSupported_, pool);
+                     &gm.uv1Vbo, &gm.uv1VboMem, rtSupported_, poolStatic);
     createHostBuffer(infl.size() * sizeof(float), auxUsage, infl.data(),
-                     &gm.morphInflVbo, &gm.morphInflVboMem, rtSupported_, pool);
+                     &gm.morphInflVbo, &gm.morphInflVboMem, rtSupported_, poolStatic);
   }
   // GPU blendshape morph: per-vertex (offset,count) vertex buffer (binding 6, always
   // created) + static delta and per-frame coefficient buffers (set 1 bindings 2/3,
@@ -6107,7 +6121,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     if (oc.size() != sm.vertices.size() * 2) oc.assign(sm.vertices.size() * 2, 0u);
     createHostBuffer(oc.size() * sizeof(uint32_t),
                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, oc.data(),
-                     &gm.morphOffsetVbo, &gm.morphOffsetVboMem, false, pool);
+                     &gm.morphOffsetVbo, &gm.morphOffsetVboMem, false, poolStatic);
   }
   gm.morphDeltaDesc = dummyMorphDesc_;
   gm.morphCoeffDesc = dummyMorphDesc_;
@@ -6175,13 +6189,13 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   if (gm.influenceDesc == VK_NULL_HANDLE) {
     const float zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     if (createHostBuffer(sizeof(zero), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, zero,
-                         &gm.influenceDataBuf, &gm.influenceDataMem, false, pool)) {
+                         &gm.influenceDataBuf, &gm.influenceDataMem, false, poolStatic)) {
       gm.influenceDesc = allocInfluenceDescriptor(gm.influenceDataBuf,
                                                   sizeof(zero));
     }
   }
   if (!createHostBuffer(sm.indices.size() * sizeof(uint32_t), eboUsage,
-                        sm.indices.data(), &gm.ebo, &gm.eboMem, rtSupported_, pool)) {
+                        sm.indices.data(), &gm.ebo, &gm.eboMem, rtSupported_, poolStatic)) {
     if (gm.influenceDataBuf) vkDestroyBuffer(device_, gm.influenceDataBuf, nullptr);
     if (gm.influenceDataMem) vkFreeMemory(device_, gm.influenceDataMem, nullptr);
     if (gm.influenceVbo) vkDestroyBuffer(device_, gm.influenceVbo, nullptr);
@@ -6203,7 +6217,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     const VkBufferUsageFlags fu = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     if (createHostBuffer(sm.sourceFaceId.size() * sizeof(uint32_t), fu,
                          sm.sourceFaceId.data(), &gm.faceBuf, &gm.faceMem,
-                         rtSupported_, pool)) {
+                         rtSupported_, poolStatic)) {
       gm.faceDesc = allocFaceDescriptor(
           gm.faceBuf, sm.sourceFaceId.size() * sizeof(uint32_t));
     }
@@ -6237,7 +6251,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       createHostBuffer(triMats.size() * sizeof(uint32_t),
                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, triMats.data(),
                        &gm.triMatBuf, &gm.triMatMem,
-                       /*deviceAddress=*/true, pool);
+                       /*deviceAddress=*/true, poolStatic);
     }
 
     bool needsRtSubmeshes = sm.submeshes.size() > 1;
@@ -6263,7 +6277,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       createHostBuffer(ranges.size() * sizeof(RtSubmeshRangeGPU),
                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, ranges.data(),
                        &gm.rtSubmeshBuf, &gm.rtSubmeshMem,
-                       /*deviceAddress=*/true, pool);
+                       /*deviceAddress=*/true, poolStatic);
       gm.rtSubmeshAddr = bufferDeviceAddress(gm.rtSubmeshBuf);
       gm.rtSubmeshCount = static_cast<uint32_t>(ranges.size());
     }
@@ -6289,7 +6303,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     if (createHostBuffer(rgba.size() * sizeof(float),
                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rgba.data(),
                          &gm.vtxColorBuf, &gm.vtxColorMem,
-                         /*deviceAddress=*/rtSupported_, pool)) {
+                         /*deviceAddress=*/rtSupported_, poolStatic)) {
       gm.vtxColorDesc = allocMorphDescriptor(
           gm.vtxColorBuf, rgba.size() * sizeof(float));
     }
