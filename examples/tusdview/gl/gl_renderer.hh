@@ -34,6 +34,10 @@ class GLRenderer final : public Renderer {
   bool updateTextureRegion(int slot, int x, int y, int w, int h,
                            const uint8_t* rgba,
                            size_t rowBytes = 0) override;
+  bool updatePtexFaceRect(int slot, uint32_t face,
+                          const DrawPtexFaceRectCPU& rect) override;
+  bool updateTextureRegions(
+      int slot, const std::vector<TextureRegionUpdate>& updates) override;
   void setLights(const std::vector<DrawLightCPU>& lights,
                  size_t meshCount) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
@@ -421,11 +425,17 @@ class GLRenderer final : public Renderer {
     GLuint tex2d{0};
     GLuint arrayTex{0};
     bool isUdim{false};
+    bool srgb{false};
     bool regionUpdatable{false};
     int width{0};
     int height{0};
     size_t residentBytes{0};
+    size_t ptexRectOffset{0};  // offset in the shared R32UI metadata buffer
+    std::vector<uint32_t> ptexRects;
   };
+  void rebuildPtexRectBuffer();
+  GLuint ptexRectBuf_{0};
+  GLuint ptexRectTex_{0};
   GLuint udimLutAtlas_{0};
   std::vector<GLTexture> textures_;
   std::vector<GLMaterial> materials_;

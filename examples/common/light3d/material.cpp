@@ -537,6 +537,7 @@ uniform bool uHasFaceId;
 // Base-color Ptex uses an embedded face-rectangle table. The source-face buffer
 // supplies the record for the current triangle; UVs are intrinsic face-local.
 uniform bool uBasePtex;
+uniform usamplerBuffer uPtexRectTex;
 uniform vec2 uBasePtexGrid; // rectangle texel offset, face count
 uniform vec2 uMetallicPtexGrid;
 uniform vec2 uRoughnessPtexGrid;
@@ -607,15 +608,10 @@ vec2 ptexUv(sampler2D tex, vec2 uv, vec2 grid) {
     int count = int(grid.y + 0.5);
     if (face < 0 || face >= count) return uv;
     ivec2 size = textureSize(tex, 0);
-    int base = int(grid.x + 0.5) + face * 8;
+    int base = int(grid.x + 0.5) + face * 4;
     uint value[4];
-    for (int component = 0; component < 4; ++component) {
-        int lo = base + component * 2;
-        ivec2 p0 = ivec2(lo % size.x, lo / size.x);
-        ivec2 p1 = ivec2((lo + 1) % size.x, (lo + 1) / size.x);
-        value[component] = uint(texelFetch(tex, p0, 0).a * 255.0 + 0.5) |
-                           (uint(texelFetch(tex, p1, 0).a * 255.0 + 0.5) << 8u);
-    }
+    for (int component = 0; component < 4; ++component)
+        value[component] = texelFetch(uPtexRectTex, base + component).r;
     if (value[2] == 0u || value[3] == 0u) return uv;
     vec2 t = clamp(uv, 0.0, 1.0);
     vec2 px = vec2(value[0], value[1]) +
@@ -758,18 +754,11 @@ void main() {
             int count = int(uBasePtexGrid.y + 0.5);
             if (face >= 0 && face < count) {
                 ivec2 size = textureSize(uBaseColorTex, 0);
-                int base = int(uBasePtexGrid.x + 0.5) + face * 8;
+                int base = int(uBasePtexGrid.x + 0.5) + face * 4;
                 uint value[4];
-                for (int component = 0; component < 4; ++component) {
-                    int lo = base + component * 2;
-                    float a = texelFetch(uBaseColorTex,
-                                        ivec2(lo % size.x, lo / size.x), 0).a;
-                    float b = texelFetch(uBaseColorTex,
-                                        ivec2((lo + 1) % size.x,
-                                              (lo + 1) / size.x), 0).a;
-                    value[component] = uint(a * 255.0 + 0.5) |
-                                       (uint(b * 255.0 + 0.5) << 8u);
-                }
+                for (int component = 0; component < 4; ++component)
+                    value[component] = texelFetch(uPtexRectTex,
+                                                  base + component).r;
                 vec2 px = vec2(float(value[0]), float(value[1])) +
                           vec2(clamp(uv.x, 0.0, 1.0),
                                1.0 - clamp(uv.y, 0.0, 1.0)) *

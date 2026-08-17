@@ -418,6 +418,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uBrdfLut"), 21);
   glUniform1i(glGetUniformLocation(program_, "uShadowMap"), 25);
   glUniform1i(glGetUniformLocation(program_, "uPointShadowMap"), 31);
+  glUniform1i(glGetUniformLocation(program_, "uPtexRectTex"), 32);
   // Filter across cube-face borders (core since GL 3.2); matters for the
   // low-res prefiltered/irradiance cubes.
   glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
@@ -1453,8 +1454,36 @@ void GLRenderer::destroyScene() {
   if (udimLutAtlas_) glDeleteTextures(1, &udimLutAtlas_);
   udimLutAtlas_ = 0;
   textures_.clear();
+  if (ptexRectTex_) glDeleteTextures(1, &ptexRectTex_);
+  if (ptexRectBuf_) glDeleteBuffers(1, &ptexRectBuf_);
+  ptexRectTex_ = 0;
+  ptexRectBuf_ = 0;
   materials_.clear();
   destroyIblTextures();
+}
+
+void GLRenderer::rebuildPtexRectBuffer() {
+  std::vector<uint32_t> records;
+  for (GLTexture& texture : textures_) {
+    texture.ptexRectOffset = records.size();
+    records.insert(records.end(), texture.ptexRects.begin(),
+                   texture.ptexRects.end());
+  }
+  if (ptexRectTex_) glDeleteTextures(1, &ptexRectTex_);
+  if (ptexRectBuf_) glDeleteBuffers(1, &ptexRectBuf_);
+  ptexRectTex_ = 0;
+  ptexRectBuf_ = 0;
+  glGenBuffers(1, &ptexRectBuf_);
+  glBindBuffer(GL_TEXTURE_BUFFER, ptexRectBuf_);
+  const size_t bytes = std::max<size_t>(records.size() * sizeof(uint32_t),
+                                        sizeof(uint32_t));
+  glBufferData(GL_TEXTURE_BUFFER, static_cast<GLsizeiptr>(bytes),
+               records.empty() ? nullptr : records.data(), GL_STATIC_DRAW);
+  glGenTextures(1, &ptexRectTex_);
+  glBindTexture(GL_TEXTURE_BUFFER, ptexRectTex_);
+  glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, ptexRectBuf_);
+  glBindTexture(GL_TEXTURE_BUFFER, 0);
+  glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
 
 void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
@@ -1729,12 +1758,10 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     // Upload as plain RGBA8 (texels used as-is; see note: the simple shader and
     // linear RGBA8 target don't re-encode gamma).
     const GLenum fmt = GLCompressedFormat(t.compressed.format, t.srgb);
-    // Ptex rectangle metadata is encoded in the atlas alpha texels. OpenGL
-    // keeps Ptex atlases raw until it has a separate metadata-buffer path;
-    // this is the intentional compatibility fallback for GL 3.3/4.x.
+    // Ptex rectangle metadata is kept in a GL texture buffer so the atlas can
+    // remain BC-compressed without depending on alpha-channel preservation.
     const bool useCompressed =
-        !t.isPtex && t.requestedCompressed && fmt != 0 &&
-        !t.compressed.data.empty();
+        t.requestedCompressed && fmt != 0 && !t.compressed.data.empty();
     // Precomputed content-aware mips (sRGB/alpha-coverage/normal-aware,
     // FinalizeDrawTextures) replace glGenerateMipmap when present. This also
     // gives compressed textures real mips (glGenerateMipmap is typically a
@@ -1790,6 +1817,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   }
   gpu.width = t.image.width;
   gpu.height = t.image.height;
+  gpu.srgb = t.srgb;
   auto imageBytes = [](const light3d::Image& image) {
     return image.data.empty()
                ? size_t(std::max(image.width, 0)) *
@@ -1815,7 +1843,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     gpu.residentBytes +=
         fallbackCompressed ? fallbackCompressed : imageBytes(t.image);
   } else {
-    const size_t compressed = t.isPtex ? 0u : compressedBytes(t.compressed);
+    const size_t compressed = compressedBytes(t.compressed);
     gpu.residentBytes = compressed ? compressed : imageBytes(t.image);
     if (!compressed) {
       for (const light3d::Image& mip : t.mipImages)
@@ -1829,14 +1857,24 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   }
   gpu.regionUpdatable = !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
                         (!t.image.data.empty() || t.streamingMutable) &&
-                        !(t.requestedCompressed && !t.isPtex &&
+                        !(t.requestedCompressed &&
                           t.compressed.format != DrawCompressedFormat::None &&
                           !t.compressed.data.empty());
+  if (t.isPtex) {
+    gpu.ptexRects.reserve(t.ptexFaceRects.size() * 4u);
+    for (const DrawPtexFaceRectCPU& rect : t.ptexFaceRects) {
+      gpu.ptexRects.push_back(rect.x);
+      gpu.ptexRects.push_back(rect.y);
+      gpu.ptexRects.push_back(rect.width);
+      gpu.ptexRects.push_back(rect.height);
+    }
+  }
   GLTexture& old = textures_[static_cast<size_t>(slot)];
   if (old.tex2d) glDeleteTextures(1, &old.tex2d);
   if (old.arrayTex) glDeleteTextures(1, &old.arrayTex);
   old = gpu;
-  if (t.isPtex && t.ptexRectTexelOffset <
+  rebuildPtexRectBuffer();
+  if (t.isPtex && t.compressed.data.empty() && t.ptexRectTexelOffset <
                       static_cast<uint32_t>(t.image.width * t.image.height)) {
     size_t linear = t.ptexRectTexelOffset;
     size_t remaining = t.ptexFaceRects.size() * 8u;
@@ -1888,6 +1926,68 @@ bool GLRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glBindTexture(GL_TEXTURE_2D, 0);
   return true;
+}
+
+bool GLRenderer::updatePtexFaceRect(int slot, uint32_t face,
+                                    const DrawPtexFaceRectCPU& rect) {
+  if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return false;
+  GLTexture& texture = textures_[static_cast<size_t>(slot)];
+  const size_t base = static_cast<size_t>(face) * 4u;
+  if (texture.ptexRects.size() < base + 4u) return false;
+  texture.ptexRects[base + 0] = rect.x;
+  texture.ptexRects[base + 1] = rect.y;
+  texture.ptexRects[base + 2] = rect.width;
+  texture.ptexRects[base + 3] = rect.height;
+  rebuildPtexRectBuffer();
+  return true;
+}
+
+bool GLRenderer::updateTextureRegions(
+    int slot, const std::vector<TextureRegionUpdate>& updates) {
+  if (updates.empty() || slot < 0 || static_cast<size_t>(slot) >= textures_.size())
+    return false;
+  const TextureRegionUpdate& first = updates.front();
+  if (first.compressedFormat == DrawCompressedFormat::None) {
+    for (const TextureRegionUpdate& update : updates) {
+      if (!update.rgba.empty() &&
+          !updateTextureRegion(slot, update.x, update.y, update.width,
+                               update.height, update.rgba.data(),
+                               update.rowBytes)) return false;
+    }
+    return true;
+  }
+  GLTexture& texture = textures_[static_cast<size_t>(slot)];
+  if (!texture.tex2d || !texture.regionUpdatable || first.x % 4 != 0 ||
+      first.y % 4 != 0) return false;
+  const GLenum fmt = GLCompressedFormat(first.compressedFormat, texture.srgb);
+  if (fmt == 0) return false;
+  auto blockBytes = [](DrawCompressedFormat f) -> size_t {
+    return (f == DrawCompressedFormat::BC1 || f == DrawCompressedFormat::BC5)
+               ? 8u : 16u;
+  };
+  glBindTexture(GL_TEXTURE_2D, texture.tex2d);
+  for (const TextureRegionUpdate& update : updates) {
+    if (update.compressedFormat != first.compressedFormat || update.x % 4 != 0 ||
+        update.y % 4 != 0 || update.width <= 0 || update.height <= 0 ||
+        update.x + update.width > texture.width ||
+        update.y + update.height > texture.height) {
+      glBindTexture(GL_TEXTURE_2D, 0);
+      return false;
+    }
+    const size_t bytes = ((static_cast<size_t>(update.width) + 3u) / 4u) *
+                         ((static_cast<size_t>(update.height) + 3u) / 4u) *
+                         blockBytes(update.compressedFormat);
+    if (update.compressed.size() < bytes) {
+      glBindTexture(GL_TEXTURE_2D, 0);
+      return false;
+    }
+    glCompressedTexSubImage2D(GL_TEXTURE_2D, 0, update.x, update.y,
+                              update.width, update.height, fmt,
+                              static_cast<GLsizei>(bytes),
+                              update.compressed.data());
+  }
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return glGetError() == GL_NO_ERROR;
 }
 
 void GLRenderer::destroyIblTextures() {
@@ -2984,8 +3084,22 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
 void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
                             const float* overrideEmissive, AlphaPass alphaPass) {
   static const GLMaterial kDefault;
+  glActiveTexture(GL_TEXTURE0 + 32);
+  glBindTexture(GL_TEXTURE_BUFFER, ptexRectTex_);
+  glActiveTexture(GL_TEXTURE0);
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
+
+  auto ptexGrid = [&](const DrawTexSampleCPU& sample) {
+    float offset = static_cast<float>(sample.ptexRectTexelOffset);
+    if (sample.tex >= 0 && static_cast<size_t>(sample.tex) < textures_.size() &&
+        !textures_[static_cast<size_t>(sample.tex)].ptexRects.empty()) {
+      offset = static_cast<float>(textures_[static_cast<size_t>(sample.tex)]
+                                      .ptexRectOffset);
+    }
+    return std::array<float, 2>{offset,
+                                static_cast<float>(sample.ptexFaceCount)};
+  };
 
   auto matTranslucent = [&](int materialId) -> bool {
     if (materialId < 0 || static_cast<size_t>(materialId) >= materials_.size())
@@ -3346,39 +3460,28 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform4fv(uBaseColorTexScale_, 1, mat.baseColorSample.scale);
         glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
         glUniform1i(uBasePtex_, mat.baseColorSample.isPtex ? 1 : 0);
-        glUniform2f(uBasePtexGrid_,
-                   static_cast<float>(mat.baseColorSample.ptexRectTexelOffset),
-                   static_cast<float>(mat.baseColorSample.ptexFaceCount));
-        glUniform2f(uMetallicPtexGrid_,
-                    static_cast<float>(mat.metallicSample.ptexRectTexelOffset),
-                    static_cast<float>(mat.metallicSample.ptexFaceCount));
-        glUniform2f(uRoughnessPtexGrid_,
-                    static_cast<float>(mat.roughnessSample.ptexRectTexelOffset),
-                    static_cast<float>(mat.roughnessSample.ptexFaceCount));
-        glUniform2f(uNormalPtexGrid_,
-                    static_cast<float>(mat.normalSample.ptexRectTexelOffset),
-                    static_cast<float>(mat.normalSample.ptexFaceCount));
-        glUniform2f(uEmissivePtexGrid_,
-                    static_cast<float>(mat.emissiveSample.ptexRectTexelOffset),
-                    static_cast<float>(mat.emissiveSample.ptexFaceCount));
-        glUniform2f(uOpacityPtexGrid_,
-                    static_cast<float>(mat.opacitySample.ptexRectTexelOffset),
-                    static_cast<float>(mat.opacitySample.ptexFaceCount));
-        glUniform2f(uOcclusionPtexGrid_,
-                    static_cast<float>(mat.occlusionSample.ptexRectTexelOffset),
-                    static_cast<float>(mat.occlusionSample.ptexFaceCount));
-        glUniform2f(uSpecularColorPtexGrid_,
-                    static_cast<float>(mat.specularColorSample.ptexRectTexelOffset),
-                    static_cast<float>(mat.specularColorSample.ptexFaceCount));
-        glUniform2f(uCoatWeightPtexGrid_,
-                    static_cast<float>(mat.coatWeightSample.ptexRectTexelOffset),
-                    static_cast<float>(mat.coatWeightSample.ptexFaceCount));
-        glUniform2f(uCoatColorPtexGrid_,
-                    static_cast<float>(mat.coatColorSample.ptexRectTexelOffset),
-                    static_cast<float>(mat.coatColorSample.ptexFaceCount));
-        glUniform2f(uCoatRoughnessPtexGrid_,
-                    static_cast<float>(mat.coatRoughnessSample.ptexRectTexelOffset),
-                    static_cast<float>(mat.coatRoughnessSample.ptexFaceCount));
+        const auto baseGrid = ptexGrid(mat.baseColorSample);
+        const auto metallicGrid = ptexGrid(mat.metallicSample);
+        const auto roughnessGrid = ptexGrid(mat.roughnessSample);
+        const auto normalGrid = ptexGrid(mat.normalSample);
+        const auto emissiveGrid = ptexGrid(mat.emissiveSample);
+        const auto opacityGrid = ptexGrid(mat.opacitySample);
+        const auto occlusionGrid = ptexGrid(mat.occlusionSample);
+        const auto specularGrid = ptexGrid(mat.specularColorSample);
+        const auto coatWeightGrid = ptexGrid(mat.coatWeightSample);
+        const auto coatColorGrid = ptexGrid(mat.coatColorSample);
+        const auto coatRoughnessGrid = ptexGrid(mat.coatRoughnessSample);
+        glUniform2fv(uBasePtexGrid_, 1, baseGrid.data());
+        glUniform2fv(uMetallicPtexGrid_, 1, metallicGrid.data());
+        glUniform2fv(uRoughnessPtexGrid_, 1, roughnessGrid.data());
+        glUniform2fv(uNormalPtexGrid_, 1, normalGrid.data());
+        glUniform2fv(uEmissivePtexGrid_, 1, emissiveGrid.data());
+        glUniform2fv(uOpacityPtexGrid_, 1, opacityGrid.data());
+        glUniform2fv(uOcclusionPtexGrid_, 1, occlusionGrid.data());
+        glUniform2fv(uSpecularColorPtexGrid_, 1, specularGrid.data());
+        glUniform2fv(uCoatWeightPtexGrid_, 1, coatWeightGrid.data());
+        glUniform2fv(uCoatColorPtexGrid_, 1, coatColorGrid.data());
+        glUniform2fv(uCoatRoughnessPtexGrid_, 1, coatRoughnessGrid.data());
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
         glUniform4fv(uNormalTexBias_, 1, mat.normalSample.bias);
         glUniform4fv(uEmissiveTexScale_, 1, mat.emissiveSample.scale);
