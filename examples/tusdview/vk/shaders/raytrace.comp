@@ -115,7 +115,11 @@ layout(set = 0, binding = 17, scalar) readonly buffer RtPointOrder { int pointOr
 layout(set = 0, binding = 18, scalar) readonly buffer RtPointChunks { RtPointChunk pointChunks[]; };
 // Native compressed Ptex images. Unused entries are bound to the white image;
 // descriptor indexing lets RT sample the same BC7 VkImage that raster uses.
-layout(set = 0, binding = 19) uniform sampler2D rtPtexImages[256];
+#ifndef TUSDVIEW_RT_PTEXTURE_IMAGE_CAP
+#define TUSDVIEW_RT_PTEXTURE_IMAGE_CAP 256
+#endif
+layout(set = 0, binding = 19)
+    uniform sampler2D rtPtexImages[TUSDVIEW_RT_PTEXTURE_IMAGE_CAP];
 
 layout(push_constant) uniform PC {
   mat4 invViewProj;  // inverse(proj * view)
@@ -352,7 +356,7 @@ vec4 sampleRtPtexTextureLod(int id, vec2 uv, uint face, float lod,
   if (id < 0 || id >= int(texDescs.length())) return missing;
   RtTexDesc td = texDescs[id];
   vec2 atlasUv = ptexAtlasUv(td, uv, face);
-  if (td.imageSlot >= 0 && td.imageSlot < 256)
+  if (td.imageSlot >= 0 && td.imageSlot < TUSDVIEW_RT_PTEXTURE_IMAGE_CAP)
     return textureLod(rtPtexImages[nonuniformEXT(td.imageSlot)], atlasUv, lod);
   return sampleRtTextureLod(id, atlasUv, lod, missing);
 }

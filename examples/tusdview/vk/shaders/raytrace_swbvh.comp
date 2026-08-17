@@ -1,5 +1,10 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+#ifndef TUSDVIEW_RT_PTEXTURE_IMAGE_CAP
+#define TUSDVIEW_RT_PTEXTURE_IMAGE_CAP 256
+#endif
 
 // tusdview's Vulkan compute-BVH ray-tracing fallback: used on GPUs without
 // VK_KHR_ray_query/VK_KHR_acceleration_structure hardware support (where
@@ -65,6 +70,19 @@ layout(set = 0, binding = 17, scalar) readonly buffer Cols { float cols[]; };   
 layout(set = 0, binding = 18, scalar) readonly buffer Uv   { float uvs[]; };    // 6 floats/tri
 layout(set = 0, binding = 19, scalar) readonly buffer MatId { int triMat[]; };
 
+struct RtTexDesc {
+  int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
+  int isPtex; int ptexCols; int ptexRows; int ptexTileEdge;
+  int ptexRectTexelOffset; int ptexFaceCount; int mipCount; int firstMip;
+  int imageSlot; int udimLayer[100];
+};
+layout(set = 0, binding = 11, scalar) readonly buffer RtTexels { uint texelWords[]; };
+layout(set = 0, binding = 12, scalar) readonly buffer RtTexDescs { RtTexDesc texDescs[]; };
+layout(set = 0, binding = 13, scalar) readonly buffer RtMatTexIds { int matTexIds[]; };
+layout(set = 0, binding = 14, scalar) readonly buffer RtMatTexParams { float matTexParams[]; };
+layout(set = 0, binding = 20, scalar) readonly buffer FaceId { int faceIds[]; };
+layout(set = 0, binding = 21) uniform sampler2D swPtexImages[TUSDVIEW_RT_PTEXTURE_IMAGE_CAP];
+
 // 14 vec4 per material (LightRT/OpenPBR), matches PackRealtimePbrMaterial
 // (src/tydra/openpbr-params.hh) -- same layout+macro as raytrace.comp.
 #define lrt(id, k) lrtRows[(id) * 14u + (k)]
@@ -112,6 +130,52 @@ vec3 xformPoint(mat3x4 m, vec3 p) {
 }
 vec3 xformDir(mat3x4 m, vec3 d) {
   return vec3(dot(m[0].xyz, d), dot(m[1].xyz, d), dot(m[2].xyz, d));
+}
+
+float swWrap(float x, int mode) {
+  if (mode == 0 || mode == 3) return clamp(x, 0.0, 1.0);
+  return mode == 2 ? (int(floor(x)) & 1) != 0 ? 1.0 - fract(x) : fract(x)
+                   : fract(x);
+}
+
+vec4 swTexel(RtTexDesc td, int x, int y) {
+  uint word = texelWords[uint(td.offset / 4 + y * td.width + x)];
+  vec4 c = unpackUnorm4x8(word);
+  if (td.srgb != 0) c.rgb = srgbToLinear(c.rgb);
+  return c;
+}
+
+vec2 swPtexUv(RtTexDesc td, vec2 uv, uint face) {
+  if (td.isPtex == 0 || face >= uint(td.ptexFaceCount)) return uv;
+  uint value[4];
+  for (uint c = 0u; c < 4u; ++c) {
+    uint lo = uint(td.offset / 4 + td.ptexRectTexelOffset) + face * 8u + c * 2u;
+    value[c] = ((texelWords[lo] >> 24u) & 255u) |
+              (((texelWords[lo + 1u] >> 24u) & 255u) << 8u);
+  }
+  vec2 px = vec2(value[0], value[1]) +
+            vec2(clamp(uv.x, 0.0, 1.0), 1.0 - clamp(uv.y, 0.0, 1.0)) *
+            vec2(max(value[2], 1u) - 1u, max(value[3], 1u) - 1u);
+  return (px + vec2(0.5)) / vec2(td.width, td.height);
+}
+
+vec4 swSampleTexture(int id, vec2 uv, uint face, vec4 missing) {
+  if (id < 0 || id >= int(texDescs.length())) return missing;
+  RtTexDesc td = texDescs[id];
+  if (td.width <= 0 || td.height <= 0) return missing;
+  uv = swPtexUv(td, uv, face);
+  if (td.isPtex != 0 && td.imageSlot >= 0 &&
+      td.imageSlot < TUSDVIEW_RT_PTEXTURE_IMAGE_CAP) {
+    return textureLod(swPtexImages[nonuniformEXT(td.imageSlot)], uv, 0.0);
+  }
+  vec2 p = vec2(swWrap(uv.x, td.wrapS), swWrap(uv.y, td.wrapT)) *
+           vec2(td.width - 1, td.height - 1);
+  ivec2 p0 = ivec2(clamp(floor(p), vec2(0.0),
+                          vec2(td.width - 1, td.height - 1)));
+  ivec2 p1 = min(p0 + ivec2(1), ivec2(td.width - 1, td.height - 1));
+  vec2 f = fract(p);
+  return mix(mix(swTexel(td, p0.x, p0.y), swTexel(td, p1.x, p0.y), f.x),
+             mix(swTexel(td, p0.x, p1.y), swTexel(td, p1.x, p1.y), f.x), f.y);
 }
 
 // Two-level (TLAS -> per-instance BLAS) closest-hit triangle trace. Merged
@@ -248,6 +312,10 @@ void main() {
     vec4 c2 = vec4(cols[hitTri*12+8], cols[hitTri*12+9], cols[hitTri*12+10], cols[hitTri*12+11]);
     vec4 vertColor = c0 * w0 + c1 * hitBc.x + c2 * hitBc.y;
 
+    vec2 uv0 = vec2(uvs[hitTri * 6 + 0], uvs[hitTri * 6 + 1]) * w0 +
+               vec2(uvs[hitTri * 6 + 2], uvs[hitTri * 6 + 3]) * hitBc.x +
+               vec2(uvs[hitTri * 6 + 4], uvs[hitTri * 6 + 5]) * hitBc.y;
+
     int mid = triMat[hitTri];
     vec3 base = vec3(0.6);
     float alpha = 1.0;
@@ -280,6 +348,13 @@ void main() {
         base = mix(base, subsurfaceColor * (1.0 - metallic) * (1.0 - transmission),
                   subsurface);
       }
+      uint sourceFace = hitTri >= 0 && uint(hitTri) < uint(faceIds.length()) &&
+                        faceIds[hitTri] >= 0
+                            ? uint(faceIds[hitTri])
+                            : uint(max(hitTri, 0));
+      if (matTexIds[mid * 12 + 0] >= 0)
+        base *= swSampleTexture(matTexIds[mid * 12 + 0], uv0,
+                                sourceFace, vec4(1.0)).rgb;
     }
     base *= vertColor.rgb;
     alpha *= vertColor.a * inst.tint.a;

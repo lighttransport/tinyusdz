@@ -29,6 +29,11 @@ endif()
 # find_package(Vulkan) is still probed (QUIET) purely so vulkan.cmake can fall
 # back to the SDK's glslangValidator when no local/system one is found.
 option(TUSDVIEW_WITH_VULKAN "Build the Vulkan backend (runtime-loaded via volk)" ON)
+set(TUSDVIEW_RT_PTEXTURE_IMAGE_CAP "256" CACHE STRING
+    "Maximum source texture slots available to Vulkan RT compressed Ptex sampling")
+if(NOT TUSDVIEW_RT_PTEXTURE_IMAGE_CAP MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "TUSDVIEW_RT_PTEXTURE_IMAGE_CAP must be a positive integer")
+endif()
 find_package(Vulkan QUIET)
 
 # Optional native file dialog (needs GTK3 on Linux). Skipped if unavailable.
@@ -575,7 +580,8 @@ target_sources(${EXAMPLE_TARGET} PRIVATE
     stream/stream_server.cc
     ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
 target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
-    NO_SSL NO_CGI USE_WEBSOCKET=1)  # civetweb: no OpenSSL/CGI; websockets on
+    NO_SSL NO_CGI USE_WEBSOCKET=1
+    TUSDVIEW_RT_PTEXTURE_IMAGE_CAP=${TUSDVIEW_RT_PTEXTURE_IMAGE_CAP})
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
 if(UNIX)
   target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)

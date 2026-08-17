@@ -330,6 +330,7 @@ class Renderer {
   }
   struct TextureRegionUpdate {
     int x{0}, y{0}, width{0}, height{0};
+    int mipLevel{0};
     size_t rowBytes{0};
     std::vector<uint8_t> rgba;
     // Optional block-compressed update. `width`/`height` remain logical texel

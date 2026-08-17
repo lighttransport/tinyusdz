@@ -36,6 +36,8 @@ if [ -z "$GLSLANG" ] || [ ! -x "$GLSLANG" ]; then
 fi
 echo "==> glslang: $GLSLANG"
 "$GLSLANG" --version | head -1 || true
+RT_IMAGE_CAP="${TUSDVIEW_RT_PTEXTURE_IMAGE_CAP:-256}"
+RT_SHADER_DEFINE="-DTUSDVIEW_RT_PTEXTURE_IMAGE_CAP=${RT_IMAGE_CAP}"
 
 mkdir -p "$OUT"
 
@@ -63,7 +65,7 @@ trap cleanup_raytrace_tmp EXIT
 # resulting module compiles without diagnostics yet is invalid SPIR-V. Validate
 # a raw module first when SPIRV-Tools is installed, then emit the C header.
 RAYTRACE_VALID=1
-if ! "$GLSLANG" -V --target-env vulkan1.2 \
+if ! "$GLSLANG" -V --target-env vulkan1.2 "$RT_SHADER_DEFINE" \
       -o "$RAYTRACE_TMP" "$HERE/raytrace.comp" 2>/dev/null; then
   RAYTRACE_VALID=0
 elif command -v spirv-val >/dev/null 2>&1 &&
@@ -72,7 +74,7 @@ elif command -v spirv-val >/dev/null 2>&1 &&
 fi
 
 if [ "$RAYTRACE_VALID" -eq 1 ] &&
-   "$GLSLANG" -V --target-env vulkan1.2 --vn raytrace_comp_spv \
+   "$GLSLANG" -V --target-env vulkan1.2 "$RT_SHADER_DEFINE" --vn raytrace_comp_spv \
       -o "$OUT/raytrace_comp.spv.h" "$HERE/raytrace.comp" 2>/dev/null; then
   echo "==> raytrace.comp -> embedded/raytrace_comp.spv.h (ray query ENABLED)"
 else
@@ -81,7 +83,7 @@ else
   # Vulkan requires pCode to be 4-byte aligned, which SPIR-V already is.
   GLSLC="${GLSLC:-$(command -v glslc || true)}"
   if [ -n "$GLSLC" ] && [ -x "$GLSLC" ] &&
-     "$GLSLC" --target-env=vulkan1.2 -o "$RAYTRACE_TMP" "$HERE/raytrace.comp"; then
+     "$GLSLC" --target-env=vulkan1.2 "$RT_SHADER_DEFINE" -o "$RAYTRACE_TMP" "$HERE/raytrace.comp"; then
     xxd -i -c 12 "$RAYTRACE_TMP" "$OUT/raytrace_comp.spv.h"
     sed -i 's/unsigned char _tmp_.*_spv\[\]/const unsigned char raytrace_comp_spv[]/' "$OUT/raytrace_comp.spv.h"
     sed -i 's/unsigned int _tmp_.*_spv_len/const unsigned int raytrace_comp_spv_len/' "$OUT/raytrace_comp.spv.h"
