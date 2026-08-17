@@ -5936,6 +5936,69 @@ bool VulkanRenderer::updateTextureRegions(
     }
     totalBytes += bytes;
   }
+
+  // Keep the CPU mirror used by the ray-query texture table in sync with
+  // streamed Ptex pages. Raster uploads go directly to VkImage, while RT
+  // rebuilds its compact SSBO from rtTexturesCpu_; without this mirror update
+  // RT would continue sampling the startup/coarse page after residency changed.
+  if (index < rtTexturesCpu_.size()) {
+    DrawTextureCPU& rtTex = rtTexturesCpu_[index];
+    if (compressedUpdates && rtTex.compressed.format != DrawCompressedFormat::None &&
+        !rtTex.compressed.data.empty()) {
+      const size_t texBlocksW =
+          (static_cast<size_t>(rtTex.compressed.width) + 3u) / 4u;
+      const size_t bytesPerBlock = blockBytes(compressedUpdates
+                                                  ? updates.front().compressedFormat
+                                                  : DrawCompressedFormat::None);
+      const size_t rowBytes = texBlocksW * bytesPerBlock;
+      for (const TextureRegionUpdate& update : updates) {
+        const size_t blockX = static_cast<size_t>(update.x) / 4u;
+        const size_t blockY = static_cast<size_t>(update.y) / 4u;
+        const size_t copyRowBytes =
+            ((static_cast<size_t>(update.width) + 3u) / 4u) * bytesPerBlock;
+        for (size_t row = 0;
+             row < (static_cast<size_t>(update.height) + 3u) / 4u; ++row) {
+          const size_t dst = (blockY + row) * rowBytes + blockX * bytesPerBlock;
+          const size_t src = row * copyRowBytes;
+          if (dst > rtTex.compressed.data.size() ||
+              copyRowBytes > rtTex.compressed.data.size() - dst ||
+              src > update.compressed.size() ||
+              copyRowBytes > update.compressed.size() - src) {
+            break;
+          }
+          std::copy(update.compressed.begin() + static_cast<std::ptrdiff_t>(src),
+                    update.compressed.begin() +
+                        static_cast<std::ptrdiff_t>(src + copyRowBytes),
+                    rtTex.compressed.data.begin() +
+                        static_cast<std::ptrdiff_t>(dst));
+        }
+      }
+      rtTextureTableDirty_ = true;
+    } else if (!compressedUpdates && !rtTex.image.data.empty()) {
+      const size_t dstRowBytes = static_cast<size_t>(rtTex.image.width) * 4u;
+      for (const TextureRegionUpdate& update : updates) {
+        const size_t srcRowBytes = update.rowBytes
+                                       ? update.rowBytes
+                                       : static_cast<size_t>(update.width) * 4u;
+        for (int row = 0; row < update.height; ++row) {
+          const size_t dst = (static_cast<size_t>(update.y + row) *
+                             static_cast<size_t>(rtTex.image.width) +
+                             static_cast<size_t>(update.x)) * 4u;
+          const size_t src = static_cast<size_t>(row) * srcRowBytes;
+          const size_t copyBytes = static_cast<size_t>(update.width) * 4u;
+          if (dst > rtTex.image.data.size() ||
+              copyBytes > rtTex.image.data.size() - dst ||
+              src > update.rgba.size() || copyBytes > update.rgba.size() - src) {
+            break;
+          }
+          std::copy(update.rgba.begin() + static_cast<std::ptrdiff_t>(src),
+                    update.rgba.begin() + static_cast<std::ptrdiff_t>(src + copyBytes),
+                    rtTex.image.data.begin() + static_cast<std::ptrdiff_t>(dst));
+        }
+      }
+      rtTextureTableDirty_ = true;
+    }
+  }
   std::vector<uint8_t> packed;
   packed.reserve(totalBytes);
   for (const TextureRegionUpdate& update : updates) {
