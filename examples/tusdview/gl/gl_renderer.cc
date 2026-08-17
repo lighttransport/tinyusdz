@@ -1774,7 +1774,13 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    // Streamed textures intentionally keep only level 0 until their pages are
+    // resident. Asking for a mipmapped minification filter in that state makes
+    // the texture incomplete and samples black (notably breaking normal AOVs).
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                    (precomputedMips || !t.streamingMutable)
+                        ? GL_LINEAR_MIPMAP_LINEAR
+                        : GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
   }
