@@ -2917,6 +2917,31 @@ bool NextResizeImage(light3d::Image* img, int w, int h, bool srgb) {
   return true;
 }
 
+bool NextResizeHDR(std::vector<float>* rgb, int width, int height, int w,
+                   int h) {
+  if (!rgb || width <= 0 || height <= 0 || w <= 0 || h <= 0 ||
+      rgb->size() < static_cast<size_t>(width) * height * 3u) return false;
+  if (width == w && height == h) return true;
+  tinyusdz::Image src;
+  src.width = width;
+  src.height = height;
+  src.channels = 3;
+  src.bpp = 32;
+  src.format = tinyusdz::Image::PixelFormat::Float;
+  src.data.resize(rgb->size() * sizeof(float));
+  std::memcpy(src.data.data(), rgb->data(), src.data.size());
+  tinyusdz::Image dst;
+  std::string err;
+  if (!tinyusdz::tydra::ResizeImage(src, w, h, &dst,
+                                    tinyusdz::tydra::ResizeFilter::Linear,
+                                    &err)) return false;
+  if (dst.data.size() != static_cast<size_t>(w) * h * 3u * sizeof(float))
+    return false;
+  rgb->resize(dst.data.size() / sizeof(float));
+  std::memcpy(rgb->data(), dst.data.data(), dst.data.size());
+  return true;
+}
+
 // Enumerate + decode UDIM tiles for a `<UDIM>`-tagged asset path into a UDIM
 // DrawTextureCPU. tydra-next carries the literal `<UDIM>` token through verbatim
 // (no udim handling in the converter), so we expand it ourselves: probe ids
@@ -2934,7 +2959,9 @@ int LoadNextUdimTexture(NextTexCache& tc, DrawScene* draw,
   for (uint32_t id = 1001; id <= 1100; ++id) {
     const std::string tilePath = pre + std::to_string(id) + post;
     DrawUdimTileCPU tile;
-    if (!DecodeNextImage(tc, tilePath, srgb, &tile.image)) continue;  // absent tile
+    if (!DecodeNextImage(tc, tilePath, srgb, &tile.image, &tile.hdrRGB))
+      continue;  // absent tile
+    tile.isHDR = !tile.hdrRGB.empty();
     tile.udim = id;
     tile.u = (id - 1001u) % 10u;
     tile.v = (id - 1001u) / 10u;
@@ -2964,8 +2991,11 @@ int LoadNextUdimTexture(NextTexCache& tc, DrawScene* draw,
     std::vector<DrawUdimTileCPU> sized;
     sized.reserve(dt.udimTiles.size());
     for (DrawUdimTileCPU& t : dt.udimTiles) {
-      if ((t.image.width != w || t.image.height != h) &&
-          !NextResizeImage(&t.image, w, h, srgb)) {
+      const int oldWidth = t.image.width;
+      const int oldHeight = t.image.height;
+      if ((oldWidth != w || oldHeight != h) &&
+          (!NextResizeImage(&t.image, w, h, srgb) ||
+           (t.isHDR && !NextResizeHDR(&t.hdrRGB, oldWidth, oldHeight, w, h)))) {
         continue;  // drop; its UDIM id stays unmapped (-1) in the LUT
       }
       sized.push_back(std::move(t));
@@ -2976,6 +3006,8 @@ int LoadNextUdimTexture(NextTexCache& tc, DrawScene* draw,
   dt.udimTileWidth = w;
   dt.udimTileHeight = h;
   dt.image = dt.udimTiles.front().image;  // representative fallback
+  dt.isHDR = dt.udimTiles.front().isHDR;
+  if (dt.isHDR) dt.hdrRGB = dt.udimTiles.front().hdrRGB;
   dt.udimLayer.fill(-1);
   for (size_t i = 0; i < dt.udimTiles.size(); ++i) {
     const uint32_t u = dt.udimTiles[i].udim;

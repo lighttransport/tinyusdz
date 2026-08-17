@@ -3592,6 +3592,188 @@ bool VulkanRenderer::createCompressedTextureImage(const DrawCompressedImageCPU& 
   return true;
 }
 
+bool VulkanRenderer::createCompressedUdimTextureArrayImage(
+    const DrawTextureCPU& tex, bool srgb, VkImage* outImg,
+    VkDeviceMemory* outMem, VkImageView* outView) {
+  if (!outImg || !outMem || !outView || !tex.isUdim || tex.udimTiles.empty() ||
+      tex.udimTileWidth <= 0 || tex.udimTileHeight <= 0) return false;
+  const DrawCompressedImageCPU& first = tex.udimTiles.front().compressed;
+  if (first.format == DrawCompressedFormat::None || first.data.empty() ||
+      first.width != tex.udimTileWidth || first.height != tex.udimTileHeight)
+    return false;
+
+  VkFormat format = VK_FORMAT_UNDEFINED;
+  switch (first.format) {
+    case DrawCompressedFormat::BC1:
+      format = srgb ? VK_FORMAT_BC1_RGBA_SRGB_BLOCK
+                    : VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+      break;
+    case DrawCompressedFormat::BC3:
+      format = srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
+      break;
+    case DrawCompressedFormat::BC5: format = VK_FORMAT_BC5_UNORM_BLOCK; break;
+    case DrawCompressedFormat::BC6H: format = VK_FORMAT_BC6H_UFLOAT_BLOCK; break;
+    case DrawCompressedFormat::BC7:
+      format = srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+      break;
+    case DrawCompressedFormat::ETC2_RGB:
+      format = srgb ? VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK
+                    : VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
+      break;
+    case DrawCompressedFormat::ETC2_RGBA:
+      format = srgb ? VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK
+                    : VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK;
+      break;
+    case DrawCompressedFormat::ASTC_4x4:
+      format = srgb ? VK_FORMAT_ASTC_4x4_SRGB_BLOCK
+                    : VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
+      break;
+    default: break;
+  }
+  if (format == VK_FORMAT_UNDEFINED) return false;
+
+  const size_t layers = tex.udimTiles.size();
+  size_t mipCount = first.mips.size();
+  int width = first.width;
+  int height = first.height;
+  for (const DrawUdimTileCPU& tile : tex.udimTiles) {
+    const DrawCompressedImageCPU& c = tile.compressed;
+    if (c.format != first.format || c.width != width || c.height != height ||
+        c.data.size() != first.data.size() || c.mips.size() != mipCount)
+      return false;
+    int mw = width;
+    int mh = height;
+    for (size_t level = 0; level < mipCount; ++level) {
+      mw = std::max(1, mw / 2);
+      mh = std::max(1, mh / 2);
+      const DrawCompressedMipCPU& m = c.mips[level];
+      const DrawCompressedMipCPU& ref = first.mips[level];
+      if (m.width != mw || m.height != mh || m.data.empty() ||
+          m.data.size() != ref.data.size() || ref.width != mw ||
+          ref.height != mh)
+        return false;
+    }
+  }
+
+  const uint32_t mipLevels = 1u + static_cast<uint32_t>(mipCount);
+  std::vector<size_t> levelBytes(mipLevels);
+  levelBytes[0] = first.data.size();
+  for (uint32_t level = 1; level < mipLevels; ++level)
+    levelBytes[level] = first.mips[level - 1].data.size();
+  size_t packedSize = 0;
+  for (size_t bytes : levelBytes) packedSize += bytes * layers;
+  std::vector<uint8_t> packed;
+  packed.reserve(packedSize);
+  for (uint32_t level = 0; level < mipLevels; ++level) {
+    for (const DrawUdimTileCPU& tile : tex.udimTiles) {
+      const DrawCompressedImageCPU& c = tile.compressed;
+      const std::vector<uint8_t>& data =
+          level == 0 ? c.data : c.mips[level - 1].data;
+      packed.insert(packed.end(), data.begin(), data.end());
+    }
+  }
+
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(packed.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                        packed.data(), &staging, &stagingMem)) return false;
+  VkImageCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  ici.imageType = VK_IMAGE_TYPE_2D;
+  ici.format = format;
+  ici.extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
+  ici.mipLevels = mipLevels;
+  ici.arrayLayers = static_cast<uint32_t>(layers);
+  ici.samples = VK_SAMPLE_COUNT_1_BIT;
+  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(device_, &ici, nullptr, outImg) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
+  VkMemoryRequirements req{};
+  vkGetImageMemoryRequirements(device_, *outImg, &req);
+  VkMemoryAllocateInfo mai{};
+  mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  mai.allocationSize = req.size;
+  mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits,
+                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) vkFreeMemory(device_, *outMem, nullptr);
+    *outMem = VK_NULL_HANDLE;
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = *outImg;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = mipLevels;
+  toDst.subresourceRange.layerCount = static_cast<uint32_t>(layers);
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
+  std::vector<VkBufferImageCopy> regions(mipLevels);
+  VkDeviceSize offset = 0;
+  int lw = width, lh = height;
+  for (uint32_t level = 0; level < mipLevels; ++level) {
+    VkBufferImageCopy& region = regions[level];
+    region = {};
+    region.bufferOffset = offset;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = level;
+    region.imageSubresource.layerCount = static_cast<uint32_t>(layers);
+    region.imageExtent = {static_cast<uint32_t>(lw), static_cast<uint32_t>(lh), 1};
+    offset += static_cast<VkDeviceSize>(levelBytes[level] * layers);
+    lw = std::max(1, lw / 2);
+    lh = std::max(1, lh / 2);
+  }
+  vkCmdCopyBufferToImage(cb, staging, *outImg,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         static_cast<uint32_t>(regions.size()), regions.data());
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+
+  VkImageViewCreateInfo vci{};
+  vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  vci.image = *outImg;
+  vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+  vci.format = format;
+  vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vci.subresourceRange.levelCount = mipLevels;
+  vci.subresourceRange.layerCount = static_cast<uint32_t>(layers);
+  if (vkCreateImageView(device_, &vci, nullptr, outView) != VK_SUCCESS) {
+    vkDestroyImage(device_, *outImg, nullptr);
+    vkFreeMemory(device_, *outMem, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    *outMem = VK_NULL_HANDLE;
+    return false;
+  }
+  return true;
+}
+
 bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
                                                  VkImage* outImg,
                                                  VkDeviceMemory* outMem,
@@ -5490,8 +5672,16 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     VkImage arrImg = VK_NULL_HANDLE;
     VkDeviceMemory arrMem = VK_NULL_HANDLE;
     VkImageView arrView = VK_NULL_HANDLE;
-    if (createUdimTextureArrayImage(t, &arrImg, &arrMem, &arrView) &&
-        updateUdimLookupAtlasRow(slot, t)) {
+    bool arrayOk = false;
+    if (t.requestedCompressed && !t.udimTiles.empty() &&
+        t.udimTiles.front().compressed.format != DrawCompressedFormat::None) {
+      arrayOk = createCompressedUdimTextureArrayImage(
+          t, t.srgb, &arrImg, &arrMem, &arrView);
+    }
+    if (!arrayOk) {
+      arrayOk = createUdimTextureArrayImage(t, &arrImg, &arrMem, &arrView);
+    }
+    if (arrayOk && updateUdimLookupAtlasRow(slot, t)) {
       VkMemoryRequirements requirements{};
       vkGetImageMemoryRequirements(device_, arrImg, &requirements);
       texSlotBytes_[index] += static_cast<size_t>(requirements.size);

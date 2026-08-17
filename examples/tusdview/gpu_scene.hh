@@ -555,6 +555,10 @@ struct DrawUdimTileCPU {
   std::string assetIdentifier;
   int renderImageId{-1};
   light3d::Image image;  // RGBA8 tile layer
+  // Linear RGB float source for HDR/EXR UDIM tiles. `image` remains the
+  // tonemapped RGBA8 fallback used by renderers without BC6H array support.
+  std::vector<float> hdrRGB;
+  bool isHDR{false};
   DrawCompressedImageCPU compressed;
   // Optional precomputed RGBA8 mips for levels 1..N (level 0 = `image`).
   // NormalizeUdimTiles equalizes tile dims, so all tiles of a texture carry

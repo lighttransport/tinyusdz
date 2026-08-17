@@ -173,7 +173,8 @@ fallbacks. HDR BC6H mip levels are generated in linear float space before GPU
 encoding. CUDA is embedded when the CUDA compiler is available. HIP uses an
 isolated hipew runtime loader so it does not collide with tusdview's existing
 HIP ray-tracing symbols. Ptex and UDIM paths retain their existing specialized
-handling; HDR UDIM tile residency remains a follow-up. If initialization or a
+handling; HDR UDIM tiles retain per-tile float data and Vulkan uploads their
+BC6H array when all tile payloads are compatible. If initialization or a
 format request fails, the viewer falls back to the existing CPU encoder. The
 integrated processor uses a private Vulkan device dispatch table so scene
 rendering's volk state is not replaced.
