@@ -138,7 +138,9 @@ displays it with an ImGui docking UI.
   displayOpacity, material binding, purpose, animation time, and transforms.
   OpenGL and Vulkan raster draw world-sized camera-facing point discs and
   tessellated curve ribbons; Vulkan ray query and CUDA/HIP trace width-aware
-  solid octahedron/tube proxies. Viewport click-picking for these carriers
+  solid octahedron/tube proxies. Under a bounded `--max-tris` RT profile,
+  legacy carriers use compact analytic splats (`max-tris / 8` samples) instead
+  of materializing all triangle proxies. Viewport click-picking for these carriers
   remains a roadmap item; mesh picking is unchanged.
 - Gaussian splat point carriers use analytic ellipses on Vulkan ray query and
   CUDA/HIP. Their BVH metadata is chunked; when point records exceed

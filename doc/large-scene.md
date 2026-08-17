@@ -1042,6 +1042,23 @@ Notes and gotchas:
   breakdown and the retained host residency split (geometry, BVH/instances,
   analytic points, materials, textures, and volumes).
 
+For CUDA/NVIDIA systems with a tighter host budget, use a bounded near-full
+profile instead of allowing legacy point/curve triangle proxies to expand
+without a limit:
+
+```sh
+./build/tusdview --headless --next --cuda --load-payloads \
+  --large-scene-profile instance-heavy --max-tris 20000000 \
+  --max-instances 2000000 --vram-budget 12 --rt-samples 1 \
+  --frames 1 --screenshot island-cuda.png $M
+```
+
+When `--max-tris` is between 1 and 64 million, RT converts legacy point and
+curve carriers into a bounded analytic splat stream (`max-tris / 8` samples)
+instead of materializing triangle tubes. Meshes retain priority. The 20M
+Island profile measured about 26.2M KiB peak RSS and 4.6 GiB CUDA VRAM on an
+RTX 5060 Ti; curve and unoriented-point quality is intentionally reduced.
+
 ### 2.7 RenderScene optimization for realtime viewers
 
 Payload deferral solves structural loading, but realtime web/native viewers have
