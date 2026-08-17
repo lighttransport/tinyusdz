@@ -5288,8 +5288,10 @@ int App::run(const std::string& initialFile, int maxFrames,
                  !(quitAfterFullUpload_ && streamFirstFrameLogged_ &&
                    loadActive_)) {
         gui_.renderViewportScene();
-        updateTextureResidency();
-        updatePtexResidency();
+        if (!quitAfterConvert_) {
+          updateTextureResidency();
+          updatePtexResidency();
+        }
       }
 
       // Grab the composited window on the final frame (--window-shot).
