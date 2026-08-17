@@ -102,10 +102,16 @@ struct DecodedImage {
   uint32_t height = 0;
   uint8_t channels = 4;
   std::vector<uint8_t> pixels;  // width * height * channels
+  // HDR images are retained as linear RGB float texels for GPU BC6H upload.
+  // LDR callers continue to use pixels above.
+  bool hdr = false;
+  std::vector<float> float_pixels;  // width * height * 3
   std::shared_ptr<::tinyusdz::next::TextureBudgetLease> budget_lease;
 
-  bool empty() const { return pixels.empty(); }
-  size_t byte_size() const { return pixels.size(); }
+  bool empty() const { return hdr ? float_pixels.empty() : pixels.empty(); }
+  size_t byte_size() const {
+    return hdr ? float_pixels.size() * sizeof(float) : pixels.size();
+  }
 };
 
 struct TextureDecodeOptions {

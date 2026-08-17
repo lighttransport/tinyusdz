@@ -1205,6 +1205,47 @@ bool GpuCompressImage(const TextureRuntimeOptions& opt, const light3d::Image& im
   return !out->data.empty();
 }
 
+bool GpuCompressHDRData(const TextureRuntimeOptions& opt, const float* rgb,
+                        size_t rgbCount, int width, int height,
+                        DrawCompressedImageCPU* out) {
+  if (!out || !EnsureGpu(opt) || !rgb || rgbCount == 0 || width <= 0 ||
+      height <= 0 || !opt.caps.bc6h ||
+      (opt.compression != TextureCompressionMode::Auto &&
+       opt.compression != TextureCompressionMode::BCn))
+    return false;
+  const size_t pixels = static_cast<size_t>(width) * static_cast<size_t>(height);
+  if (rgbCount < pixels * 3u) return false;
+  tusdview_texture_bench::TextureRequest request;
+  request.rgbf = rgb;
+  request.rgbfBytes = rgbCount * sizeof(float);
+  request.width = request.dstWidth = static_cast<uint32_t>(width);
+  request.height = request.dstHeight = static_cast<uint32_t>(height);
+  request.srgb = false;
+  request.format = tusdview_texture_bench::CompressionFormat::BC6H;
+  request.resize = false;
+  request.compress = true;
+  tusdview_texture_bench::TextureResult result;
+  if (!gTextureGpu->process(request, &result, &gTextureGpuError)) {
+    std::fprintf(stderr, "[tusdview] HDR GPU texture processing failed: %s\n",
+                 gTextureGpuError.c_str());
+    return false;
+  }
+  gTextureGpuMs += result.timing.totalMs;
+  ++gTextureGpuImages;
+  out->format = DrawCompressedFormat::BC6H;
+  out->width = static_cast<int>(result.width);
+  out->height = static_cast<int>(result.height);
+  out->data = std::move(result.compressed);
+  return !out->data.empty();
+}
+
+bool GpuCompressHDR(const TextureRuntimeOptions& opt, const DrawTextureCPU& texture,
+                    DrawCompressedImageCPU* out) {
+  return texture.isHDR &&
+         GpuCompressHDRData(opt, texture.hdrRGB.data(), texture.hdrRGB.size(),
+                            texture.image.width, texture.image.height, out);
+}
+
 bool GpuResizeImage(const TextureRuntimeOptions& opt, light3d::Image* image,
                     int width, int height) {
   if (!image || !EnsureGpu(opt) || image->channels != 4 ||
@@ -1267,7 +1308,8 @@ void CompressDrawTexture(const TextureRuntimeOptions& opt,
   }
   texture->requestedCompressed = true;
 #if defined(TUSDVIEW_TEXTURE_GPU)
-  if ((texture->isUdim && GpuCompressUdim(opt, texture)) ||
+  if ((texture->isHDR && GpuCompressHDR(opt, *texture, &texture->compressed)) ||
+      (texture->isUdim && GpuCompressUdim(opt, texture)) ||
       (!texture->isUdim && GpuCompressImage(opt, texture->image, texture->srgb,
                                              texture->isNormalMap,
                                              &texture->compressed))) {
@@ -1297,7 +1339,8 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
     if (tex.compressedFinal) return;  // kept-compressed KTX2 -- already final
     tex.requestedCompressed = true;
 #if defined(TUSDVIEW_TEXTURE_GPU)
-    if ((tex.isUdim && GpuCompressUdim(opt, &tex)) ||
+    if ((tex.isHDR && GpuCompressHDR(opt, tex, &tex.compressed)) ||
+        (tex.isUdim && GpuCompressUdim(opt, &tex)) ||
         (!tex.isUdim && GpuCompressImage(opt, tex.image, tex.srgb,
                                           tex.isNormalMap, &tex.compressed))) {
       return;
@@ -1536,12 +1579,65 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
     }
     return true;
   };
+  auto buildHdrOne = [&](DrawTextureCPU& tex) -> bool {
+    if (!tex.isHDR || tex.hdrRGB.empty() || !tex.requestedCompressed ||
+        tex.compressed.format != DrawCompressedFormat::BC6H) return false;
+    int width = tex.image.width;
+    int height = tex.image.height;
+    std::vector<float> current = tex.hdrRGB;
+    tex.compressed.mips.clear();
+    while (width > 1 || height > 1) {
+      const int nextWidth = std::max(1, width / 2);
+      const int nextHeight = std::max(1, height / 2);
+      tinyusdz::Image src;
+      src.width = width;
+      src.height = height;
+      src.channels = 3;
+      src.bpp = 32;
+      src.format = tinyusdz::Image::PixelFormat::Float;
+      src.data.resize(current.size() * sizeof(float));
+      std::memcpy(src.data.data(), current.data(), src.data.size());
+      tinyusdz::Image dst;
+      std::string err;
+      if (!tydra::ResizeImage(src, nextWidth, nextHeight, &dst,
+                              tydra::ResizeFilter::Linear, &err) ||
+          dst.data.size() != static_cast<size_t>(nextWidth) * nextHeight *
+                                  3u * sizeof(float)) {
+        tex.compressed.mips.clear();
+        return false;
+      }
+      std::vector<float> next(dst.data.size() / sizeof(float));
+      std::memcpy(next.data(), dst.data.data(), dst.data.size());
+      DrawCompressedImageCPU level;
+#if defined(TUSDVIEW_TEXTURE_GPU)
+      if (!GpuCompressHDRData(opt, next.data(), next.size(), nextWidth,
+                              nextHeight, &level) ||
+          level.format != DrawCompressedFormat::BC6H) {
+        tex.compressed.mips.clear();
+        return false;
+      }
+#else
+      tex.compressed.mips.clear();
+      return false;
+#endif
+      DrawCompressedMipCPU mip;
+      mip.width = level.width;
+      mip.height = level.height;
+      mip.data = std::move(level.data);
+      tex.compressed.mips.push_back(std::move(mip));
+      current = std::move(next);
+      width = nextWidth;
+      height = nextHeight;
+    }
+    return true;
+  };
   for (DrawTextureCPU& tex : out->textures) {
     if (tex.isPtex || tex.deferredDecode) continue;
     // Kept-compressed KTX2 passthrough: the compressed payload is final and
     // `image` is empty, so there is nothing to build a mip chain from (the KTX2
     // level 0 is uploaded directly; multi-level KTX2 mips are a follow-up).
     if (tex.compressedFinal) continue;
+    if (buildHdrOne(tex)) continue;
     TexUsage usage;
     usage.srgb = tex.srgb;
     usage.normalMap = tex.isNormalMap;

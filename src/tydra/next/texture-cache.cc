@@ -19,6 +19,7 @@
 #include "next/reader/usdz-reader.hh"
 #include "safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
+#include "value-types.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -186,10 +187,51 @@ bool NarrowTo8Bit(::tinyusdz::Image* img) {
 // channel count is kept as-is.
 bool ToDecoded(::tinyusdz::Image* src, bool force_rgba,
                DecodedImage* out) {
-  if (!src || !out || src->width <= 0 || src->height <= 0 || src->bpp != 8 ||
-      src->format != ::tinyusdz::Image::PixelFormat::UInt) {
+  if (!src || !out || src->width <= 0 || src->height <= 0) {
     return false;
   }
+  if (src->format == ::tinyusdz::Image::PixelFormat::Float &&
+      (src->bpp == 16 || src->bpp == 32)) {
+    const size_t ch = static_cast<size_t>(src->channels);
+    size_t npix = 0, samples = 0, source_bytes = 0;
+    if (ch < 1 || ch > 4 ||
+        !safe::mul(static_cast<size_t>(src->width),
+                   static_cast<size_t>(src->height), &npix) ||
+        !safe::mul(npix, ch, &samples) ||
+        !safe::mul(samples, static_cast<size_t>(src->bpp / 8),
+                   &source_bytes) || src->data.size() < source_bytes) {
+      return false;
+    }
+    out->width = static_cast<uint32_t>(src->width);
+    out->height = static_cast<uint32_t>(src->height);
+    out->channels = 3;
+    out->hdr = true;
+    out->float_pixels.resize(npix * 3u);
+    auto sample = [&](size_t index) -> float {
+      if (src->bpp == 32) {
+        float v = 0.0f;
+        std::memcpy(&v, src->data.data() + index * sizeof(float), sizeof(v));
+        return v;
+      }
+      uint16_t h = 0;
+      std::memcpy(&h, src->data.data() + index * sizeof(uint16_t), sizeof(h));
+      ::tinyusdz::value::half halfValue{};
+      halfValue.value = h;
+      return ::tinyusdz::value::half_to_float(halfValue);
+    };
+    for (size_t i = 0; i < npix; ++i) {
+      const size_t s = i * ch;
+      float r = sample(s);
+      float g = ch > 1 ? sample(s + 1) : r;
+      float b = ch > 2 ? sample(s + 2) : g;
+      out->float_pixels[i * 3u + 0] = r;
+      out->float_pixels[i * 3u + 1] = g;
+      out->float_pixels[i * 3u + 2] = b;
+    }
+    return true;
+  }
+  if (src->bpp != 8 || src->format != ::tinyusdz::Image::PixelFormat::UInt)
+    return false;
   const size_t ch = static_cast<size_t>(src->channels);
   if (ch < 1 || ch > 4) return false;
   size_t npix = 0;
@@ -244,6 +286,27 @@ bool ToDecoded(::tinyusdz::Image* src, bool force_rgba,
 bool ResizeDecoded(DecodedImage* img, uint32_t w, uint32_t h, bool srgb) {
   if (w == 0 || h == 0 || img->width == 0 || img->height == 0) return false;
   if (img->width == w && img->height == h) return true;
+
+  if (img->hdr) {
+    ::tinyusdz::Image src;
+    src.width = static_cast<int>(img->width);
+    src.height = static_cast<int>(img->height);
+    src.channels = 3;
+    src.bpp = 32;
+    src.format = ::tinyusdz::Image::PixelFormat::Float;
+    src.data.resize(img->float_pixels.size() * sizeof(float));
+    std::memcpy(src.data.data(), img->float_pixels.data(), src.data.size());
+    ::tinyusdz::Image dst;
+    std::string err;
+    if (!ResizeImage(src, static_cast<int>(w), static_cast<int>(h), &dst,
+                     ResizeFilter::Linear, &err)) return false;
+    img->width = static_cast<uint32_t>(dst.width);
+    img->height = static_cast<uint32_t>(dst.height);
+    img->channels = 3;
+    img->float_pixels.resize(dst.data.size() / sizeof(float));
+    std::memcpy(img->float_pixels.data(), dst.data.data(), dst.data.size());
+    return true;
+  }
 
   ::tinyusdz::Image src;
   src.width = static_cast<int>(img->width);

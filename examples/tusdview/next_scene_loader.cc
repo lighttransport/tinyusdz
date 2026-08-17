@@ -2775,12 +2775,41 @@ std::string ResolveSiblingAsset(const std::string& resolved,
 }
 #endif  // TUSDVIEW_WITH_TEXTOOLS
 
+void TonemapHDRToRGBA8(const std::vector<float>& rgb, uint32_t width,
+                       uint32_t height, light3d::Image* out) {
+  if (!out || width == 0 || height == 0 || rgb.size() <
+      static_cast<size_t>(width) * height * 3u) return;
+  out->width = static_cast<int>(width);
+  out->height = static_cast<int>(height);
+  out->channels = 4;
+  out->data.resize(static_cast<size_t>(width) * height * 4u);
+  auto encode = [](float v) -> uint8_t {
+    if (!std::isfinite(v) || v < 0.0f) v = 0.0f;
+    const float mapped = v / (1.0f + v);
+    const float srgb = std::pow(std::min(1.0f, mapped), 1.0f / 2.2f);
+    return static_cast<uint8_t>(std::clamp(srgb * 255.0f + 0.5f, 0.0f, 255.0f));
+  };
+  for (size_t i = 0, p = 0; i < static_cast<size_t>(width) * height;
+       ++i, p += 3u) {
+    out->data[i * 4u + 0] = encode(rgb[p + 0]);
+    out->data[i * 4u + 1] = encode(rgb[p + 1]);
+    out->data[i * 4u + 2] = encode(rgb[p + 2]);
+    out->data[i * 4u + 3] = 255;
+  }
+}
+
 // Decode an asset into an RGBA8 light3d::Image through the shared decoder.
 bool DecodeNextImage(NextTexCache& tc, const std::string& asset,
-                     bool srgb, light3d::Image* out) {
+                     bool srgb, light3d::Image* out,
+                     std::vector<float>* hdrRGB = nullptr) {
   if (!tc.decoder || asset.empty()) return false;
   tydn::DecodedImage img;
   if (!tc.decoder->Decode(asset, srgb, &img)) return false;
+  if (img.hdr) {
+    if (hdrRGB) *hdrRGB = img.float_pixels;
+    TonemapHDRToRGBA8(img.float_pixels, img.width, img.height, out);
+    return !out->data.empty();
+  }
   out->width = static_cast<int>(img.width);
   out->height = static_cast<int>(img.height);
   out->channels = 4;
@@ -2811,7 +2840,16 @@ bool DecodeDeferredDrawTextureImpl(const DrawTextureCPU& placeholder,
   decoded->image.width = static_cast<int>(image.width);
   decoded->image.height = static_cast<int>(image.height);
   decoded->image.channels = 4;
-  decoded->image.data = std::move(image.pixels);
+  if (image.hdr) {
+    decoded->hdrRGB = std::move(image.float_pixels);
+    decoded->isHDR = !decoded->hdrRGB.empty();
+    TonemapHDRToRGBA8(decoded->hdrRGB, image.width, image.height,
+                      &decoded->image);
+  } else {
+    decoded->image.data = std::move(image.pixels);
+    decoded->hdrRGB.clear();
+    decoded->isHDR = false;
+  }
   decoded->deferredDecode = false;
   CompressDrawTexture(runtime, decoded);
   return !decoded->image.data.empty() || !decoded->compressed.data.empty();
@@ -3110,12 +3148,13 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
     }
   }
 #endif
-  if (!built && !DecodeNextImage(tc, asset, srgb, &dt.image)) {
+  if (!built && !DecodeNextImage(tc, asset, srgb, &dt.image, &dt.hdrRGB)) {
     tc.byKey[key] = -1;  // negative-cache the miss
     if (tc.progress) tc.progress->texturesDone.fetch_add(1);
     return -1;
   }
   if (!built) dt.assetIdentifier = asset;
+  dt.isHDR = !dt.hdrRGB.empty();
   dt.srgb = srgb;
   dt.wrapS = NextWrapToDraw(rt.wrap_s);
   dt.wrapT = NextWrapToDraw(rt.wrap_t);

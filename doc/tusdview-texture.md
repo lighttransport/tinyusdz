@@ -166,11 +166,14 @@ tusdview --next --backend vk --texture-gpu vulkan \
 ```
 
 GPU resize is used for texture edge/budget reductions and GPU block encoding is
-used for BC1/BC3/BC5/BC7/ASTC-compatible requests. CUDA is embedded when the
-CUDA compiler is available. HIP remains benchmark/plugin-only because direct
-HIP runtime linkage conflicts with tusdview's existing hipew loader; requesting
-HIP therefore falls back safely to CPU. Ptex and UDIM paths retain
-their existing specialized handling. If initialization or a format request
-fails, the viewer falls back to the existing CPU encoder. The integrated
-processor uses a private Vulkan device dispatch table so scene rendering's
-volk state is not replaced.
+used for BC1/BC3/BC5/BC7/ASTC-compatible requests. Float EXR/HDR textures keep
+their linear RGB data, use GPU BC6H for `--texture-compress auto` or `bc`, and
+retain a Reinhard-tonemapped RGBA8 representation for BC7/unsupported-device
+fallbacks. HDR BC6H mip levels are generated in linear float space before GPU
+encoding. CUDA is embedded when the CUDA compiler is available. HIP uses an
+isolated hipew runtime loader so it does not collide with tusdview's existing
+HIP ray-tracing symbols. Ptex and UDIM paths retain their existing specialized
+handling; HDR UDIM tile residency remains a follow-up. If initialization or a
+format request fails, the viewer falls back to the existing CPU encoder. The
+integrated processor uses a private Vulkan device dispatch table so scene
+rendering's volk state is not replaced.
