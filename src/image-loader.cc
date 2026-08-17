@@ -946,7 +946,7 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
   std::string warn;
   std::string dngerr;
 
-  bool ret = tinydng::LoadDNGFromMemory(reinterpret_cast<const char *>(bytes), uint32_t(size), custom_fields, &images, &warn, &dngerr);
+  bool ret = tinydng::LoadDNGFromMemory(reinterpret_cast<const char *>(bytes), size, custom_fields, &images, &warn, &dngerr);
 
   if (!dngerr.empty()) {
     (*err) += dngerr;
@@ -1425,8 +1425,7 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
 #if defined(TINYUSDZ_WITH_TIFF)
   {
     std::string msg;
-    if (sz <= static_cast<size_t>((std::numeric_limits<uint32_t>::max)()) &&
-        tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &msg)) {
+    if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), sz, &msg)) {
 
       bool ok = DecodeImageTIFF(addr, sz, uri, &ret.image, &err);
 
@@ -1530,15 +1529,14 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
 #endif
 
 #if defined(TINYUSDZ_WITH_TIFF)
-  if (sz <= static_cast<size_t>((std::numeric_limits<uint32_t>::max)()) &&
-      tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &err)) {
+  if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), sz, &err)) {
     std::vector<tinydng::FieldInfo> custom_fields;
     std::vector<tinydng::DNGImage> images;
     std::string warn;
     std::string dngerr;
-    if (!tinydng::LoadDNGFromMemory(reinterpret_cast<const char *>(addr),
-                                    uint32_t(sz), custom_fields, &images,
-                                    &warn, &dngerr) || images.empty()) {
+    if (!tinydng::LoadDNGMetadataFromMemory(
+            reinterpret_cast<const char *>(addr), sz, custom_fields,
+            &images, &warn, &dngerr) || images.empty()) {
 #if defined(TINYUSDZ_WITH_LIBTIFF)
       if (GetTiledTIFFInfo(addr, sz, &ret.width, &ret.height,
                            &ret.channels)) {
@@ -1598,6 +1596,35 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
   }
 
   return std::move(ret);
+}
+
+nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromFile(
+    const std::string &filename) {
+  io::MMapFileHandle mapped;
+  std::string map_err;
+  if (io::MMapFile(filename, &mapped, false, &map_err)) {
+    if (mapped.size <= static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+      auto result = GetImageInfoFromMemory(mapped.addr,
+                                           static_cast<size_t>(mapped.size),
+                                           filename);
+      std::string unmap_err;
+      io::UnmapFile(mapped, &unmap_err);
+      return result;
+    }
+    std::string unmap_err;
+    io::UnmapFile(mapped, &unmap_err);
+  }
+
+  // Mapping is the normal path. Keep the existing bounded stream fallback for
+  // platforms without mmap support and for unusual filesystems that reject it.
+  std::vector<uint8_t> data;
+  std::string err;
+  if (!io::ReadWholeFile(&data, &err, filename, MaxMemoryBytes(1024 * 1024),
+                         nullptr)) {
+    return nonstd::make_unexpected("File not found or failed to read : \"" +
+                                   filename + "\"\n");
+  }
+  return GetImageInfoFromMemory(data.data(), data.size(), filename);
 }
 
 nonstd::expected<image::ImageResult, std::string> LoadImageFromFile(

@@ -3,8 +3,11 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "io-util.hh"
 
 namespace tinyusdz {
 namespace ptx {
@@ -45,6 +48,9 @@ struct FaceImage {
 class Reader {
  public:
   Reader() = default;
+  ~Reader();
+  Reader(const Reader&) = delete;
+  Reader& operator=(const Reader&) = delete;
 
   static bool OpenFile(const std::string& path, Reader* out, std::string* err);
   static bool OpenMemory(const uint8_t* data, size_t size, Reader* out,
@@ -61,6 +67,7 @@ class Reader {
   const uint8_t* data_ = nullptr;
   size_t size_ = 0;
   std::vector<uint8_t> owned_;
+  std::unique_ptr<io::MMapFileHandle> mapped_file_;
   Info info_;
   std::vector<uint8_t> constantData_;
   struct Level {
@@ -73,6 +80,7 @@ class Reader {
   std::vector<uint8_t> levelInfoBytes_;
   uint64_t levelDataOffset_ = 0;
 
+  void ResetSource();
   bool Parse(std::string* err);
 };
 
