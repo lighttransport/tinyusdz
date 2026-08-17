@@ -5720,8 +5720,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   Bounds streamedTightBounds;
   bool streamOk = true;
   bool loggedFirstProduced = false;
-  auto publishAvailableMeshes = [&]() {
+  // Uploading one mesh at a time invalidates the renderer's shared MDI build.
+  // Large instanced scenes can therefore rebuild multi-gigabyte buffers once per
+  // prototype. Keep the producer-side scene responsive, but publish in bounded
+  // mesh batches so the renderer rebuilds MDI substantially less often. The
+  // final flush below makes the batching transparent to the completed scene.
+  const size_t progressiveMeshBatch = stream ? 512u : 1u;
+  auto publishAvailableMeshes = [&](bool force = false) {
     if (!stream || draw->meshes.empty() || !streamOk) return;
+    if (!force && draw->meshes.size() < progressiveMeshBatch) return;
     if (streamedMaterialCount != draw->materials.size() ||
         streamedTextureCount != draw->textures.size()) {
       streamOk = stream->pushResources(
@@ -8738,6 +8745,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     LogProcessMemory("after finalize");
   }
   if (stream) {
+    publishAvailableMeshes(/*force=*/true);
     publishAvailableNonMeshes();
     if (!streamOk) {
       if (err) *err = "next: progressive load cancelled";
