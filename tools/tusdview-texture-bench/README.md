@@ -36,9 +36,41 @@ directory when the HIP runtime is not on the system loader path. The CUDA
 adapter uses native CUDA kernels for resize and BC1/BC3/BC5/BC7 compression.
 Its default architecture is `120` for Blackwell-class GPUs and can be changed
 with `-DTUSDVIEW_TEXTURE_CUDA_ARCHITECTURES=...`; select it with
-`--backend cuda`. CUDA BC6H remains an explicit skip for now.
+`--backend cuda`. CUDA also supports the BC6H mode-11 HDR path.
 
 Use `--mips N` to benchmark and validate N output mip levels; `--mips 0`
 generates the complete chain down to 1x1. LDR and HIP BC6H HDR levels are chained from the
 previous GPU-generated level. Each level is reported separately (`bc7@mip0`,
 `bc7@mip1`, …) and GPU time is averaged over the requested iterations.
+
+Use `--metadata-only --root FILE` to query TIFF/BigTIFF dimensions without
+decoding pixels. This is useful for large tiled TIFF/TEX files and reports
+metadata time separately. For corpus runs, pass a directory with
+`--max-images N`; JSON reports include `source_bytes`, `mapped_source_bytes`,
+`load_ms`, and `rss_delta_bytes` alongside GPU timings.
+
+Opt-in real-corpus CTest checks are registered as
+`tusdview-texture-vulkan-nvidia-real`, `tusdview-texture-vulkan-nvidia-formats-real`,
+`tusdview-texture-vulkan-amd-real`,
+`tusdview-texture-vulkan-amd-formats-real`,
+`tusdview-texture-hip-real`, and `tusdview-texture-cuda-real` when those
+backends are available.
+Set `TUSDVIEW_TEXTURE_GPU_ROOT` to an external file or corpus directory:
+
+```sh
+TUSDVIEW_TEXTURE_GPU_ROOT=/mnt/disk1/data/island \
+  ctest --test-dir build_ninja -R tusdview-texture-vulkan-nvidia-real -V
+```
+
+They skip with CTest code 77 when the external corpus is absent.
+HDR tests use the same matrix with `bc6h,bc7,astc`; point
+`TUSDVIEW_TEXTURE_GPU_ROOT` at an EXR, or set
+`TUSDVIEW_TEXTURE_GPU_HDR_ROOT` separately, then select them with
+`-R 'tusdview-texture-.*-hdr-real'`.
+Directory scans are sorted by path before `--max-images` is applied, and
+AppleDouble sidecars (`._*`) are excluded.
+Set `TUSDVIEW_TEXTURE_GPU_MIN_PSNR` to enforce a minimum decoded quality in
+real-data tests; the default is `0` (report-only).
+Full-resolution BC6H tests require `TUSDVIEW_TEXTURE_GPU_HDR_ROOT` to point
+directly at an EXR and are named
+`tusdview-texture-vulkan-{nvidia,amd}-bc6h-full-real`.

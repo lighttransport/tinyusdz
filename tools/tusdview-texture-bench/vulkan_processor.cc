@@ -258,7 +258,12 @@ bool VulkanProcessor::submit(VkCommandBuffer cb, std::string* error) {
   VkFenceCreateInfo fi{}; fi.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO; VkFence fence=VK_NULL_HANDLE;
   if (vkCreateFence(device_, &fi, nullptr, &fence) != VK_SUCCESS) return false;
   VkSubmitInfo si{}; si.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO; si.commandBufferCount=1; si.pCommandBuffers=&cb;
-  VkResult r=vkQueueSubmit(queue_,1,&si,fence); if(r==VK_SUCCESS) r=vkWaitForFences(device_,1,&fence,VK_TRUE,UINT64_MAX);
+  VkResult r=vkQueueSubmit(queue_,1,&si,fence);
+  // Never let a driver-side shader fault make a real-corpus CTest hang
+  // indefinitely. Large HDR inputs can exceed watchdog limits on some Vulkan
+  // implementations; report a bounded failure so the caller can retry with a
+  // smaller --max-dimension value.
+  if (r == VK_SUCCESS) r=vkWaitForFences(device_,1,&fence,VK_TRUE,30ull*1000ull*1000ull*1000ull);
   vkDestroyFence(device_,fence,nullptr); if(r!=VK_SUCCESS){if(error)*error="Vulkan queue submission failed";return false;} return true;
 }
 
@@ -296,8 +301,12 @@ bool VulkanProcessor::process(const TextureRequest& request, TextureResult* resu
   writes[1].dstSet=resizeSet_;writes[1].dstBinding=1;writes[1].descriptorCount=1;writes[1].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;writes[1].pBufferInfo=&out;
   writes[2].dstSet=compressSet_;writes[2].dstBinding=0;writes[2].descriptorCount=1;writes[2].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;writes[2].pBufferInfo=bc6h ? &out : &out;
   writes[3].dstSet=compressSet_;writes[3].dstBinding=1;writes[3].descriptorCount=1;writes[3].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;writes[3].pBufferInfo=&comp;
-  vkUpdateDescriptorSets(device_,4,writes,0,nullptr); vkResetCommandBuffer(commandBuffer_,0); vkResetQueryPool(device_,queryPool_,0,4);
+  vkUpdateDescriptorSets(device_,4,writes,0,nullptr); vkResetCommandBuffer(commandBuffer_,0);
   VkCommandBufferBeginInfo bi{};bi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;bi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; if(vkBeginCommandBuffer(commandBuffer_,&bi)!=VK_SUCCESS)return false;
+  // Reset queries on the GPU command stream. Host vkResetQueryPool requires
+  // the optional hostQueryReset feature and triggers validation errors on
+  // otherwise valid Vulkan 1.2 devices.
+  vkCmdResetQueryPool(commandBuffer_, queryPool_, 0, 4);
   vkCmdWriteTimestamp(commandBuffer_,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,queryPool_,0);
   if (bc6h) { uint32_t pc[4]={request.width,request.height,dw,dh}; vkCmdBindPipeline(commandBuffer_,VK_PIPELINE_BIND_POINT_COMPUTE,resizeHdrPipeline_); vkCmdBindDescriptorSets(commandBuffer_,VK_PIPELINE_BIND_POINT_COMPUTE,resizeHdrLayout_,0,1,&resizeSet_,0,nullptr); vkCmdPushConstants(commandBuffer_,resizeHdrLayout_,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(pc),pc); vkCmdDispatch(commandBuffer_,(dw+15u)/16u,(dh+15u)/16u,1); }
   else if (request.resize){uint32_t pc[6]={request.width,request.height,dw,dh,request.filter==ResizeFilter::Mitchell?1u:0u,request.srgb?1u:0u};vkCmdBindPipeline(commandBuffer_,VK_PIPELINE_BIND_POINT_COMPUTE,resizePipeline_);vkCmdBindDescriptorSets(commandBuffer_,VK_PIPELINE_BIND_POINT_COMPUTE,resizeLayout_,0,1,&resizeSet_,0,nullptr);vkCmdPushConstants(commandBuffer_,resizeLayout_,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(pc),pc);vkCmdDispatch(commandBuffer_,(dw+15u)/16u,(dh+15u)/16u,1);}else std::memcpy(resizeOutputMapped_,request.rgba,resizedBytes);
