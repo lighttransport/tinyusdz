@@ -154,3 +154,23 @@ After the fast Vulkan BC6H endpoint/index path was enabled, uncapped
 GPU-assisted Vulkan validation passes with Khronos ValidationLayers. The test
 self-skips when `VK_LAYER_PATH` is not configured. Query pools are reset on
 the command stream, producing no query-reset validation errors.
+
+## tusdview integration
+
+The viewer's `--next` texture finalization can use the same Vulkan compute
+processor as the benchmark:
+
+```sh
+tusdview --next --backend vk --texture-gpu vulkan \
+  --texture-compress bc7 --texture-gpu-device=9070XT scene.usdz
+```
+
+GPU resize is used for texture edge/budget reductions and GPU block encoding is
+used for BC1/BC3/BC5/BC7/ASTC-compatible requests. CUDA is embedded when the
+CUDA compiler is available. HIP remains benchmark/plugin-only because direct
+HIP runtime linkage conflicts with tusdview's existing hipew loader; requesting
+HIP therefore falls back safely to CPU. Ptex and UDIM paths retain
+their existing specialized handling. If initialization or a format request
+fails, the viewer falls back to the existing CPU encoder. The integrated
+processor uses a private Vulkan device dispatch table so scene rendering's
+volk state is not replaced.

@@ -289,6 +289,8 @@ enum class TextureCompressionMode : int {
   Auto = 5,
 };
 
+enum class TextureGpuBackend : int { Off = 0, Vulkan = 1, CUDA = 2, HIP = 3 };
+
 // GPU compressed-format capabilities, mirrored from RendererCaps so the CPU-side
 // texture build (ApplyTextureRuntimeOptions) can cap-gate the requested format
 // without a renderer dependency. Default = BC-only desktop assumption.
@@ -313,6 +315,10 @@ struct TextureRuntimeOptions {
   // needs the vendored textools; no-op otherwise). Backends upload the
   // precomputed levels instead of glGenerateMipmap (GL) / no mips (VK).
   bool generateMips{false};
+  // Optional GPU preprocessing. Vulkan is currently the viewer integration;
+  // unsupported formats or initialization failures fall back to CPU encoding.
+  TextureGpuBackend gpuBackend{TextureGpuBackend::Off};
+  std::string gpuDevice;
   // DomeLight image-based lighting bake at load (vendored envmap lib):
   // 0 = off, 1 = low (32px faces), 2 = high (64px faces). Needs textools.
   int domeIbl{2};

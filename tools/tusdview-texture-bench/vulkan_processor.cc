@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstring>
 #include <limits>
+#include <cctype>
 #include <vector>
 
 namespace tusdview_texture_bench {
@@ -35,30 +36,36 @@ VulkanProcessor::VulkanProcessor(bool allowSoftware, const std::string& selector
   ci.pApplicationInfo = &app;
   if (vkCreateInstance(&ci, nullptr, &instance_) != VK_SUCCESS) return;
   volkLoadInstance(instance_);
-  if (!pickDevice(allowSoftware, selector, &ignored)) return;
-  if (!createResources(&ignored)) return;
+  if (!pickDevice(allowSoftware, selector, &ignored)) {
+    info_.driver = ignored;
+    return;
+  }
+  if (!createResources(&ignored)) {
+    info_.driver = ignored;
+    return;
+  }
 }
 
 VulkanProcessor::~VulkanProcessor() {
-  if (device_) vkDeviceWaitIdle(device_);
+  if (device_) deviceTable_.vkDeviceWaitIdle(device_);
   if (device_) {
-    if (resizePipeline_) vkDestroyPipeline(device_, resizePipeline_, nullptr);
-    if (resizeHdrPipeline_) vkDestroyPipeline(device_, resizeHdrPipeline_, nullptr);
-    if (compressPipeline_) vkDestroyPipeline(device_, compressPipeline_, nullptr);
-    if (bc6hPipeline_) vkDestroyPipeline(device_, bc6hPipeline_, nullptr);
-    if (resizeLayout_) vkDestroyPipelineLayout(device_, resizeLayout_, nullptr);
-    if (resizeHdrLayout_) vkDestroyPipelineLayout(device_, resizeHdrLayout_, nullptr);
-    if (compressLayout_) vkDestroyPipelineLayout(device_, compressLayout_, nullptr);
-    if (bc6hLayout_) vkDestroyPipelineLayout(device_, bc6hLayout_, nullptr);
-    if (resizeSetLayout_) vkDestroyDescriptorSetLayout(device_, resizeSetLayout_, nullptr);
-    if (compressSetLayout_) vkDestroyDescriptorSetLayout(device_, compressSetLayout_, nullptr);
-    if (descriptorPool_) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
-    if (queryPool_) vkDestroyQueryPool(device_, queryPool_, nullptr);
-    if (commandPool_) vkDestroyCommandPool(device_, commandPool_, nullptr);
+    if (resizePipeline_) deviceTable_.vkDestroyPipeline(device_, resizePipeline_, nullptr);
+    if (resizeHdrPipeline_) deviceTable_.vkDestroyPipeline(device_, resizeHdrPipeline_, nullptr);
+    if (compressPipeline_) deviceTable_.vkDestroyPipeline(device_, compressPipeline_, nullptr);
+    if (bc6hPipeline_) deviceTable_.vkDestroyPipeline(device_, bc6hPipeline_, nullptr);
+    if (resizeLayout_) deviceTable_.vkDestroyPipelineLayout(device_, resizeLayout_, nullptr);
+    if (resizeHdrLayout_) deviceTable_.vkDestroyPipelineLayout(device_, resizeHdrLayout_, nullptr);
+    if (compressLayout_) deviceTable_.vkDestroyPipelineLayout(device_, compressLayout_, nullptr);
+    if (bc6hLayout_) deviceTable_.vkDestroyPipelineLayout(device_, bc6hLayout_, nullptr);
+    if (resizeSetLayout_) deviceTable_.vkDestroyDescriptorSetLayout(device_, resizeSetLayout_, nullptr);
+    if (compressSetLayout_) deviceTable_.vkDestroyDescriptorSetLayout(device_, compressSetLayout_, nullptr);
+    if (descriptorPool_) deviceTable_.vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
+    if (queryPool_) deviceTable_.vkDestroyQueryPool(device_, queryPool_, nullptr);
+    if (commandPool_) deviceTable_.vkDestroyCommandPool(device_, commandPool_, nullptr);
     destroyBuffer(&input_, &inputMemory_, &inputMapped_);
     destroyBuffer(&resizeOutput_, &resizeOutputMemory_, &resizeOutputMapped_);
     destroyBuffer(&compressedOutput_, &compressedOutputMemory_, &compressedOutputMapped_);
-    vkDestroyDevice(device_, nullptr);
+    deviceTable_.vkDestroyDevice(device_, nullptr);
   }
   if (instance_) vkDestroyInstance(instance_, nullptr);
 }
@@ -131,11 +138,18 @@ bool VulkanProcessor::pickDevice(bool allowSoftware, const std::string& selector
   std::vector<VkPhysicalDevice> devices(count);
   vkEnumeratePhysicalDevices(instance_, &count, devices.data());
   int bestScore = std::numeric_limits<int>::min();
+  std::string selectorLower;
+  selectorLower.reserve(selector.size());
+  for (char c : selector) selectorLower.push_back(
+      static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
   for (uint32_t index = 0; index < count; ++index) {
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(devices[index], &props);
+    std::string deviceLower;
+    for (char c : std::string(props.deviceName)) deviceLower.push_back(
+        static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     if (!selector.empty() && selector != std::to_string(index) &&
-        std::string(props.deviceName).find(selector) == std::string::npos) continue;
+        deviceLower.find(selectorLower) == std::string::npos) continue;
     if (!allowSoftware && props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) continue;
     uint32_t qcount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(devices[index], &qcount, nullptr);
@@ -170,6 +184,50 @@ bool VulkanProcessor::pickDevice(bool allowSoftware, const std::string& selector
   info_.backend = "vulkan";
   return true;
 }
+
+// From this point on all device commands use the processor-local volk table.
+// Instance/physical-device queries above intentionally remain on the global
+// loader table, which is valid before this processor creates its device.
+#define vkAllocateCommandBuffers deviceTable_.vkAllocateCommandBuffers
+#define vkAllocateDescriptorSets deviceTable_.vkAllocateDescriptorSets
+#define vkAllocateMemory deviceTable_.vkAllocateMemory
+#define vkBeginCommandBuffer deviceTable_.vkBeginCommandBuffer
+#define vkBindBufferMemory deviceTable_.vkBindBufferMemory
+#define vkCmdBindDescriptorSets deviceTable_.vkCmdBindDescriptorSets
+#define vkCmdBindPipeline deviceTable_.vkCmdBindPipeline
+#define vkCmdDispatch deviceTable_.vkCmdDispatch
+#define vkCmdPipelineBarrier deviceTable_.vkCmdPipelineBarrier
+#define vkCmdPushConstants deviceTable_.vkCmdPushConstants
+#define vkCmdResetQueryPool deviceTable_.vkCmdResetQueryPool
+#define vkCmdWriteTimestamp deviceTable_.vkCmdWriteTimestamp
+#define vkCreateBuffer deviceTable_.vkCreateBuffer
+#define vkCreateCommandPool deviceTable_.vkCreateCommandPool
+#define vkCreateComputePipelines deviceTable_.vkCreateComputePipelines
+#define vkCreateDescriptorPool deviceTable_.vkCreateDescriptorPool
+#define vkCreateDescriptorSetLayout deviceTable_.vkCreateDescriptorSetLayout
+#define vkCreateFence deviceTable_.vkCreateFence
+#define vkCreatePipelineLayout deviceTable_.vkCreatePipelineLayout
+#define vkCreateQueryPool deviceTable_.vkCreateQueryPool
+#define vkCreateShaderModule deviceTable_.vkCreateShaderModule
+#define vkDestroyBuffer deviceTable_.vkDestroyBuffer
+#define vkDestroyCommandPool deviceTable_.vkDestroyCommandPool
+#define vkDestroyDescriptorPool deviceTable_.vkDestroyDescriptorPool
+#define vkDestroyDescriptorSetLayout deviceTable_.vkDestroyDescriptorSetLayout
+#define vkDestroyFence deviceTable_.vkDestroyFence
+#define vkDestroyPipeline deviceTable_.vkDestroyPipeline
+#define vkDestroyPipelineLayout deviceTable_.vkDestroyPipelineLayout
+#define vkDestroyQueryPool deviceTable_.vkDestroyQueryPool
+#define vkEndCommandBuffer deviceTable_.vkEndCommandBuffer
+#define vkFreeMemory deviceTable_.vkFreeMemory
+#define vkGetBufferMemoryRequirements deviceTable_.vkGetBufferMemoryRequirements
+#define vkGetDeviceQueue deviceTable_.vkGetDeviceQueue
+#define vkMapMemory deviceTable_.vkMapMemory
+#define vkQueueSubmit deviceTable_.vkQueueSubmit
+#define vkResetCommandBuffer deviceTable_.vkResetCommandBuffer
+#define vkResetQueryPool deviceTable_.vkResetQueryPool
+#define vkUnmapMemory deviceTable_.vkUnmapMemory
+#define vkUpdateDescriptorSets deviceTable_.vkUpdateDescriptorSets
+#define vkWaitForFences deviceTable_.vkWaitForFences
 
 bool VulkanProcessor::createPipeline(const uint32_t* code, size_t words,
                                      VkPipeline* pipeline, VkPipelineLayout* layout,
@@ -217,7 +275,7 @@ bool VulkanProcessor::createResources(std::string* error) {
   if (vkCreateDevice(physical_, &dci, nullptr, &device_) != VK_SUCCESS) {
     if (error) *error = "vkCreateDevice failed"; return false;
   }
-  volkLoadDevice(device_); vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
+  volkLoadDeviceTable(&deviceTable_, device_); vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
   VkCommandPoolCreateInfo cpi{}; cpi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
   cpi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; cpi.queueFamilyIndex = queueFamily_;
   if (vkCreateCommandPool(device_, &cpi, nullptr, &commandPool_) != VK_SUCCESS) return false;
