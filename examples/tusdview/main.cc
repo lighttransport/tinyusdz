@@ -1612,6 +1612,17 @@ int main(int argc, char** argv) {
            "--screenshot out-{mode}.ppm");
       return 1;
     }
+    // CUDA and HIP trace AFTER the frame loop and write the screenshot
+    // themselves; the sweep captures the in-loop viewport. Accepting the
+    // combination silently produced N raster images labelled as ray-traced
+    // AOVs, plus one file named with the literal "{mode}" from the tracer's
+    // own write. Refuse instead of emitting wrong output.
+    if (wantCuda || wantHip) {
+      LOGE("--mode-sweep is not supported with --cuda/--hip: those backends "
+           "trace after the frame loop and write the screenshot themselves. "
+           "Run one mode per invocation for them.");
+      return 1;
+    }
     app.setModeSweep(modeSweep, screenshot);
   }
   for (const auto& bw : wantBlend) app.setBlendWeight(bw.first, bw.second);
