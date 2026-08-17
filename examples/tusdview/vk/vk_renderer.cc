@@ -8629,6 +8629,10 @@ void VulkanRenderer::rebuildTlas() {
   w[16].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   w[16].pBufferInfo = &pointChunkInfo;
   std::array<VkDescriptorImageInfo, 256> ptexImages{};
+  size_t directPtexCount = 0;
+  for (const DrawTextureCPU& texture : rtTexturesCpu_) {
+    if (texture.isPtex && !texture.compressed.data.empty()) ++directPtexCount;
+  }
   for (size_t i = 0; i < ptexImages.size(); ++i) {
     ptexImages[i].sampler = sampler_;
     ptexImages[i].imageView =
@@ -8643,6 +8647,10 @@ void VulkanRenderer::rebuildTlas() {
   w[17].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   w[17].pImageInfo = ptexImages.data();
   vkUpdateDescriptorSets(device_, 18, w, 0, nullptr);
+  if (directPtexCount > 0) {
+    std::fprintf(stderr, "[vk_rt] direct compressed Ptex images: %zu\n",
+                 directPtexCount);
+  }
 
   tlasDirty_ = false;
   rtTextureTableDirty_ = false;
