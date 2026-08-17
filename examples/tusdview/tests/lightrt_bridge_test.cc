@@ -996,5 +996,37 @@ int main() {
     return 1;
   }
 
+  // Native compressed Ptex keeps its source slot so Vulkan RT can bind the
+  // compressed VkImage directly, while the shared table still carries the
+  // face-rectangle metadata used by CUDA/HIP and software-BVH fallback.
+  tusdview::DrawTextureCPU directPtex;
+  directPtex.isPtex = true;
+  directPtex.image.width = 4;
+  directPtex.image.height = 4;
+  directPtex.image.channels = 4;
+  directPtex.image.data.assign(4 * 4 * 4, 192);
+  directPtex.ptexRectTexelOffset = 0;
+  directPtex.ptexFaceRects.push_back({0, 0, 4, 4, 0, 0});
+  directPtex.compressed.format = tusdview::DrawCompressedFormat::BC7;
+  directPtex.compressed.width = 4;
+  directPtex.compressed.height = 4;
+  directPtex.compressed.data.assign(16, 0);
+  directPtex.requestedCompressed = true;
+  tusdview::DrawMaterialCPU directPtexMaterial;
+  directPtexMaterial.baseColorTex = 0;
+  tusdview::HostTextureTable directPtexTable;
+  tusdview::BuildHostTextureTable({directPtex}, {directPtexMaterial},
+                                  &directPtexTable);
+  if (directPtexTable.textures.size() != 1 ||
+      directPtexTable.sourceToTable.size() != 1 ||
+      directPtexTable.sourceToTable[0] != 0 ||
+      directPtexTable.textures[0].isPtex != 1 ||
+      directPtexTable.textures[0].imageSlot != 0 ||
+      directPtexTable.textures[0].ptexFaceCount != 1 ||
+      directPtexTable.matTex.empty() || directPtexTable.matTex[0] != 0) {
+    std::fprintf(stderr, "direct compressed Ptex RT metadata is incorrect\n");
+    return 1;
+  }
+
   return 0;
 }

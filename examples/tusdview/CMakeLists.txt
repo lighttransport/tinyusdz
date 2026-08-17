@@ -240,6 +240,10 @@ if(TINYUSDZ_BUILD_TESTS)
       rt_scene_build.cc
       rt_bvh.cc
       texture_tools.cc
+      ptex_atlas.cc
+      ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+      ${PROJECT_SOURCE_DIR}/src/io-util.cc
+      ${PROJECT_SOURCE_DIR}/src/external/miniz.c
       displacement_bake.cc
       $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
   target_compile_features(tusdview_lightrt_bridge_test PRIVATE cxx_std_17)

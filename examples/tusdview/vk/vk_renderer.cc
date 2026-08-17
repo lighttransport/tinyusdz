@@ -5925,13 +5925,11 @@ bool VulkanRenderer::updateTextureRegions(
     const size_t stride = update.rowBytes
                               ? update.rowBytes
                               : size_t(update.width) * 4u;
-    const int mip = update.mipLevel;
-    const int mipWidth = mip >= 0 && mip < texSlotMipLevels_[index]
-                             ? std::max(1, texSlotWidths_[index] >> mip)
-                             : 0;
-    const int mipHeight = mip >= 0 && mip < texSlotMipLevels_[index]
-                              ? std::max(1, texSlotHeights_[index] >> mip)
-                              : 0;
+    int mipWidth = 0;
+    int mipHeight = 0;
+    TextureMipDimensions(texSlotWidths_[index], texSlotHeights_[index],
+                          texSlotMipLevels_[index], update.mipLevel,
+                          &mipWidth, &mipHeight);
     const size_t bw = (static_cast<size_t>(update.width) + 3u) / 4u;
     const size_t bh = (static_cast<size_t>(update.height) + 3u) / 4u;
     const size_t bytes = compressedUpdates

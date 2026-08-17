@@ -4,6 +4,7 @@
 // tusdview wrapper (texture_tools.hh) + BuildDrawScene. Compiled with and
 // without TUSDVIEW_WITH_TEXTOOLS; most checks skip in the OFF build.
 #include "mesh_build.hh"
+#include "renderer.hh"
 #include "texture_tools.hh"
 
 #include <cmath>
@@ -143,6 +144,21 @@ void TestMipDims() {
     CHECK(mips[1].width == 2 && mips[1].height == 1);
     CHECK(mips[2].width == 1 && mips[2].height == 1);
   }
+}
+
+void TestTextureRegionMipDimensions() {
+  int w = 0, h = 0;
+  CHECK(tusdview::TextureMipDimensions(7, 5, 4, 0, &w, &h) &&
+        w == 7 && h == 5);
+  CHECK(tusdview::TextureMipDimensions(7, 5, 4, 1, &w, &h) &&
+        w == 3 && h == 2);
+  CHECK(tusdview::TextureMipDimensions(7, 5, 4, 2, &w, &h) &&
+        w == 1 && h == 1);
+  CHECK(tusdview::TextureMipDimensions(7, 5, 4, 3, &w, &h) &&
+        w == 1 && h == 1);
+  CHECK(!tusdview::TextureMipDimensions(7, 5, 4, 4, &w, &h));
+  CHECK(!tusdview::TextureMipDimensions(7, 5, 4, -1, &w, &h));
+  CHECK(!tusdview::TextureMipDimensions(7, 5, 4, 1, nullptr, &h));
 }
 
 void TestSrgbCorrectMip() {
@@ -502,6 +518,7 @@ int main() {
   }
   TestSolidResize();
   TestMipDims();
+  TestTextureRegionMipDimensions();
   TestSrgbCorrectMip();
   TestCompressedSizes();
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
