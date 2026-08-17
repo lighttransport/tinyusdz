@@ -96,6 +96,15 @@ set(TUSDVIEW_COMMON_SOURCES
     ${COMMON_DIR}/light3d/material.cpp
     ${COMMON_DIR}/light3d/texture.cpp)
 
+# hipew intentionally uses variables named like HIP entry points. Keep those
+# loader variables out of the executable's dynamic symbol table so a directly
+# compiled HIP translation unit resolves hipGetDeviceCount/etc. to libamdhip64
+# rather than interposing on hipew's function-pointer variables.
+if(UNIX AND NOT APPLE)
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c
+                              PROPERTIES COMPILE_OPTIONS "-fvisibility=hidden")
+endif()
+
 # Compile-check the vendored LightRT MaterialX/OpenPBR evaluator core. The
 # objects are intentionally not linked into tusdview yet because texture loading
 # still needs a single owning stb implementation in tinyusdz. `third_party_impl.c`

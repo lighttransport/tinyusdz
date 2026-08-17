@@ -99,32 +99,61 @@ typedef hiprtcResult (*thiprtcDestroyProgram)(hiprtcProgram *prog);
 typedef const char *(*thiprtcGetErrorString)(hiprtcResult result);
 
 /* --- resolved entry points (valid after a successful hipewInit) ----------- */
-extern thipInit hipInit;
-extern thipDriverGetVersion hipDriverGetVersion;
-extern thipGetDeviceCount hipGetDeviceCount;
-extern thipSetDevice hipSetDevice;
-extern thipDeviceGet hipDeviceGet;
-extern thipDeviceGetName hipDeviceGetName;
-extern thipMalloc hipMalloc;
-extern thipFree hipFree;
-extern thipMemGetInfo hipMemGetInfo;
-extern thipMemcpyHtoD hipMemcpyHtoD;
-extern thipMemcpyDtoH hipMemcpyDtoH;
-extern thipModuleLoadData hipModuleLoadData;
-extern thipModuleUnload hipModuleUnload;
-extern thipModuleGetFunction hipModuleGetFunction;
-extern thipModuleLaunchKernel hipModuleLaunchKernel;
-extern thipDeviceSynchronize hipDeviceSynchronize;
-extern thipGetErrorString hipGetErrorString;
+extern thipInit hipew_hipInit;
+extern thipDriverGetVersion hipew_hipDriverGetVersion;
+extern thipGetDeviceCount hipew_hipGetDeviceCount;
+extern thipSetDevice hipew_hipSetDevice;
+extern thipDeviceGet hipew_hipDeviceGet;
+extern thipDeviceGetName hipew_hipDeviceGetName;
+extern thipMalloc hipew_hipMalloc;
+extern thipFree hipew_hipFree;
+extern thipMemGetInfo hipew_hipMemGetInfo;
+extern thipMemcpyHtoD hipew_hipMemcpyHtoD;
+extern thipMemcpyDtoH hipew_hipMemcpyDtoH;
+extern thipModuleLoadData hipew_hipModuleLoadData;
+extern thipModuleUnload hipew_hipModuleUnload;
+extern thipModuleGetFunction hipew_hipModuleGetFunction;
+extern thipModuleLaunchKernel hipew_hipModuleLaunchKernel;
+extern thipDeviceSynchronize hipew_hipDeviceSynchronize;
+extern thipGetErrorString hipew_hipGetErrorString;
 
-extern thiprtcCreateProgram hiprtcCreateProgram;
-extern thiprtcCompileProgram hiprtcCompileProgram;
-extern thiprtcGetCodeSize hiprtcGetCodeSize;
-extern thiprtcGetCode hiprtcGetCode;
-extern thiprtcGetProgramLogSize hiprtcGetProgramLogSize;
-extern thiprtcGetProgramLog hiprtcGetProgramLog;
-extern thiprtcDestroyProgram hiprtcDestroyProgram;
-extern thiprtcGetErrorString hiprtcGetErrorString;
+extern thiprtcCreateProgram hipew_hiprtcCreateProgram;
+extern thiprtcCompileProgram hipew_hiprtcCompileProgram;
+extern thiprtcGetCodeSize hipew_hiprtcGetCodeSize;
+extern thiprtcGetCode hipew_hiprtcGetCode;
+extern thiprtcGetProgramLogSize hipew_hiprtcGetProgramLogSize;
+extern thiprtcGetProgramLog hipew_hiprtcGetProgramLog;
+extern thiprtcDestroyProgram hipew_hiprtcDestroyProgram;
+extern thiprtcGetErrorString hipew_hiprtcGetErrorString;
+
+/* Compatibility names for existing hipew clients. The variables themselves
+ * remain in the hipew_ namespace so they cannot interpose on libamdhip64's
+ * real HIP entry points when another translation unit links the HIP runtime. */
+#define hipInit hipew_hipInit
+#define hipDriverGetVersion hipew_hipDriverGetVersion
+#define hipGetDeviceCount hipew_hipGetDeviceCount
+#define hipSetDevice hipew_hipSetDevice
+#define hipDeviceGet hipew_hipDeviceGet
+#define hipDeviceGetName hipew_hipDeviceGetName
+#define hipMalloc hipew_hipMalloc
+#define hipFree hipew_hipFree
+#define hipMemGetInfo hipew_hipMemGetInfo
+#define hipMemcpyHtoD hipew_hipMemcpyHtoD
+#define hipMemcpyDtoH hipew_hipMemcpyDtoH
+#define hipModuleLoadData hipew_hipModuleLoadData
+#define hipModuleUnload hipew_hipModuleUnload
+#define hipModuleGetFunction hipew_hipModuleGetFunction
+#define hipModuleLaunchKernel hipew_hipModuleLaunchKernel
+#define hipDeviceSynchronize hipew_hipDeviceSynchronize
+#define hipGetErrorString hipew_hipGetErrorString
+#define hiprtcCreateProgram hipew_hiprtcCreateProgram
+#define hiprtcCompileProgram hipew_hiprtcCompileProgram
+#define hiprtcGetCodeSize hipew_hiprtcGetCodeSize
+#define hiprtcGetCode hipew_hiprtcGetCode
+#define hiprtcGetProgramLogSize hipew_hiprtcGetProgramLogSize
+#define hiprtcGetProgramLog hipew_hiprtcGetProgramLog
+#define hiprtcDestroyProgram hipew_hiprtcDestroyProgram
+#define hiprtcGetErrorString hipew_hiprtcGetErrorString
 
 /* Load libamdhip64 + libhiprtc and resolve the entry points above. `mask` is a
  * bitwise-OR of HIPEW_INIT_HIP / HIPEW_INIT_HIPRTC. Returns HIPEW_SUCCESS, or an

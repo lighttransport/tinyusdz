@@ -145,11 +145,20 @@ if(TUSDVIEW_TEXTURE_GLSLANG)
         TUSDVIEW_TEXTURE_HAVE_CUDA=1)
     message(STATUS "tusdview: CUDA texture preprocessing ENABLED")
   endif()
-  # Do not link HIP directly into tusdview: the viewer already uses hipew for
-  # its dynamically-loaded HIP ray tracer, and both APIs export overlapping
-  # global symbols. The standalone benchmark remains the HIP integration point
-  # until the viewer gets a separate dynamically-loaded HIP texture plugin.
-  message(STATUS "tusdview: HIP texture preprocessing deferred to plugin (hipew symbol isolation)")
+  check_language(HIP)
+  if(CMAKE_HIP_COMPILER)
+    enable_language(HIP)
+    target_sources(${EXAMPLE_TARGET} PRIVATE
+        ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/hip_processor.hip)
+    set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/hip_processor.hip
+        PROPERTIES LANGUAGE HIP)
+    set_target_properties(${EXAMPLE_TARGET} PROPERTIES
+        HIP_ARCHITECTURES "native")
+    target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
+        TUSDVIEW_TEXTURE_HAVE_HIP=1)
+    message(STATUS "tusdview: HIP texture preprocessing ENABLED via hipew-isolated runtime")
+  endif()
   message(STATUS "tusdview: Vulkan GPU texture preprocessing ENABLED")
 else()
   message(STATUS "tusdview: Vulkan GPU texture preprocessing disabled (glslangValidator missing)")
