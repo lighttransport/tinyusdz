@@ -1305,10 +1305,11 @@ int main(int argc, char** argv) {
 #endif
 
   if ((quitAfterFullUpload || quitAfterConvert) &&
-      (backend != tusdview::Backend::GL || !useNextLoader || threaded || headless ||
+      ((backend != tusdview::Backend::GL && backend != tusdview::Backend::Vulkan) ||
+       !useNextLoader || threaded || headless ||
        wantRt || wantCuda || wantHip || wantCpuRt)) {
     LOGE("--quit-after-full-upload/--quit-after-convert requires interactive "
-         "non-threaded OpenGL with --next");
+         "non-threaded OpenGL/Vulkan with --next");
     return 1;
   }
 
