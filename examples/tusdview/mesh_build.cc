@@ -1209,13 +1209,18 @@ bool GpuCompressHDRData(const TextureRuntimeOptions& opt, const float* rgb,
                         size_t rgbCount, int width, int height,
                         DrawCompressedImageCPU* out) {
   if (!out || !EnsureGpu(opt) || !rgb || rgbCount == 0 || width <= 0 ||
-      height <= 0 || !opt.caps.bc6h ||
+      height <= 0 || (!opt.caps.bc6h && !opt.caps.bc) ||
       (opt.compression != TextureCompressionMode::Auto &&
        opt.compression != TextureCompressionMode::BCn))
     return false;
   const size_t pixels = static_cast<size_t>(width) * static_cast<size_t>(height);
   if (rgbCount < pixels * 3u) return false;
   tusdview_texture_bench::TextureRequest request;
+  // HIP's legacy processor validates the common RGBA pointer before entering
+  // its BC6H branch. BC6H consumes rgbf exclusively; this non-null alias keeps
+  // the request compatible without allocating or copying an LDR buffer.
+  request.rgba = reinterpret_cast<const uint8_t*>(rgb);
+  request.rgbaBytes = rgbCount * sizeof(float);
   request.rgbf = rgb;
   request.rgbfBytes = rgbCount * sizeof(float);
   request.width = request.dstWidth = static_cast<uint32_t>(width);
@@ -1307,6 +1312,15 @@ bool GpuCompressUdim(const TextureRuntimeOptions& opt, DrawTextureCPU* texture) 
 }
 }  // namespace
 #endif
+
+void ShutdownTextureGpu() {
+#if defined(TUSDVIEW_TEXTURE_GPU)
+  gTextureGpu.reset();
+  gTextureGpuError.clear();
+  gTextureGpuImages = 0;
+  gTextureGpuMs = 0.0;
+#endif
+}
 
 void CompressDrawTexture(const TextureRuntimeOptions& opt,
                          DrawTextureCPU* texture) {

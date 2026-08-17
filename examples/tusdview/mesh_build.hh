@@ -114,6 +114,11 @@ void ClassifyTextureUsage(DrawScene* out);
 // just this one.
 void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out);
 void CompressDrawTexture(const TextureRuntimeOptions& opt, DrawTextureCPU* texture);
+// Release the process-wide texture GPU processor while the Vulkan loader and
+// renderer are still alive. The processor owns a private Vulkan device table;
+// deferring its destructor to static shutdown can outlive the renderer's volk
+// state on Vulkan.
+void ShutdownTextureGpu();
 
 // Classify texture usage from the built materials, then build the content-aware
 // CPU mip chains (and per-level compressed payloads when compression is on).
