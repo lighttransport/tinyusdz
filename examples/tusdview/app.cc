@@ -2374,8 +2374,22 @@ void App::drainProgressiveLoad() {
       if (event.textureSlot < 0) continue;
       const size_t slot = static_cast<size_t>(event.textureSlot);
       if (draw_.textures.size() <= slot) draw_.textures.resize(slot + 1);
-      if (!conversionOnly)
-        renderer_->uploadTexture(event.textureSlot, event.texture);
+      if (!conversionOnly) {
+        // Progressive texture events arrive while the loader and UI are still
+        // running.  In the threaded render path the renderer/context is owned
+        // by the render thread; calling uploadTexture directly here races that
+        // thread and can crash as soon as the first decoded payload is queued.
+        // Keep the payload alive in the GPU-op closure, matching the upload
+        // marshalling used by the completion and residency paths below.
+        if (renderThreadActive_) {
+          auto upload = std::make_shared<DrawTextureCPU>(event.texture);
+          postGpu([this, slot, upload = std::move(upload)] {
+            renderer_->uploadTexture(static_cast<int>(slot), *upload);
+          });
+        } else {
+          renderer_->uploadTexture(event.textureSlot, event.texture);
+        }
+      }
       // The block payload is the resident source after upload. Keep its asset
       // identity for future refinement, but drop the 4x larger RGBA staging.
       if (!event.texture.compressed.data.empty()) {

@@ -3886,7 +3886,9 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
   }
 }
 
-int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
+int Gui::pickMesh(float px, float py, int vpW, int vpH,
+                  float* hitDistance) const {
+  if (hitDistance) *hitDistance = 1e30f;
   if (!cam_ || !renderer_ || !draw_ || draw_->meshes.empty() || vpW <= 0 ||
       vpH <= 0) {
     return -1;
@@ -3968,6 +3970,13 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
     // Skip hidden meshes (they aren't drawn, so they shouldn't be pickable).
     if (!meshVisibleForView(mi)) continue;
     const DrawMeshCPU& m = draw_->meshes[mi];
+    // These are viewer-generated boxes, not authored USD mesh prims.  Picking
+    // their scene-spanning bounds made a click on a tree select the large
+    // composition/budget container instead of the actual source mesh.
+    if (m.absPath == "/__composition_preview_bounds" ||
+        m.name == "__gpu_budget_proxy__") {
+      continue;
+    }
     const bool gpuDeformed = !m.jointIdx.empty() || !m.morphDeltaHalf.empty();
     const float* pickMin = m.hasPosedPickAabb
                                ? m.posedPickAabbMin
@@ -3975,19 +3984,53 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
     const float* pickMax = m.hasPosedPickAabb
                                ? m.posedPickAabbMax
                                : (gpuDeformed ? m.restAabbMax : m.aabbMax);
-    float boundsT = 0.0f;
-    if (!hitAabb(pickMin, pickMax, bestT, &boundsT)) continue;
-    if (boundsT < bestBoundsT) {
-      bestBoundsT = boundsT;
-      bestBounds = static_cast<int>(mi);
+    bool boundsHit = false;
+    if (m.instanceCount() > 0) {
+      // aabbMin/Max is the union of all placements and is therefore much too
+      // large for picking an instanced prototype. Test each prototype-local
+      // box after applying its authored 3x4 object-to-world transform.
+      for (size_t ii = 0; ii < m.instanceCount(); ++ii) {
+        const float* x = &m.instanceXforms[ii * 12];
+        float imn[3] = {1e30f, 1e30f, 1e30f};
+        float imx[3] = {-1e30f, -1e30f, -1e30f};
+        for (int c = 0; c < 8; ++c) {
+          const float lx = (c & 1) ? pickMax[0] : pickMin[0];
+          const float ly = (c & 2) ? pickMax[1] : pickMin[1];
+          const float lz = (c & 4) ? pickMax[2] : pickMin[2];
+          for (int r = 0; r < 3; ++r) {
+            const float w = x[r * 4 + 0] * lx + x[r * 4 + 1] * ly +
+                            x[r * 4 + 2] * lz + x[r * 4 + 3];
+            imn[r] = std::min(imn[r], w);
+            imx[r] = std::max(imx[r], w);
+          }
+        }
+        float instanceT = 0.0f;
+        if (hitAabb(imn, imx, bestT, &instanceT)) {
+          boundsHit = true;
+          if (instanceT < bestBoundsT) {
+            bestBoundsT = instanceT;
+            bestBounds = static_cast<int>(mi);
+          }
+        }
+      }
+    } else {
+      float boundsT = 0.0f;
+      boundsHit = hitAabb(pickMin, pickMax, bestT, &boundsT);
+      if (boundsHit && boundsT < bestBoundsT) {
+        bestBoundsT = boundsT;
+        bestBounds = static_cast<int>(mi);
+      }
     }
+    if (!boundsHit) continue;
 
     // Static next meshes normally arrive here after FreeMeshSurfaceCPU (and,
     // once auxiliary upload is done, without indices too). Use the closest
     // retained object bound instead of making selection depend on whether a CPU
     // geometry copy happened to survive. GPU-deformed meshes also use bounds:
     // their retained vertices are the rest pose, not the shape on screen.
-    if (m.vertices.empty() || m.indices.size() < 3 || gpuDeformed) continue;
+    if (m.instanceCount() > 0 || m.vertices.empty() ||
+        m.indices.size() < 3 || gpuDeformed)
+      continue;
 
     light3d::Mat4 W;
     for (int k = 0; k < 16; ++k) W.m[k] = m.world[k];
@@ -4005,15 +4048,19 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
       }
     }
   }
-  return best >= 0 ? best : bestBounds;
+  const int result = best >= 0 ? best : bestBounds;
+  if (hitDistance) *hitDistance = best >= 0 ? bestT : bestBoundsT;
+  return result;
 }
 
 std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
   if (!draw_ || !cam_ || !renderer_ || vpW <= 0 || vpH <= 0) return {};
-  const int mesh = pickMesh(px, py, vpW, vpH);
-  if (mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size()) {
-    return draw_->meshes[static_cast<size_t>(mesh)].absPath;
-  }
+  // This is deliberately renderer-independent.  Both the GL and Vulkan
+  // raster backends retain the same tessellated carrier data; only the depth
+  // convention used to unproject/project the local ID/depth buffer differs
+  // (GL [-1,1], Vulkan [0,1]).
+  float meshT = 1.0e30f;
+  const int mesh = pickMesh(px, py, vpW, vpH, &meshT);
 
   const bool z01 = renderer_->caps().usesZeroToOneDepth;
   const light3d::Mat4 invVP =
@@ -4051,6 +4098,130 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
     *tOut = std::max(t0, 0.0f);
     return true;
   };
+  // Curves are rendered as camera-facing quads, so testing only their carrier
+  // AABB is both too broad (the enclosing trunk/foliage mesh wins) and too
+  // shallow (a click can land on a curve behind the AABB entry point).  Test
+  // the retained tessellated segments in screen space, then use the segment's
+  // world-space point to order it against mesh hits.  This is only performed
+  // for a mouse click, not per frame, and remains cheap for the capped Island
+  // debug scenes.
+  const light3d::Mat4 VP = cam_->proj(z01) * cam_->view();
+  auto project = [&](const light3d::Vec3& p, float& sx, float& sy,
+                     float& ndcZ) -> bool {
+    const float* m = VP.m;
+    const float x = m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12];
+    const float y = m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13];
+    const float z = m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14];
+    const float w = m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15];
+    if (!std::isfinite(w) || w <= 1.0e-7f || !std::isfinite(x) ||
+        !std::isfinite(y) || !std::isfinite(z)) return false;
+    const float iw = 1.0f / w;
+    sx = (x * iw * 0.5f + 0.5f) * static_cast<float>(vpW);
+    sy = (1.0f - (y * iw * 0.5f + 0.5f)) * static_cast<float>(vpH);
+    ndcZ = z * iw;
+    return std::isfinite(sx) && std::isfinite(sy) && std::isfinite(ndcZ);
+  };
+  auto curveHit = [&](const DrawCurvesCPU& c, float& outT) -> bool {
+    float broadT = 0.0f;
+    if (!hit(c.aabbMin, c.aabbMax, &broadT)) return false;
+    const size_t np = c.points.size() / 3;
+    if (np < 2) return false;
+    const std::vector<uint32_t> counts = c.vertexCounts.empty()
+        ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : c.vertexCounts;
+    auto point = [&](size_t i) {
+      const float x = c.points[i * 3], y = c.points[i * 3 + 1],
+                  z = c.points[i * 3 + 2];
+      return light3d::Vec3{
+          c.world[0] * x + c.world[4] * y + c.world[8] * z + c.world[12],
+          c.world[1] * x + c.world[5] * y + c.world[9] * z + c.world[13],
+          c.world[2] * x + c.world[6] * y + c.world[10] * z + c.world[14]};
+    };
+    // Local selection ID/depth buffer.  Restricting this to a small window
+    // around the cursor gives the same coverage semantics as a GPU ID pass,
+    // without allocating a second full-size Vulkan framebuffer for every
+    // click.  Each invocation represents one carrier ID; the caller compares
+    // the resulting depth between carriers and meshes.
+    constexpr int kPickRadius = 10;
+    constexpr int kPickWidth = kPickRadius * 2 + 1;
+    int idBuffer[kPickWidth * kPickWidth] = {};
+    float depthBuffer[kPickWidth * kPickWidth];
+    std::fill(std::begin(depthBuffer), std::end(depthBuffer), 1.0e30f);
+    const light3d::Mat4 view = cam_->view();
+    const light3d::Vec3 cameraRight{view.m[0], view.m[1], view.m[2]};
+    const float sx = std::sqrt(c.world[0] * c.world[0] + c.world[1] * c.world[1] + c.world[2] * c.world[2]);
+    const float sy = std::sqrt(c.world[4] * c.world[4] + c.world[5] * c.world[5] + c.world[6] * c.world[6]);
+    const float sz = std::sqrt(c.world[8] * c.world[8] + c.world[9] * c.world[9] + c.world[10] * c.world[10]);
+    const float worldScale = std::max(sx, std::max(sy, sz));
+    float best = 1.0e30f;
+    size_t base = 0;
+    for (uint32_t count : counts) {
+      const size_t end = std::min(np, base + static_cast<size_t>(count));
+      for (size_t i = base; i + 1 < end; ++i) {
+        const light3d::Vec3 a = point(i), b = point(i + 1);
+        float ax, ay, az, bx, by, bz;
+        if (!project(a, ax, ay, az) || !project(b, bx, by, bz)) continue;
+        const float dx = bx - ax, dy = by - ay;
+        const float len2 = dx * dx + dy * dy;
+        const float w0 = c.widths.empty() ? 1.0f :
+            (c.widths.size() == 1 ? c.widths[0] : c.widths[std::min(i, c.widths.size() - 1)]);
+        const float w1 = c.widths.empty() ? 1.0f :
+            (c.widths.size() == 1 ? c.widths[0] : c.widths[std::min(i + 1, c.widths.size() - 1)]);
+        const float width = 0.5f * (w0 + w1) * worldScale;
+        if (!std::isfinite(width) || width < 0.0f) continue;
+        const light3d::Vec3 mid = (a + b) * 0.5f;
+        const light3d::Vec3 edge = mid + cameraRight * (0.5f * width);
+        float mx, my, mz;
+        float radius = 2.0f;
+        if (project(mid, mx, my, mz) && project(edge, mx, my, mz)) {
+          // Keep the local buffer bounded even for malformed authored widths.
+          radius = std::max(2.0f, std::min(64.0f,
+              std::sqrt((mx - (ax + bx) * 0.5f) * (mx - (ax + bx) * 0.5f) +
+                        (my - (ay + by) * 0.5f) * (my - (ay + by) * 0.5f))));
+        }
+        const int x0 = std::max(-kPickRadius, static_cast<int>(std::floor(std::min(ax, bx) - px - radius)));
+        const int x1 = std::min(kPickRadius, static_cast<int>(std::ceil(std::max(ax, bx) - px + radius)));
+        const int y0 = std::max(-kPickRadius, static_cast<int>(std::floor(std::min(ay, by) - py - radius)));
+        const int y1 = std::min(kPickRadius, static_cast<int>(std::ceil(std::max(ay, by) - py + radius)));
+        for (int yy = y0; yy <= y1; ++yy) {
+          for (int xx = x0; xx <= x1; ++xx) {
+            const float qx = px + static_cast<float>(xx) + 0.5f;
+            const float qy = py + static_cast<float>(yy) + 0.5f;
+            float u = 0.0f;
+            if (len2 > 1.0e-8f)
+              u = std::max(0.0f, std::min(1.0f,
+                  ((qx - ax) * dx + (qy - ay) * dy) / len2));
+            const float ex = ax + u * dx - qx, ey = ay + u * dy - qy;
+            if (ex * ex + ey * ey > radius * radius) continue;
+            const light3d::Vec3 q = a * (1.0f - u) + b * u;
+            const float t = light3d::dot(q - ro, rd);
+            if (t <= 1.0e-5f) continue;
+            const int bi = (yy + kPickRadius) * kPickWidth + xx + kPickRadius;
+            if (t < depthBuffer[bi]) {
+              depthBuffer[bi] = t;
+              idBuffer[bi] = 1;
+            }
+          }
+        }
+      }
+      base = end;
+    }
+    // Sample the cursor pixel first; if its center falls in a one-pixel gap,
+    // accept the nearest covered pixel in the local selection buffer.
+    for (int pass = 0; pass < 2 && best == 1.0e30f; ++pass) {
+      for (int yy = -kPickRadius; yy <= kPickRadius; ++yy) {
+        for (int xx = -kPickRadius; xx <= kPickRadius; ++xx) {
+          if (pass == 0 && (xx != 0 || yy != 0)) continue;
+          const int bi = (yy + kPickRadius) * kPickWidth + xx + kPickRadius;
+          if (idBuffer[bi] == 0) continue;
+          if (pass == 1 && xx * xx + yy * yy > 4) continue;
+          best = std::min(best, depthBuffer[bi]);
+        }
+      }
+    }
+    if (best == 1.0e30f) return false;
+    outT = best;
+    return true;
+  };
   std::string bestPath;
   float bestT = 1.0e30f;
   auto consider = [&](const std::string& path, const std::string& purpose,
@@ -4064,8 +4235,23 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
   };
   for (const DrawPointsCPU& p : draw_->points)
     consider(p.absPath, p.purpose, p.aabbMin, p.aabbMax);
-  for (const DrawCurvesCPU& c : draw_->curves)
-    consider(c.absPath, c.purpose, c.aabbMin, c.aabbMax);
+  for (size_t i = 0; i < draw_->curves.size(); ++i) {
+    const DrawCurvesCPU& c = draw_->curves[i];
+    if (!carrierVisibleForView(draw_->points.size() + i)) continue;
+    float segmentT = 0.0f;
+    if (curveHit(c, segmentT) && segmentT < bestT) {
+      bestT = segmentT;
+      bestPath = c.absPath;
+    } else if (c.points.size() < 6) {
+      consider(c.absPath, c.purpose, c.aabbMin, c.aabbMax);
+    }
+  }
+  // Do not let a broad mesh/container bound hide a visible curve carrier. The
+  // curve path is only preferred when its bounds enter the ray before the mesh
+  // hit; otherwise normal mesh picking remains authoritative.
+  if (!bestPath.empty() && bestT < meshT) return bestPath;
+  if (mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size())
+    return draw_->meshes[static_cast<size_t>(mesh)].absPath;
   return bestPath;
 }
 

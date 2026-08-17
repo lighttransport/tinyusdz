@@ -350,7 +350,8 @@ class Gui {
   std::vector<int> regionPickMeshes(const ImVec2& imageMin, int vpW, int vpH) const;
   bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
                                 const ImVec2& rectMax, int vpW, int vpH) const;
-  int pickMesh(float px, float py, int vpW, int vpH) const;
+  int pickMesh(float px, float py, int vpW, int vpH,
+               float* hitDistance = nullptr) const;
   std::string pickCarrierPath(float px, float py, int vpW, int vpH) const;
   void selectAdjacentMesh(int step);
   void applyViewPreset(CameraViewPreset preset);
