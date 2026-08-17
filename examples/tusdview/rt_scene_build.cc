@@ -660,7 +660,7 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
   };
   auto appendImage = [&](const light3d::Image& image,
                          const std::vector<light3d::Image>& sourceMips,
-                         const DrawTextureCPU& tex) {
+                         const DrawTextureCPU& tex, int sourceSlot) {
     if (image.width <= 0 || image.height <= 0 || image.channels != 4 ||
         image.data.empty()) return -1;
     const int id = static_cast<int>(out->textures.size());
@@ -710,6 +710,7 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       td.ptexFaceCount = static_cast<int>(tex.ptexFaceRects.size());
       td.mipCount = static_cast<int>(levels.size() - level);
       td.firstMip = td.mipCount > 1 ? id + static_cast<int>(level) + 1 : -1;
+      td.imageSlot = tex.isPtex ? sourceSlot : -1;
       for (int& layer : td.udimLayer) layer = -1;
       out->texels.insert(out->texels.end(), src.data.begin(), src.data.end());
       out->textures.push_back(td);
@@ -738,7 +739,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
             decodeImage(tile.image, tile.compressed, &decoded);
         const std::vector<light3d::Image>* mips =
             decodeMips(tile.mipImages, tile.compressed, &decodedMipsStorage);
-        const int tileId = image ? appendImage(*image, *mips, tex) : -1;
+        const int tileId = image ? appendImage(*image, *mips, tex,
+                                               static_cast<int>(ti)) : -1;
         if (budgetRejected) {
           ++skippedBudget;
           budgetRejected = false;
@@ -787,7 +789,7 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
         }
       }
       if (tableId < 0) {
-        tableId = appendImage(*image, *mips, tex);
+        tableId = appendImage(*image, *mips, tex, static_cast<int>(ti));
         if (budgetRejected) {
           ++skippedBudget;
           budgetRejected = false;
