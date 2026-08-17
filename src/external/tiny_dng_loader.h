@@ -35,6 +35,7 @@ THE SOFTWARE.
 #include <string>
 #include <vector>
 #include <array>
+#include <cstdint>
 
 namespace tinydng {
 
@@ -181,8 +182,8 @@ struct DNGImage {
 
   int tile_width;
   int tile_length;
-  unsigned int tile_offset;
-  unsigned int tile_byte_count;  // (compressed) size
+  uint64_t tile_offset;
+  uint64_t tile_byte_count;  // (compressed) size
 
   int pad0;
   double analog_balance[3];
@@ -210,7 +211,7 @@ struct DNGImage {
   int width;
   int height;
   int compression;
-  unsigned int offset;
+  uint64_t offset;
   short orientation;
   short _pad0;
   int strip_byte_count;
@@ -223,13 +224,13 @@ struct DNGImage {
 
   // For an image with multiple strips.
   int strips_per_image;
-  std::vector<unsigned int> strip_byte_counts;
-  std::vector<unsigned int> strip_offsets;
+  std::vector<uint64_t> strip_byte_counts;
+  std::vector<uint64_t> strip_offsets;
 
   // For tiled TIFF images. Entries are ordered according to TIFF's tile
   // ordering; planar-separate images contain one tile set per sample plane.
-  std::vector<unsigned int> tile_byte_counts;
-  std::vector<unsigned int> tile_offsets;
+  std::vector<uint64_t> tile_byte_counts;
+  std::vector<uint64_t> tile_offsets;
 
   // Color profile
   std::string profile_name; // UTF-8 string
@@ -292,17 +293,25 @@ bool IsDNG(const char* filename, std::string* msg);
 
 ///
 /// A variant of `LoadDNG` which loads DNG image from memory.
-/// Up to 2GB DNG data.
+/// Supports files addressable by size_t, including BigTIFF offsets.
 ///
-bool LoadDNGFromMemory(const char* mem, unsigned int size,
+bool LoadDNGFromMemory(const char* mem, size_t size,
                        std::vector<FieldInfo>& custom_fields,
                        std::vector<DNGImage>* images, std::string* warn,
                        std::string* err);
 
+// Parse TIFF/DNG headers and image metadata without decoding pixel payloads.
+// The returned DNGImage entries contain offsets, dimensions, tiling and
+// compression information, but their `data` vectors remain empty.
+bool LoadDNGMetadataFromMemory(const char* mem, size_t size,
+                               std::vector<FieldInfo>& custom_fields,
+                               std::vector<DNGImage>* images,
+                               std::string* warn, std::string* err);
+
 ///
 /// A variant of `IsDNG` which checks if a data is DNG image.
 ///
-bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
+bool IsDNGFromMemory(const char* mem, size_t size, std::string* msg);
 
 }  // namespace tinydng
 
@@ -2453,6 +2462,32 @@ class StreamReader {
     }
   }
 
+  bool read_uint64(int type, uint64_t* ret) const {
+    if (!ret) return false;
+    if (type == TYPE_BYTE || type == TYPE_SBYTE) {
+      unsigned char value = 0;
+      if (!read1(&value)) return false;
+      *ret = value;
+      return true;
+    }
+    if (type == TYPE_SHORT || type == TYPE_SSHORT) {
+      unsigned short value = 0;
+      if (!read2(&value)) return false;
+      *ret = value;
+      return true;
+    }
+    if (type == TYPE_LONG || type == TYPE_IFD) {
+      unsigned int value = 0;
+      if (!read4(&value)) return false;
+      *ret = value;
+      return true;
+    }
+    if (type == TYPE_LONG8 || type == TYPE_IFD8) {
+      return read8(ret);
+    }
+    return false;
+  }
+
   bool read_real(int type, double* ret) const {
     // @todo { Support more types. }
 
@@ -2611,8 +2646,8 @@ class StreamReader {
 };
 
 static bool GetTIFFTag(const StreamReader& sr, unsigned short* tag,
-                       unsigned short* type, unsigned int* len,
-                       unsigned int* saved_offt) {
+                       unsigned short* type, uint64_t* len,
+                       uint64_t* saved_offt, bool bigtiff) {
   if (!sr.read2(tag)) {
     return false;
   }
@@ -2621,23 +2656,38 @@ static bool GetTIFFTag(const StreamReader& sr, unsigned short* tag,
     return false;
   }
 
-  if (!sr.read4(len)) {
+  if (bigtiff) {
+    if (!sr.read8(len)) return false;
+  } else {
+    unsigned int classic_len = 0;
+    if (!sr.read4(&classic_len)) return false;
+    *len = classic_len;
+  }
+
+  const uint64_t value_slot = bigtiff ? 8u : 4u;
+  (*saved_offt) = static_cast<uint64_t>(sr.tell()) + value_slot;
+
+  static const size_t typesize_table[] = {1, 1, 1, 2, 4, 8, 1, 1, 2, 4,
+                                          8, 4, 8, 4, 0, 0, 8, 8, 8};
+  const size_t type_size = (*type < (sizeof(typesize_table) /
+                                     sizeof(typesize_table[0])))
+                               ? typesize_table[*type]
+                               : 0;
+  if (type_size == 0 || *len > (std::numeric_limits<uint64_t>::max)() /
+                              static_cast<uint64_t>(type_size)) {
     return false;
   }
 
-  (*saved_offt) = static_cast<unsigned int>(sr.tell()) + 4;
-
-  size_t typesize_table[] = {1, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8, 4};
-
-  if ((*len) * (typesize_table[(*type) < 14 ? (*type) : 0]) > 4) {
-    unsigned int base = 0;  // fixme
-    unsigned int offt = 0;
-    if (!sr.read4(&offt)) {
-      return false;
+  if ((*len) * static_cast<uint64_t>(type_size) > value_slot) {
+    uint64_t offt = 0;
+    if (bigtiff) {
+      if (!sr.read8(&offt)) return false;
+    } else {
+      unsigned int classic_offt = 0;
+      if (!sr.read4(&classic_offt)) return false;
+      offt = classic_offt;
     }
-    if (!sr.seek_set(offt + base)) {
-      return false;
-    }
+    if (!sr.seek_set(offt)) return false;
   }
 
   return true;
@@ -3660,7 +3710,10 @@ static int ParseCustomField(const StreamReader& sr,
 static bool ParseTIFFIFD(const StreamReader& sr,
                          const std::vector<FieldInfo>& custom_field_lists,
                          std::vector<tinydng::DNGImage>* images,
-                         std::string* warn, std::string* err, uint32_t call_depth = 0) {
+                         std::string* warn, std::string* err,
+                         uint32_t call_depth = 0,
+                         bool load_data_tables = true,
+                         bool bigtiff = false) {
   if (!images) {
     if (err) {
       (*err) += "`images` argument is null.\n";
@@ -3672,14 +3725,20 @@ static bool ParseTIFFIFD(const StreamReader& sr,
   InitializeDNGImage(&image);
 
   // TINY_DNG_DPRINTF("id = %d\n", idx);
-  unsigned short num_entries = 0;
-  if (!sr.read2(&num_entries)) {
-    if (err) {
-      (*err) += "Faild to read the number of entries in TIFF IFD.\n";
+  uint64_t num_entries = 0;
+  if (bigtiff) {
+    if (!sr.read8(&num_entries)) {
+      if (err) (*err) += "Failed to read the number of entries in TIFF IFD.\n";
+      return false;
     }
-    return false;
+  } else {
+    unsigned short classic_entries = 0;
+    if (!sr.read2(&classic_entries)) {
+      if (err) (*err) += "Failed to read the number of entries in TIFF IFD.\n";
+      return false;
+    }
+    num_entries = classic_entries;
   }
-
   if (num_entries == 0) {
     if (err) {
       (*err) += "TIFF IFD cannot have 0 entries.\n";
@@ -3691,14 +3750,16 @@ static bool ParseTIFFIFD(const StreamReader& sr,
   TINY_DNG_DPRINTF("num entries %d\n", num_entries);
 
   // For delayed reading of strip offsets and strip byte counts.
-  long offt_strip_offset = 0;
-  long offt_strip_byte_counts = 0;
+  uint64_t offt_strip_offset = 0;
+  uint64_t offt_strip_byte_counts = 0;
+  unsigned short strip_offset_type = TYPE_LONG;
+  unsigned short strip_byte_count_type = TYPE_LONG;
 
   while (num_entries--) {
     unsigned short tag, type;
-    unsigned int len;
-    unsigned int saved_offt;
-    if (!GetTIFFTag(sr, &tag, &type, &len, &saved_offt)) {
+    uint64_t len;
+    uint64_t saved_offt;
+    if (!GetTIFFTag(sr, &tag, &type, &len, &saved_offt, bigtiff)) {
       if (err) {
         (*err) += "Failed to read TIFF Tag.\n";
       }
@@ -3810,8 +3871,9 @@ static bool ParseTIFFIFD(const StreamReader& sr,
 
       case TAG_STRIP_OFFSET:
       case TAG_JPEG_IF_OFFSET:
-        offt_strip_offset = static_cast<long>(sr.tell());
-        if (!sr.read4(&image.offset)) {
+        offt_strip_offset = static_cast<uint64_t>(sr.tell());
+        strip_offset_type = type;
+        if (!sr.read_uint64(type, &image.offset)) {
           if (err) {
             (*err) += "Failed to parse Compression Tag.\n";
           }
@@ -3838,16 +3900,20 @@ static bool ParseTIFFIFD(const StreamReader& sr,
         }
         break;
 
-      case TAG_STRIP_BYTE_COUNTS:
-        offt_strip_byte_counts = static_cast<long>(sr.tell());
-        if (!sr.read4(&image.strip_byte_count)) {
+      case TAG_STRIP_BYTE_COUNTS: {
+        offt_strip_byte_counts = static_cast<uint64_t>(sr.tell());
+        strip_byte_count_type = type;
+        uint64_t strip_byte_count = 0;
+        if (!sr.read_uint64(type, &strip_byte_count)) {
           if (err) {
             (*err) = "Failed to parse StripByteCount Tag.\n";
           }
           return false;
         }
+        image.strip_byte_count = strip_byte_count;
         TINY_DNG_DPRINTF("strip_byte_count = %d\n", image.strip_byte_count);
         break;
+      }
 
       case TAG_PLANAR_CONFIGURATION:
         if (!sr.read2(&image.planar_configuration)) {
@@ -3894,9 +3960,9 @@ static bool ParseTIFFIFD(const StreamReader& sr,
       {
         // TINY_DNG_DPRINTF("sub_ifds = %d\n", len);
         for (size_t k = 0; k < len; k++) {
-          unsigned int i = static_cast<unsigned int>(sr.tell());
-          unsigned int offt;
-          if (!sr.read4(&offt)) {
+          uint64_t i = static_cast<uint64_t>(sr.tell());
+          uint64_t offt = 0;
+          if (!sr.read_uint64(type, &offt)) {
             if (err) {
               (*err) += "Failed to parse SubIFDs Tag.\n";
             }
@@ -3919,14 +3985,15 @@ static bool ParseTIFFIFD(const StreamReader& sr,
             return false;
           }
 
-          if (!ParseTIFFIFD(sr, custom_field_lists, images, warn, err, call_depth+1)) {
+          if (!ParseTIFFIFD(sr, custom_field_lists, images, warn, err,
+                            call_depth + 1, load_data_tables, bigtiff)) {
             if (err) {
               (*err) += "Failed to Parse SubIFD Tag.\n";
             }
             return false;
           }
 
-          if (!sr.seek_set(i + 4)) {
+          if (!sr.seek_set(i + (bigtiff ? 8u : 4u))) {
             if (err) {
               (*err) += "Failed to rewind to SubIFD Tag position.\n";
             }
@@ -3960,13 +4027,15 @@ static bool ParseTIFFIFD(const StreamReader& sr,
 
       case TAG_TILE_OFFSETS:
         image.tile_offsets.clear();
-        for (size_t k = 0; k < len; ++k) {
-          unsigned int value = 0;
-          if (!sr.read_uint(type, &value)) {
-            if (err) (*err) += "Failed to parse TileOffsets Tag.\n";
-            return false;
+        if (load_data_tables) {
+          for (size_t k = 0; k < len; ++k) {
+            uint64_t value = 0;
+            if (!sr.read_uint64(type, &value)) {
+              if (err) (*err) += "Failed to parse TileOffsets Tag.\n";
+              return false;
+            }
+            image.tile_offsets.push_back(value);
           }
-          image.tile_offsets.push_back(value);
         }
         if (!image.tile_offsets.empty()) image.tile_offset = image.tile_offsets[0];
         TINY_DNG_DPRINTF("tile_offt = %d\n", int(image.tile_offset));
@@ -3974,13 +4043,15 @@ static bool ParseTIFFIFD(const StreamReader& sr,
 
       case TAG_TILE_BYTE_COUNTS:
         image.tile_byte_counts.clear();
-        for (size_t k = 0; k < len; ++k) {
-          unsigned int value = 0;
-          if (!sr.read_uint(type, &value)) {
-            if (err) (*err) += "Failed to parse TileByteCounts Tag.\n";
-            return false;
+        if (load_data_tables) {
+          for (size_t k = 0; k < len; ++k) {
+            uint64_t value = 0;
+            if (!sr.read_uint64(type, &value)) {
+              if (err) (*err) += "Failed to parse TileByteCounts Tag.\n";
+              return false;
+            }
+            image.tile_byte_counts.push_back(value);
           }
-          image.tile_byte_counts.push_back(value);
         }
         if (!image.tile_byte_counts.empty()) image.tile_byte_count = image.tile_byte_counts[0];
         break;
@@ -4553,7 +4624,7 @@ static bool ParseTIFFIFD(const StreamReader& sr,
   }
 
   // Delayed read of strip offsets and strip byte counts
-  if (image.strips_per_image > 0) {
+  if (load_data_tables && image.strips_per_image > 0) {
     image.strip_byte_counts.clear();
     image.strip_offsets.clear();
 
@@ -4568,8 +4639,8 @@ static bool ParseTIFFIFD(const StreamReader& sr,
       }
 
       for (int k = 0; k < image.strips_per_image; k++) {
-        unsigned int strip_byte_count;
-        if (!sr.read4(&strip_byte_count)) {
+        uint64_t strip_byte_count = 0;
+        if (!sr.read_uint64(strip_byte_count_type, &strip_byte_count)) {
           if (err) {
             (*err) += "Failed to read StripByteCount value.\n";
           }
@@ -4589,8 +4660,8 @@ static bool ParseTIFFIFD(const StreamReader& sr,
       }
 
       for (int k = 0; k < image.strips_per_image; k++) {
-        unsigned int strip_offset;
-        if (!sr.read4(&strip_offset)) {
+        uint64_t strip_offset = 0;
+        if (!sr.read_uint64(strip_offset_type, &strip_offset)) {
           if (err) {
             (*err) += "Failed to read StripOffset value.\n";
           }
@@ -4628,7 +4699,9 @@ static bool ParseTIFFIFD(const StreamReader& sr,
 static bool ParseDNGFromMemory(const StreamReader& sr,
                                const std::vector<FieldInfo>& custom_fields,
                                std::vector<tinydng::DNGImage>* images,
-                               std::string* warn, std::string* err) {
+                               std::string* warn, std::string* err,
+                               bool load_data_tables = true,
+                               bool bigtiff = false) {
   if (!images) {
     if (err) {
       (*err) += "Invalid `images` argument.\n";
@@ -4636,15 +4709,29 @@ static bool ParseDNGFromMemory(const StreamReader& sr,
     return false;
   }
 
-  unsigned int offt;
-  if (!sr.read4(&offt)) {
+  uint64_t offt = 0;
+  if (bigtiff) {
+    if (!sr.read8(&offt)) {
+      if (err) (*err) += "Failed to read offset.\n";
+      return false;
+    }
+  } else {
+    unsigned int classic_offt = 0;
+    if (!sr.read4(&classic_offt)) {
+      if (err) (*err) += "Failed to read offset.\n";
+      return false;
+    }
+    offt = classic_offt;
+  }
+  if (offt > sr.size()) {
     if (err) {
-      (*err) += "Failed to read offset.\n";
+      (*err) += "Invalid first IFD offset.\n";
     }
     return false;
   }
 
-  TINY_DNG_DPRINTF("First IFD offt: %d\n", offt);
+  TINY_DNG_DPRINTF("First IFD offt: %llu\n",
+                   static_cast<unsigned long long>(offt));
 
   size_t count = 0;
 
@@ -4657,18 +4744,34 @@ static bool ParseDNGFromMemory(const StreamReader& sr,
     }
 
     // TINY_DNG_DPRINTF("Parse TIFF IFD\n");
-    if (!ParseTIFFIFD(sr, custom_fields, images, warn, err)) {
+    if (!ParseTIFFIFD(sr, custom_fields, images, warn, err, 0,
+                      load_data_tables, bigtiff)) {
+      if (err && err->empty()) (*err) += "Failed to parse TIFF IFD.\n";
       break;
     }
     // Get next IFD offset(0 = end of file).
-    if (!sr.read4(&offt)) {
+    if (bigtiff) {
+      if (!sr.read8(&offt)) {
+        if (err) (*err) += "Failed to read next IDF offset.\n";
+        return false;
+      }
+    } else {
+      unsigned int classic_offt = 0;
+      if (!sr.read4(&classic_offt)) {
+        if (err) (*err) += "Failed to read next IDF offset.\n";
+        return false;
+      }
+      offt = classic_offt;
+    }
+    if (offt > sr.size()) {
       if (err) {
-        (*err) += "Failed to read next IDF offset.\n";
+        (*err) += "Invalid next IFD offset.\n";
       }
       return false;
     }
 
-    TINY_DNG_DPRINTF("Next IFD offset = %d\n", offt);
+    TINY_DNG_DPRINTF("Next IFD offset = %llu\n",
+                     static_cast<unsigned long long>(offt));
 
     // Avoid infinite loop
     count++;
@@ -5166,12 +5269,15 @@ static bool DecodeTiledImage(StreamReader& sr, DNGImage* image,
     for (size_t ty = 0; ty < tilesY; ++ty) {
       for (size_t tx = 0; tx < tilesX; ++tx) {
         const size_t tileIndex = plane * tilesPerPlane + ty * tilesX + tx;
-        const size_t offset = image->tile_offsets[tileIndex];
-        const size_t count = image->tile_byte_counts[tileIndex];
-        if (count == 0 || offset > sr.size() || count > sr.size() - offset) {
+        const uint64_t offset64 = image->tile_offsets[tileIndex];
+        const uint64_t count64 = image->tile_byte_counts[tileIndex];
+        if (count64 == 0 || offset64 > sr.size() ||
+            count64 > static_cast<uint64_t>(sr.size()) - offset64) {
           if (err) (*err) += "Invalid tiled TIFF tile range.\n";
           return false;
         }
+        const size_t offset = static_cast<size_t>(offset64);
+        const size_t count = static_cast<size_t>(count64);
         const uint8_t* src = sr.map_abs_addr(offset, count);
         if (!src) return false;
         decoded.assign(tileBytes, 0);
@@ -5339,14 +5445,15 @@ bool LoadDNG(const char* filename, std::vector<FieldInfo>& custom_fields,
   fclose(fp);
 
   return LoadDNGFromMemory(reinterpret_cast<const char*>(whole_data.data()),
-                           static_cast<unsigned int>(whole_data.size()),
+                           whole_data.size(),
                            custom_fields, images, warn, err);
 }
 
-bool LoadDNGFromMemory(const char* mem, unsigned int size,
-                       std::vector<FieldInfo>& custom_fields,
-                       std::vector<DNGImage>* images, std::string* warn,
-                       std::string* err) {
+static bool LoadDNGFromMemoryImpl(const char* mem, size_t size,
+                                  std::vector<FieldInfo>& custom_fields,
+                                  std::vector<DNGImage>* images,
+                                  std::string* warn, std::string* err,
+                                  bool decode_pixels) {
   (void)warn;
 
   if ((mem == NULL) || (size < 32) || (!images)) {
@@ -5388,15 +5495,37 @@ bool LoadDNGFromMemory(const char* mem, unsigned int size,
     return false;
   }
 
-  // skip magic header
-  if (!sr.seek_set(4)) {
+  unsigned short version = 0;
+  if (!sr.seek_set(2) || !sr.read2(&version)) {
     if (err) {
-      (*err) += "Failed to seek to offset 4.\n";
+      (*err) += "Failed to read TIFF version.\n";
     }
     return false;
   }
 
-  bool ret = ParseDNGFromMemory(sr, custom_fields, images, warn, err);
+  bool bigtiff = false;
+  if (version == 42) {
+    if (!sr.seek_set(4)) {
+      if (err) (*err) += "Failed to seek to classic TIFF offset.\n";
+      return false;
+    }
+  } else if (version == 43) {
+    unsigned short offset_size = 0;
+    unsigned short reserved = 0;
+    if (!sr.seek_set(4) || !sr.read2(&offset_size) ||
+        !sr.read2(&reserved) || offset_size != 8 || reserved != 0 ||
+        !sr.seek_set(8)) {
+      if (err) (*err) += "Invalid BigTIFF header.\n";
+      return false;
+    }
+    bigtiff = true;
+  } else {
+    if (err) (*err) += "Unsupported TIFF version.\n";
+    return false;
+  }
+
+  bool ret = ParseDNGFromMemory(sr, custom_fields, images, warn, err,
+                                decode_pixels, bigtiff);
 
   if (!ret) {
     if (err) {
@@ -5405,16 +5534,17 @@ bool LoadDNGFromMemory(const char* mem, unsigned int size,
     return false;
   }
 
+  if (!decode_pixels) return true;
+
   //
   // Decode image data.
   //
   for (size_t i = 0; i < images->size(); i++) {
     tinydng::DNGImage* image = &((*images)[i]);
 
-    const size_t data_offset =
+    const uint64_t data_offset64 =
         (image->offset > 0) ? image->offset : image->tile_offset;
-    TINY_DNG_DPRINTF("data_offset = %d\n", int(data_offset));
-    if ((data_offset == 0) || (data_offset > sr.size())) {
+    if (data_offset64 == 0 || data_offset64 > sr.size()) {
       if (err) {
         std::stringstream ss;
         ss << i << "'th image data offset is zero or invalid.\n";
@@ -5422,6 +5552,8 @@ bool LoadDNGFromMemory(const char* mem, unsigned int size,
       }
       return false;
     }
+    const size_t data_offset = static_cast<size_t>(data_offset64);
+    TINY_DNG_DPRINTF("data_offset = %d\n", int(data_offset));
 
     // std::cout << "offt =\n" << image->offset << std::endl;
     // std::cout << "tile_offt = \n" << image->tile_offset << std::endl;
@@ -6337,7 +6469,23 @@ bool LoadDNGFromMemory(const char* mem, unsigned int size,
   return ret ? true : false;
 }
 
-bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg) {
+bool LoadDNGMetadataFromMemory(const char* mem, size_t size,
+                               std::vector<FieldInfo>& custom_fields,
+                               std::vector<DNGImage>* images,
+                               std::string* warn, std::string* err) {
+  return LoadDNGFromMemoryImpl(mem, size, custom_fields, images, warn, err,
+                               false);
+}
+
+bool LoadDNGFromMemory(const char* mem, size_t size,
+                       std::vector<FieldInfo>& custom_fields,
+                       std::vector<DNGImage>* images, std::string* warn,
+                       std::string* err) {
+  return LoadDNGFromMemoryImpl(mem, size, custom_fields, images, warn, err,
+                               true);
+}
+
+bool IsDNGFromMemory(const char* mem, size_t size, std::string* msg) {
   if ((mem == NULL) || (size < 32)) {
     if (msg) {
       (*msg) = "Invalid argument. argument is null or invalid.\n";
@@ -6418,7 +6566,7 @@ bool IsDNG(const char* filename, std::string* msg) {
   fclose(fp);
 
   return IsDNGFromMemory(reinterpret_cast<const char*>(whole_data.data()),
-                         static_cast<unsigned int>(whole_data.size()), msg);
+                         whole_data.size(), msg);
 }
 
 #ifdef __clang__

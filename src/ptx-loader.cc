@@ -85,10 +85,47 @@ bool PlanarToInterleaved(const std::vector<uint8_t>& planar, uint32_t w,
 
 }  // namespace
 
+Reader::~Reader() { ResetSource(); }
+
+void Reader::ResetSource() {
+  if (mapped_file_) {
+    std::string ignored;
+    io::UnmapFile(*mapped_file_, &ignored);
+    mapped_file_.reset();
+  }
+  data_ = nullptr;
+  size_ = 0;
+  owned_.clear();
+}
+
 bool Reader::OpenFile(const std::string& path, Reader* out, std::string* err) {
   if (!out) return Fail(err, "Ptex output reader is null");
-  std::ifstream f(path, std::ios::binary | std::ios::ate);
-  if (!f) return Fail(err, "cannot open Ptex file");
+
+  out->ResetSource();
+
+  // PTEX containers can be several GiB. Mapping keeps the compressed source
+  // out of the heap and lets the kernel fault in only the metadata and face
+  // blocks that are actually touched by Parse/ReadFace.
+  auto mapped = std::make_unique<io::MMapFileHandle>();
+  std::string mmapError;
+  if (io::MMapFile(path, mapped.get(), false, &mmapError)) {
+    if (mapped->size > 0 && mapped->size <= (16ull << 30)) {
+      out->data_ = mapped->addr;
+      out->size_ = static_cast<size_t>(mapped->size);
+      out->mapped_file_ = std::move(mapped);
+      return out->Parse(err);
+    }
+    std::string ignored;
+    io::UnmapFile(*mapped, &ignored);
+  }
+
+  // Keep the stream path as a portability fallback (WASI, restricted mobile
+  // builds, and filesystems where mmap is refused). It is intentionally only
+  // used after mmap fails; normal desktop PTEX loads are zero-copy.
+  std::ifstream f;
+  if (!io::OpenInputFile(&f, path, std::ios::binary | std::ios::ate)) {
+    return Fail(err, "cannot open Ptex file");
+  }
   const std::streamoff n = f.tellg();
   if (n <= 0) return Fail(err, "empty Ptex file");
   // streamoff is 64-bit, but streamsize and size_t are 32-bit on wasm32, so a
@@ -123,7 +160,7 @@ bool Reader::OpenFile(const std::string& path, Reader* out, std::string* err) {
 bool Reader::OpenMemory(const uint8_t* data, size_t size, Reader* out,
                         std::string* err) {
   if (!out || (!data && size)) return Fail(err, "invalid Ptex memory");
-  out->owned_.clear();
+  out->ResetSource();
   out->data_ = data;
   out->size_ = size;
   return out->Parse(err);
