@@ -485,6 +485,10 @@ class VulkanRenderer final : public Renderer {
   bool createCompressedTextureImage(const DrawCompressedImageCPU& img, bool srgb,
                                     VkImage* outImg, VkDeviceMemory* outMem,
                                     VkImageView* outView);
+  bool createCompressedUdimTextureArrayImage(const DrawTextureCPU& tex,
+                                             bool srgb, VkImage* outImg,
+                                             VkDeviceMemory* outMem,
+                                             VkImageView* outView);
   bool createUdimTextureArrayImage(const DrawTextureCPU& tex, VkImage* outImg,
                                    VkDeviceMemory* outMem,
                                    VkImageView* outView);
