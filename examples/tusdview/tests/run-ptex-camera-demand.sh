@@ -60,6 +60,9 @@ log="$out/run.log"
 texture_args=()
 if [[ "${TUSDVIEW_PTEX_COMPRESS:-1}" != "0" ]]; then
   texture_args=(--texture-compress bc7 --texture-gpu vulkan)
+  if [[ -n "${TUSDVIEW_PTEX_GPU_DEVICE:-}" ]]; then
+    texture_args+=(--texture-gpu-device "${TUSDVIEW_PTEX_GPU_DEVICE}")
+  fi
 fi
 if ! env TUSDVIEW_PTEX_FORCE_RESIDENCY=1 timeout 60s \
     "$viewer" --headless --backend vk --next \
