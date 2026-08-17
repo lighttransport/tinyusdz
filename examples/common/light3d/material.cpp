@@ -834,7 +834,16 @@ void main() {
         vec2 du2 = dFdy(uv);
         float r = du1.x * du2.y - du2.x * du1.y;
         vec3 t = dp1 * du2.y - dp2 * du1.y;
-        t = (abs(r) > 1e-8) ? t / r : dp1;
+        if (abs(r) > 1e-8) {
+            t /= r;
+        } else {
+            // A constant/degenerate UV derivative must not feed a zero or
+            // normal-parallel tangent into normalize(): that produces NaNs,
+            // which encode as black in the AOV. Pick a stable tangent instead.
+            vec3 ref = (abs(N.z) < 0.9) ? vec3(0.0, 0.0, 1.0)
+                                       : vec3(0.0, 1.0, 0.0);
+            t = cross(ref, N);
+        }
         t = normalize(t - N * dot(N, t));
         vec3 b = normalize(cross(N, t)) * (r < 0.0 ? -1.0 : 1.0);
         N = normalize(mat3(t, b, N) * tangentNormal);
@@ -854,7 +863,14 @@ void main() {
         vec2 du1 = dFdx(uv), du2 = dFdy(uv);
         float rr = du1.x * du2.y - du2.x * du1.y;
         vec3 t = dp1 * du2.y - dp2 * du1.y;
-        t = normalize((abs(rr) > 1e-8 ? t / rr : dp1) - N * dot(N, t));
+        if (abs(rr) > 1e-8) {
+            t /= rr;
+        } else {
+            vec3 ref = (abs(N.z) < 0.9) ? vec3(0.0, 0.0, 1.0)
+                                       : vec3(0.0, 1.0, 0.0);
+            t = cross(ref, N);
+        }
+        t = normalize(t - N * dot(N, t));
         vec3 b = normalize(cross(N, t)) * (rr < 0.0 ? -1.0 : 1.0);
         coatN = normalize(mat3(t, b, N) * tn);
     }
@@ -878,7 +894,11 @@ void main() {
     if (uRenderMode != 0 && uRenderMode != 36 && uRenderMode != 37 &&
         uRenderMode != 38 && uRenderMode != 39 && uRenderMode != 40) {
         vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
-        if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }       // shading normal
+        if (uRenderMode == 2) {
+            vec3 aovN = (dot(N, uCameraPos - vWorldPos) < 0.0) ? -N : N;
+            fragColor = vec4(aovN * 0.5 + 0.5, 1.0);
+            return;
+        } // shading normal
         if (uRenderMode == 35) { fragColor = vec4(coatN * 0.5 + 0.5, 1.0); return; } // coat normal
         if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }     // material id
         if (uRenderMode == 4) { fragColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }    // geometric normal
