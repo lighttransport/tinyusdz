@@ -511,16 +511,21 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
         atlasWidth = packedAtlasWidth;
         rectRows = (rectTexels + uint64_t(atlasWidth) - 1u) / atlasWidth;
       }
-      const uint64_t totalHeight = uint64_t(atlasHeight) +
+      // BCn residency updates address 4x4 blocks. Keep the mutable physical
+      // cache origin block-aligned even when the packed fallback atlas ends on
+      // an odd row (the raw atlas path does not require this padding).
+      const uint32_t cacheBaseY =
+          cacheRows > 0 ? (atlasHeight + 3u) & ~uint32_t{3u} : atlasHeight;
+      const uint64_t totalHeight = uint64_t(cacheBaseY) +
                                    cacheRows * physicalCacheSlotEdge + rectRows;
       const uint64_t bytes = uint64_t(atlasWidth) * totalHeight * 4u;
       if (!retryForCache && totalHeight <= options.maxAtlasEdge &&
           (options.maxAtlasBytes == 0 || bytes <= options.maxAtlasBytes)) {
         imageHeight = static_cast<uint32_t>(totalHeight);
-        physicalCacheOffsetY = atlasHeight;
+        physicalCacheOffsetY = cacheBaseY;
         physicalCacheSlots = static_cast<uint32_t>(selectedSlots);
         rectTexelOffset = atlasWidth * static_cast<uint32_t>(
-            uint64_t(atlasHeight) + cacheRows * physicalCacheSlotEdge);
+            uint64_t(cacheBaseY) + cacheRows * physicalCacheSlotEdge);
         break;
       }
     }

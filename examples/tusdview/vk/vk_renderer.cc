@@ -131,7 +131,7 @@ std::string RtPipelineCachePath(const VkPhysicalDeviceProperties& props,
 
 constexpr uint32_t kRasterDescriptorSetCount = 4;
 constexpr uint32_t kMaterialBindingCount = 32;
-constexpr uint32_t kDeformBindingCount = 7;
+constexpr uint32_t kDeformBindingCount = 8;
 constexpr uint32_t kMaxMaterialSets = 8192;
 constexpr uint32_t kMaxDeformSets = 16384;
 
@@ -2626,7 +2626,7 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
     deformBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     deformBindings[i].descriptorCount = 1;
     deformBindings[i].stageFlags =
-        (i == 6) ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
+        (i >= 6) ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
   }
   VkDescriptorSetLayoutCreateInfo deformLci{};
   deformLci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -2985,7 +2985,8 @@ VkDescriptorSet VulkanRenderer::allocDeformDescriptor(const VkMeshGPU& mesh) {
       mesh.morphChanBuf ? mesh.morphChanBuf : dummyMorphBuf_,
       mesh.vtxColorBuf ? mesh.vtxColorBuf : dummyMorphBuf_,
       mesh.faceBuf ? mesh.faceBuf
-                   : (dummyFaceBuf_ ? dummyFaceBuf_ : dummyMorphBuf_)};
+                   : (dummyFaceBuf_ ? dummyFaceBuf_ : dummyMorphBuf_),
+      ptexRectBuf_ ? ptexRectBuf_ : dummyMorphBuf_};
   VkDescriptorBufferInfo infos[kDeformBindingCount]{};
   VkWriteDescriptorSet writes[kDeformBindingCount]{};
   for (uint32_t i = 0; i < kDeformBindingCount; ++i) {
@@ -3018,9 +3019,46 @@ void VulkanRenderer::refreshDeformDescriptors() {
     write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     write.pBufferInfo = &info;
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    VkDescriptorBufferInfo rectInfo{};
+    rectInfo.buffer = ptexRectBuf_ ? ptexRectBuf_ : dummyMorphBuf_;
+    rectInfo.range = VK_WHOLE_SIZE;
+    write.dstBinding = 7;
+    write.pBufferInfo = &rectInfo;
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
   };
   updateBone(dummyDeformDesc_);
   for (const VkMeshGPU& mesh : meshes_) updateBone(mesh.deformDesc);
+}
+
+void VulkanRenderer::rebuildPtexRectBuffer() {
+  if (!device_) return;
+  // A page completion can arrive after a frame that sampled the old table.
+  // Retire that submission before replacing the buffer and its descriptors.
+  if (ptexRectBuf_) vkDeviceWaitIdle(device_);
+  if (ptexRectBuf_) vkDestroyBuffer(device_, ptexRectBuf_, nullptr);
+  if (ptexRectMem_) vkFreeMemory(device_, ptexRectMem_, nullptr);
+  ptexRectBuf_ = VK_NULL_HANDLE;
+  ptexRectMem_ = VK_NULL_HANDLE;
+  ptexRectOffsets_.assign(rtTexturesCpu_.size(), 0u);
+
+  std::vector<uint32_t> rects;
+  rects.reserve(4);
+  for (size_t slot = 0; slot < rtTexturesCpu_.size(); ++slot) {
+    const DrawTextureCPU& tex = rtTexturesCpu_[slot];
+    ptexRectOffsets_[slot] = static_cast<uint32_t>(rects.size() / 4u);
+    if (!tex.isPtex) continue;
+    for (const DrawPtexFaceRectCPU& r : tex.ptexFaceRects) {
+      rects.push_back(r.x);
+      rects.push_back(r.y);
+      rects.push_back(r.width);
+      rects.push_back(r.height);
+    }
+  }
+  if (rects.empty()) rects.assign(4, 0u);
+  createHostBuffer(rects.size() * sizeof(uint32_t),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rects.data(),
+                   &ptexRectBuf_, &ptexRectMem_);
+  refreshDeformDescriptors();
 }
 
 void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
@@ -5303,10 +5341,16 @@ void VulkanRenderer::destroyScene() {
   texSlotWidths_.clear();
   texSlotHeights_.clear();
   texRegionUpdatable_.clear();
+  texCompressedFormats_.clear();
   texUdimArrayViews_.clear();
   texUdimArrayImgs_.clear();
   texUdimArrayMems_.clear();
   texIsUdim_.clear();
+  if (ptexRectBuf_) vkDestroyBuffer(device_, ptexRectBuf_, nullptr);
+  if (ptexRectMem_) vkFreeMemory(device_, ptexRectMem_, nullptr);
+  ptexRectBuf_ = VK_NULL_HANDLE;
+  ptexRectMem_ = VK_NULL_HANDLE;
+  ptexRectOffsets_.clear();
   if (udimLutAtlasView_) vkDestroyImageView(device_, udimLutAtlasView_, nullptr);
   if (udimLutAtlasImg_) vkDestroyImage(device_, udimLutAtlasImg_, nullptr);
   if (udimLutAtlasMem_) vkFreeMemory(device_, udimLutAtlasMem_, nullptr);
@@ -5434,7 +5478,24 @@ void VulkanRenderer::updateMaterialTables(
     if (dispMatMapped_ && i < kMaxDispMaterials) {
       float* dst = static_cast<float*>(dispMatMapped_) +
                    i * kVkMatTexParamFloats;
-      PackRasterMaterialTextureParams(materials[i], dst);
+      DrawMaterialCPU packed = materials[i];
+      auto patchPtexOffset = [&](DrawTexSampleCPU* sample) {
+        if (!sample || !sample->isPtex || sample->tex < 0 ||
+            static_cast<size_t>(sample->tex) >= ptexRectOffsets_.size()) return;
+        sample->ptexRectTexelOffset = ptexRectOffsets_[sample->tex];
+      };
+      patchPtexOffset(&packed.baseColorSample);
+      patchPtexOffset(&packed.metallicSample);
+      patchPtexOffset(&packed.roughnessSample);
+      patchPtexOffset(&packed.normalSample);
+      patchPtexOffset(&packed.emissiveSample);
+      patchPtexOffset(&packed.opacitySample);
+      patchPtexOffset(&packed.occlusionSample);
+      patchPtexOffset(&packed.specularColorSample);
+      patchPtexOffset(&packed.coatWeightSample);
+      patchPtexOffset(&packed.coatColorSample);
+      patchPtexOffset(&packed.coatRoughnessSample);
+      PackRasterMaterialTextureParams(packed, dst);
     }
   }
 
@@ -5485,6 +5546,9 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                          0);
   texRegionUpdatable_.assign(
       textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
+  texCompressedFormats_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+      DrawCompressedFormat::None);
   texUdimArrayViews_.assign(
       textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
       dummyArrayView_);
@@ -5615,6 +5679,8 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (slot < 0 || static_cast<size_t>(slot) >= texDescs_.size()) return;
   const size_t index = static_cast<size_t>(slot);
   rtTexturesCpu_[index] = t;
+  if (ptexRectOffsets_.size() != rtTexturesCpu_.size())
+    ptexRectOffsets_.assign(rtTexturesCpu_.size(), 0u);
   // Ray-query textures are packed into a host-built SSBO. A streamed
   // coarse/full replacement must rebuild that table before the next RT frame.
   if (rtActive_) rtTextureTableDirty_ = true;
@@ -5644,15 +5710,19 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     texSlotBytes_[index] = static_cast<size_t>(requirements.size);
     texSlotWidths_[index] = t.image.width;
     texSlotHeights_[index] = t.image.height;
+    texCompressedFormats_[index] =
+        (t.requestedCompressed && t.compressed.format != DrawCompressedFormat::None)
+            ? t.compressed.format
+            : DrawCompressedFormat::None;
     texRegionUpdatable_[index] =
         !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
                 (!t.image.data.empty() || t.streamingMutable) &&
-                !(t.requestedCompressed &&
-                  t.compressed.format != DrawCompressedFormat::None &&
-                  !t.compressed.data.empty())
+                (texCompressedFormats_[index] == DrawCompressedFormat::None ||
+                 t.isPtex)
             ? 1
             : 0;
-    if (t.isPtex && t.ptexRectTexelOffset <
+    if (t.isPtex && texCompressedFormats_[index] == DrawCompressedFormat::None &&
+        t.ptexRectTexelOffset <
                         static_cast<uint32_t>(t.image.width * t.image.height)) {
       size_t linear = t.ptexRectTexelOffset;
       size_t remaining = t.ptexFaceRects.size() * 8u;
@@ -5667,6 +5737,10 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
         remaining -= static_cast<size_t>(count);
       }
     }
+  }
+  if (t.isPtex) {
+    rebuildPtexRectBuffer();
+    updateMaterialTables(rtMaterialsCpu_);
   }
   if (ok && t.isUdim && index < texUdimArrayDescs_.size()) {
     VkImage arrImg = VK_NULL_HANDLE;
@@ -5781,6 +5855,18 @@ bool VulkanRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,
   return updateTextureRegions(slot, {std::move(update)});
 }
 
+bool VulkanRenderer::updatePtexFaceRect(int slot, uint32_t face,
+                                        const DrawPtexFaceRectCPU& rect) {
+  if (slot < 0 || static_cast<size_t>(slot) >= rtTexturesCpu_.size() ||
+      !rtTexturesCpu_[static_cast<size_t>(slot)].isPtex ||
+      face >= rtTexturesCpu_[static_cast<size_t>(slot)].ptexFaceRects.size()) {
+    return false;
+  }
+  rtTexturesCpu_[static_cast<size_t>(slot)].ptexFaceRects[face] = rect;
+  rebuildPtexRectBuffer();
+  return true;
+}
+
 bool VulkanRenderer::updateTextureRegions(
     int slot, const std::vector<TextureRegionUpdate>& updates) {
   if (!device_ || slot < 0 || static_cast<size_t>(slot) >= texSlotImgs_.size() ||
@@ -5788,22 +5874,67 @@ bool VulkanRenderer::updateTextureRegions(
     return false;
   }
   const size_t index = static_cast<size_t>(slot);
-  if (!texRegionUpdatable_[index] || !texSlotImgs_[index]) return false;
+  if (!texRegionUpdatable_[index] || !texSlotImgs_[index]) {
+    LOGW("Vulkan texture region update rejected: slot=%d updatable=%d image=%s",
+         slot, texRegionUpdatable_[index],
+         texSlotImgs_[index] ? "valid" : "null");
+    return false;
+  }
+  const bool compressedUpdates =
+      updates.front().compressedFormat != DrawCompressedFormat::None;
+  auto blockBytes = [](DrawCompressedFormat f) -> size_t {
+    switch (f) {
+      case DrawCompressedFormat::BC1:
+      case DrawCompressedFormat::BC5:
+      case DrawCompressedFormat::ETC2_RGB: return 8u;
+      case DrawCompressedFormat::BC3:
+      case DrawCompressedFormat::BC6H:
+      case DrawCompressedFormat::BC7:
+      case DrawCompressedFormat::ETC2_RGBA:
+      case DrawCompressedFormat::ASTC_4x4: return 16u;
+      default: return 0u;
+    }
+  };
+  if (compressedUpdates && texCompressedFormats_[index] == DrawCompressedFormat::None) {
+    LOGW("Vulkan compressed texture update rejected: slot %d is uncompressed", slot);
+    return false;
+  }
   size_t totalBytes = 0;
   for (const TextureRegionUpdate& update : updates) {
+    if ((update.compressedFormat != DrawCompressedFormat::None) !=
+            compressedUpdates ||
+        (compressedUpdates && update.compressedFormat !=
+                                  texCompressedFormats_[index])) {
+      LOGW("Vulkan texture region update format mismatch: slot=%d", slot);
+      return false;
+    }
     const size_t stride = update.rowBytes
                               ? update.rowBytes
                               : size_t(update.width) * 4u;
+    const size_t bw = (static_cast<size_t>(update.width) + 3u) / 4u;
+    const size_t bh = (static_cast<size_t>(update.height) + 3u) / 4u;
+    const size_t bytes = compressedUpdates
+                             ? bw * bh * blockBytes(update.compressedFormat)
+                             : stride * size_t(update.height);
     if (update.x < 0 || update.y < 0 || update.width <= 0 ||
         update.height <= 0 || update.x + update.width > texSlotWidths_[index] ||
         update.y + update.height > texSlotHeights_[index] ||
-        stride < size_t(update.width) * 4u || (stride & 3u) != 0 ||
-        update.rgba.size() < stride * size_t(update.height) ||
+        (!compressedUpdates && (stride < size_t(update.width) * 4u ||
+                                (stride & 3u) != 0 ||
+                                update.rgba.size() < bytes)) ||
+        (compressedUpdates &&
+         ((update.x & 3) != 0 || (update.y & 3) != 0 ||
+          update.compressed.size() < bytes)) ||
         totalBytes > std::numeric_limits<size_t>::max() -
-                         stride * size_t(update.height)) {
+                         bytes) {
+      LOGW("Vulkan texture region update bounds/stride failure: slot=%d "
+           "rect=(%d,%d %dx%d) stride=%zu bytes=%zu texture=%dx%d", slot,
+           update.x, update.y, update.width, update.height, stride,
+           compressedUpdates ? update.compressed.size() : update.rgba.size(),
+           texSlotWidths_[index], texSlotHeights_[index]);
       return false;
     }
-    totalBytes += stride * size_t(update.height);
+    totalBytes += bytes;
   }
   std::vector<uint8_t> packed;
   packed.reserve(totalBytes);
@@ -5811,9 +5942,18 @@ bool VulkanRenderer::updateTextureRegions(
     const size_t stride = update.rowBytes
                               ? update.rowBytes
                               : size_t(update.width) * 4u;
-    packed.insert(packed.end(), update.rgba.begin(),
-                  update.rgba.begin() +
-                      static_cast<std::ptrdiff_t>(stride * update.height));
+    if (compressedUpdates) {
+      const size_t bytes = ((static_cast<size_t>(update.width) + 3u) / 4u) *
+                           ((static_cast<size_t>(update.height) + 3u) / 4u) *
+                           blockBytes(update.compressedFormat);
+      packed.insert(packed.end(), update.compressed.begin(),
+                    update.compressed.begin() +
+                        static_cast<std::ptrdiff_t>(bytes));
+    } else {
+      packed.insert(packed.end(), update.rgba.begin(),
+                    update.rgba.begin() +
+                        static_cast<std::ptrdiff_t>(stride * update.height));
+    }
   }
   VkBuffer staging = VK_NULL_HANDLE;
   VkDeviceMemory stagingMem = VK_NULL_HANDLE;
@@ -5848,13 +5988,19 @@ bool VulkanRenderer::updateTextureRegions(
                               : size_t(update.width) * 4u;
     VkBufferImageCopy& region = regions[i];
     region.bufferOffset = offset;
-    region.bufferRowLength = static_cast<uint32_t>(stride / 4u);
+    region.bufferRowLength = compressedUpdates ? 0u
+                                               : static_cast<uint32_t>(stride / 4u);
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageOffset = {update.x, update.y, 0};
     region.imageExtent = {static_cast<uint32_t>(update.width),
                           static_cast<uint32_t>(update.height), 1};
-    offset += static_cast<VkDeviceSize>(stride) * update.height;
+    const size_t bytes = compressedUpdates
+                             ? ((static_cast<size_t>(update.width) + 3u) / 4u) *
+                                   ((static_cast<size_t>(update.height) + 3u) / 4u) *
+                                   blockBytes(update.compressedFormat)
+                             : stride * update.height;
+    offset += static_cast<VkDeviceSize>(bytes);
   }
   vkCmdCopyBufferToImage(cb, staging, texSlotImgs_[index],
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
