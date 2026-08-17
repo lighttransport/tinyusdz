@@ -145,7 +145,12 @@ class App
   const LoadOptions& loadOptions() const { return loadOpts_; }
   void setUploadBudgetMs(double ms) { uploadBudgetMs_ = ms; }
   void setQuitAfterFullUpload(bool on) { quitAfterFullUpload_ = on; }
-  void setQuitAfterConvert(bool on) { quitAfterConvert_ = on; }
+  void setQuitAfterConvert(bool on) {
+    quitAfterConvert_ = on;
+    // Conversion-only validation must include ordinary texture decode and
+    // compression even when an interactive preset enabled deferred decode.
+    loadOpts_.forceTextureDecode = on;
+  }
 
   // Use the `next` lazy loader + tydra-next converter (flat-shaded large-scene
   // mesh preview) instead of the default Tydra path. See next_scene_loader.cc.

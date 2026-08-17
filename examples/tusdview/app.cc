@@ -2070,6 +2070,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
 
 void App::drainProgressiveLoad() {
   if (!streamLoadActive_ || !loadStream_) return;
+  const bool conversionOnly = quitAfterConvert_;
   const auto sliceStart = std::chrono::steady_clock::now();
   // Automated progressive benchmarks need one representative useful present,
   // then can drain aggressively instead of spending llvmpipe time drawing every
@@ -2087,7 +2088,7 @@ void App::drainProgressiveLoad() {
   // Diagnostic wire/source-face buffers are optional. Keep their compact CPU
   // source until a diagnostic mode is requested instead of consuming GPU memory
   // and upload bandwidth during an ordinary shaded load.
-  if (streamFirstFrameLogged_ && streamAuxEager_) {
+  if (!conversionOnly && streamFirstFrameLogged_ && streamAuxEager_) {
     while (nextAux_ < draw_.meshes.size() && elapsedMs() < budgetMs) {
       restoreDeferredMeshAux(nextAux_);
       renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
@@ -2130,8 +2131,10 @@ void App::drainProgressiveLoad() {
       DrawScene preview = std::move(event.scene);
       renderer_->beginScene(preview.materials,
                             static_cast<int>(preview.textures.size()));
-      for (const DrawMeshCPU& mesh : preview.meshes) {
-        renderer_->appendMeshSurface(mesh);
+      if (!conversionOnly) {
+        for (const DrawMeshCPU& mesh : preview.meshes) {
+          renderer_->appendMeshSurface(mesh);
+        }
       }
       draw_ = std::move(preview);
       streamRendererBegun_ = true;
@@ -2195,10 +2198,12 @@ void App::drainProgressiveLoad() {
         camera_.fitToScene(streamBoundsMin_, streamBoundsMax_);
         streamCameraFramed_ = true;
       }
-      if (streamAuxEager_)
-        renderer_->appendMesh(mesh);
-      else
-        renderer_->appendMeshSurface(mesh);
+      if (!conversionOnly) {
+        if (streamAuxEager_)
+          renderer_->appendMesh(mesh);
+        else
+          renderer_->appendMeshSurface(mesh);
+      }
       streamUploadedVertices_ += vertices;
       streamUploadedTriangles_ += triangles;
       streamUploadedEffectiveTriangles_ += effectiveTriangles;
@@ -2249,7 +2254,7 @@ void App::drainProgressiveLoad() {
       if (useful) {
         const bool usefulPurpose = points.purpose != "guide";
         DrawPointsCPU metadata = retainPointMetadata(points);
-        renderer_->appendPoints(std::move(points));
+        if (!conversionOnly) renderer_->appendPoints(std::move(points));
         draw_.points.push_back(std::move(metadata));
         if (usefulPurpose) streamHasUsefulGeometry_ = true;
       }
@@ -2272,7 +2277,7 @@ void App::drainProgressiveLoad() {
       if (useful) {
         const bool usefulPurpose = curves.purpose != "guide";
         DrawCurvesCPU metadata = retainCurveMetadata(curves);
-        renderer_->appendCurves(std::move(curves));
+        if (!conversionOnly) renderer_->appendCurves(std::move(curves));
         draw_.curves.push_back(std::move(metadata));
         if (usefulPurpose) streamHasUsefulGeometry_ = true;
       }
@@ -2306,7 +2311,7 @@ void App::drainProgressiveLoad() {
         std::memcpy(metadata.emission, volume.emission,
                     sizeof(metadata.emission));
         metadata.background = volume.background;
-        renderer_->appendVolume(volume);
+        if (!conversionOnly) renderer_->appendVolume(volume);
         draw_.volumes.push_back(std::move(metadata));
         streamHasUsefulGeometry_ = true;
       }
@@ -2314,7 +2319,8 @@ void App::drainProgressiveLoad() {
       if (event.textureSlot < 0) continue;
       const size_t slot = static_cast<size_t>(event.textureSlot);
       if (draw_.textures.size() <= slot) draw_.textures.resize(slot + 1);
-      renderer_->uploadTexture(event.textureSlot, event.texture);
+      if (!conversionOnly)
+        renderer_->uploadTexture(event.textureSlot, event.texture);
       // The block payload is the resident source after upload. Keep its asset
       // identity for future refinement, but drop the 4x larger RGBA staging.
       if (!event.texture.compressed.data.empty()) {
@@ -2348,12 +2354,14 @@ void App::drainProgressiveLoad() {
       std::vector<DrawVolumeCPU> streamedVolumes = std::move(draw_.volumes);
       std::vector<DrawTextureCPU> streamedTextures = std::move(draw_.textures);
       DrawScene finalScene = std::move(event.scene);
-      renderer_->syncSceneResources(finalScene.materials,
-                                    static_cast<int>(finalScene.textures.size()));
-      for (DrawPointsCPU& points : finalScene.points)
-        renderer_->appendPoints(std::move(points));
-      for (DrawCurvesCPU& curves : finalScene.curves)
-        renderer_->appendCurves(std::move(curves));
+      if (!conversionOnly) {
+        renderer_->syncSceneResources(
+            finalScene.materials, static_cast<int>(finalScene.textures.size()));
+        for (DrawPointsCPU& points : finalScene.points)
+          renderer_->appendPoints(std::move(points));
+        for (DrawCurvesCPU& curves : finalScene.curves)
+          renderer_->appendCurves(std::move(curves));
+      }
       draw_ = std::move(finalScene);
       draw_.meshes = std::move(streamedMeshes);
       if (!streamedVolumes.empty()) draw_.volumes = std::move(streamedVolumes);
@@ -2371,7 +2379,7 @@ void App::drainProgressiveLoad() {
       // Deferred ordinary slots are scheduled from live camera demand. Upload
       // only specialized synchronous payloads here; they remain outside the
       // generic residency manager.
-      for (size_t i = 0; i < draw_.textures.size(); ++i) {
+      for (size_t i = 0; !conversionOnly && i < draw_.textures.size(); ++i) {
         if (!draw_.textures[i].deferredDecode &&
             (!draw_.textures[i].image.data.empty() ||
              !draw_.textures[i].compressed.data.empty() ||

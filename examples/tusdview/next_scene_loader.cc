@@ -5658,7 +5658,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     texOpts.usdz = &usdzArchive;
   }
   texCache.decoder = std::make_unique<tydn::TextureDecoder>(texOpts);
-  texCache.deferOrdinary = opts.asyncTextureDecode && !texOpts.usdz;
+  texCache.deferOrdinary = opts.asyncTextureDecode &&
+                           !opts.forceTextureDecode && !texOpts.usdz;
 
   // Resolve a material prim path to a DrawScene material index (cached by path).
   // Unbound / unconvertible -> 0 (default gray material).

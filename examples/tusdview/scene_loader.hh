@@ -76,6 +76,11 @@ struct LoadOptions {
   // Register ordinary texture slots during material conversion, then decode,
   // resize and compress them after geometry publication on bounded workers.
   bool asyncTextureDecode{false};
+  // Force ordinary textures through the synchronous decode/compression path.
+  // This is useful for bounded conversion benchmarks and validation runs where
+  // the result must include texture processing rather than merely registering
+  // deferred placeholders for the interactive residency manager.
+  bool forceTextureDecode{false};
   // Interactive fast path: when decoded textures fit comfortably in the
   // device texture budget, avoid CPU block compression/mip generation.
   bool optimizeTextureUpload{false};
