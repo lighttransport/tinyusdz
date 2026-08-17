@@ -8526,7 +8526,7 @@ void VulkanRenderer::rebuildTlas() {
   VkDescriptorBufferInfo pointNodeInfo{rtPointNodeBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo pointOrderInfo{rtPointOrderBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo pointChunkInfo{rtPointChunkBuf_, 0, VK_WHOLE_SIZE};
-  VkWriteDescriptorSet w[17]{};
+  VkWriteDescriptorSet w[18]{};
   w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   w[0].pNext = &asInfo;
   w[0].dstSet = rtSet_;
@@ -8628,7 +8628,21 @@ void VulkanRenderer::rebuildTlas() {
   w[16].descriptorCount = 1;
   w[16].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   w[16].pBufferInfo = &pointChunkInfo;
-  vkUpdateDescriptorSets(device_, 17, w, 0, nullptr);
+  std::array<VkDescriptorImageInfo, 256> ptexImages{};
+  for (size_t i = 0; i < ptexImages.size(); ++i) {
+    ptexImages[i].sampler = sampler_;
+    ptexImages[i].imageView =
+        (i < texSlotViews_.size() && texSlotViews_[i]) ? texSlotViews_[i]
+                                                        : whiteView_;
+    ptexImages[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  }
+  w[17].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[17].dstSet = rtSet_;
+  w[17].dstBinding = 19;
+  w[17].descriptorCount = static_cast<uint32_t>(ptexImages.size());
+  w[17].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  w[17].pImageInfo = ptexImages.data();
+  vkUpdateDescriptorSets(device_, 18, w, 0, nullptr);
 
   tlasDirty_ = false;
   rtTextureTableDirty_ = false;
@@ -8638,7 +8652,7 @@ void VulkanRenderer::rebuildTlas() {
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
   constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
-  VkDescriptorSetLayoutBinding b[19]{};
+  VkDescriptorSetLayoutBinding b[20]{};
   b[0].binding = 0;
   b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   b[0].descriptorCount = kMaxTlasChunks;
@@ -8676,6 +8690,10 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   b[18].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   b[18].descriptorCount = 1;
   b[18].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  b[19] = b[8];
+  b[19].binding = 19;
+  b[19].descriptorCount = 256;
+  b[19].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   lci.bindingCount = 19;
@@ -8687,7 +8705,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxTlasChunks};
   ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
   ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 13};
-  ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
+  ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 + 256};
   VkDescriptorPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   pci.maxSets = 1;

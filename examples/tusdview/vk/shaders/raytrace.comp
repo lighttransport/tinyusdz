@@ -9,6 +9,7 @@
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_nonuniform_qualifier : require
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -87,6 +88,7 @@ struct RtTexDesc {
   int isPtex; int ptexCols; int ptexRows; int ptexTileEdge;
   int ptexRectTexelOffset; int ptexFaceCount;
   int mipCount; int firstMip;
+  int imageSlot;
   int udimLayer[100];
 };
 layout(set = 0, binding = 11, scalar) readonly buffer RtTexels {
@@ -111,6 +113,9 @@ layout(set = 0, binding = 15, scalar) readonly buffer RtPoints { RtPoint points[
 layout(set = 0, binding = 16, scalar) readonly buffer RtPointNodes { RtPointNode pointNodes[]; };
 layout(set = 0, binding = 17, scalar) readonly buffer RtPointOrder { int pointOrder[]; };
 layout(set = 0, binding = 18, scalar) readonly buffer RtPointChunks { RtPointChunk pointChunks[]; };
+// Native compressed Ptex images. Unused entries are bound to the white image;
+// descriptor indexing lets RT sample the same BC7 VkImage that raster uses.
+layout(set = 0, binding = 19) uniform sampler2D rtPtexImages[256];
 
 layout(push_constant) uniform PC {
   mat4 invViewProj;  // inverse(proj * view)
@@ -345,8 +350,11 @@ vec2 ptexAtlasUv(RtTexDesc td, vec2 uv, uint face) {
 vec4 sampleRtPtexTextureLod(int id, vec2 uv, uint face, float lod,
                             vec4 missing) {
   if (id < 0 || id >= int(texDescs.length())) return missing;
-  return sampleRtTextureLod(id, ptexAtlasUv(texDescs[id], uv, face), lod,
-                            missing);
+  RtTexDesc td = texDescs[id];
+  vec2 atlasUv = ptexAtlasUv(td, uv, face);
+  if (td.imageSlot >= 0 && td.imageSlot < 256)
+    return textureLod(rtPtexImages[nonuniformEXT(td.imageSlot)], atlasUv, lod);
+  return sampleRtTextureLod(id, atlasUv, lod, missing);
 }
 
 vec4 sampleRtMaterialTexture(int id, vec2 uv, uint face, float lod,

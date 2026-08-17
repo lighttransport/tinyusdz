@@ -61,11 +61,15 @@ texture_args=()
 if [[ "${TUSDVIEW_PTEX_COMPRESS:-1}" != "0" ]]; then
   texture_args=(--texture-compress bc7 --texture-gpu vulkan)
   if [[ -n "${TUSDVIEW_PTEX_GPU_DEVICE:-}" ]]; then
-    texture_args+=(--texture-gpu-device "${TUSDVIEW_PTEX_GPU_DEVICE}")
+    texture_args+=("--texture-gpu-device=${TUSDVIEW_PTEX_GPU_DEVICE}")
   fi
 fi
+rt_args=()
+if [[ "${TUSDVIEW_PTEX_RT:-0}" == "1" ]]; then
+  rt_args=(--rt)
+fi
 if ! env TUSDVIEW_PTEX_FORCE_RESIDENCY=1 timeout 60s \
-    "$viewer" --headless --backend vk --next \
+    "$viewer" --headless --backend vk --next "${rt_args[@]}" \
     --large-scene-profile instance-heavy --ptex-initial-faces 1 --ptex-cache-mb 4 \
     "${texture_args[@]}" \
     --frames 4 --size 192x128 --camera /Camera \
