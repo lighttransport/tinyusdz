@@ -48,23 +48,21 @@ void main() {
     uint p = (sy * pc.sw + sx) * 3u;
     for (uint c = 0u; c < 3u; ++c) { q[i][c] = quantUF16(src[p + c]); lo[c] = min(lo[c], q[i][c]); hi[c] = max(hi[c], q[i][c]); }
   }
-  uint llo[3] = uint[3](1023u,1023u,1023u); uint lhi[3] = uint[3](0u,0u,0u); uint minI=0u,maxI=0u; uint minL=0xffffffffu,maxL=0u;
-  for(uint i=0u;i<16u;++i){uint lum=unquant(q[i][0])*38u+unquant(q[i][1])*76u+unquant(q[i][2])*14u;if(lum<minL){minL=lum;minI=i;}if(lum>=maxL){maxL=lum;maxI=i;}}
-  for(uint c=0u;c<3u;++c){llo[c]=q[minI][c];lhi[c]=q[maxI][c];}
-  uint boxErr=0u,lineErr=0u;
-  for(uint i=0u;i<16u;++i)for(uint s=0u;s<16u;++s){uint w=weight(s);uint eb=0u,el=0u;for(uint c=0u;c<3u;++c){int db=int(unquant(q[i][c]))-int(unquant(((64u-w)*lo[c]+w*hi[c]+32u)>>6u));int dl=int(unquant(q[i][c]))-int(unquant(((64u-w)*llo[c]+w*lhi[c]+32u)>>6u));eb+=uint(db*db);el+=uint(dl*dl);}if((i==0u&&s==0u)||eb<boxErr)boxErr=eb;if((i==0u&&s==0u)||el<lineErr)lineErr=el;}
-  if(lineErr<boxErr)for(uint c=0u;c<3u;++c){lo[c]=llo[c];hi[c]=lhi[c];}
-  uint sel[16];
-  for (uint i = 0u; i < 16u; ++i) {
-    uint best = 0u; uint bestErr = 0xffffffffu;
-    for (uint s = 0u; s < 16u; ++s) {
-      uint w = weight(s); uint e = 0u;
-      for (uint c = 0u; c < 3u; ++c) { uint v = unquant(((64u-w)*lo[c] + w*hi[c] + 32u) >> 6u); int d = int(unquant(q[i][c])) - int(v); e += uint(d*d); }
-      if (e < bestErr) { bestErr = e; best = s; }
-    }
-    sel[i] = best;
+  // Fast endpoint-line mode: use the per-channel box endpoints and derive
+  // all indices from luminance in one pass. This avoids the old 16x16
+  // endpoint/weight error search, which made full-resolution EXR BC6H
+  // impractical on Vulkan while providing only a small quality improvement.
+  uint minLum=0xffffffffu, maxLum=0u;
+  for (uint i=0u; i<16u; ++i) {
+    uint lum=unquant(q[i][0])*38u+unquant(q[i][1])*76u+unquant(q[i][2])*14u;
+    minLum=min(minLum,lum); maxLum=max(maxLum,lum);
   }
-  if ((sel[0] & 8u) != 0u) { uint t[3]; for (uint c=0u;c<3u;++c){t[c]=lo[c];lo[c]=hi[c];hi[c]=t[c];} for(uint i=0u;i<16u;++i)sel[i]=15u-sel[i]; }
+  uint sel[16];
+  uint lumRange=max(1u,maxLum-minLum);
+  for (uint i=0u; i<16u; ++i) {
+    uint lum=unquant(q[i][0])*38u+unquant(q[i][1])*76u+unquant(q[i][2])*14u;
+    sel[i]=min(15u,((lum-minLum)*15u+lumRange/2u)/lumRange);
+  }
   uint words[4] = uint[4](0u,0u,0u,0u); uint bit = 0u;
   putBits(words, bit, 3u, 5u); for(uint c=0u;c<3u;++c)putBits(words,bit,lo[c],10u); for(uint c=0u;c<3u;++c)putBits(words,bit,hi[c],10u); putBits(words,bit,sel[0],3u); for(uint i=1u;i<16u;++i)putBits(words,bit,sel[i],4u);
   uint block = by * ((pc.dw + 3u) / 4u) + bx;

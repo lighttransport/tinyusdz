@@ -75,6 +75,77 @@ if(TUSDVIEW_TEXTURE_HAVE_CUDA)
   target_compile_definitions(tusdview_texture_gpu_bench PRIVATE TUSDVIEW_TEXTURE_HAVE_CUDA=1)
   set_source_files_properties(cuda_processor.cu PROPERTIES LANGUAGE CUDA)
 endif()
+
+# HDR/EXR real-data checks. Set TUSDVIEW_TEXTURE_GPU_ROOT to an EXR (or use
+# TUSDVIEW_TEXTURE_GPU_HDR_ROOT for a separate HDR asset) to enable these.
+set(_texture_hdr_test_env
+    "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+    "TUSDVIEW_TEXTURE_GPU_FORMATS=bc6h,bc7,astc"
+    "TUSDVIEW_TEXTURE_GPU_MIPS=3"
+    "TUSDVIEW_TEXTURE_GPU_MAX_DIMENSION=2048"
+    "TUSDVIEW_TEXTURE_GPU_MIN_PSNR=5")
+add_test(NAME tusdview-texture-vulkan-nvidia-hdr-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          ${_texture_hdr_test_env}
+          "TUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
+          "TUSDVIEW_TEXTURE_GPU_DEVICE=NVIDIA"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-vulkan-nvidia-hdr-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;hdr;nvidia" TIMEOUT 900)
+
+add_test(NAME tusdview-texture-vulkan-amd-hdr-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          ${_texture_hdr_test_env}
+          "TUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
+          "TUSDVIEW_TEXTURE_GPU_DEVICE=AMD"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-vulkan-amd-hdr-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;hdr;amd" TIMEOUT 900)
+
+set(_texture_bc6h_full_env
+    "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+    "TUSDVIEW_TEXTURE_GPU_FORMATS=bc6h"
+    "TUSDVIEW_TEXTURE_GPU_MIPS=3"
+    "TUSDVIEW_TEXTURE_GPU_MIN_PSNR=5"
+    "TUSDVIEW_TEXTURE_GPU_MAX_GPU_MS=60000")
+add_test(NAME tusdview-texture-vulkan-nvidia-bc6h-full-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          ${_texture_bc6h_full_env}
+          "TUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
+          "TUSDVIEW_TEXTURE_GPU_DEVICE=NVIDIA"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-vulkan-nvidia-bc6h-full-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;hdr;full;nvidia" TIMEOUT 1800)
+
+add_test(NAME tusdview-texture-vulkan-amd-bc6h-full-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          ${_texture_bc6h_full_env}
+          "TUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
+          "TUSDVIEW_TEXTURE_GPU_DEVICE=AMD"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-vulkan-amd-bc6h-full-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;hdr;full;amd" TIMEOUT 1800)
+if(TUSDVIEW_TEXTURE_HAVE_HIP)
+  add_test(NAME tusdview-texture-hip-hdr-real
+    COMMAND ${CMAKE_COMMAND} -E env
+            ${_texture_hdr_test_env}
+            "TUSDVIEW_TEXTURE_GPU_MAX_DIMENSION=2048"
+            "TUSDVIEW_TEXTURE_GPU_BACKEND=hip"
+            bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+  set_tests_properties(tusdview-texture-hip-hdr-real PROPERTIES
+    SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;hdr;hip" TIMEOUT 900)
+endif()
+
+if(TUSDVIEW_TEXTURE_HAVE_CUDA)
+  add_test(NAME tusdview-texture-cuda-hdr-real
+    COMMAND ${CMAKE_COMMAND} -E env
+            ${_texture_hdr_test_env}
+            "TUSDVIEW_TEXTURE_GPU_MAX_DIMENSION=2048"
+            "TUSDVIEW_TEXTURE_GPU_BACKEND=cuda"
+            bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+  set_tests_properties(tusdview-texture-cuda-hdr-real PROPERTIES
+    SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;hdr;cuda" TIMEOUT 900)
+endif()
 add_dependencies(tusdview_texture_gpu_bench tusdview_texture_gpu_shaders)
 target_compile_features(tusdview_texture_gpu_bench PRIVATE cxx_std_17)
 target_compile_definitions(tusdview_texture_gpu_bench PRIVATE VK_NO_PROTOTYPES)
@@ -143,10 +214,118 @@ add_test(NAME tusdview-texture-vulkan-nvidia-formats
 set_tests_properties(tusdview-texture-vulkan-nvidia-formats PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;formats;hdr;mips;nvidia" TIMEOUT 180)
 
+# Opt-in real-corpus checks. These remain skipped unless the caller supplies
+# TUSDVIEW_TEXTURE_GPU_ROOT, so ordinary builds never depend on private assets.
+add_test(NAME tusdview-texture-vulkan-nvidia-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+          "TUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
+          "TUSDVIEW_TEXTURE_GPU_DEVICE=NVIDIA"
+          "TUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-vulkan-nvidia-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;nvidia" TIMEOUT 900)
+
+add_test(NAME tusdview-texture-vulkan-nvidia-formats-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+          "TUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
+          "TUSDVIEW_TEXTURE_GPU_DEVICE=NVIDIA"
+          "TUSDVIEW_TEXTURE_GPU_FORMATS=bc1,bc3,bc5,bc7,astc"
+          "TUSDVIEW_TEXTURE_GPU_MIPS=3"
+          "TUSDVIEW_TEXTURE_GPU_MAX_IMAGES=1"
+          "TUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
+          "TUSDVIEW_TEXTURE_GPU_MIN_PSNR=1"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-vulkan-nvidia-formats-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;formats;nvidia" TIMEOUT 900)
+
+add_test(NAME tusdview-texture-vulkan-amd-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+          "TUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
+          "TUSDVIEW_TEXTURE_GPU_DEVICE=AMD"
+          "TUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-vulkan-amd-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;amd" TIMEOUT 900)
+
+add_test(NAME tusdview-texture-vulkan-amd-formats-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+          "TUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
+          "TUSDVIEW_TEXTURE_GPU_DEVICE=AMD"
+          "TUSDVIEW_TEXTURE_GPU_FORMATS=bc1,bc3,bc5,bc7,astc"
+          "TUSDVIEW_TEXTURE_GPU_MIPS=3"
+          "TUSDVIEW_TEXTURE_GPU_MAX_IMAGES=1"
+          "TUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
+          "TUSDVIEW_TEXTURE_GPU_MIN_PSNR=1"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-vulkan-amd-formats-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;formats;amd" TIMEOUT 900)
+
+add_test(NAME tusdview-texture-tiff-metadata-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+          "TUSDVIEW_TEXTURE_GPU_METADATA_ONLY=1"
+          "TUSDVIEW_TEXTURE_GPU_MAX_IMAGES=8"
+          "TUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-tiff-metadata-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;tiff;metadata" TIMEOUT 300)
+
+add_test(NAME tusdview-texture-tiff-decode-real
+  COMMAND ${CMAKE_COMMAND} -E env
+          "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+          "TUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
+          "TUSDVIEW_TEXTURE_GPU_FORMATS=bc7"
+          "TUSDVIEW_TEXTURE_GPU_MIPS=3"
+          "TUSDVIEW_TEXTURE_GPU_MAX_IMAGES=1"
+          "TUSDVIEW_TEXTURE_GPU_MAX_GPU_MS=5000"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+set_tests_properties(tusdview-texture-tiff-decode-real PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;tiff;decode" TIMEOUT 900)
+
+add_test(NAME tusdview-texture-vulkan-validation
+  COMMAND ${CMAKE_COMMAND} -E env
+          "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+          bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-vulkan-validation.sh")
+set_tests_properties(tusdview-texture-vulkan-validation PROPERTIES
+  SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;vulkan;validation" TIMEOUT 180)
+
+if(TUSDVIEW_TEXTURE_HAVE_HIP)
+  add_test(NAME tusdview-texture-hip-real
+    COMMAND ${CMAKE_COMMAND} -E env
+            "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+            "TUSDVIEW_TEXTURE_GPU_BACKEND=hip"
+            "TUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
+            bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+  set_tests_properties(tusdview-texture-hip-real PROPERTIES
+    SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;hip" TIMEOUT 900)
+endif()
+
+if(TUSDVIEW_TEXTURE_HAVE_CUDA)
+  add_test(NAME tusdview-texture-cuda-real
+    COMMAND ${CMAKE_COMMAND} -E env
+            "TUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:tusdview_texture_gpu_bench>"
+            "TUSDVIEW_TEXTURE_GPU_BACKEND=cuda"
+            "TUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
+            bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-gpu-real.sh")
+  set_tests_properties(tusdview-texture-cuda-real PROPERTIES
+    SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;real;cuda" TIMEOUT 900)
+endif()
+
 if(TUSDVIEW_TEXTURE_HAVE_HIP)
   get_filename_component(_texture_hip_bin "${CMAKE_HIP_COMPILER}" DIRECTORY)
   get_filename_component(_texture_hip_root "${_texture_hip_bin}/../../.." REALPATH)
-  set_tests_properties(tusdview-texture-gpu-synthetic tusdview-texture-gpu-mips tusdview-texture-gpu-bc6h-mips tusdview-texture-vulkan-formats PROPERTIES
+  set_tests_properties(tusdview-texture-gpu-synthetic tusdview-texture-gpu-mips tusdview-texture-gpu-bc6h-mips tusdview-texture-vulkan-formats
+    tusdview-texture-vulkan-nvidia-real tusdview-texture-vulkan-nvidia-formats-real
+    tusdview-texture-vulkan-amd-real
+    tusdview-texture-vulkan-amd-formats-real
+    tusdview-texture-tiff-metadata-real tusdview-texture-vulkan-nvidia-hdr-real
+    tusdview-texture-vulkan-amd-hdr-real tusdview-texture-tiff-decode-real
+    tusdview-texture-vulkan-validation tusdview-texture-vulkan-nvidia-bc6h-full-real
+    tusdview-texture-vulkan-amd-bc6h-full-real PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=${_texture_hip_root}/lib:$ENV{LD_LIBRARY_PATH}")
   add_test(NAME tusdview-texture-hip-mips
     COMMAND ${CMAKE_COMMAND} -E env
@@ -195,6 +374,15 @@ if(TUSDVIEW_TEXTURE_HAVE_CUDA)
     SKIP_RETURN_CODE 77 LABELS "tusdview;gpu;formats;hdr;mips;cuda" TIMEOUT 180)
   set_tests_properties(tusdview-texture-cuda-mips tusdview-texture-cuda-bc6h-mips
     tusdview-texture-cuda-formats tusdview-texture-vulkan-nvidia-mips
-    tusdview-texture-vulkan-nvidia-bc6h-mips tusdview-texture-vulkan-nvidia-formats PROPERTIES
+    tusdview-texture-vulkan-nvidia-bc6h-mips tusdview-texture-vulkan-nvidia-formats
+    tusdview-texture-vulkan-nvidia-real tusdview-texture-vulkan-nvidia-formats-real
+    tusdview-texture-vulkan-amd-real
+    tusdview-texture-vulkan-amd-formats-real
+    tusdview-texture-tiff-metadata-real tusdview-texture-vulkan-nvidia-hdr-real
+    tusdview-texture-vulkan-amd-hdr-real tusdview-texture-hip-real
+    tusdview-texture-hip-hdr-real tusdview-texture-cuda-real
+    tusdview-texture-cuda-hdr-real tusdview-texture-tiff-decode-real
+    tusdview-texture-vulkan-validation tusdview-texture-vulkan-nvidia-bc6h-full-real
+    tusdview-texture-vulkan-amd-bc6h-full-real PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=${_texture_cuda_root}/lib64:${_texture_hip_root}/lib:$ENV{LD_LIBRARY_PATH}")
 endif()

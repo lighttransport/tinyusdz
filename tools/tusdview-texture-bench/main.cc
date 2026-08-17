@@ -41,6 +41,7 @@ struct Options {
   bool srgb{true};
   bool metadataOnly{false};
   int maxImages{0};
+  int maxDimension{0};
 };
 
 struct ImageInput {
@@ -73,6 +74,11 @@ uint64_t CurrentRSSBytes() {
   return 0;
 }
 
+bool IsAppleDouble(const fs::path& path) {
+  const std::string name = path.filename().string();
+  return name.size() > 2 && name[0] == '.' && name[1] == '_';
+}
+
 void Usage() {
   std::printf("Usage: tusdview_texture_gpu_bench --root DIR [options]\n"
               "       tusdview_texture_gpu_bench --synthetic [options]\n"
@@ -82,6 +88,7 @@ void Usage() {
               "  --iterations N --warmup N       (default 5/2)\n"
               "  --mips N (0 = full chain to 1x1; default 1)\n"
               "  --max-images N (limit decoded corpus images; default unlimited)\n"
+              "  --max-dimension N (cap GPU output edge for bounded real-data tests)\n"
               "  --metadata-only (query dimensions without decoding pixels)\n"
               "  PTEX inputs decode face 0/mip 0 as bounded representative pages\n"
               "  --report FILE --device NAME --linear --allow-software\n");
@@ -106,12 +113,14 @@ bool Parse(int argc, char** argv, Options* o) {
     else if (a == "--warmup" && i + 1 < argc) o->warmup = std::atoi(argv[++i]);
     else if (a == "--mips" && i + 1 < argc) o->mips = std::atoi(argv[++i]);
     else if (a == "--max-images" && i + 1 < argc) o->maxImages = std::atoi(argv[++i]);
+    else if (a == "--max-dimension" && i + 1 < argc) o->maxDimension = std::atoi(argv[++i]);
     else { std::fprintf(stderr, "unknown option: %s\n", a.c_str()); return false; }
   }
   if (!o->synthetic && o->root.empty()) { std::fprintf(stderr, "--root or --synthetic is required\n"); return false; }
   if (o->filter != "bilinear" && o->filter != "mitchell") { std::fprintf(stderr, "invalid --filter\n"); return false; }
   if (o->mips < 0) { std::fprintf(stderr, "invalid --mips\n"); return false; }
   if (o->maxImages < 0) { std::fprintf(stderr, "invalid --max-images\n"); return false; }
+  if (o->maxDimension < 0) { std::fprintf(stderr, "invalid --max-dimension\n"); return false; }
   return true;
 }
 
@@ -122,10 +131,13 @@ int RunMetadataOnly(const Options& options) {
   } else if (fs::is_directory(options.root)) {
     for (const auto& entry : fs::recursive_directory_iterator(options.root)) {
       if (!entry.is_regular_file()) continue;
+      if (IsAppleDouble(entry.path())) continue;
       const std::string ext = entry.path().extension().string();
       if (ext == ".tif" || ext == ".tiff" || ext == ".tex") paths.push_back(entry.path().string());
-      if (options.maxImages > 0 && static_cast<int>(paths.size()) >= options.maxImages) break;
     }
+    std::sort(paths.begin(), paths.end());
+    if (options.maxImages > 0 && static_cast<int>(paths.size()) > options.maxImages)
+      paths.resize(static_cast<size_t>(options.maxImages));
   }
   if (paths.empty()) return kSkip;
   int failures = 0;
@@ -317,18 +329,24 @@ std::vector<ImageInput> Discover(const Options& o) {
   }
   if (!fs::is_directory(o.root)) return out;
   const std::set<std::string> ext = {".png",".jpg",".jpeg",".bmp",".tga",".ppm",".exr",".hdr",".tif",".tiff",".tex",".ptx"};
+  std::vector<std::string> paths;
   for (const auto& entry : fs::recursive_directory_iterator(o.root)) {
     if (!entry.is_regular_file()) continue;
+    if (IsAppleDouble(entry.path())) continue;
     std::string suffix = entry.path().extension().string(); std::transform(suffix.begin(),suffix.end(),suffix.begin(),[](char c){return char(std::tolower(static_cast<unsigned char>(c)));});
     if (ext.count(suffix)) {
+      paths.push_back(entry.path().string());
+    }
+  }
+  std::sort(paths.begin(), paths.end());
+  for (const auto& path : paths) {
       ImageInput image;
-      const bool isPtex = suffix == ".ptx";
-      const bool ok = LoadInput(entry.path().string(), isPtex, &image);
+      const bool isPtex = fs::path(path).extension().string() == ".ptx";
+      const bool ok = LoadInput(path, isPtex, &image);
       if (ok) {
         out.push_back(std::move(image));
         if (o.maxImages > 0 && static_cast<int>(out.size()) >= o.maxImages) break;
       }
-    }
   }
   return out;
 }
@@ -403,13 +421,24 @@ int RunBackend(const Options& options, Backend backend, const std::vector<ImageI
     std::vector<uint8_t> mipRGBA = image.rgba;
     std::vector<float> mipRGBF = image.rgbf;
     uint32_t mipSourceWidth = image.width, mipSourceHeight = image.height;
+    uint32_t outputBaseWidth = image.width, outputBaseHeight = image.height;
+    if (options.maxDimension > 0) {
+      const uint32_t limit = static_cast<uint32_t>(options.maxDimension);
+      const uint32_t edge = std::max(outputBaseWidth, outputBaseHeight);
+      if (edge > limit) {
+        const double scale = static_cast<double>(limit) / static_cast<double>(edge);
+        outputBaseWidth = std::max(1u, static_cast<uint32_t>(outputBaseWidth * scale));
+        outputBaseHeight = std::max(1u, static_cast<uint32_t>(outputBaseHeight * scale));
+      }
+    }
     for (int mip = 0; mip < levelCount; ++mip) {
       TextureRequest req;
       req.rgba = mipRGBA.data(); req.rgbaBytes = mipRGBA.size();
       req.rgbf = mipRGBF.data(); req.rgbfBytes = mipRGBF.size() * sizeof(float);
       req.width = mipSourceWidth; req.height = mipSourceHeight;
       const int mipShift = options.mips == 1 ? 1 : mip;
-      req.dstWidth = std::max(1u, image.width >> mipShift); req.dstHeight = std::max(1u, image.height >> mipShift);
+      req.dstWidth = std::max(1u, outputBaseWidth >> mipShift);
+      req.dstHeight = std::max(1u, outputBaseHeight >> mipShift);
       req.srgb = options.srgb; req.filter = options.filter == "mitchell" ? ResizeFilter::Mitchell : ResizeFilter::Bilinear; req.format = format;
       req.downloadResized = true;
       // Repeated timing iterations restart from the original host source;

@@ -99,6 +99,20 @@ void tinydng_bigtiff_test(void) {
   const auto bytes = MakeRGBTiff(true);
   CheckRGBTiff(bytes);
 #if defined(TINYUSDZ_WITH_TIFF)
+  // Move only the StripOffsets metadata above 4 GiB. Metadata queries must
+  // retain the 64-bit value without attempting to decode the unavailable
+  // pixel payload.
+  auto highOffset = bytes;
+  const size_t ifd = 16u + 8u;
+  const size_t stripOffsetEntry = ifd + 5u * 20u;
+  const size_t value = stripOffsetEntry + 12u;
+  const uint64_t high = 0x100000000ull;
+  for (int i = 0; i < 8; ++i) highOffset[value + i] = static_cast<uint8_t>(high >> (i * 8));
+  auto highInfo = tinyusdz::image::GetImageInfoFromMemory(
+      highOffset.data(), highOffset.size(), "high-offset-bigtiff.tif");
+  TEST_CHECK(highInfo.has_value());
+  if (highInfo) TEST_CHECK(highInfo->width == 2 && highInfo->height == 2);
+
   const std::string path = "/tmp/tinyusdz-unit-bigtiff.tif";
   {
     std::ofstream file(path, std::ios::binary);
