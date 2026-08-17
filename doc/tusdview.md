@@ -721,6 +721,30 @@ proxies. isCoral is baseline-identical at 4 (0.80ms) and marginally blockier at
 the value is the safe direction -- it draws more real geometry, costing speed
 rather than fidelity.
 
+## `--mode-sweep`: many AOVs from one load
+
+```
+tusdview scene.usda --backend vk --rt --headless --frames 4 \
+  --mode-sweep albedo,metallic,roughness,emissive \
+  --screenshot out-{mode}.ppm
+```
+
+Renders each mode from a single load, writing `--screenshot` once per mode with
+`{mode}` substituted (the placeholder is required). Each mode gets the same
+frame budget it would get in its own process, so the images are **byte-identical**
+to running `--mode N` times -- verified 9/9 on Vulkan raster and Vulkan RT.
+
+The win is startup, not rendering. A small headless case spends ~90% of its time
+creating and destroying the Vulkan device (measured: `ioctl` 40%, ICD `dlopen`
+~14%, shutdown 11%, all pipeline creation only 1-3%), so N modes of one scene
+cost N device creations. Nine modes of a two-triangle scene: 6.20 s as separate
+processes, 0.72 s as one sweep (8.6x).
+
+**Not available for CUDA or HIP.** Those backends trace after the frame loop and
+write the image themselves; the sweep captures the in-loop viewport, so it would
+hand them the raster result. `examples/tusdview/tests/run-texture-semantic-aov.sh`
+gates its use accordingly.
+
 ## Machine-readable capability line
 
 Every run prints a versioned capability line after renderer init, and again

@@ -716,17 +716,57 @@ want_family() {
   done
   return 1
 }
+declare -A prerendered_log=()
+# Render every requested mode of ONE asset in a single process (--mode-sweep),
+# writing the exact files case_run expects. tusdview gives each mode the same
+# frame budget it would get in its own process, so the images are byte-identical
+# to the one-process-per-mode path -- this only removes repeated process start
+# and Vulkan device creation, which is ~90% of a small case's cost.
+sweep_prerender() {
+  local tag="$1" source="$2" prefix="$3" modes="$4"; shift 4
+  local backend_key="${tag%-legacy}"
+  if [ "${backend_unavailable[$backend_key]:-0}" = 1 ]; then return; fi
+  [ -n "$modes" ] || return
+  # Only backends whose screenshot comes from the in-loop viewport capture can
+  # be swept. CUDA and HIP trace AFTER the frame loop and write the image
+  # themselves ("CUDA RT wrote ..."), so a sweep would hand them the raster
+  # viewport instead -- caught as failing cuda albedo/metallic/roughness probes.
+  case "$backend_key" in
+    gl|vk-raster|vk-rt) ;;
+    *) return ;;
+  esac
+  local log="$OUT/$tag-$prefix-sweep.log"
+  if [[ "$tag" = gl* ]]; then
+    run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode-sweep "$modes" --frames 4 --view-dir 0,0,-1 --screenshot "$OUT/$tag-$prefix-{mode}.ppm" "$source" >"$log" 2>&1
+  else
+    run "$@" --config "$OUT/config.json" --mode-sweep "$modes" --frames 4 --view-dir 0,0,-1 --screenshot "$OUT/$tag-$prefix-{mode}.ppm" "$source" >"$log" 2>&1
+  fi
+  # Only claim the images the sweep actually produced; anything missing falls
+  # back to its own render in case_run, so a sweep failure degrades rather than
+  # silently dropping coverage.
+  local m
+  for m in ${modes//,/ }; do
+    [ -s "$OUT/$tag-$prefix-$m.ppm" ] && prerendered_log["$OUT/$tag-$prefix-$m.ppm"]="$log"
+  done
+}
+
 case_run() {
   local tag="$1" marker="$2" source="$3" mode="$4" kind="$5" case_id="$6"; shift 6
   local backend_key="${tag%-legacy}"
   if [ "${backend_unavailable[$backend_key]:-0}" = 1 ]; then return; fi
   local img="$OUT/$tag-$case_id.ppm" log="$OUT/$tag-$case_id.log"
-  if [[ "$tag" = gl* ]]; then
+  local run_rc=0
+  if [ -n "${prerendered_log[$img]:-}" ] && [ -s "$img" ]; then
+    # Already produced by sweep_prerender: one process rendered every mode of
+    # this asset (--mode-sweep), byte-identical to rendering them separately.
+    log="${prerendered_log[$img]}"
+  elif [[ "$tag" = gl* ]]; then
     run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
+    run_rc=$?
   else
     run "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
+    run_rc=$?
   fi
-  local run_rc=$?
   if grep -q '\[tusdview\]\[error\] load failed:' "$log"; then
     echo "FAIL: $tag $case_id asset load"; fail=1; return
   fi
@@ -866,6 +906,12 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     done
     for family in preview openpbr standard; do
       want_family "$family" || continue
+      sweep_list=""
+      for _m in albedo metallic roughness emissive; do
+        want_mode "$_m" && sweep_list="${sweep_list:+$sweep_list,}$_m"
+      done
+      sweep_prerender "$tag" "$OUT/core-$family.usda" "$family" "$sweep_list" "${args[@]}"
+      sweep_prerender "$tag" "$OUT/core-$family-udim.usda" "$family-udim" "$sweep_list" "${args[@]}"
       want_mode albedo && case_run "$tag" "$marker" "$OUT/core-$family.usda" albedo albedo "$family-albedo" "${args[@]}"
       want_mode metallic && case_run "$tag" "$marker" "$OUT/core-$family.usda" metallic metallic "$family-metallic" "${args[@]}"
       want_mode roughness && case_run "$tag" "$marker" "$OUT/core-$family.usda" roughness roughness "$family-roughness" "${args[@]}"
