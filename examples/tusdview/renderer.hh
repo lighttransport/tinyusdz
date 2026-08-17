@@ -8,6 +8,7 @@
 // lives behind this interface so the app main-loop is backend-agnostic.
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -26,6 +27,21 @@ struct ImDrawData;
 namespace tusdview {
 
 enum class Backend { GL, Vulkan };
+
+// Return the logical dimensions addressed by a streamed texture-region update
+// at mipLevel. Keeping this calculation in the renderer ABI makes the Vulkan
+// bounds checks and CPU-side regression tests agree on NPOT dimensions.
+inline bool TextureMipDimensions(int width, int height, int mipLevels,
+                                 int mipLevel, int* mipWidth,
+                                 int* mipHeight) {
+  if (width <= 0 || height <= 0 || mipLevels <= 0 || mipLevel < 0 ||
+      mipLevel >= mipLevels || !mipWidth || !mipHeight) {
+    return false;
+  }
+  *mipWidth = std::max(1, width >> mipLevel);
+  *mipHeight = std::max(1, height >> mipLevel);
+  return true;
+}
 
 // User-facing render-technique selector for the runtime backend switch (View
 // menu + CPU RT keybinding). Decomposes into a window-owning Backend (which

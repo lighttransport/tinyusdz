@@ -66,7 +66,8 @@ EOF
   base="$out/$index"
   common=(--next --texture-compress bc7 --texture-gpu vulkan
           "--texture-gpu-device=$device" --ptex-initial-faces 1
-          --ptex-cache-mb 8 --frames 2 --size 256x160 --camera /Camera)
+          --ptex-cache-mb 8 --texture-mips on --frames 2 --size 256x160
+          --camera /Camera)
 
   env -u DISPLAY TUSDVIEW_VK_DEVICE=nvidia timeout 180s "$viewer" \
     --headless --backend vk "${common[@]}" \
@@ -82,6 +83,17 @@ EOF
     >"$base-rt.log" 2>&1
   grep -F "renderer: Vulkan (ray query), GPU: $device" "$base-rt.log" >/dev/null
   grep -F "RT texture table:" "$base-rt.log" >/dev/null
+  grep -F "[vk_rt] direct compressed Ptex images:" "$base-rt.log" >/dev/null
+
+  if [[ "${TUSDVIEW_LOCAL_SW_RT:-1}" == "1" ]]; then
+    env -u DISPLAY TUSDVIEW_VK_DEVICE=nvidia TUSDVIEW_RT_FORCE_SW=1 \
+      timeout 180s "$viewer" --headless --backend vk --rt "${common[@]}" \
+      --render-report "$base-swrt.json" --screenshot "$base-swrt.png" "$scene" \
+      >"$base-swrt.log" 2>&1
+    grep -F "renderer: Vulkan (compute BVH), GPU: $device" "$base-swrt.log" >/dev/null
+    grep -F "[vk_swrt] direct compressed Ptex images:" "$base-swrt.log" >/dev/null
+    grep -F "RT texture table:" "$base-swrt.log" >/dev/null
+  fi
 
   env __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
     TUSDVIEW_VK_DEVICE=nvidia timeout 180s xvfb-run -a "$viewer" \

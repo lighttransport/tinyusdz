@@ -159,15 +159,36 @@ vec2 swPtexUv(RtTexDesc td, vec2 uv, uint face) {
   return (px + vec2(0.5)) / vec2(td.width, td.height);
 }
 
-vec4 swSampleTexture(int id, vec2 uv, uint face, vec4 missing) {
+float swTextureLod(int id, vec2 uv, vec2 duvdx, vec2 duvdy, uint face) {
+  if (id < 0 || id >= int(texDescs.length())) return 0.0;
+  RtTexDesc td = texDescs[id];
+  vec2 a = uv;
+  vec2 b = uv + duvdx;
+  vec2 c = uv + duvdy;
+  if (td.isPtex != 0) {
+    a = swPtexUv(td, a, face);
+    b = swPtexUv(td, b, face);
+    c = swPtexUv(td, c, face);
+  }
+  float footprint = max(length((b - a) * vec2(td.width, td.height)),
+                        length((c - a) * vec2(td.width, td.height)));
+  return clamp(log2(max(footprint, 1.0)), 0.0,
+               float(max(td.mipCount - 1, 0)));
+}
+
+vec4 swSampleTexture(int id, vec2 uv, vec2 duvdx, vec2 duvdy,
+                     uint face, vec4 missing) {
   if (id < 0 || id >= int(texDescs.length())) return missing;
   RtTexDesc td = texDescs[id];
   if (td.width <= 0 || td.height <= 0) return missing;
-  uv = swPtexUv(td, uv, face);
+  vec2 sourceUv = uv;
   if (td.isPtex != 0 && td.imageSlot >= 0 &&
       td.imageSlot < TUSDVIEW_RT_PTEXTURE_IMAGE_CAP) {
-    return textureLod(swPtexImages[nonuniformEXT(td.imageSlot)], uv, 0.0);
+    float lod = swTextureLod(id, sourceUv, duvdx, duvdy, face);
+    uv = swPtexUv(td, sourceUv, face);
+    return textureLod(swPtexImages[nonuniformEXT(td.imageSlot)], uv, lod);
   }
+  uv = sourceUv;
   vec2 p = vec2(swWrap(uv.x, td.wrapS), swWrap(uv.y, td.wrapT)) *
            vec2(td.width - 1, td.height - 1);
   ivec2 p0 = ivec2(clamp(floor(p), vec2(0.0),
@@ -176,6 +197,37 @@ vec4 swSampleTexture(int id, vec2 uv, uint face, vec4 missing) {
   vec2 f = fract(p);
   return mix(mix(swTexel(td, p0.x, p0.y), swTexel(td, p1.x, p0.y), f.x),
              mix(swTexel(td, p0.x, p1.y), swTexel(td, p1.x, p1.y), f.x), f.y);
+}
+
+void swRayForPixel(ivec2 px, ivec2 size, out vec3 origin, out vec3 dir) {
+  vec2 uv = (vec2(px) + 0.5) / vec2(size);
+  vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+  vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
+  vec4 farH = pc.invViewProj * vec4(ndc, 1.0, 1.0);
+  vec3 nearW = nearH.xyz / nearH.w;
+  vec3 farW = farH.xyz / farH.w;
+  origin = nearW;
+  dir = normalize(farW - nearW);
+}
+
+vec3 swPlanePoint(vec3 ro, vec3 rd, vec3 n, float planeD) {
+  float denom = dot(n, rd);
+  float t = abs(denom) > 1e-7 ? (planeD - dot(n, ro)) / denom : 0.0;
+  return ro + rd * t;
+}
+
+vec3 swBarycentric(vec3 p, vec3 v0, vec3 e1, vec3 e2) {
+  float d00 = dot(e1, e1);
+  float d01 = dot(e1, e2);
+  float d11 = dot(e2, e2);
+  vec3 vp = p - v0;
+  float d20 = dot(vp, e1);
+  float d21 = dot(vp, e2);
+  float den = d00 * d11 - d01 * d01;
+  if (abs(den) < 1e-12) return vec3(1.0, 0.0, 0.0);
+  float b1 = (d11 * d20 - d01 * d21) / den;
+  float b2 = (d00 * d21 - d01 * d20) / den;
+  return vec3(1.0 - b1 - b2, b1, b2);
 }
 
 // Two-level (TLAS -> per-instance BLAS) closest-hit triangle trace. Merged
@@ -277,14 +329,8 @@ void main() {
   ivec2 size = imageSize(outImg);
   if (px.x >= size.x || px.y >= size.y) return;
 
-  vec2 uv = (vec2(px) + 0.5) / vec2(size);
-  vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-  vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
-  vec4 farH = pc.invViewProj * vec4(ndc, 1.0, 1.0);
-  vec3 nearW = nearH.xyz / nearH.w;
-  vec3 farW = farH.xyz / farH.w;
-  vec3 origin = nearW;
-  vec3 dir = normalize(farW - nearW);
+  vec3 origin, dir;
+  swRayForPixel(px, size, origin, dir);
 
   vec3 bgc = srgbToLinear(pc.clearColor.rgb);
   vec3 outc = bgc;
@@ -352,9 +398,37 @@ void main() {
                         faceIds[hitTri] >= 0
                             ? uint(faceIds[hitTri])
                             : uint(max(hitTri, 0));
-      if (matTexIds[mid * 12 + 0] >= 0)
-        base *= swSampleTexture(matTexIds[mid * 12 + 0], uv0,
+      int baseTexId = matTexIds[mid * 12 + 0];
+      if (baseTexId >= 0) {
+        vec3 wv0 = xformPoint(inst.o2w, vec3(tris[hitTri * 9 + 0],
+                                              tris[hitTri * 9 + 1],
+                                              tris[hitTri * 9 + 2]));
+        vec3 wv1 = xformPoint(inst.o2w, vec3(tris[hitTri * 9 + 3],
+                                              tris[hitTri * 9 + 4],
+                                              tris[hitTri * 9 + 5]));
+        vec3 wv2 = xformPoint(inst.o2w, vec3(tris[hitTri * 9 + 6],
+                                              tris[hitTri * 9 + 7],
+                                              tris[hitTri * 9 + 8]));
+        vec3 e1w = wv1 - wv0;
+        vec3 e2w = wv2 - wv0;
+        vec3 planeN = normalize(cross(e1w, e2w));
+        float planeD = dot(planeN, wv0);
+        vec3 dxO, dxD, dyO, dyD;
+        swRayForPixel(px + ivec2(1, 0), size, dxO, dxD);
+        swRayForPixel(px + ivec2(0, 1), size, dyO, dyD);
+        vec3 dxB = swBarycentric(swPlanePoint(dxO, dxD, planeN, planeD),
+                                 wv0, e1w, e2w);
+        vec3 dyB = swBarycentric(swPlanePoint(dyO, dyD, planeN, planeD),
+                                 wv0, e1w, e2w);
+        vec2 uv1 = vec2(uvs[hitTri * 6 + 2], uvs[hitTri * 6 + 3]);
+        vec2 uv2 = vec2(uvs[hitTri * 6 + 4], uvs[hitTri * 6 + 5]);
+        vec2 duvdx = uv1 * dxB.y + uv2 * dxB.z +
+                     vec2(uvs[hitTri * 6 + 0], uvs[hitTri * 6 + 1]) * dxB.x - uv0;
+        vec2 duvdy = uv1 * dyB.y + uv2 * dyB.z +
+                     vec2(uvs[hitTri * 6 + 0], uvs[hitTri * 6 + 1]) * dyB.x - uv0;
+        base *= swSampleTexture(baseTexId, uv0, duvdx, duvdy,
                                 sourceFace, vec4(1.0)).rgb;
+      }
     }
     base *= vertColor.rgb;
     alpha *= vertColor.a * inst.tint.a;
