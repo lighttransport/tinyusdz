@@ -3318,6 +3318,21 @@ if(TINYUSDZ_BUILD_TESTS)
                            RESOURCE_LOCK tusdview_semantic_gpu)
     endforeach()
 
+    # Explicitly exercise the GL normal-map TBN fallback with constant UVs.
+    # Keep this as a small GL-only shard so the full CUDA/HIP semantic matrices
+    # do not repeat a regression case that targets the raster shader branch.
+    add_test(
+      NAME tusdview-texture-semantic-aov-gl-degenerate
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_SEMANTIC_BACKENDS=gl"
+              "TUSDVIEW_SEMANTIC_MODES=degenerate-normal degenerate-coat-normal"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
+    )
+    set_tests_properties(tusdview-texture-semantic-aov-gl-degenerate PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "tusdview"
+                         RESOURCE_LOCK tusdview_semantic_gpu)
+
     # Keep the RT texture-table path loader-neutral. Split by backend while
     # retaining both loaders in each case so default/legacy image parity is
     # still checked within the backend shard.

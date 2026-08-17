@@ -67,6 +67,18 @@ quad() {
   }
 USDA
 }
+quad_degenerate() {
+  cat <<'USDA'
+  def Mesh "Quad" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    texCoord2f[] primvars:st = [(0,0), (0,0), (0,0), (0,0)] (interpolation = "vertex")
+    rel material:binding = </World/M>
+  }
+USDA
+}
 quad_udim() {
   cat <<'USDA'
   def Mesh "Quad" {
@@ -80,7 +92,7 @@ quad_udim() {
 USDA
 }
 write_normal_material() {
-  local family="$1" file="$2" udim="${3:-0}" shader_id base_name normal_name
+  local family="$1" file="$2" udim="${3:-0}" degenerate="${4:-0}" shader_id base_name normal_name
   local texture=normal.ppm
   [ "$udim" = 0 ] || texture='normal.<UDIM>.ppm'
   case "$family" in
@@ -91,7 +103,10 @@ write_normal_material() {
   esac
   {
     echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
-    if [ "$udim" = 1 ]; then quad_udim; else quad; fi
+    if [ "$degenerate" = 1 ]; then quad_degenerate
+    elif [ "$udim" = 1 ]; then quad_udim
+    else quad
+    fi
     cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
@@ -126,12 +141,16 @@ write_normal_material openpbr "$OUT/normal-openpbr.usda"
 write_normal_material openpbr "$OUT/normal-openpbr-udim.usda" 1
 write_normal_material standard "$OUT/normal-standard.usda"
 write_normal_material standard "$OUT/normal-standard-udim.usda" 1
+write_normal_material preview "$OUT/normal-degenerate.usda" 0 1
 write_coat_normal_material() {
-  local file="$1" udim="${2:-0}" texture=normal.ppm
+  local file="$1" udim="${2:-0}" degenerate="${3:-0}" texture=normal.ppm
   [ "$udim" = 0 ] || texture='coat_normal.<UDIM>.ppm'
 {
   echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
-  if [ "$udim" = 1 ]; then quad_udim; else quad; fi
+  if [ "$degenerate" = 1 ]; then quad_degenerate
+  elif [ "$udim" = 1 ]; then quad_udim
+  else quad
+  fi
   cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
@@ -163,6 +182,7 @@ USDA
 }
 write_coat_normal_material "$OUT/coat-normal.usda"
 write_coat_normal_material "$OUT/coat-normal-udim.usda" 1
+write_coat_normal_material "$OUT/coat-normal-degenerate.usda" 0 1
 write_standard_coat_normal_material() {
   local file="$1" udim="${2:-0}" texture=normal.ppm
   [ "$udim" = 0 ] || texture='coat_normal.<UDIM>.ppm'
@@ -656,6 +676,13 @@ def mean(lo,hi):
 l,r=mean(2,4),mean(6,8); kind=sys.argv[2]; print(kind,'left=',l,'right=',r)
 if kind=='vector': ok=l[0]-l[2]>=25 and r[2]-r[0]>=25 and l[0]-r[0]>=45
 elif kind=='coat-normal': ok=l[0]-l[2]>=25 and r[2]-r[0]>=25 and l[0]-r[0]>=45
+elif kind in ('degenerate-normal','degenerate-coat-normal'):
+ # Constant UVs must still produce a finite, visible normal AOV on both sides.
+ # Do not require identical values: the renderer may face-forward the shading
+ # normal independently per fragment. The regression is black/NaN output from
+ # a degenerate TBN, so require meaningful encoded color in both sample bands.
+ ok=(sum(l) >= 180 and sum(r) >= 180 and
+     max(l) >= 80 and max(r) >= 80)
 elif kind=='occlusion': ok=abs(sum(l)-sum(r))>=12
 # Coat currently has no scalar AOV; this controlled shaded probe only requires
 # a visible response and is deliberately looser than the diagnostic AOVs.
@@ -865,6 +892,8 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     done
     want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal.usda" coat-normal coat-normal coat-normal "${args[@]}"
     want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal-udim.usda" coat-normal coat-normal coat-normal-udim "${args[@]}"
+    want_mode degenerate-normal && case_run "$tag" "$marker" "$OUT/normal-degenerate.usda" normals degenerate-normal degenerate-normal "${args[@]}"
+    want_mode degenerate-coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal-degenerate.usda" coat-normal degenerate-coat-normal degenerate-coat-normal "${args[@]}"
     if want_family standard; then
       want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal-standard.usda" coat-normal coat-normal standard-coat-normal "${args[@]}"
       want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal-standard-udim.usda" coat-normal coat-normal standard-coat-normal-udim "${args[@]}"
