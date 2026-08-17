@@ -108,24 +108,23 @@ extern "C" {
 #endif
 
 #if defined(TINYUSDZ_WITH_TIFF)
-#ifndef TINYUSDZ_NO_TINY_DNG_LOADER_IMPLEMENTATION
-#define TINY_DNG_LOADER_IMPLEMENTATION
-#endif
-
-#ifndef TINY_DNG_NO_EXCEPTION
-#define TINY_DNG_NO_EXCEPTION
-#endif
-
-#ifndef TINY_DNG_LOADER_NO_STDIO
-#define TINY_DNG_LOADER_NO_STDIO
-#endif
-
-// Prevent including `stb_image.h` inside of tiny_dng_loader.h
+// stb_image is owned by this translation unit; TinyDNG's implementation lives
+// in tiny_dng_loader.cc and must not include a second stb_image copy here.
 #ifndef TINY_DNG_LOADER_NO_STB_IMAGE_INCLUDE
 #define TINY_DNG_LOADER_NO_STB_IMAGE_INCLUDE
 #endif
-
 #include "external/tiny_dng_loader.h"
+#endif
+
+#if defined(TINYUSDZ_WITH_LIBTIFF)
+#include <tiffio.h>
+// tiny_dng_loader exposes these as namespace constants, while tiffio.h
+// defines same-named preprocessor macros. Keep the TinyDNG API usable below.
+#ifdef SAMPLEFORMAT_UINT
+#undef SAMPLEFORMAT_UINT
+#undef SAMPLEFORMAT_INT
+#undef SAMPLEFORMAT_IEEEFP
+#endif
 #endif
 
 
@@ -771,6 +770,171 @@ bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
 
 #if defined(TINYUSDZ_WITH_TIFF)
 
+#if defined(TINYUSDZ_WITH_LIBTIFF)
+struct TiffMemory {
+  const uint8_t *data = nullptr;
+  toff_t size = 0;
+  toff_t offset = 0;
+};
+
+tsize_t TiffRead(thandle_t handle, tdata_t dst, tsize_t count) {
+  TiffMemory *m = static_cast<TiffMemory *>(handle);
+  if (!m || count <= 0 || m->offset >= m->size) return 0;
+  const toff_t available = m->size - m->offset;
+  const toff_t n = (std::min)(available, static_cast<toff_t>(count));
+  std::memcpy(dst, m->data + m->offset, static_cast<size_t>(n));
+  m->offset += n;
+  return static_cast<tsize_t>(n);
+}
+
+tsize_t TiffWrite(thandle_t, tdata_t, tsize_t) { return 0; }
+
+toff_t TiffSeek(thandle_t handle, toff_t offset, int whence) {
+  TiffMemory *m = static_cast<TiffMemory *>(handle);
+  if (!m) return static_cast<toff_t>(-1);
+  toff_t next = 0;
+  if (whence == SEEK_SET) next = offset;
+  else if (whence == SEEK_CUR) next = m->offset + offset;
+  else if (whence == SEEK_END) next = m->size + offset;
+  else return static_cast<toff_t>(-1);
+  if (next < 0 || next > m->size) return static_cast<toff_t>(-1);
+  m->offset = next;
+  return next;
+}
+
+int TiffClose(thandle_t) { return 0; }
+toff_t TiffSize(thandle_t handle) {
+  const TiffMemory *m = static_cast<const TiffMemory *>(handle);
+  return m ? m->size : 0;
+}
+int TiffMap(thandle_t, tdata_t *, toff_t *) { return 0; }
+void TiffUnmap(thandle_t, tdata_t, toff_t) {}
+
+TIFF *OpenMemoryTiff(const uint8_t *bytes, size_t size, TiffMemory *memory) {
+  if (!bytes || size > static_cast<size_t>((std::numeric_limits<toff_t>::max)())) return nullptr;
+  memory->data = bytes;
+  memory->size = static_cast<toff_t>(size);
+  memory->offset = 0;
+  TIFFSetWarningHandler(nullptr);
+  return TIFFClientOpen("tinyusdz-memory", "r", memory, TiffRead, TiffWrite,
+                        TiffSeek, TiffClose, TiffSize, TiffMap, TiffUnmap);
+}
+
+bool FindLargestTiffDirectory(TIFF *tif, uint16_t *directory,
+                              uint32_t *width, uint32_t *height) {
+  if (!tif || !directory || !width || !height) return false;
+  uint16_t best = 0;
+  uint32_t bestWidth = 0, bestHeight = 0;
+  for (uint16_t d = 0; d < (std::numeric_limits<uint16_t>::max)(); ++d) {
+    if (!TIFFSetDirectory(tif, d)) break;
+    uint32_t w = 0, h = 0;
+    if (TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &w) &&
+        TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &h) &&
+        uint64_t(w) * h > uint64_t(bestWidth) * bestHeight) {
+      best = d; bestWidth = w; bestHeight = h;
+    }
+  }
+  if (!bestWidth || !bestHeight || !TIFFSetDirectory(tif, best)) return false;
+  *directory = best; *width = bestWidth; *height = bestHeight;
+  return true;
+}
+
+bool DecodeTiledTIFF(const uint8_t *bytes, size_t size, const std::string &uri,
+                     Image *image, std::string *err) {
+  TiffMemory memory;
+  TIFF *tif = OpenMemoryTiff(bytes, size, &memory);
+  if (!tif) return false;
+  uint16_t directory = 0;
+  uint32_t width = 0, height = 0;
+  bool ok = FindLargestTiffDirectory(tif, &directory, &width, &height);
+  uint16_t bits = 0, samples = 0, planar = PLANARCONFIG_CONTIG;
+  uint16_t sampleFormat = 1;  // SAMPLEFORMAT_UINT
+  uint32_t tileWidth = 0, tileHeight = 0;
+  ok = ok && TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &bits) &&
+       TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &samples) &&
+       TIFFGetFieldDefaulted(tif, TIFFTAG_PLANARCONFIG, &planar) &&
+       TIFFGetFieldDefaulted(tif, TIFFTAG_SAMPLEFORMAT, &sampleFormat) &&
+       TIFFGetField(tif, TIFFTAG_TILEWIDTH, &tileWidth) &&
+       TIFFGetField(tif, TIFFTAG_TILELENGTH, &tileHeight) &&
+       samples >= 1 && samples <= 4 && tileWidth && tileHeight;
+  if (!ok || bits != 32 || sampleFormat != 3 /* IEEE floating point */) {
+    TIFFClose(tif);
+    return false;
+  }
+  size_t pixels = 0, total = 0;
+  ok = safe::mul(static_cast<size_t>(width), height, &pixels) &&
+       safe::mul(pixels, samples, &total) &&
+       safe::mul(total, sizeof(float), &total) &&
+       total <= kMaxDecodedImageBytes;
+  if (!ok) { TIFFClose(tif); return false; }
+  const tsize_t tileBytes = TIFFTileSize(tif);
+  if (tileBytes <= 0) { TIFFClose(tif); return false; }
+  if (static_cast<size_t>(tileBytes) % sizeof(float) != 0) {
+    TIFFClose(tif);
+    return false;
+  }
+  std::vector<float> tile(static_cast<size_t>(tileBytes) / sizeof(float));
+  image->width = static_cast<int>(width);
+  image->height = static_cast<int>(height);
+  image->channels = static_cast<int>(samples);
+  image->bpp = 32;
+  image->format = Image::PixelFormat::Float;
+  image->data.assign(total, 0);
+  const uint32_t xTiles = (width + tileWidth - 1u) / tileWidth;
+  const uint32_t yTiles = (height + tileHeight - 1u) / tileHeight;
+  for (uint16_t sample = 0; sample < samples; ++sample) {
+    if (planar == PLANARCONFIG_CONTIG && sample != 0) break;
+    for (uint32_t ty = 0; ty < yTiles; ++ty) {
+      for (uint32_t tx = 0; tx < xTiles; ++tx) {
+        const uint32_t x0 = tx * tileWidth, y0 = ty * tileHeight;
+        if (TIFFReadTile(tif, tile.data(), x0, y0, 0,
+                         planar == PLANARCONFIG_SEPARATE ? sample : 0) < 0) {
+          ok = false; break;
+        }
+        const float *src = tile.data();
+        const uint32_t rows = (std::min)(tileHeight, height - y0);
+        const uint32_t cols = (std::min)(tileWidth, width - x0);
+        for (uint32_t y = 0; y < rows; ++y) {
+          for (uint32_t x = 0; x < cols; ++x) {
+            const size_t dstPixel = (size_t(y0 + y) * width + x0 + x) * samples;
+            const size_t srcPixel = size_t(y) * tileWidth + x;
+            if (planar == PLANARCONFIG_SEPARATE) {
+              std::memcpy(image->data.data() + (dstPixel + sample) * sizeof(float),
+                          src + srcPixel, sizeof(float));
+            } else {
+              std::memcpy(image->data.data() + dstPixel * sizeof(float),
+                          src + srcPixel * samples,
+                          sizeof(float) * samples);
+            }
+          }
+        }
+      }
+      if (!ok) break;
+    }
+    if (!ok) break;
+  }
+  TIFFClose(tif);
+  if (!ok) {
+    image->data.clear();
+    if (err) *err += "Failed to decode tiled TIFF: " + uri + "\n";
+  }
+  return ok;
+}
+
+bool GetTiledTIFFInfo(const uint8_t *bytes, size_t size, uint32_t *width,
+                      uint32_t *height, uint32_t *channels) {
+  TiffMemory memory;
+  TIFF *tif = OpenMemoryTiff(bytes, size, &memory);
+  if (!tif) return false;
+  uint16_t directory = 0, samples = 0;
+  bool ok = FindLargestTiffDirectory(tif, &directory, width, height) &&
+            TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &samples);
+  TIFFClose(tif);
+  if (ok) *channels = samples;
+  return ok;
+}
+#endif
+
 bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
                     const std::string &uri, Image *image,
                     std::string *err) {
@@ -789,6 +953,9 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
   }
 
   if (!ret) {
+#if defined(TINYUSDZ_WITH_LIBTIFF)
+    if (DecodeTiledTIFF(bytes, size, uri, image, err)) return true;
+#endif
     (*err) += "Failed to load TIFF/DNG image: " + uri + "\n";
     return false;
   }
@@ -1258,7 +1425,8 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
 #if defined(TINYUSDZ_WITH_TIFF)
   {
     std::string msg;
-    if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &msg)) {
+    if (sz <= static_cast<size_t>((std::numeric_limits<uint32_t>::max)()) &&
+        tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &msg)) {
 
       bool ok = DecodeImageTIFF(addr, sz, uri, &ret.image, &err);
 
@@ -1362,9 +1530,32 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
 #endif
 
 #if defined(TINYUSDZ_WITH_TIFF)
-  if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &err)) {
-
-      return nonstd::make_unexpected("TODO: TIFF/DNG format");
+  if (sz <= static_cast<size_t>((std::numeric_limits<uint32_t>::max)()) &&
+      tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &err)) {
+    std::vector<tinydng::FieldInfo> custom_fields;
+    std::vector<tinydng::DNGImage> images;
+    std::string warn;
+    std::string dngerr;
+    if (!tinydng::LoadDNGFromMemory(reinterpret_cast<const char *>(addr),
+                                    uint32_t(sz), custom_fields, &images,
+                                    &warn, &dngerr) || images.empty()) {
+#if defined(TINYUSDZ_WITH_LIBTIFF)
+      if (GetTiledTIFFInfo(addr, sz, &ret.width, &ret.height,
+                           &ret.channels)) {
+        return std::move(ret);
+      }
+#endif
+      return nonstd::make_unexpected("Failed to load TIFF/DNG header: " + uri +
+                                     "\n" + dngerr);
+    }
+    size_t largest = 0;
+    for (size_t i = 1; i < images.size(); ++i) {
+      if (images[largest].width < images[i].width) largest = i;
+    }
+    ret.width = static_cast<uint32_t>(images[largest].width);
+    ret.height = static_cast<uint32_t>(images[largest].height);
+    ret.channels = static_cast<uint32_t>(images[largest].samples_per_pixel);
+    return std::move(ret);
 
   }
 #endif

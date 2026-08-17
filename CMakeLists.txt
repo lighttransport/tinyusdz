@@ -124,6 +124,9 @@ option(TINYUSDZ_WITH_TCMALLOC
 option(TINYUSDZ_BUILD_GUI_VIEWER
        "Build the interactive GUI USD viewer example 'tusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
        OFF)
+option(TINYUSDZ_BUILD_TEXTURE_GPU_BENCH
+       "Build the standalone headless Vulkan/CUDA/HIP texture processing benchmark"
+       OFF)
 option(TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD
        "Apply NVIDIA PRIME/GLVND offload variables to tusdview CTest cases when the NVIDIA device is visible"
        OFF)
@@ -332,7 +335,7 @@ option(TINYUSDZ_NO_WUFFS_IMPLEMENTATION
 # -- TIFF --
 option(TINYUSDZ_WITH_TIFF
        "Build with TIFF texture(includes 32bit floating point TIFF) support"
-       OFF)
+       ON)
 # ----------
 
 # -- EXR --
@@ -1003,14 +1006,17 @@ set(TINYUSDZ_PYTHON_BINDING_SOURCES
 #    ${PROJECT_SOURCE_DIR}/src/blender/bindings.cc)
 
 if(TINYUSDZ_WITH_TIFF)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/tiny_dng_loader.cc)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
     set_source_files_properties(
       ${PROJECT_SOURCE_DIR}/src/external/tiny_dng_loader.cc
-      PROPERTIES COMPILE_DEFINITIONS "TINY_DNG_LOADER_USE_SYSTEM_ZLIB=1")
+      PROPERTIES COMPILE_DEFINITIONS "TINY_DNG_LOADER_ENABLE_ZIP=1;TINY_DNG_LOADER_USE_SYSTEM_ZLIB=1")
   else()
     set_source_files_properties(
       ${PROJECT_SOURCE_DIR}/src/external/tiny_dng_loader.cc
-      PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+      PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external
+                 COMPILE_DEFINITIONS "TINY_DNG_LOADER_ENABLE_ZIP=1")
   endif()
 
   # NOTE: tiny_dng_loader doesn't depend on tinyexr,
@@ -1054,18 +1060,12 @@ if(TINYUSDZ_WITH_EXR)
   endif()
 endif(TINYUSDZ_WITH_EXR)
 
-if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
-
-  if(NOT TINYUSDZ_USE_SYSTEM_ZLIB)
-    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
-
-    # TODO: Set this only for clang, gcc
-    set_source_files_properties(
-      ${PROJECT_SOURCE_DIR}/src/external/miniz.c
-      PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
-  endif()
-
-endif()
+# TinyUSDZ's PTEX reader and nanoimage backend use miniz directly. Keep this
+# bundled dependency even when TinyDNG itself is configured to use system zlib.
+list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+set_source_files_properties(
+  ${PROJECT_SOURCE_DIR}/src/external/miniz.c
+  PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
 
 # -- Zstd compression --
 if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
@@ -1141,14 +1141,6 @@ if(TINYUSDZ_WITH_NANOIMAGE)
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_png.c
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_tga.c
        ${PROJECT_SOURCE_DIR}/src/external/nanoimage/nanoimage_zlib.c)
-  # Ensure miniz.c is compiled (may already be added by EXR/TIFF, but guard for
-  # when nanoimage is the only inflate consumer)
-  if(NOT TINYUSDZ_WITH_EXR AND NOT TINYUSDZ_WITH_TIFF)
-    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
-    set_source_files_properties(
-      ${PROJECT_SOURCE_DIR}/src/external/miniz.c
-      PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
-  endif()
 endif()
 
 if(TINYUSDZ_WITH_ALAC_AUDIO)
@@ -2102,7 +2094,7 @@ endif()
 # main enable_testing() inside the TINYUSDZ_BUILD_TESTS block below runs after
 # these add_subdirectory() calls, which is too late for the subdirectory's own
 # add_test() to take effect. Calling it twice is harmless.
-if(TINYUSDZ_BUILD_TESTS)
+if(TINYUSDZ_BUILD_TESTS OR (TINYUSDZ_BUILD_TEXTURE_GPU_BENCH AND BUILD_TESTING))
   enable_testing()
 endif()
 
@@ -2185,6 +2177,14 @@ if(TINYUSDZ_BUILD_EXAMPLES)
     add_subdirectory(examples/c_api_example)
   endif()
 endif(TINYUSDZ_BUILD_EXAMPLES)
+
+if(TINYUSDZ_BUILD_TEXTURE_GPU_BENCH)
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    add_subdirectory(tools/tusdview-texture-bench)
+  else()
+    message(WARNING "TINYUSDZ_BUILD_TEXTURE_GPU_BENCH requires TINYUSDZ_WITH_TEXTOOLS=ON")
+  endif()
+endif()
 
 # Register tool-local tests added below as part of the top-level test tree.
 if(TINYUSDZ_BUILD_TESTS)
