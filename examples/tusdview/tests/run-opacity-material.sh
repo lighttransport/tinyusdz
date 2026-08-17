@@ -363,7 +363,7 @@ img="$OUT/display-opacity-vkrt.ppm"
 run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" --frames 4 \
   --view-dir 0,0,-1 --screenshot "$img" "$OUT/display-opacity.usda" \
   >"$OUT/display-opacity-vkrt.log" 2>&1
-if grep -q 'Vulkan ray tracing enabled (hardware ray query)' "$OUT/display-opacity-vkrt.log" && [ -s "$img" ]; then
+if grep -q 'caps: v1 .*rt=hardware' "$OUT/display-opacity-vkrt.log" && [ -s "$img" ]; then
   ran=$((ran+1)); varying_ran=$((varying_ran+1))
   probe "$img" vary-vkrt || { echo "FAIL: vary-vkrt"; fail=1; }
   probe_display_background "$img" || {
@@ -373,7 +373,7 @@ if grep -q 'Vulkan ray tracing enabled (hardware ray query)' "$OUT/display-opaci
   run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" \
     --mode opacity --frames 4 --view-dir 0,0,-1 --screenshot "$aov" \
     "$OUT/display-opacity.usda" >"$OUT/display-opacity-vkrt-opacity-aov.log" 2>&1
-  if grep -q 'Vulkan ray tracing enabled (hardware ray query)' \
+  if grep -q 'caps: v1 .*rt=hardware' \
        "$OUT/display-opacity-vkrt-opacity-aov.log" && [ -s "$aov" ]; then
     probe_opacity_aov "$aov" display-opacity-vkrt || {
       echo "FAIL: display-opacity-vkrt opacity AOV"; fail=1;
@@ -386,7 +386,7 @@ if grep -q 'Vulkan ray tracing enabled (hardware ray query)' "$OUT/display-opaci
   run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" --frames 4 \
     --view-dir 0,0,-1 --screenshot "$mask_img" "$OUT/opacity-udim.usda" \
     >"$OUT/opacity-udim-vkrt.log" 2>&1
-  if grep -q 'Vulkan ray tracing enabled (hardware ray query)' \
+  if grep -q 'caps: v1 .*rt=hardware' \
        "$OUT/opacity-udim-vkrt.log" && [ -s "$mask_img" ]; then
     mask_ran=$((mask_ran+1))
     probe "$mask_img" mask-vkrt || { echo "FAIL: mask-vkrt"; fail=1; }

@@ -178,6 +178,18 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
                      caps_.gpu_name;
   }
   caps_.api_info = version ? reinterpret_cast<const char*>(version) : "OpenGL";
+  {
+    // GL exposes no device-type enum, so classify from the renderer string.
+    // Only the software rasterizers need identifying; everything else is a GPU.
+    std::string lower = caps_.gpu_name;
+    for (char& c : lower) c = static_cast<char>(std::tolower(c));
+    const bool software = lower.find("llvmpipe") != std::string::npos ||
+                          lower.find("softpipe") != std::string::npos ||
+                          lower.find("swrast") != std::string::npos ||
+                          lower.find("lavapipe") != std::string::npos ||
+                          lower.find("software rasterizer") != std::string::npos;
+    caps_.device_type = software ? "cpu" : "gpu";
+  }
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize_);
 
   // Compressed-texture format support (extension strings + core versions).

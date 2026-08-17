@@ -143,6 +143,10 @@ struct RendererCaps {
   std::string api_info;
   bool usesZeroToOneDepth{false};  // Vulkan clip space Z in [0,1]; GL in [-1,1]
   bool flipViewportV{false};       // GL FBO textures are bottom-up
+  // Device class, as the API reports it: "discrete", "integrated", "virtual",
+  // "cpu", "other" or "unknown". Tests use this to tell a real GPU from a
+  // software rasterizer without pattern-matching driver marketing strings.
+  std::string device_type{"unknown"};
   bool supportsRayTracing{false};  // device has the RT extensions (Vulkan only)
   bool supportsGpuSkinning{false};
   bool supportsExtendedGpuSkinning{false};  // texture-backed >4 influences

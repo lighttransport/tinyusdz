@@ -702,6 +702,7 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
   phys_ = best->device;
   queueFamily_ = best->queueFamily;
   caps_.gpu_name = best->props.deviceName;
+  caps_.device_type = DeviceTypeName(best->props.deviceType);
   caps_.api_info = "Vulkan " +
                    std::to_string(VK_VERSION_MAJOR(best->props.apiVersion)) + "." +
                    std::to_string(VK_VERSION_MINOR(best->props.apiVersion)) + "." +

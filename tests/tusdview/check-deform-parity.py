@@ -27,6 +27,7 @@ check above can never go quietly vacuous.
 Exits 77 (skip) when the binary, the scene or a usable GPU is missing.
 """
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -163,7 +164,7 @@ def main():
 
     def backend_available(log):
         if which == "rt":
-            return ("Vulkan ray tracing enabled (hardware ray query)" in log and
+            return (re.search(r"caps: v1 .*rt=hardware", log) and
                     "ray tracing is unavailable" not in log)
         if which == "cuda":
             return "CUDA RT wrote" in log

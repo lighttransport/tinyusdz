@@ -600,6 +600,8 @@ class App
   // texture budget, host scene source, headless size, init()). Factored out of
   // the startup path so the live-switch path (applyTechniqueSwitch) can reuse
   // the exact same sequence instead of duplicating it.
+  // Emits the versioned `caps: v1 ...` line consumed by the test suite.
+  void logCapabilities() const;
   bool createAndInitRenderer(Backend backend, std::string* err);
   // Apply a requested technique switch: same-owner overlay changes (Vulkan
   // raster <-> Vulkan RT) just flip renderer_->setRayTracing(); an owner change

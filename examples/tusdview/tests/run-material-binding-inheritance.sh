@@ -76,11 +76,12 @@ validate_textured_render() {
     echo "FAIL: $tag render failed (rc=$rc)"; sed -n '1,40p' "$log"; exit 1
   fi
 
-# Mesa's software Vulkan path on this machine is useful for API/validation
-# smoke tests but does not fetch the viewer's textured vertex attributes
-# reliably. A flat software render therefore cannot distinguish bad asset
-# anchoring from the device limitation; let a hardware backend answer instead.
-  if grep -Eqi 'llvmpipe|softpipe|lavapipe|software rasterizer|selected a CPU|GPU:.*\(cpu|\(cpu, driver' "$log"; then
+# Mesa's software Vulkan path is useful for API/validation smoke tests but does
+# not fetch the viewer's textured vertex attributes reliably, so a flat software
+# render cannot distinguish bad asset anchoring from the device limitation. Ask
+# the viewer what it selected (caps line) rather than pattern-matching driver
+# marketing strings, which is how this check drifted out of date before.
+  if grep -Eq 'caps: v1 .*device=cpu' "$log"; then
     echo "SKIP: software Vulkan cannot validate texture sampling"
     exit "$SKIP"
   fi
