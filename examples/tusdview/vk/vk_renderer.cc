@@ -722,6 +722,12 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
 void VulkanRenderer::detectRtSupport() {
   rtSupported_ = false;
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
+  if (const char* forceSw = std::getenv("TUSDVIEW_RT_FORCE_SW")) {
+    if (std::atoi(forceSw) != 0) {
+      LOGI("ray tracing: TUSDVIEW_RT_FORCE_SW=1; skipping hardware ray query");
+      return;
+    }
+  }
   if (!phys_) return;
 
   // Required device extensions for the ray-query path. (descriptor_indexing,
@@ -5340,6 +5346,7 @@ void VulkanRenderer::destroyScene() {
   texSlotBytes_.clear();
   texSlotWidths_.clear();
   texSlotHeights_.clear();
+  texSlotMipLevels_.clear();
   texRegionUpdatable_.clear();
   texCompressedFormats_.clear();
   texUdimArrayViews_.clear();
@@ -5406,6 +5413,7 @@ void VulkanRenderer::growTextureSlots(int textureCount) {
   texSlotBytes_.resize(n, 0);
   texSlotWidths_.resize(n, 0);
   texSlotHeights_.resize(n, 0);
+  texSlotMipLevels_.resize(n, 1);
   texRegionUpdatable_.resize(n, 0);
   texUdimArrayViews_.resize(n, dummyArrayView_);
   texUdimArrayImgs_.resize(n, VK_NULL_HANDLE);
@@ -5544,6 +5552,8 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                         0);
   texSlotHeights_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
                          0);
+  texSlotMipLevels_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 1);
   texRegionUpdatable_.assign(
       textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
   texCompressedFormats_.assign(
@@ -5710,6 +5720,9 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     texSlotBytes_[index] = static_cast<size_t>(requirements.size);
     texSlotWidths_[index] = t.image.width;
     texSlotHeights_[index] = t.image.height;
+    texSlotMipLevels_[index] =
+        1 + static_cast<int>(t.requestedCompressed ? t.compressed.mips.size()
+                                                   : t.mipImages.size());
     texCompressedFormats_[index] =
         (t.requestedCompressed && t.compressed.format != DrawCompressedFormat::None)
             ? t.compressed.format
@@ -5816,6 +5829,7 @@ void VulkanRenderer::evictTexture(int slot) {
   texSlotBytes_[index] = 0;
   texSlotWidths_[index] = 0;
   texSlotHeights_[index] = 0;
+  texSlotMipLevels_[index] = 1;
   texRegionUpdatable_[index] = 0;
   texUdimArrayViews_[index] = dummyArrayView_;
   texUdimArrayImgs_[index] = VK_NULL_HANDLE;
@@ -5911,14 +5925,22 @@ bool VulkanRenderer::updateTextureRegions(
     const size_t stride = update.rowBytes
                               ? update.rowBytes
                               : size_t(update.width) * 4u;
+    const int mip = update.mipLevel;
+    const int mipWidth = mip >= 0 && mip < texSlotMipLevels_[index]
+                             ? std::max(1, texSlotWidths_[index] >> mip)
+                             : 0;
+    const int mipHeight = mip >= 0 && mip < texSlotMipLevels_[index]
+                              ? std::max(1, texSlotHeights_[index] >> mip)
+                              : 0;
     const size_t bw = (static_cast<size_t>(update.width) + 3u) / 4u;
     const size_t bh = (static_cast<size_t>(update.height) + 3u) / 4u;
     const size_t bytes = compressedUpdates
                              ? bw * bh * blockBytes(update.compressedFormat)
                              : stride * size_t(update.height);
     if (update.x < 0 || update.y < 0 || update.width <= 0 ||
-        update.height <= 0 || update.x + update.width > texSlotWidths_[index] ||
-        update.y + update.height > texSlotHeights_[index] ||
+        update.mipLevel < 0 || update.mipLevel >= texSlotMipLevels_[index] ||
+        update.height <= 0 || update.x + update.width > mipWidth ||
+        update.y + update.height > mipHeight ||
         (!compressedUpdates && (stride < size_t(update.width) * 4u ||
                                 (stride & 3u) != 0 ||
                                 update.rgba.size() < bytes)) ||
@@ -5931,7 +5953,7 @@ bool VulkanRenderer::updateTextureRegions(
            "rect=(%d,%d %dx%d) stride=%zu bytes=%zu texture=%dx%d", slot,
            update.x, update.y, update.width, update.height, stride,
            compressedUpdates ? update.compressed.size() : update.rgba.size(),
-           texSlotWidths_[index], texSlotHeights_[index]);
+           mipWidth, mipHeight);
       return false;
     }
     totalBytes += bytes;
@@ -5945,13 +5967,23 @@ bool VulkanRenderer::updateTextureRegions(
     DrawTextureCPU& rtTex = rtTexturesCpu_[index];
     if (compressedUpdates && rtTex.compressed.format != DrawCompressedFormat::None &&
         !rtTex.compressed.data.empty()) {
-      const size_t texBlocksW =
-          (static_cast<size_t>(rtTex.compressed.width) + 3u) / 4u;
       const size_t bytesPerBlock = blockBytes(compressedUpdates
                                                   ? updates.front().compressedFormat
                                                   : DrawCompressedFormat::None);
-      const size_t rowBytes = texBlocksW * bytesPerBlock;
       for (const TextureRegionUpdate& update : updates) {
+        DrawCompressedMipCPU* level = nullptr;
+        std::vector<uint8_t>* dstData = &rtTex.compressed.data;
+        int levelWidth = rtTex.compressed.width;
+        if (update.mipLevel > 0 &&
+            static_cast<size_t>(update.mipLevel - 1) <
+                rtTex.compressed.mips.size()) {
+          level = &rtTex.compressed.mips[static_cast<size_t>(update.mipLevel - 1)];
+          dstData = &level->data;
+          levelWidth = level->width;
+        }
+        const size_t levelBlocksW =
+            (static_cast<size_t>(levelWidth) + 3u) / 4u;
+        const size_t rowBytes = levelBlocksW * bytesPerBlock;
         const size_t blockX = static_cast<size_t>(update.x) / 4u;
         const size_t blockY = static_cast<size_t>(update.y) / 4u;
         const size_t copyRowBytes =
@@ -5960,8 +5992,8 @@ bool VulkanRenderer::updateTextureRegions(
              row < (static_cast<size_t>(update.height) + 3u) / 4u; ++row) {
           const size_t dst = (blockY + row) * rowBytes + blockX * bytesPerBlock;
           const size_t src = row * copyRowBytes;
-          if (dst > rtTex.compressed.data.size() ||
-              copyRowBytes > rtTex.compressed.data.size() - dst ||
+          if (dst > dstData->size() ||
+              copyRowBytes > dstData->size() - dst ||
               src > update.compressed.size() ||
               copyRowBytes > update.compressed.size() - src) {
             break;
@@ -5969,14 +6001,19 @@ bool VulkanRenderer::updateTextureRegions(
           std::copy(update.compressed.begin() + static_cast<std::ptrdiff_t>(src),
                     update.compressed.begin() +
                         static_cast<std::ptrdiff_t>(src + copyRowBytes),
-                    rtTex.compressed.data.begin() +
+                    dstData->begin() +
                         static_cast<std::ptrdiff_t>(dst));
         }
       }
       rtTextureTableDirty_ = true;
     } else if (!compressedUpdates && !rtTex.image.data.empty()) {
-      const size_t dstRowBytes = static_cast<size_t>(rtTex.image.width) * 4u;
       for (const TextureRegionUpdate& update : updates) {
+        light3d::Image* level = &rtTex.image;
+        if (update.mipLevel > 0 &&
+            static_cast<size_t>(update.mipLevel - 1) < rtTex.mipImages.size()) {
+          level = &rtTex.mipImages[static_cast<size_t>(update.mipLevel - 1)];
+        }
+        const size_t dstRowBytes = static_cast<size_t>(level->width) * 4u;
         const size_t srcRowBytes = update.rowBytes
                                        ? update.rowBytes
                                        : static_cast<size_t>(update.width) * 4u;
@@ -5986,14 +6023,14 @@ bool VulkanRenderer::updateTextureRegions(
                              static_cast<size_t>(update.x)) * 4u;
           const size_t src = static_cast<size_t>(row) * srcRowBytes;
           const size_t copyBytes = static_cast<size_t>(update.width) * 4u;
-          if (dst > rtTex.image.data.size() ||
-              copyBytes > rtTex.image.data.size() - dst ||
+          if (dst > level->data.size() ||
+              copyBytes > level->data.size() - dst ||
               src > update.rgba.size() || copyBytes > update.rgba.size() - src) {
             break;
           }
           std::copy(update.rgba.begin() + static_cast<std::ptrdiff_t>(src),
                     update.rgba.begin() + static_cast<std::ptrdiff_t>(src + copyBytes),
-                    rtTex.image.data.begin() + static_cast<std::ptrdiff_t>(dst));
+                    level->data.begin() + static_cast<std::ptrdiff_t>(dst));
         }
       }
       rtTextureTableDirty_ = true;
@@ -6035,7 +6072,8 @@ bool VulkanRenderer::updateTextureRegions(
   toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   toDst.image = texSlotImgs_[index];
   toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.levelCount =
+      static_cast<uint32_t>(std::max(1, texSlotMipLevels_[index]));
   toDst.subresourceRange.layerCount = 1;
   toDst.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
   toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -6054,6 +6092,7 @@ bool VulkanRenderer::updateTextureRegions(
     region.bufferRowLength = compressedUpdates ? 0u
                                                : static_cast<uint32_t>(stride / 4u);
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = static_cast<uint32_t>(update.mipLevel);
     region.imageSubresource.layerCount = 1;
     region.imageOffset = {update.x, update.y, 0};
     region.imageExtent = {static_cast<uint32_t>(update.width),
@@ -8628,7 +8667,7 @@ void VulkanRenderer::rebuildTlas() {
   w[16].descriptorCount = 1;
   w[16].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   w[16].pBufferInfo = &pointChunkInfo;
-  std::array<VkDescriptorImageInfo, 256> ptexImages{};
+  std::array<VkDescriptorImageInfo, TUSDVIEW_RT_PTEXTURE_IMAGE_CAP> ptexImages{};
   size_t directPtexCount = 0;
   for (const DrawTextureCPU& texture : rtTexturesCpu_) {
     if (texture.isPtex && !texture.compressed.data.empty()) ++directPtexCount;
@@ -8700,11 +8739,11 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   b[18].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   b[19] = b[8];
   b[19].binding = 19;
-  b[19].descriptorCount = 256;
+  b[19].descriptorCount = TUSDVIEW_RT_PTEXTURE_IMAGE_CAP;
   b[19].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 19;
+  lci.bindingCount = 20;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &rtSetLayout_),
            "rt descriptor set layout");
@@ -8713,7 +8752,8 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxTlasChunks};
   ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
   ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 13};
-  ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 + 256};
+  ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+           3 + TUSDVIEW_RT_PTEXTURE_IMAGE_CAP};
   VkDescriptorPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   pci.maxSets = 1;
@@ -8855,7 +8895,7 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   // SW-technique-specific (BVH/triangle data) and free to reuse numbers the
   // hardware layout spends on AS(0)/MeshDesc(2)/InstInfo(4)/points(15-18),
   // since the two layouts never coexist in one pipeline.
-  VkDescriptorSetLayoutBinding b[20]{};
+  VkDescriptorSetLayoutBinding b[22]{};
   auto img = [](VkDescriptorSetLayoutBinding& x, uint32_t bnd) {
     x.binding = bnd; x.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     x.descriptorCount = 1; x.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -8885,17 +8925,25 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   buf(b[17], 17);                     // Cols (float[12]/tri)
   buf(b[18], 18);                     // Uv (float[6]/tri)
   buf(b[19], 19);                     // MatId (int/tri)
+  b[20] = b[10];
+  b[20].binding = 20;
+  b[20].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  b[20].descriptorCount = 1;
+  b[21] = b[10];
+  b[21].binding = 21;
+  b[21].descriptorCount = TUSDVIEW_RT_PTEXTURE_IMAGE_CAP;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 20;
+  lci.bindingCount = 22;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &swRtSetLayout_),
            "sw-rt descriptor set layout");
 
   VkDescriptorPoolSize ps[3]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
-  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 15};
-  ps[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
+  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16};
+  ps[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+           3 + TUSDVIEW_RT_PTEXTURE_IMAGE_CAP};
   VkDescriptorPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   pci.maxSets = 1;
@@ -8964,6 +9012,8 @@ void VulkanRenderer::destroySwRt() {
   if (swUvMem_) { vkFreeMemory(device_, swUvMem_, nullptr); swUvMem_ = VK_NULL_HANDLE; }
   if (swMatBuf_) { vkDestroyBuffer(device_, swMatBuf_, nullptr); swMatBuf_ = VK_NULL_HANDLE; }
   if (swMatMem_) { vkFreeMemory(device_, swMatMem_, nullptr); swMatMem_ = VK_NULL_HANDLE; }
+  if (swFaceBuf_) { vkDestroyBuffer(device_, swFaceBuf_, nullptr); swFaceBuf_ = VK_NULL_HANDLE; }
+  if (swFaceMem_) { vkFreeMemory(device_, swFaceMem_, nullptr); swFaceMem_ = VK_NULL_HANDLE; }
   if (swBlasBuf_) { vkDestroyBuffer(device_, swBlasBuf_, nullptr); swBlasBuf_ = VK_NULL_HANDLE; }
   if (swBlasMem_) { vkFreeMemory(device_, swBlasMem_, nullptr); swBlasMem_ = VK_NULL_HANDLE; }
   if (swTlasBuf_) { vkDestroyBuffer(device_, swTlasBuf_, nullptr); swTlasBuf_ = VK_NULL_HANDLE; }
@@ -9098,6 +9148,8 @@ void VulkanRenderer::rebuildSwBvh() {
     if (swUvMem_) { vkFreeMemory(device_, swUvMem_, nullptr); swUvMem_ = VK_NULL_HANDLE; }
     if (swMatBuf_) { vkDestroyBuffer(device_, swMatBuf_, nullptr); swMatBuf_ = VK_NULL_HANDLE; }
     if (swMatMem_) { vkFreeMemory(device_, swMatMem_, nullptr); swMatMem_ = VK_NULL_HANDLE; }
+    if (swFaceBuf_) { vkDestroyBuffer(device_, swFaceBuf_, nullptr); swFaceBuf_ = VK_NULL_HANDLE; }
+    if (swFaceMem_) { vkFreeMemory(device_, swFaceMem_, nullptr); swFaceMem_ = VK_NULL_HANDLE; }
     if (swBlasBuf_) { vkDestroyBuffer(device_, swBlasBuf_, nullptr); swBlasBuf_ = VK_NULL_HANDLE; }
     if (swBlasMem_) { vkFreeMemory(device_, swBlasMem_, nullptr); swBlasMem_ = VK_NULL_HANDLE; }
     if (swTlasBuf_) { vkDestroyBuffer(device_, swTlasBuf_, nullptr); swTlasBuf_ = VK_NULL_HANDLE; }
@@ -9156,6 +9208,7 @@ void VulkanRenderer::rebuildSwBvh() {
   ok = uploadFloats(hs.cols, &swColBuf_, &swColMem_) && ok;
   ok = uploadFloats(hs.uv, &swUvBuf_, &swUvMem_) && ok;
   ok = uploadInts(hs.mat, &swMatBuf_, &swMatMem_) && ok;
+  ok = uploadInts(hs.face, &swFaceBuf_, &swFaceMem_) && ok;
   ok = uploadNodes(hs.blas, &swBlasBuf_, &swBlasMem_) && ok;
   ok = uploadNodes(hs.tlas, &swTlasBuf_, &swTlasMem_) && ok;
   ok = uploadInsts(hs.instances, &swInstBuf_, &swInstMem_) && ok;
@@ -9214,6 +9267,7 @@ void VulkanRenderer::rebuildSwBvh() {
   VkDescriptorBufferInfo swColsInfo{swColBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swUvInfo{swUvBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swMatIdInfo{swMatBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo swFaceInfo{swFaceBuf_, 0, VK_WHOLE_SIZE};
 
   const auto bufW = [&](VkWriteDescriptorSet& w, uint32_t bnd,
                         const VkDescriptorBufferInfo* info) {
@@ -9242,7 +9296,19 @@ void VulkanRenderer::rebuildSwBvh() {
     w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     w.pImageInfo = info;
   };
-  VkWriteDescriptorSet w[20]{};
+  std::array<VkDescriptorImageInfo, TUSDVIEW_RT_PTEXTURE_IMAGE_CAP> ptexImages{};
+  size_t directPtexCount = 0;
+  for (const DrawTextureCPU& texture : rtTexturesCpu_) {
+    if (texture.isPtex && !texture.compressed.data.empty()) ++directPtexCount;
+  }
+  for (size_t i = 0; i < ptexImages.size(); ++i) {
+    ptexImages[i].sampler = sampler_;
+    ptexImages[i].imageView =
+        (i < texSlotViews_.size() && texSlotViews_[i]) ? texSlotViews_[i]
+                                                        : whiteView_;
+    ptexImages[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  }
+  VkWriteDescriptorSet w[22]{};
   bufW(w[0], 0, &tlasInfo);
   imgW(w[1], 1, &outImgInfo);
   bufW(w[2], 2, &blasInfo);
@@ -9263,7 +9329,18 @@ void VulkanRenderer::rebuildSwBvh() {
   bufW(w[17], 17, &swColsInfo);
   bufW(w[18], 18, &swUvInfo);
   bufW(w[19], 19, &swMatIdInfo);
-  vkUpdateDescriptorSets(device_, 20, w, 0, nullptr);
+  bufW(w[20], 20, &swFaceInfo);
+  w[21].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[21].dstSet = swRtSet_;
+  w[21].dstBinding = 21;
+  w[21].descriptorCount = static_cast<uint32_t>(ptexImages.size());
+  w[21].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  w[21].pImageInfo = ptexImages.data();
+  vkUpdateDescriptorSets(device_, 22, w, 0, nullptr);
+  if (directPtexCount > 0) {
+    std::fprintf(stderr, "[vk_swrt] direct compressed Ptex images: %zu\n",
+                 directPtexCount);
+  }
 #endif
 
   tlasDirty_ = false;

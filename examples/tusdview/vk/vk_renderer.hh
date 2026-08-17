@@ -861,6 +861,7 @@ class VulkanRenderer final : public Renderer {
   std::vector<size_t> texSlotBytes_;
   std::vector<int> texSlotWidths_;
   std::vector<int> texSlotHeights_;
+  std::vector<int> texSlotMipLevels_;
   std::vector<uint8_t> texRegionUpdatable_;
   std::vector<DrawCompressedFormat> texCompressedFormats_;
   std::vector<VkImageView> texUdimArrayViews_;
@@ -1142,6 +1143,8 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory swUvMem_{VK_NULL_HANDLE};
   VkBuffer swMatBuf_{VK_NULL_HANDLE};    // HostScene::mat (material id/tri)
   VkDeviceMemory swMatMem_{VK_NULL_HANDLE};
+  VkBuffer swFaceBuf_{VK_NULL_HANDLE};   // HostScene::face (source face/tri)
+  VkDeviceMemory swFaceMem_{VK_NULL_HANDLE};
   VkBuffer swBlasBuf_{VK_NULL_HANDLE};   // HostScene::blas (Node[])
   VkDeviceMemory swBlasMem_{VK_NULL_HANDLE};
   VkBuffer swTlasBuf_{VK_NULL_HANDLE};   // HostScene::tlas (Node[])
