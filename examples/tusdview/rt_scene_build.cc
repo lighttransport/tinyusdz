@@ -1347,15 +1347,34 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       for (size_t i = 0; i < n && out->pointCenters.size() / 3 < compactPointBudget; ++i) {
         float center[3];
         CarrierWorldPoint(src.world, &src.points[i * 3], center);
-        float major[3] = {src.world[0], src.world[1], src.world[2]};
-        float normal[3] = {src.world[4], src.world[5], src.world[6]};
+        // Orient each analytic disk to the local curve tangent. The previous
+        // fixed world-axis frame made compact curves look like a row of
+        // unrelated dots when the strand turned.
+        const size_t prev = i > 0 ? i - 1 : i;
+        const size_t next = i + 1 < n ? i + 1 : i;
+        float localTangent[3] = {
+            src.points[next * 3 + 0] - src.points[prev * 3 + 0],
+            src.points[next * 3 + 1] - src.points[prev * 3 + 1],
+            src.points[next * 3 + 2] - src.points[prev * 3 + 2]};
+        float major[3] = {
+            src.world[0] * localTangent[0] + src.world[4] * localTangent[1] +
+                src.world[8] * localTangent[2],
+            src.world[1] * localTangent[0] + src.world[5] * localTangent[1] +
+                src.world[9] * localTangent[2],
+            src.world[2] * localTangent[0] + src.world[6] * localTangent[1] +
+                src.world[10] * localTangent[2]};
         const float ml = std::sqrt(major[0] * major[0] + major[1] * major[1] +
                                    major[2] * major[2]);
-        const float nl = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] +
-                                   normal[2] * normal[2]);
-        if (!std::isfinite(ml) || !std::isfinite(nl) || ml <= 1.0e-8f ||
-            nl <= 1.0e-8f) continue;
+        if (!std::isfinite(ml) || ml <= 1.0e-8f) continue;
         for (float& v : major) v /= ml;
+        const float ref[3] = {std::fabs(major[1]) < 0.9f ? 0.0f : 1.0f,
+                              std::fabs(major[1]) < 0.9f ? 1.0f : 0.0f, 0.0f};
+        float normal[3] = {major[1] * ref[2] - major[2] * ref[1],
+                           major[2] * ref[0] - major[0] * ref[2],
+                           major[0] * ref[1] - major[1] * ref[0]};
+        const float nl = std::sqrt(normal[0] * normal[0] +
+                                   normal[1] * normal[1] + normal[2] * normal[2]);
+        if (!std::isfinite(nl) || nl <= 1.0e-8f) continue;
         for (float& v : normal) v /= nl;
         const float width = (src.widths.empty()
                                  ? 1.0f
