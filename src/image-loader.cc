@@ -1633,8 +1633,25 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromFile(
   // Assume filename is already resolved.
   std::string filepath = filename;
 
+  const size_t max_bytes = MaxMemoryBytes(uint64_t(max_memory_limit_in_mb));
+  io::MMapFileHandle mapped;
+  std::string map_err;
+  if (io::MMapFile(filepath, &mapped, false, &map_err)) {
+    if (mapped.size > static_cast<uint64_t>(max_bytes)) {
+      std::string unmap_err;
+      io::UnmapFile(mapped, &unmap_err);
+      return nonstd::make_unexpected("Image file exceeds memory limit: \"" +
+                                     filepath + "\"\n");
+    }
+    auto result = LoadImageFromMemory(mapped.addr,
+                                      static_cast<size_t>(mapped.size),
+                                      filename);
+    std::string unmap_err;
+    io::UnmapFile(mapped, &unmap_err);
+    return result;
+  }
+
   std::vector<uint8_t> data;
-  size_t max_bytes = MaxMemoryBytes(uint64_t(max_memory_limit_in_mb));
   std::string err;
   if (!io::ReadWholeFile(&data, &err, filepath, max_bytes,
                          /* userdata */ nullptr)) {

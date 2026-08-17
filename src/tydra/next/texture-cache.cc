@@ -93,14 +93,25 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
     path = opt.base_dir + "/" + path;
   }
   if (opt.max_source_bytes != 0) {
-    // Keep this preflight to a metadata/stat check: the next call loads the
-    // file into the decoder-owned buffer, and a separate info-from-file API is
-    // not present in every link graph that embeds tydra-next.
+    // Metadata preflight is mmap-backed for TIFF/BigTIFF, so a multi-gigabyte
+    // texture is not copied merely to determine its decoded size.
     std::ifstream probe(path, std::ios::binary | std::ios::ate);
     if (!probe.is_open()) return false;
     const std::streamoff encoded_size = probe.tellg();
     if (encoded_size < 0 ||
         static_cast<uint64_t>(encoded_size) > opt.max_source_bytes) {
+      return false;
+    }
+    auto info = ::tinyusdz::image::GetImageInfoFromFile(path);
+    if (!info) return false;
+    size_t pixels = 0;
+    size_t samples = 0;
+    size_t decoded_bytes = 0;
+    if (!safe::mul(static_cast<size_t>(info.value().width),
+                   static_cast<size_t>(info.value().height), &pixels) ||
+        !safe::mul(pixels, std::max<size_t>(4, info.value().channels), &samples) ||
+        !safe::mul(samples, size_t{4}, &decoded_bytes) ||
+        static_cast<uint64_t>(decoded_bytes) > opt.max_source_bytes) {
       return false;
     }
   }

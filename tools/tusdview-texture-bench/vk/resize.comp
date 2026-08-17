@@ -1,0 +1,62 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(std430, set = 0, binding = 0) readonly buffer Src { uint src[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Dst { uint dst[]; };
+layout(push_constant) uniform PC {
+  uint sw; uint sh; uint dw; uint dh; uint filterMode; uint srgb;
+} pc;
+
+float srgbToLinear(float x) {
+  return x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4);
+}
+float linearToSrgb(float x) {
+  x = clamp(x, 0.0, 1.0);
+  return x <= 0.0031308 ? x * 12.92 : 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+}
+vec4 loadPixel(int x, int y) {
+  x = clamp(x, 0, int(pc.sw) - 1); y = clamp(y, 0, int(pc.sh) - 1);
+  uint p = src[uint(y) * pc.sw + uint(x)];
+  vec4 c = vec4(float(p & 255u), float((p >> 8) & 255u),
+                float((p >> 16) & 255u), float((p >> 24) & 255u)) / 255.0;
+  if (pc.srgb != 0u) { c.rgb = vec3(srgbToLinear(c.r), srgbToLinear(c.g), srgbToLinear(c.b)); }
+  return c;
+}
+float mitchell(float x) {
+  x = abs(x); const float B = 1.0 / 3.0; const float C = 1.0 / 3.0;
+  if (x < 1.0) return ((12.0 - 9.0 * B - 6.0 * C) * x*x*x +
+      (-18.0 + 12.0 * B + 6.0 * C) * x*x + (6.0 - 2.0 * B)) / 6.0;
+  if (x < 2.0) return ((-B - 6.0 * C) * x*x*x + (6.0 * B + 30.0 * C) * x*x +
+      (-12.0 * B - 48.0 * C) * x + (8.0 * B + 24.0 * C)) / 6.0;
+  return 0.0;
+}
+vec4 resizePixel(int x, int y) {
+  float sx = (float(x) + 0.5) * float(pc.sw) / float(pc.dw) - 0.5;
+  float sy = (float(y) + 0.5) * float(pc.sh) / float(pc.dh) - 0.5;
+  if (pc.filterMode == 0u) {
+    int x0 = int(floor(sx)); int y0 = int(floor(sy));
+    float fx = sx - float(x0), fy = sy - float(y0);
+    vec4 a = loadPixel(x0,y0); vec4 b = loadPixel(x0+1,y0);
+    vec4 c = loadPixel(x0,y0+1); vec4 d = loadPixel(x0+1,y0+1);
+    a.rgb *= a.a; b.rgb *= b.a; c.rgb *= c.a; d.rgb *= d.a;
+    vec4 outPixel = mix(mix(a,b,fx), mix(c,d,fx), fy);
+    outPixel.rgb = outPixel.a > 1e-6 ? outPixel.rgb / outPixel.a : vec3(0.0);
+    if (pc.srgb != 0u) outPixel.rgb = vec3(linearToSrgb(outPixel.r), linearToSrgb(outPixel.g), linearToSrgb(outPixel.b));
+    return clamp(outPixel, 0.0, 1.0);
+  }
+  int ix = int(floor(sx)); int iy = int(floor(sy));
+  vec4 sum = vec4(0.0); float total = 0.0;
+  for (int j = -1; j <= 2; ++j) for (int i = -1; i <= 2; ++i) {
+    float w = mitchell(float(i) - (sx - float(ix))) * mitchell(float(j) - (sy - float(iy)));
+    vec4 c = loadPixel(ix+i, iy+j); c.rgb *= c.a;
+    sum += c * w; total += w;
+  }
+  sum /= max(total, 1e-6); sum.rgb = sum.a > 1e-6 ? sum.rgb / sum.a : vec3(0.0);
+  if (pc.srgb != 0u) sum.rgb = vec3(linearToSrgb(sum.r), linearToSrgb(sum.g), linearToSrgb(sum.b));
+  return clamp(sum, 0.0, 1.0);
+}
+void main() {
+  uvec2 p = gl_GlobalInvocationID.xy;
+  if (p.x >= pc.dw || p.y >= pc.dh) return;
+  vec4 c = resizePixel(int(p.x), int(p.y));
+  dst[p.y * pc.dw + p.x] = packUnorm4x8(c);
+}

@@ -1,0 +1,94 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer Src { uint src[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Dst { uint dst[]; };
+layout(push_constant) uniform PC { uint width; uint height; uint format; } pc;
+
+vec4 texel(uint x, uint y) {
+  x = min(x, pc.width - 1u); y = min(y, pc.height - 1u);
+  return unpackUnorm4x8(src[y * pc.width + x]);
+}
+vec4 blockTexel(uint i) { return texel((gl_WorkGroupID.x * 4u) + (i & 3u),
+                                        (gl_WorkGroupID.y * 4u) + (i >> 2u)); }
+uint rgb565(vec3 c) {
+  return (uint(round(clamp(c.r,0.0,1.0)*31.0)) << 11u) |
+         (uint(round(clamp(c.g,0.0,1.0)*63.0)) << 5u) |
+         uint(round(clamp(c.b,0.0,1.0)*31.0));
+}
+vec3 rgb565Decode(uint c) {
+  return vec3(float((c>>11u)&31u)/31.0, float((c>>5u)&63u)/63.0, float(c&31u)/31.0);
+}
+uint nearestRGB(vec3 c, vec3 e0, vec3 e1) {
+  vec3 p[4]; p[0]=e0; p[1]=e1; p[2]=(2.0*e0+e1)/3.0; p[3]=(e0+2.0*e1)/3.0;
+  uint best=0u; float d=1e9;
+  for (uint i=0u;i<4u;++i) { float q=dot(c-p[i],c-p[i]); if(q<d){d=q;best=i;} }
+  return best;
+}
+uint bc1Block() {
+  vec3 lo=vec3(1.0), hi=vec3(0.0);
+  for(uint i=0u;i<16u;++i){vec3 c=blockTexel(i).rgb;lo=min(lo,c);hi=max(hi,c);}
+  uint e0=rgb565(hi), e1=rgb565(lo); if(e0<e1){uint t=e0;e0=e1;e1=t;}
+  vec3 c0=rgb565Decode(e0), c1=rgb565Decode(e1); uint ind=0u;
+  for(uint i=0u;i<16u;++i) ind |= nearestRGB(blockTexel(i).rgb,c0,c1) << (2u*i);
+  return e0 | (e1<<16u); // indices are written by the caller
+}
+uint alphaIndex(uint channel, uint texelIndex) {
+  float lo=1.0,hi=0.0; for(uint i=0u;i<16u;++i){float a=blockTexel(i)[channel];lo=min(lo,a);hi=max(hi,a);}
+  uint a0=uint(round(hi*255.0)), a1=uint(round(lo*255.0));
+  float p[8]; p[0]=float(a0)/255.0;p[1]=float(a1)/255.0;
+  for(uint i=2u;i<8u;++i)p[i]=((8u-i)*p[0]+(i-1u)*p[1])/7.0;
+  uint b=0u;float d=1e9;for(uint j=0u;j<8u;++j){float q=abs(blockTexel(texelIndex)[channel]-p[j]);if(q<d){d=q;b=j;}}
+  return b;
+}
+uint alphaWord(uint channel, uint word) {
+  float lo=1.0,hi=0.0; for(uint i=0u;i<16u;++i){float a=blockTexel(i)[channel];lo=min(lo,a);hi=max(hi,a);}
+  uint a0=uint(round(hi*255.0)), a1=uint(round(lo*255.0));
+  uint result = word == 0u ? (a0 | (a1 << 8u)) : 0u;
+  for(uint i=0u;i<16u;++i) for(uint k=0u;k<3u;++k) {
+    uint bit = 16u + i*3u + k;
+    if ((bit >> 5u) == word) result |= ((alphaIndex(channel,i) >> k) & 1u) << (bit & 31u);
+  }
+  return result;
+}
+void putBit(inout uvec4 b, int bit, uint v) { uint m=1u<<uint(bit&31); if((v&1u)!=0u){if((bit>>5)==0)b.x|=m;else if((bit>>5)==1)b.y|=m;else if((bit>>5)==2)b.z|=m;else b.w|=m;} }
+void putBits(inout uvec4 b,int bit,int n,uint v){for(int i=0;i<n;++i)putBit(b,bit+i,(v>>uint(i))&1u);}
+uint bitrev8(uint v) { v=((v&0x0fu)<<4u)|((v>>4u)&0x0fu); v=((v&0x33u)<<2u)|((v>>2u)&0x33u); return ((v&0x55u)<<1u)|((v>>1u)&0x55u); }
+uvec4 astcBlock() {
+  vec4 lo=vec4(1.0),hi=vec4(0.0);for(uint i=0u;i<16u;++i){vec4 c=blockTexel(i);lo=min(lo,c);hi=max(hi,c);}
+  uint w[12]; int levels[4]=int[4](0,21,43,64); int den=0;
+  for(uint c=0u;c<3u;++c){int e=int(round((hi[c]-lo[c])*255.0));den+=e*e;}
+  for(uint gy=0u;gy<3u;++gy)for(uint gx=0u;gx<4u;++gx){uint sx=gx,sy=min((gy*3u+1u)/2u,3u),ti=sy*4u+sx;int dotv=0;for(uint c=0u;c<3u;++c)dotv+=(int(round(blockTexel(ti)[c]*255.0))-int(round(lo[c]*255.0)))*int(round((hi[c]-lo[c])*255.0));int q=den>0?int(clamp(round(float(dotv)*64.0/float(den)),0.0,64.0)):0;uint best=0u;int bd=1000000;for(uint k=0u;k<4u;++k){int e=abs(levels[k]-q);if(e<bd){bd=e;best=k;}}w[gy*4u+gx]=best;}
+  uint wb[3]=uint[3](0u,0u,0u);for(uint i=0u;i<12u;++i)wb[i>>2u]|=w[i]<<((i&3u)*2u);
+  uvec4 b=uvec4(0u);b.w|=bitrev8(wb[2])<<8u;b.w|=bitrev8(wb[1])<<16u;b.w|=bitrev8(wb[0])<<24u;
+  // ASTC mode 34: 4x3 weights, two-color CEM 8.  The fields are not
+  // contiguous after the mode header; keep explicit bit positions here.
+  putBits(b,0,11,34u); putBits(b,11,2,0u); putBits(b,13,4,8u);
+  int endpointBit=17;
+  for(uint c=0u;c<3u;++c){putBits(b,endpointBit,8,uint(round(clamp(lo[c],0.0,1.0)*255.0)));endpointBit+=8;putBits(b,endpointBit,8,uint(round(clamp(hi[c],0.0,1.0)*255.0)));endpointBit+=8;}
+  return b;
+}
+uvec4 bc7Block() {
+  vec4 lo=vec4(1.0),hi=vec4(0.0);for(uint i=0u;i<16u;++i){vec4 c=blockTexel(i);lo=min(lo,c);hi=max(hi,c);}
+  uvec4 b=uvec4(0u);putBits(b,0,7,64u);int bit=7;
+  for(int c=0;c<4;++c){putBits(b,bit,7,uint(round(hi[c]*127.0)));bit+=7;}
+  for(int c=0;c<4;++c){putBits(b,bit,7,uint(round(lo[c]*127.0)));bit+=7;}
+  putBits(b,63,1,0u);putBits(b,64,1,0u);bit=65;
+  for(uint i=0u;i<16u;++i){vec4 c=blockTexel(i);uint idx=0u;float d=1e9;for(uint j=0u;j<16u;++j){float f=float(j)/15.0;vec4 q=mix(hi,lo,f);float z=dot(c-q,c-q);if(z<d){d=z;idx=j;}}int n=(i==0u)?3:4;putBits(b,bit,n,idx);bit+=n;}
+  return b;
+}
+void main(){
+  if(gl_LocalInvocationIndex!=0u)return; uint block=gl_WorkGroupID.y*((pc.width+3u)/4u)+gl_WorkGroupID.x;
+  uint words=(pc.format==0u)?2u:4u; uint base=block*words;
+  if(pc.format==4u){
+    uvec4 b=astcBlock();
+    dst[base]=b.x;dst[base+1u]=b.y;dst[base+2u]=b.z;dst[base+3u]=b.w;return;
+  }
+  if(pc.format==3u){uvec4 b=bc7Block();dst[base]=b.x;dst[base+1u]=b.y;dst[base+2u]=b.z;dst[base+3u]=b.w;return;}
+  // BC1/3/5 use a compact deterministic endpoint approximation. The index
+  // streams are emitted in separate words to keep the shader straightforward.
+  vec3 lo=vec3(1.0),hi=vec3(0.0);for(uint i=0u;i<16u;++i){vec3 c=blockTexel(i).rgb;lo=min(lo,c);hi=max(hi,c);}
+  uint e0=rgb565(hi),e1=rgb565(lo);uint indices=0u;vec3 c0=rgb565Decode(e0),c1=rgb565Decode(e1);for(uint i=0u;i<16u;++i)indices|=nearestRGB(blockTexel(i).rgb,c0,c1)<<(2u*i);
+  if(pc.format==0u){dst[base]=e0|(e1<<16u);dst[base+1u]=indices;}
+  else if(pc.format==1u){dst[base]=alphaWord(3u,0u);dst[base+1u]=alphaWord(3u,1u);dst[base+2u]=e0|(e1<<16u);dst[base+3u]=indices;}
+  else {dst[base]=alphaWord(0u,0u);dst[base+1u]=alphaWord(0u,1u);dst[base+2u]=alphaWord(1u,0u);dst[base+3u]=alphaWord(1u,1u);}
+}

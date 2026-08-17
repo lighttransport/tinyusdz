@@ -30,6 +30,7 @@
 #include "unit-task-queue.h"
 #include "unit-png-stream.h"
 #include "unit-ptx.h"
+#include "unit-tiff.h"
 #include "unit-imageproc.h"
 #include "unit-tydra.h"
 #include "unit-tydra-subdivision.h"
@@ -90,6 +91,8 @@
 
 
 TEST_LIST = {
+  { "tinydng_classic_tiff_test", tinydng_classic_tiff_test },
+  { "tinydng_bigtiff_test", tinydng_bigtiff_test },
   { "ptx_reader_rejects_invalid_input_test", ptx_reader_rejects_invalid_input_test },
   { "ptx_reader_island_fixture_test", ptx_reader_island_fixture_test },
   { "ptx_reader_synthetic_fixture_test", ptx_reader_synthetic_fixture_test },
