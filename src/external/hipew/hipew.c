@@ -11,10 +11,13 @@
 typedef HMODULE hipew_lib_t;
 #else
 #include <dlfcn.h>
+#include <glob.h>
 typedef void *hipew_lib_t;
 #endif
 
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 /* --- entry-point definitions ---------------------------------------------- */
 thipInit hipInit;
@@ -49,7 +52,54 @@ static hipew_lib_t g_hiprtc_lib = NULL;
 static int g_inited_mask = 0;
 static int g_result = HIPEW_ERROR_NOT_INITIALIZED;
 
+#ifndef _WIN32
+static hipew_lib_t hipew_try_root(const char *root,
+                                  const char *const *names) {
+  if (!root || !root[0]) return NULL;
+  char path[1024];
+  for (int i = 0; names[i]; ++i) {
+    if (snprintf(path, sizeof(path), "%s/%s", root, names[i]) >=
+        (int)sizeof(path))
+      continue;
+    hipew_lib_t h = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+    if (h) return h;
+  }
+  /* HIP_PATH/ROCM_PATH conventionally points at the ROCm root. */
+  for (int i = 0; names[i]; ++i) {
+    if (snprintf(path, sizeof(path), "%s/lib/%s", root, names[i]) >=
+        (int)sizeof(path))
+      continue;
+    hipew_lib_t h = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+    if (h) return h;
+  }
+  return NULL;
+}
+#endif
+
 static hipew_lib_t hipew_dlopen(const char *const *names) {
+#ifndef _WIN32
+  /* ROCm installations are frequently unpacked under /opt and are not
+   * registered with ldconfig. Try the conventional environment roots and
+   * the versioned layout used by current ROCm packages so dynamic clients do
+   * not need to export LD_LIBRARY_PATH just to discover HIP. */
+  const char *roots[] = {getenv("HIP_PATH"), getenv("ROCM_PATH"),
+                         "/opt/rocm/lib", NULL};
+  for (int r = 0; roots[r]; ++r) {
+    hipew_lib_t h = hipew_try_root(roots[r], names);
+    if (h) return h;
+  }
+  glob_t versioned_rocm;
+  if (glob("/opt/rocm/core-*/lib", 0, NULL, &versioned_rocm) == 0) {
+    for (size_t i = 0; i < versioned_rocm.gl_pathc; ++i) {
+      hipew_lib_t h = hipew_try_root(versioned_rocm.gl_pathv[i], names);
+      if (h) {
+        globfree(&versioned_rocm);
+        return h;
+      }
+    }
+    globfree(&versioned_rocm);
+  }
+#endif
   for (int i = 0; names[i]; i++) {
 #ifdef _WIN32
     hipew_lib_t h = LoadLibraryA(names[i]);
@@ -98,6 +148,10 @@ int hipewInit(unsigned int mask) {
       g_hip_lib = hipew_dlopen(hip_names);
     }
     if (!g_hip_lib) {
+#ifndef _WIN32
+      const char *detail = dlerror();
+      if (detail) fprintf(stderr, "hipew: HIP dlopen failed: %s\n", detail);
+#endif
       g_inited_mask = (int)mask;
       g_result = HIPEW_ERROR_OPEN_FAILED;
       return g_result;

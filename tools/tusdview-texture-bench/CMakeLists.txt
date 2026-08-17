@@ -59,14 +59,22 @@ add_custom_target(tusdview_texture_gpu_shaders
 
 add_executable(tusdview_texture_gpu_bench
   main.cc texture_gpu.cc vulkan_processor.cc
+  ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c
   ${PROJECT_SOURCE_DIR}/examples/common/volk/volk.c
   )
 if(TUSDVIEW_TEXTURE_HAVE_HIP)
-  target_sources(tusdview_texture_gpu_bench PRIVATE hip_processor.hip)
-  set_source_files_properties(hip_processor.hip PROPERTIES LANGUAGE HIP)
-  set_target_properties(tusdview_texture_gpu_bench PROPERTIES
-    HIP_ARCHITECTURES "${TUSDVIEW_TEXTURE_HIP_ARCHITECTURES}")
-  target_compile_definitions(tusdview_texture_gpu_bench PRIVATE TUSDVIEW_TEXTURE_HAVE_HIP=1)
+  if(NOT TARGET tusdview_texture_hip_plugin)
+    add_library(tusdview_texture_hip_plugin MODULE hip_processor.hip)
+    target_include_directories(tusdview_texture_hip_plugin PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR})
+    set_target_properties(tusdview_texture_hip_plugin PROPERTIES
+      HIP_ARCHITECTURES "${TUSDVIEW_TEXTURE_HIP_ARCHITECTURES}"
+      PREFIX "")
+  endif()
+  add_dependencies(tusdview_texture_gpu_bench tusdview_texture_hip_plugin)
+  target_compile_definitions(tusdview_texture_gpu_bench PRIVATE
+    TUSDVIEW_TEXTURE_HAVE_HIP=1 TUSDVIEW_TEXTURE_HIP_DYNAMIC=1
+    TUSDVIEW_TEXTURE_HIP_PLUGIN_PATH="$<TARGET_FILE:tusdview_texture_hip_plugin>")
 endif()
 if(TUSDVIEW_TEXTURE_HAVE_CUDA)
   target_sources(tusdview_texture_gpu_bench PRIVATE cuda_processor.cu)
@@ -155,6 +163,7 @@ target_include_directories(tusdview_texture_gpu_bench PRIVATE
   ${PROJECT_SOURCE_DIR}/examples/common/vulkan-headers/include
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/src/external
+  ${PROJECT_SOURCE_DIR}/src/external/hipew
   ${PROJECT_SOURCE_DIR}/src/external/textools/texcomp/include
   ${PROJECT_SOURCE_DIR}/src/external/textools/texcomp/src)
 target_link_libraries(tusdview_texture_gpu_bench PRIVATE
