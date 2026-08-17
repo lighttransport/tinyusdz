@@ -1729,8 +1729,12 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     // Upload as plain RGBA8 (texels used as-is; see note: the simple shader and
     // linear RGBA8 target don't re-encode gamma).
     const GLenum fmt = GLCompressedFormat(t.compressed.format, t.srgb);
+    // Ptex rectangle metadata is encoded in the atlas alpha texels. OpenGL
+    // keeps Ptex atlases raw until it has a separate metadata-buffer path;
+    // this is the intentional compatibility fallback for GL 3.3/4.x.
     const bool useCompressed =
-        t.requestedCompressed && fmt != 0 && !t.compressed.data.empty();
+        !t.isPtex && t.requestedCompressed && fmt != 0 &&
+        !t.compressed.data.empty();
     // Precomputed content-aware mips (sRGB/alpha-coverage/normal-aware,
     // FinalizeDrawTextures) replace glGenerateMipmap when present. This also
     // gives compressed textures real mips (glGenerateMipmap is typically a
@@ -1811,7 +1815,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     gpu.residentBytes +=
         fallbackCompressed ? fallbackCompressed : imageBytes(t.image);
   } else {
-    const size_t compressed = compressedBytes(t.compressed);
+    const size_t compressed = t.isPtex ? 0u : compressedBytes(t.compressed);
     gpu.residentBytes = compressed ? compressed : imageBytes(t.image);
     if (!compressed) {
       for (const light3d::Image& mip : t.mipImages)
@@ -1825,7 +1829,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   }
   gpu.regionUpdatable = !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
                         (!t.image.data.empty() || t.streamingMutable) &&
-                        !(t.requestedCompressed &&
+                        !(t.requestedCompressed && !t.isPtex &&
                           t.compressed.format != DrawCompressedFormat::None &&
                           !t.compressed.data.empty());
   GLTexture& old = textures_[static_cast<size_t>(slot)];

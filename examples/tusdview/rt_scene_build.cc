@@ -17,12 +17,38 @@
 
 #include "displacement_bake.hh"  // SampleTextureRed
 #include "lightrt_mtlx_bridge.hh"
+#include "ptex_atlas.hh"
 #include "log.hh"
 #include "texture_tools.hh"
 
 namespace tusdview {
 
 namespace {
+
+// BC7 is allowed to quantize the alpha channel, but the raster Ptex path keeps
+// rectangle metadata outside the compressed image. Reconstruct the canonical
+// metadata texels before putting a compressed Ptex atlas into the raw RT SSBO.
+// This keeps Vulkan ray-query/compute RT on the same coarse Ptex fallback atlas
+// without requiring the RT shader to decode BC blocks itself.
+void RestorePtexRectMetadata(light3d::Image* image,
+                             const DrawTextureCPU& tex) {
+  if (!image || !tex.isPtex || tex.ptexFaceRects.empty() ||
+      image->width <= 0 || image->height <= 0) return;
+  const size_t texelCount = static_cast<size_t>(image->width) *
+                            static_cast<size_t>(image->height);
+  const size_t first = tex.ptexRectTexelOffset;
+  const size_t count = tex.ptexFaceRects.size() * 8u;
+  if (first > texelCount || count > texelCount - first) return;
+  for (uint32_t face = 0;
+       face < static_cast<uint32_t>(tex.ptexFaceRects.size()); ++face) {
+    uint8_t encoded[8u * 4u];
+    EncodePtexFaceRectTexels(tex.ptexFaceRects[face], encoded);
+    for (size_t byte = 0; byte < 8u; ++byte) {
+      const size_t linear = first + static_cast<size_t>(face) * 8u + byte;
+      image->data[linear * 4u + 3u] = encoded[byte * 4u + 3u];
+    }
+  }
+}
 
 // column-major mat4 (DrawMeshCPU.world) -> row-major 3x4 o2w (instance format).
 inline void Mat4ToO2W(const float m[16], float o2w[12]) {
@@ -725,14 +751,21 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       out->sourceToTable[ti] = virtualId;
     } else {
       light3d::Image decoded;
+      light3d::Image restoredPtex;
       std::vector<light3d::Image> decodedMipsStorage;
-      const light3d::Image* image =
+      const light3d::Image* sourceImage =
           decodeImage(tex.image, tex.compressed, &decoded);
       const std::vector<light3d::Image>* mips =
           decodeMips(tex.mipImages, tex.compressed, &decodedMipsStorage);
-      if (!image) {
+      if (!sourceImage) {
         out->sourceToTable[ti] = -1;
         continue;
+      }
+      const light3d::Image* image = sourceImage;
+      if (tex.isPtex && !tex.compressed.data.empty()) {
+        restoredPtex = *sourceImage;
+        RestorePtexRectMetadata(&restoredPtex, tex);
+        image = &restoredPtex;
       }
       uint64_t hash = imageHash(0, *image);
       for (const light3d::Image& mip : *mips) hash = imageHash(hash, mip);
