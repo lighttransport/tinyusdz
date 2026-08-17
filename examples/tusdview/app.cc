@@ -519,6 +519,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   uint64_t ptexPageDecodedBytes = 0;
   uint64_t ptexPhysicalSlots = 0, ptexGpuUploads = 0, ptexGpuHits = 0;
   uint64_t ptexGpuMisses = 0, ptexGpuEvictions = 0;
+  uint64_t ptexSourceBytes = 0, ptexUniqueSourceBytes = 0;
+  std::unordered_set<const void*> ptexSources;
   size_t ptexRequestedFaces = 0;
   for (const auto& requests : ptexRequestedFaces_)
     ptexRequestedFaces += requests.size();
@@ -541,6 +543,13 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
         std::max(ptexCachePeakBytes, texture.ptexPageCachePeakBytes);
     ptexPageDecodedBytes += texture.ptexPageDecodedBytes;
     ptexPhysicalSlots += texture.ptexPhysicalCacheSlots;
+    const std::vector<uint8_t>& source = texture.PtexSourceData();
+    ptexSourceBytes += source.size();
+    const void* sourceKey = texture.ptexSourceDataShared
+                                ? static_cast<const void*>(
+                                      texture.ptexSourceDataShared.get())
+                                : static_cast<const void*>(source.data());
+    if (ptexSources.insert(sourceKey).second) ptexUniqueSourceBytes += source.size();
     ptexGpuUploads += texture.ptexGpuPageUploads;
     ptexGpuHits += texture.ptexGpuPageHits;
     ptexGpuMisses += texture.ptexGpuPageMisses;
@@ -579,6 +588,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"ptex_physical_cache_bytes", loadOpts_.ptexPhysicalCacheBytes},
       {"ptex_faces", ptexFaces},
       {"ptex_atlas_bytes", ptexAtlasBytes},
+      {"ptex_source_bytes", ptexSourceBytes},
+      {"ptex_unique_source_bytes", ptexUniqueSourceBytes},
       {"ptex_downsampled_faces", ptexDownsampledFaces},
       {"ptex_fallback_textures", ptexFallbackTextures},
       {"ptex_page_cache_hits", ptexCacheHits},
@@ -660,7 +671,13 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   report["limits"] = {
       {"gpu_memory_budget_bytes", gpuMemBudgetBytes_},
       {"max_full_meshes", maxFullMeshes_},
-      {"rt_max_instances", rtMaxInstances_}};
+      {"rt_max_instances", rtMaxInstances_},
+      {"rt_max_tris", cudaMaxTris_}};
+  if (cudaRt_) {
+    report["cuda_memory"] = {
+        {"used_mib", cudaTracer_.deviceUsedBytes() / (1024u * 1024u)},
+        {"total_mib", cudaTracer_.deviceTotalBytes() / (1024u * 1024u)}};
+  }
   std::vector<std::string> degradationReasons = draw_.skipped;
   if (draw_.truncated) {
     degradationReasons.push_back(
@@ -1253,6 +1270,7 @@ static void FreeCurveGeometryCPUForRT(DrawCurvesCPU& c) {
 static void FreeTexturePayloadCPUForRT(DrawTextureCPU& t) {
   std::vector<uint8_t>().swap(t.image.data);
   std::vector<uint8_t>().swap(t.ptexSourceData);
+  t.ptexSourceDataShared.reset();
   std::vector<uint8_t>().swap(t.compressed.data);
   for (DrawCompressedMipCPU& mip : t.compressed.mips)
     std::vector<uint8_t>().swap(mip.data);
@@ -1827,7 +1845,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       if (ok && !renderThreadActive_) {
         bool havePtexPages = false;
         for (DrawTextureCPU& texture : draw_.textures) {
-          if (!texture.ptexSourceData.empty() &&
+          if (texture.HasPtexSourceData() &&
               texture.ptexPhysicalCacheSlots > 0) {
             havePtexPages = true;
             if (!cudaRt_ && !hipRt_) {
@@ -2546,7 +2564,7 @@ void App::stepProgressiveUpload() {
     while (nextTex_ < draw_.textures.size()) {
       renderer_->uploadTexture(static_cast<int>(nextTex_), draw_.textures[nextTex_]);
       if (!cudaRt_ && !hipRt_ && draw_.textures[nextTex_].isPtex &&
-          !draw_.textures[nextTex_].ptexSourceData.empty()) {
+          draw_.textures[nextTex_].HasPtexSourceData()) {
         // Fallback pixels are now device-resident. Keep only compact native
         // Ptex bytes for on-demand page decode.
         draw_.textures[nextTex_].image.data.clear();
@@ -2633,7 +2651,7 @@ bool App::stepPtexResidency(double deadlineMs) {
   while (nextPtexTexture_ < draw_.textures.size()) {
     DrawTextureCPU& texture = draw_.textures[nextPtexTexture_];
     if (texture.ptexPhysicalCacheSlots == 0 ||
-        texture.ptexSourceData.empty() || texture.ptexFaceRects.empty()) {
+        !texture.HasPtexSourceData() || texture.ptexFaceRects.empty()) {
       ++nextPtexTexture_;
       continue;
     }
@@ -2660,8 +2678,8 @@ bool App::stepPtexResidency(double deadlineMs) {
     std::string error;
     if (!ptexReaders_[nextPtexTexture_]) {
       auto reader = std::make_shared<tinyusdz::ptx::Reader>();
-      if (!tinyusdz::ptx::Reader::OpenMemory(texture.ptexSourceData.data(),
-                                             texture.ptexSourceData.size(),
+      const std::vector<uint8_t>& source = texture.PtexSourceData();
+      if (!tinyusdz::ptx::Reader::OpenMemory(source.data(), source.size(),
                                              reader.get(), &error)) {
         LOGW("Ptex residency source reopen failed: %s", error.c_str());
         ++nextPtexTexture_;
@@ -3541,7 +3559,26 @@ bool App::ensureRtTexturePayloads() {
   // so it costs a decode (not a pinned duplicate) and keeps the VRAM budget
   // machinery untouched. Vulkan hardware ray query is unaffected: it samples
   // the already-uploaded GPU textures rather than draw_.
+  // Raster residency intentionally releases ordinary texture payloads after
+  // upload. Re-decoding every Island texture at authored resolution here used
+  // over 60 GiB of transient host RAM before RT geometry even started. RT is
+  // already a bounded preview path for large scenes, so reconstruct a compact
+  // texture set when the scene has hundreds of deferred textures. Ptex keeps
+  // its native atlas/source path and is not affected by this fallback cap.
+  const bool boundedRtTextures = draw_.textures.size() > 512;
+  const int rtTextureEdge = boundedRtTextures ? 512 : 0;
+  const size_t rtTextureBytes = boundedRtTextures
+                                    ? size_t{2ull * 1024ull * 1024ull}
+                                    : 0;
+  if (boundedRtTextures) {
+    LOGI("RT texture fallback: %zu deferred slots, edge <= %d, per-texture "
+         "decode budget %.1f MiB",
+         draw_.textures.size(), rtTextureEdge,
+         double(rtTextureBytes) / (1024.0 * 1024.0));
+  }
   bool decodedAny = false;
+  size_t decodedCount = 0;
+  uint64_t decodedBytes = 0;
   for (DrawTextureCPU& tex : draw_.textures) {
     if (!tex.deferredDecode && !tex.image.data.empty()) continue;
     if (tex.isUdim || tex.isPtex) continue;  // never released above
@@ -3551,13 +3588,19 @@ bool App::ensureRtTexturePayloads() {
     // Full resolution (budget 0): the tracer has no LOD/streaming of its own,
     // so a coarse mip here would be the permanent quality of the RT image.
     TextureRuntimeOptions runtime = loadOpts_.textureOptions;
-    runtime.maxTextureSize = 0;
-    if (DecodeDeferredDrawTexture(placeholder, runtime, /*budgetBytes=*/0,
+    runtime.maxTextureSize = rtTextureEdge;
+    if (DecodeDeferredDrawTexture(placeholder, runtime, rtTextureBytes,
                                   &decoded)) {
+      decodedBytes += decoded.image.data.size();
+      decodedBytes += decoded.compressed.data.size();
+      ++decodedCount;
       tex = std::move(decoded);
       decodedAny = true;
     }
   }
+  if (boundedRtTextures)
+    LOGI("RT texture fallback complete: decoded %zu slot(s), %.1f MiB payload",
+         decodedCount, double(decodedBytes) / (1024.0 * 1024.0));
   return decodedAny;
 }
 

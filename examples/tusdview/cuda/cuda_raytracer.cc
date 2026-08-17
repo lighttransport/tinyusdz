@@ -427,6 +427,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!ctx_) { if (err) *err = "CUDA not initialized"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   freeScene();
+  deviceUsedBytes_ = 0;
+  deviceTotalBytes_ = 0;
 
   // Build the host scene (parallel per-mesh geometry + TLAS) -- shared with HIP.
   HostScene hs;
@@ -587,6 +589,19 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
           &dMatLightRt_)) return false;
   if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
           &dLightParams_)) return false;
+  if (cuMemGetInfo) {
+    size_t freeBytes = 0, totalBytes = 0;
+    if (cuMemGetInfo(&freeBytes, &totalBytes) == CUDA_SUCCESS) {
+      deviceUsedBytes_ = totalBytes - freeBytes;
+      deviceTotalBytes_ = totalBytes;
+      std::fprintf(stderr,
+                   "CUDA RT VRAM: %.1f MiB used / %.1f MiB total, "
+                   "%.1f MiB free\n",
+                   double(totalBytes - freeBytes) / (1024.0 * 1024.0),
+                   double(totalBytes) / (1024.0 * 1024.0),
+                   double(freeBytes) / (1024.0 * 1024.0));
+    }
+  }
   if (progress) progress->phase = 4;  // done
   return true;
 }

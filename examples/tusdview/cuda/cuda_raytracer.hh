@@ -54,6 +54,8 @@ class CudaRayTracer {
              BuildProgress* progress = nullptr);
   size_t triangleCount() const { return triCount_; }
   bool truncated() const { return truncated_; }
+  size_t deviceUsedBytes() const { return deviceUsedBytes_; }
+  size_t deviceTotalBytes() const { return deviceTotalBytes_; }
 
   // Trace one frame. `invViewProj` is the column-major inverse(proj*view) (16
   // floats), `camPos`/`lightDir` are 3-float world vectors (lightDir points toward
@@ -140,6 +142,8 @@ class CudaRayTracer {
   std::string deviceName_;
   std::string cacheDirectory_;
   size_t textureBudgetBytes_{0};
+  size_t deviceUsedBytes_{0};
+  size_t deviceTotalBytes_{0};
   bool pointPaging_{false};
   std::unique_ptr<HostScene> pointHost_;
 };

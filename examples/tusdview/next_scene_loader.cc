@@ -193,7 +193,7 @@ size_t ProgressiveTextureBytes(const DrawTextureCPU& t) {
       bytes += mip.data.size();
     for (const light3d::Image& mip : tile.mipImages) bytes += mip.data.size();
   }
-  bytes += t.ptexSourceData.size();
+  bytes += t.PtexSourceData().size();
   return bytes;
 }
 }  // namespace
@@ -2737,6 +2737,8 @@ struct NextTexCache {
   // shelf packing enough headroom for differently-shaped face sets.
   size_t ptexAtlasPerTextureBytes = 256ull * 1024ull * 1024ull;
   size_t ptexAtlasBytes = 0;
+  std::unordered_map<std::string, std::shared_ptr<const std::vector<uint8_t>>>
+      ptexSourceByAsset;
   uint32_t ptexInitialFaces = 0;
   size_t ptexPhysicalCacheBytes = 32ull * 1024ull * 1024ull;
   double ptexBuildSeconds = 0.0;
@@ -3095,10 +3097,22 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
       built = true;
     }
     std::vector<uint8_t> bytes;
+    std::shared_ptr<const std::vector<uint8_t>> sharedBytes;
+    if (!built) {
+      auto sourceIt = tc.ptexSourceByAsset.find(asset);
+      if (sourceIt != tc.ptexSourceByAsset.end()) {
+        sharedBytes = sourceIt->second;
+      } else if (tc.decoder->ReadAssetBytes(asset, &bytes)) {
+        sharedBytes = std::make_shared<const std::vector<uint8_t>>(
+            std::move(bytes));
+        tc.ptexSourceByAsset.emplace(asset, sharedBytes);
+      }
+    }
     ::tinyusdz::ptx::Reader ptx;
     std::string ptxErr;
-    if (!built && tc.decoder->ReadAssetBytes(asset, &bytes) &&
-        ::tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &ptx,
+    if (!built && sharedBytes &&
+        ::tinyusdz::ptx::Reader::OpenMemory(sharedBytes->data(),
+                                             sharedBytes->size(), &ptx,
                                             &ptxErr)) {
       const auto ptexBuildBegin = std::chrono::steady_clock::now();
       const ::tinyusdz::ptx::Info& pi = ptx.info();
@@ -3144,7 +3158,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
         dt.ptexPhysicalCacheSlotEdge = atlasStats.physicalCacheSlotEdge;
         dt.ptexPhysicalCacheSlots = atlasStats.physicalCacheSlots;
         if (dt.ptexPhysicalCacheSlots > 0) {
-          dt.ptexSourceData = std::move(bytes);
+          dt.ptexSourceDataShared = sharedBytes;
           dt.streamingMutable = true;
           dt.ptexForceResidency = atlasOptions.forcePhysicalCache;
           dt.ptexDemandDriven = atlasOptions.initialFaceLimit > 0;
@@ -5629,9 +5643,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   if (opts.ptexPhysicalCacheBytes > 0)
     texCache.ptexPhysicalCacheBytes = opts.ptexPhysicalCacheBytes;
   if (opts.textureOptions.textureBudgetMB > 0) {
-    texCache.ptexAtlasBudgetBytes =
+    const size_t textureBudgetBytes =
         size_t(opts.textureOptions.textureBudgetMB) * size_t{1024} *
         size_t{1024};
+    // Ptex is only one consumer of the texture budget. Previously this
+    // assignment gave it the whole budget, allowing thousands of fallback
+    // atlases to retain 8+ GiB in a scene whose regular textures and GPU
+    // tables still needed the same pool. Keep the long-standing 2 GiB Ptex
+    // safety cap even when a larger global texture budget is configured.
+    texCache.ptexAtlasBudgetBytes = std::min(
+        textureBudgetBytes, size_t{2ull * 1024ull * 1024ull * 1024ull});
   }
   texCache.ptexAtlasPerTextureBytes = std::min(
       texCache.ptexAtlasBudgetBytes,
@@ -5829,7 +5850,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       const bool hasPayload =
           !texture.image.data.empty() || !texture.mipImages.empty() ||
           !texture.compressed.data.empty() || !texture.compressed.mips.empty() ||
-          !texture.udimTiles.empty() || !texture.ptexSourceData.empty() ||
+          !texture.udimTiles.empty() || texture.HasPtexSourceData() ||
           texture.streamingMutable;
       if (texture.deferredDecode || !hasPayload) continue;
       if (!stream->pushTexture(static_cast<int>(i), std::move(texture),

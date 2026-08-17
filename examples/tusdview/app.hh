@@ -209,6 +209,8 @@ class App
   }
   // --max-instances N: cap the CUDA/HIP 2-level-BVH instance count (0 = no cap).
   void setRtMaxInstances(size_t n) { rtMaxInstances_ = n; }
+  // --max-tris N also bounds the flattened CUDA/HIP RT scene.
+  void setRtMaxTris(size_t n) { if (n > 0) cudaMaxTris_ = n; }
   // --lod-stream: view-dependent district LOD pre-pass (needs --next). Promotes
   // the camera-nearest districts to districtLod=full under the memory budgets.
   void setLodStream(bool on) { lodStream_ = on; }

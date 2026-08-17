@@ -1572,6 +1572,8 @@ int main(int argc, char** argv) {
   app.setQuitAfterFullUpload(quitAfterFullUpload);
   app.setQuitAfterConvert(quitAfterConvert);
   app.setLoadBudget(static_cast<std::size_t>(maxTris < 0 ? 0 : maxTris), timeBudget);
+  if (maxTris > 0)
+    app.setRtMaxTris(static_cast<std::size_t>(maxTris));
   app.setGpuBudget(
       maxGpuMemGiB > 0.0 ? static_cast<std::size_t>(maxGpuMemGiB * 1024.0 *
                                                     1024.0 * 1024.0)
