@@ -66,6 +66,61 @@ bool ParseProfile(const char* s, LargeSceneProfile* out) {
   return true;
 }
 
+static const std::pair<const char*, tusdview::RenderMode> kModeTable[] = {
+    {"shaded", tusdview::RenderMode::Shaded},
+    {"wireframe", tusdview::RenderMode::Wireframe},
+    {"normals", tusdview::RenderMode::Normals},
+    {"material-id", tusdview::RenderMode::MaterialId},
+    {"geom-normal", tusdview::RenderMode::GeomNormal},
+    {"uv", tusdview::RenderMode::Uv},
+    {"depth", tusdview::RenderMode::Depth},
+    {"albedo", tusdview::RenderMode::Albedo},
+    {"facing", tusdview::RenderMode::Facing},
+    {"roughness", tusdview::RenderMode::Roughness},
+    {"metallic", tusdview::RenderMode::Metallic},
+    {"emissive", tusdview::RenderMode::Emissive},
+    {"opacity", tusdview::RenderMode::Opacity},
+    {"position", tusdview::RenderMode::Position},
+    {"barycentric", tusdview::RenderMode::Barycentric},
+    {"prim-id", tusdview::RenderMode::PrimId},
+    {"mesh-id", tusdview::RenderMode::MeshId},
+    {"purpose", tusdview::RenderMode::Purpose},
+    {"missing-normals", tusdview::RenderMode::MissingNormals},
+    {"double-sided", tusdview::RenderMode::DoubleSided},
+    {"skin-weights", tusdview::RenderMode::SkinWeights},
+    {"tangent", tusdview::RenderMode::Tangent},
+    {"uv-checker", tusdview::RenderMode::UvChecker},
+    {"ao", tusdview::RenderMode::AmbientOcclusion},
+    {"curvature", tusdview::RenderMode::Curvature},
+    {"instance-id", tusdview::RenderMode::InstanceId},
+    {"bvh-heatmap", tusdview::RenderMode::BvhHeatmap},
+    {"soft-shadow", tusdview::RenderMode::SoftShadow},
+    {"kind", tusdview::RenderMode::Kind},
+    {"udim", tusdview::RenderMode::UdimTile},
+    {"uv1", tusdview::RenderMode::Uv1},
+    {"blend-influence", tusdview::RenderMode::BlendInfluence},
+    {"texel-density", tusdview::RenderMode::TexelDensity},
+    {"source-face-id", tusdview::RenderMode::SourceFaceId},
+    {"coat-normal", tusdview::RenderMode::CoatNormal},
+    {"coat-weight", tusdview::RenderMode::CoatWeight},
+    {"coat-color", tusdview::RenderMode::CoatColor},
+    {"coat-roughness", tusdview::RenderMode::CoatRoughness},
+    {"specular-f0", tusdview::RenderMode::SpecularF0},
+    {"ior-f0", tusdview::RenderMode::IorF0},
+};
+
+// Name -> RenderMode, shared by --mode and --mode-sweep.
+bool ParseRenderModeName(const char* name, tusdview::RenderMode* out) {
+  const auto* it = std::find_if(
+      std::begin(kModeTable), std::end(kModeTable),
+      [name](const std::pair<const char*, tusdview::RenderMode>& e) {
+        return std::strcmp(name, e.first) == 0;
+      });
+  if (it == std::end(kModeTable)) return false;
+  if (out) *out = it->second;
+  return true;
+}
+
 std::uint64_t ParseByteCount(const std::string& text) {
   std::string v = text;
   std::uint64_t mul = 1;
@@ -226,7 +281,8 @@ int main(int argc, char** argv) {
   std::optional<size_t> curvePreviewPrims;
   std::optional<size_t> curvePreviewStrands;
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
-  bool wantMaterialId = false; // --material-id: start in material-id viz mode
+  bool wantMaterialId = false;
+  std::vector<std::pair<std::string, tusdview::RenderMode>> modeSweep;  // --mode-sweep
   std::optional<tusdview::RenderMode> wantMode;  // --mode <name>: any render mode
   std::vector<std::pair<std::string, float>> wantBlend;  // --blend NAME=WEIGHT
   std::string wantSelect;  // --select <prim path>
@@ -738,59 +794,40 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--material-id") == 0) {
       wantMaterialId = true;
     } else if (std::strcmp(argv[i], "--mode") == 0 && (i + 1) < argc) {
-      static const std::pair<const char*, tusdview::RenderMode> kModeTable[] = {
-          {"shaded", tusdview::RenderMode::Shaded},
-          {"wireframe", tusdview::RenderMode::Wireframe},
-          {"normals", tusdview::RenderMode::Normals},
-          {"material-id", tusdview::RenderMode::MaterialId},
-          {"geom-normal", tusdview::RenderMode::GeomNormal},
-          {"uv", tusdview::RenderMode::Uv},
-          {"depth", tusdview::RenderMode::Depth},
-          {"albedo", tusdview::RenderMode::Albedo},
-          {"facing", tusdview::RenderMode::Facing},
-          {"roughness", tusdview::RenderMode::Roughness},
-          {"metallic", tusdview::RenderMode::Metallic},
-          {"emissive", tusdview::RenderMode::Emissive},
-          {"opacity", tusdview::RenderMode::Opacity},
-          {"position", tusdview::RenderMode::Position},
-          {"barycentric", tusdview::RenderMode::Barycentric},
-          {"prim-id", tusdview::RenderMode::PrimId},
-          {"mesh-id", tusdview::RenderMode::MeshId},
-          {"purpose", tusdview::RenderMode::Purpose},
-          {"missing-normals", tusdview::RenderMode::MissingNormals},
-          {"double-sided", tusdview::RenderMode::DoubleSided},
-          {"skin-weights", tusdview::RenderMode::SkinWeights},
-          {"tangent", tusdview::RenderMode::Tangent},
-          {"uv-checker", tusdview::RenderMode::UvChecker},
-          {"ao", tusdview::RenderMode::AmbientOcclusion},
-          {"curvature", tusdview::RenderMode::Curvature},
-          {"instance-id", tusdview::RenderMode::InstanceId},
-          {"bvh-heatmap", tusdview::RenderMode::BvhHeatmap},
-          {"soft-shadow", tusdview::RenderMode::SoftShadow},
-          {"kind", tusdview::RenderMode::Kind},
-          {"udim", tusdview::RenderMode::UdimTile},
-          {"uv1", tusdview::RenderMode::Uv1},
-          {"blend-influence", tusdview::RenderMode::BlendInfluence},
-          {"texel-density", tusdview::RenderMode::TexelDensity},
-          {"source-face-id", tusdview::RenderMode::SourceFaceId},
-          {"coat-normal", tusdview::RenderMode::CoatNormal},
-          {"coat-weight", tusdview::RenderMode::CoatWeight},
-          {"coat-color", tusdview::RenderMode::CoatColor},
-          {"coat-roughness", tusdview::RenderMode::CoatRoughness},
-          {"specular-f0", tusdview::RenderMode::SpecularF0},
-          {"ior-f0", tusdview::RenderMode::IorF0},
-      };
       const char* m = argv[++i];
-      const auto* modeIt = std::find_if(
-          std::begin(kModeTable), std::end(kModeTable),
-          [m](const std::pair<const char*, tusdview::RenderMode>& entry) {
-            return std::strcmp(m, entry.first) == 0;
-          });
-      if (modeIt == std::end(kModeTable)) {
+      tusdview::RenderMode parsed{};
+      if (!ParseRenderModeName(m, &parsed)) {
         LOGE("--mode: unknown '%s'", m);
         return 1;
       }
-      wantMode = modeIt->second;
+      wantMode = parsed;
+    } else if (std::strcmp(argv[i], "--mode-sweep") == 0 && (i + 1) < argc) {
+      // Comma-separated mode list rendered from ONE load. Each mode gets
+      // --frames frames and its own screenshot, so a caller that wants N AOVs
+      // of the same scene pays one process start and one Vulkan device
+      // creation instead of N. --screenshot must contain {mode}.
+      std::string list = argv[++i];
+      size_t pos = 0;
+      while (pos <= list.size()) {
+        const size_t comma = list.find(',', pos);
+        const std::string name =
+            list.substr(pos, comma == std::string::npos ? std::string::npos
+                                                        : comma - pos);
+        if (!name.empty()) {
+          tusdview::RenderMode parsed{};
+          if (!ParseRenderModeName(name.c_str(), &parsed)) {
+            LOGE("--mode-sweep: unknown mode '%s'", name.c_str());
+            return 1;
+          }
+          modeSweep.push_back({name, parsed});
+        }
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+      }
+      if (modeSweep.empty()) {
+        LOGE("--mode-sweep: empty mode list");
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--select") == 0 && (i + 1) < argc) {
       // Select a prim by absolute path once loaded (highlights it; a GeomSubset
       // highlights just its faces). Also handy for headless screenshots.
@@ -1569,6 +1606,14 @@ int main(int argc, char** argv) {
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);
+  if (!modeSweep.empty()) {
+    if (screenshot.empty() || screenshot.find("{mode}") == std::string::npos) {
+      LOGE("--mode-sweep needs --screenshot with a {mode} placeholder, e.g. "
+           "--screenshot out-{mode}.ppm");
+      return 1;
+    }
+    app.setModeSweep(modeSweep, screenshot);
+  }
   for (const auto& bw : wantBlend) app.setBlendWeight(bw.first, bw.second);
   if (!wantSelect.empty()) app.setInitialSelection(wantSelect);
   return app.run(file, maxFrames, screenshot);

@@ -4619,6 +4619,44 @@ void App::applyNavCommand(const StreamNav& c) {
 //         rt=<off|hardware|software> rt_available=<0|1> gpu="<name>"
 // New keys append before gpu=; the gpu= value is quoted and last because it is
 // the only field that can contain spaces.
+// Write the current viewport under --mode-sweep. Mirrors the end-of-run capture
+// path (including the threaded-GL case, where the render thread owns the
+// context and leaves the pixels in renderCapture_).
+void App::captureModeSweepFrame(const std::string& modeName) {
+  if (modeSweepPattern_.empty()) return;
+  std::string path = modeSweepPattern_;
+  for (size_t at = path.find("{mode}"); at != std::string::npos;
+       at = path.find("{mode}", at)) {
+    path.replace(at, 6, modeName);
+    at += modeName.size();
+  }
+  std::vector<uint8_t> rgba;
+  int w = 0, h = 0;
+  bool ok = false;
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  if (renderThreadActive_) {
+    rgba = renderCapture_;
+    w = renderCaptureW_;
+    h = renderCaptureH_;
+    ok = !rgba.empty();
+  } else
+#endif
+  {
+    ok = renderer_->captureViewport(&rgba, &w, &h);
+  }
+  if (!ok || w <= 0 || h <= 0) {
+    LOGW("mode-sweep: capture not supported by this backend (%s)",
+         modeName.c_str());
+    return;
+  }
+  std::string shotErr;
+  if (WriteScreenshotImage(path, rgba, w, h, &shotErr)) {
+    LOGI("wrote %s (%dx%d)", path.c_str(), w, h);
+  } else {
+    LOGW("failed to write %s: %s", path.c_str(), shotErr.c_str());
+  }
+}
+
 void App::logCapabilities() const {
   if (!renderer_) return;
   const RendererCaps& c = renderer_->caps();
@@ -4910,6 +4948,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
 
   int frameCount = 0;
+  if (!modeSweep_.empty()) setRenderMode(modeSweep_[0].second);
   bool running = true;
   while (running) {
     // Apply a browser-requested headless composite resize (queued last frame):
@@ -5405,6 +5444,24 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (quitAfterFullPresent_) running = false;
 
     if (maxFrames >= 0 && ++frameCount >= maxFrames) {
+      // --mode-sweep: one load, many AOVs. Capture the mode that just finished
+      // its full frame budget, then switch and give the next mode the SAME
+      // budget, so every image sees as many frames as it would have in its own
+      // process. Only when the list is exhausted does the run end.
+      if (!modeSweep_.empty() && modeSweepIndex_ < modeSweep_.size()) {
+        captureModeSweepFrame(modeSweep_[modeSweepIndex_].first);
+        ++modeSweepIndex_;
+        if (modeSweepIndex_ < modeSweep_.size()) {
+          setRenderMode(modeSweep_[modeSweepIndex_].second);
+          // The iteration that captured the previous mode already advanced the
+          // frame the new mode will be drawn into, so it starts at 1, not 0.
+          // Starting at 0 gives every mode after the first an extra frame,
+          // which is measurable: its image then matches a separate process run
+          // with --frames N+1 rather than N.
+          frameCount = 1;
+          continue;
+        }
+      }
       running = false;
       if (!headless_) glfwSetWindowShouldClose(window_, GLFW_TRUE);
     }
@@ -5633,7 +5690,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     return finishRun(0);  // HIP owns the screenshot.
   }
 
-  shot(screenshot, /*window=*/false);
+  if (modeSweep_.empty()) shot(screenshot, /*window=*/false);
   shot(windowShot_, /*window=*/true);
   return finishRun(0);
 }

@@ -228,6 +228,15 @@ class App
     gui_.setRecentScenes(recentScenes_);
   }
   // Initial render mode (e.g. --wireframe); applies to raster + both RT backends.
+  // --mode-sweep: render each mode from ONE load, writing `pattern` with
+  // {mode} replaced. Each mode gets the same frame count a separate process
+  // would have given it, so the images match the one-process-per-mode path.
+  void setModeSweep(
+      const std::vector<std::pair<std::string, RenderMode>>& modes,
+      const std::string& pattern) {
+    modeSweep_ = modes;
+    modeSweepPattern_ = pattern;
+  }
   void setRenderMode(RenderMode m) { gui_.setRenderMode(m); }
   void setBlendWeight(const std::string& name, float w) {
     gui_.setBlendWeight(name, w);
@@ -460,7 +469,10 @@ class App
   std::string largeSceneProfile_ = "off";
   int reportCaptureWidth_{0};
   int reportCaptureHeight_{0};
-  bool headless_{false};  // windowless offscreen rendering (Vulkan only)
+  bool headless_{false};
+  std::vector<std::pair<std::string, RenderMode>> modeSweep_;  // --mode-sweep
+  std::string modeSweepPattern_;
+  size_t modeSweepIndex_{0};  // windowless offscreen rendering (Vulkan only)
   // Mirrors run()'s local winW/winH (headless composite size) so
   // createAndInitRenderer() can call setHeadlessSize() without needing them
   // passed as parameters; kept in sync with the streamResizeW_/H_ live-resize
@@ -602,6 +614,7 @@ class App
   // the exact same sequence instead of duplicating it.
   // Emits the versioned `caps: v1 ...` line consumed by the test suite.
   void logCapabilities() const;
+  void captureModeSweepFrame(const std::string& modeName);
   bool createAndInitRenderer(Backend backend, std::string* err);
   // Apply a requested technique switch: same-owner overlay changes (Vulkan
   // raster <-> Vulkan RT) just flip renderer_->setRayTracing(); an owner change
