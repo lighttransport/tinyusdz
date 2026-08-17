@@ -1001,6 +1001,7 @@ App::~App() {
       if (renderer_) {
     renderer_->shutdown();
   }
+  ShutdownTextureGpu();
   if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
   if (window_) glfwDestroyWindow(window_);
   glfwTerminate();
