@@ -1231,6 +1231,31 @@ bool GpuResizeImage(const TextureRuntimeOptions& opt, light3d::Image* image,
   image->data = std::move(result.resizedRGBA);
   return true;
 }
+
+bool GpuCompressUdim(const TextureRuntimeOptions& opt, DrawTextureCPU* texture) {
+  if (!texture || !texture->isUdim || texture->udimTiles.empty()) return false;
+  DrawCompressedFormat expected = DrawCompressedFormat::None;
+  std::vector<DrawCompressedImageCPU> encoded;
+  encoded.reserve(texture->udimTiles.size());
+  for (const DrawUdimTileCPU& tile : texture->udimTiles) {
+    DrawCompressedImageCPU c;
+    if (!GpuCompressImage(opt, tile.image, texture->srgb,
+                          texture->isNormalMap, &c)) return false;
+    if (expected == DrawCompressedFormat::None) expected = c.format;
+    if (c.format != expected) return false;
+    encoded.push_back(std::move(c));
+  }
+  DrawCompressedImageCPU baseEncoded;
+  if (!texture->image.data.empty()) {
+    if (!GpuCompressImage(opt, texture->image, texture->srgb,
+                          texture->isNormalMap, &baseEncoded) ||
+        baseEncoded.format != expected) return false;
+  }
+  for (size_t i = 0; i < encoded.size(); ++i)
+    texture->udimTiles[i].compressed = std::move(encoded[i]);
+  if (!baseEncoded.data.empty()) texture->compressed = std::move(baseEncoded);
+  return true;
+}
 }  // namespace
 #endif
 
@@ -1242,9 +1267,10 @@ void CompressDrawTexture(const TextureRuntimeOptions& opt,
   }
   texture->requestedCompressed = true;
 #if defined(TUSDVIEW_TEXTURE_GPU)
-  if (!texture->isUdim && GpuCompressImage(opt, texture->image, texture->srgb,
-                                           texture->isNormalMap,
-                                           &texture->compressed)) {
+  if ((texture->isUdim && GpuCompressUdim(opt, texture)) ||
+      (!texture->isUdim && GpuCompressImage(opt, texture->image, texture->srgb,
+                                             texture->isNormalMap,
+                                             &texture->compressed))) {
     return;
   }
 #endif
@@ -1271,8 +1297,9 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
     if (tex.compressedFinal) return;  // kept-compressed KTX2 -- already final
     tex.requestedCompressed = true;
 #if defined(TUSDVIEW_TEXTURE_GPU)
-    if (!tex.isUdim && GpuCompressImage(opt, tex.image, tex.srgb,
-                                        tex.isNormalMap, &tex.compressed)) {
+    if ((tex.isUdim && GpuCompressUdim(opt, &tex)) ||
+        (!tex.isUdim && GpuCompressImage(opt, tex.image, tex.srgb,
+                                          tex.isNormalMap, &tex.compressed))) {
       return;
     }
 #endif
