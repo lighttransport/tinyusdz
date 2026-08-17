@@ -1334,7 +1334,19 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // Phase A/B1: build and assemble bounded mesh batches. Keeping only a
   // worker-sized batch alive avoids retaining every intermediate MeshBuild
   // while the rest of a large scene is still being built.
-  std::vector<DrawMeshCPU> nonMeshProxies = BuildNonMeshRtProxyMeshes(scene);
+  // In a deliberately reduced RT build, proxying every point/curve carrier
+  // before the global cap is counterproductive: large procedural carriers can
+  // consume tens of GiB, only to be discarded when the instance/triangle cap
+  // is reached. Native analytic points remain supported; non-mesh carriers are
+  // omitted for the low-memory envelope and reported as truncated geometry.
+  std::vector<DrawMeshCPU> nonMeshProxies;
+  const bool skipNonMeshProxies = maxTris > 0 && maxTris <= 10000000;
+  if (!skipNonMeshProxies) {
+    nonMeshProxies = BuildNonMeshRtProxyMeshes(scene);
+  } else {
+    LOGI("RT geometry: skipping point/curve proxy expansion for reduced "
+         "memory envelope (max-tris=%zu)", maxTris);
+  }
   std::vector<const DrawMeshCPU*> sourceMeshes;
   sourceMeshes.reserve(scene.meshes.size() + nonMeshProxies.size());
   for (const DrawMeshCPU& mesh : scene.meshes) sourceMeshes.push_back(&mesh);
@@ -1355,6 +1367,10 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   };
   setPhase(0, sourceMeshes.size());  // geometry
   size_t buildBatchMeshes = std::max<size_t>(1, size_t(RtBuildWorkerLimit()) * 2);
+  // A reduced RT cap is also the memory contract: do not retain a worker-sized
+  // set of large MeshBuild temporaries while assembling the next batch. The
+  // environment variable below remains an explicit tuning escape hatch.
+  if (skipNonMeshProxies) buildBatchMeshes = 1;
   if (const char *env = std::getenv("TUSDVIEW_RT_BUILD_BATCH_MESHES")) {
     char *end = nullptr;
     const unsigned long long parsed = std::strtoull(env, &end, 10);

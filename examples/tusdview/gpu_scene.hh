@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -613,6 +614,12 @@ struct DrawTextureCPU {
   // pages are decoded on demand and the much larger full-resolution atlas is
   // never materialized.
   std::vector<uint8_t> ptexSourceData;
+  std::shared_ptr<const std::vector<uint8_t>> ptexSourceDataShared;
+
+  const std::vector<uint8_t>& PtexSourceData() const {
+    return ptexSourceDataShared ? *ptexSourceDataShared : ptexSourceData;
+  }
+  bool HasPtexSourceData() const { return !PtexSourceData().empty(); }
   int renderImageId{-1};        // source RenderScene::images index, or -1
   int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
   bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear scalar/normal data
