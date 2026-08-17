@@ -513,7 +513,7 @@ enum class DrawCompressedFormat : int {
   BC1 = 1,
   BC3 = 3,
   BC5 = 5,       // RGTC two-channel (normal maps)
-  BC6H = 6,      // BPTC float (HDR) — reserved; encode path is RGBA8-only for now
+  BC6H = 6,      // BPTC float (HDR)
   BC7 = 7,
   ETC2_RGB = 10,
   ETC2_RGBA = 11,
@@ -564,6 +564,10 @@ struct DrawUdimTileCPU {
 
 struct DrawTextureCPU {
   light3d::Image image;  // always normalized to RGBA8 (channels == 4) on the CPU side
+  // Linear RGB float source retained for HDR/EXR GPU BC6H processing. The
+  // image field is a tonemapped RGBA8 fallback when a backend cannot use it.
+  std::vector<float> hdrRGB;
+  bool isHDR{false};
   std::string assetIdentifier;  // Tydra TextureImage::asset_identifier, if known
   bool deferredDecode{false};  // slot exists; pixels arrive asynchronously
   // Native Ptex source. `image` is a bounded face atlas when residency permits,
