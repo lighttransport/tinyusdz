@@ -740,10 +740,12 @@ creating and destroying the Vulkan device (measured: `ioctl` 40%, ICD `dlopen`
 cost N device creations. Nine modes of a two-triangle scene: 6.20 s as separate
 processes, 0.72 s as one sweep (8.6x).
 
-**Not available for CUDA or HIP.** Those backends trace after the frame loop and
-write the image themselves; the sweep captures the in-loop viewport, so it would
-hand them the raster result. `examples/tusdview/tests/run-texture-semantic-aov.sh`
-gates its use accordingly.
+**Rejected for CUDA and HIP.** Those backends trace after the frame loop and
+write the image themselves, while the sweep captures the in-loop viewport.
+Combining them used to produce N raster images labelled as ray-traced AOVs plus
+one file named with the literal `{mode}` from the tracer's own write, so the
+viewer now refuses the combination with an error rather than emitting wrong
+output. Run one mode per invocation for those backends.
 
 ## Machine-readable capability line
 
