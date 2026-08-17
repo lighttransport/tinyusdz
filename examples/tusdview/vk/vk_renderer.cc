@@ -5415,6 +5415,7 @@ void VulkanRenderer::growTextureSlots(int textureCount) {
   texSlotHeights_.resize(n, 0);
   texSlotMipLevels_.resize(n, 1);
   texRegionUpdatable_.resize(n, 0);
+  texCompressedFormats_.resize(n, DrawCompressedFormat::None);
   texUdimArrayViews_.resize(n, dummyArrayView_);
   texUdimArrayImgs_.resize(n, VK_NULL_HANDLE);
   texUdimArrayMems_.resize(n, VK_NULL_HANDLE);
@@ -10221,12 +10222,19 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
         for (size_t i = base; i + 1 < end; ++i) {
           float p0[3], p1[3], c0[3]; worldPoint(s, i, p0); worldPoint(s, i + 1, p1);
           float dir[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+          const float dirLen2 = dot3(dir, dir);
+          // Bad/duplicate tessellation points are common in authored curve
+          // data.  Expanding them produces zero-area or non-finite helper
+          // triangles, which can expose unstable clipping at particular dolly
+          // distances on Vulkan.
+          if (!std::isfinite(dirLen2) || dirLen2 < 1.0e-12f) continue;
           float side[3]; cross3(forward, dir, side); normalize3(side);
           if (dot3(side, side) < 0.5f) std::memcpy(side, right, sizeof(side));
           colorAt(s, i, c0);
           const float w0 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)]);
           const float w1 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i + 1, s.widths.size() - 1)]);
           const float width = 0.5f * (w0 + w1) * scale;
+          if (!std::isfinite(width) || width < 0.0f) continue;
           float pm[3] = {0.5f * (p0[0] + p1[0]), 0.5f * (p0[1] + p1[1]),
                          0.5f * (p0[2] + p1[2])};
           if (!rasterVisible(p0, width) && !rasterVisible(p1, width) &&
