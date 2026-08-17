@@ -123,7 +123,12 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
 // Build camera-independent solid approximations for Points and Curves. RT
 // backends consume these; raster backends retain the original carriers and
 // generate camera-facing billboards/ribbons at draw time.
-std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene);
+// Build triangle proxies for point/curve carriers. Compact mode keeps the
+// carrier coverage while using fewer tessellation segments for bounded RT
+// previews; full mode preserves the higher-quality legacy proxy.
+std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
+                                                  bool compact = false,
+                                                  size_t maxTriangles = 0);
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {

@@ -889,10 +889,19 @@ size_t RtProxyTriangleLimit() {
 
 }  // namespace
 
-std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
+std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
+                                                  bool compact,
+                                                  size_t maxTriangles) {
   std::vector<DrawMeshCPU> proxies;
   proxies.reserve(scene.points.size() + scene.curves.size());
   const size_t proxyTriangleLimit = RtProxyTriangleLimit();
+  size_t remainingTriangles = maxTriangles;
+  auto reserveTriangles = [&](size_t count) {
+    if (maxTriangles == 0) return true;
+    if (remainingTriangles < count) return false;
+    remainingTriangles -= count;
+    return true;
+  };
   for (const DrawPointsCPU& src : scene.points) {
     const size_t pointCount = src.points.size() / 3;
     const bool native_gaussian =
@@ -923,8 +932,12 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
         o[1] = src.world[1] * a[0] + src.world[5] * a[1] + src.world[9] * a[2];
         o[2] = src.world[2] * a[0] + src.world[6] * a[1] + src.world[10] * a[2];
       };
-      constexpr int kSegments = 8;
+      const int kSegments = compact ? 4 : 8;
       for (size_t i = 0; i < count; ++i) {
+        if (!reserveTriangles(static_cast<size_t>(kSegments) * 2)) {
+          flush();
+          return proxies;
+        }
         if (!mesh.indices.empty() &&
             mesh.indices.size() / 3 + 16 > proxyTriangleLimit)
           flush();
@@ -984,13 +997,17 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
       continue;
     }
     // A subdivided octahedron (subdivide each of 8 faces into 4) producing
-    // 32 triangles per point -- better than the previous 8-triangle octahedron,
-    // giving a noticeably rounder appearance without the full icosahedron.
+    // 32 triangles per point. Compact mode uses the base octahedron (8
+    // triangles), retaining a conservative volume at a much lower host cost.
     static const float dirs[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
                                       {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
     static const uint32_t edges[12][2] = {{0,2},{2,1},{1,3},{3,0},{0,4},{2,4},
                                            {1,4},{3,4},{0,5},{2,5},{1,5},{3,5}};
     for (size_t i = 0; i < count; ++i) {
+      if (!reserveTriangles(static_cast<size_t>(compact ? 8 : 32))) {
+        flush();
+        return proxies;
+      }
       if (!mesh.indices.empty() &&
           mesh.indices.size() / 3 + 32 > proxyTriangleLimit)
         flush();
@@ -1016,6 +1033,16 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
                             center[1] + dir[1] * width * 0.5f,
                             center[2] + dir[2] * width * 0.5f};
         AddProxyVertex(p, dir, color, opacity, &mesh);
+      }
+      if (compact) {
+        static const uint32_t octaFaces[8][3] = {
+            {0, 2, 4}, {2, 1, 4}, {1, 3, 4}, {3, 0, 4},
+            {0, 5, 2}, {2, 5, 1}, {1, 5, 3}, {3, 5, 0}};
+        for (const auto& face : octaFaces) {
+          mesh.indices.insert(mesh.indices.end(),
+                              {base + face[0], base + face[1], base + face[2]});
+        }
+        continue;
       }
       // Add the 12 edge-midpoint vertices (normalized for spherical proxy).
       for (const auto& edge : edges) {
@@ -1083,6 +1110,11 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
     for (uint32_t authoredCount : src.vertexCounts) {
       const size_t end = std::min(pointCount, begin + authoredCount);
       for (size_t i = begin; i + 1 < end; ++i) {
+        const int kSegments = compact ? 4 : 8;
+        if (!reserveTriangles(static_cast<size_t>(kSegments) * 2)) {
+          flush();
+          return proxies;
+        }
         if (!mesh.indices.empty() &&
             mesh.indices.size() / 3 + 16 > proxyTriangleLimit)
           flush();
@@ -1123,7 +1155,6 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
               src.opacities[src.opacities.size() > i + 1 ? i + 1 : 0];
           opacity = 0.5f * (o0 + o1);
         }
-        constexpr int kSegments = 8;
         const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
         for (int ring = 0; ring < 2; ++ring) {
           const float* center = ring == 0 ? p0 : p1;
@@ -1175,6 +1206,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   }
   const size_t cap = maxTris ? maxTris : (size_t(1) << 62);
   const size_t instCap = maxInstances ? maxInstances : ~size_t(0);
+  const bool compactCarriers = maxTris > 0 && maxTris <= 64000000;
+  const size_t compactPointBudget = compactCarriers ? maxTris / 8 : 0;
   auto setPhase = [&](int p, size_t total) {
     if (progress) { progress->phase = p; progress->done = 0; progress->total = total; }
   };
@@ -1194,10 +1227,14 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
         src.gaussian && src.ellipseRadii.size() >= n * 2 &&
         src.ellipseNormals.size() >= n * 3 &&
         src.ellipseMajorAxes.size() >= n * 3;
-    const bool analytic_points = !src.gaussian && src.normals.size() >= n * 3;
+    const bool analytic_points =
+        !src.gaussian &&
+        (src.normals.size() >= n * 3 || compactCarriers);
     if (!gaussian && !analytic_points)
       continue;
     for (size_t i = 0; i < n; ++i) {
+      if (compactCarriers && out->pointCenters.size() / 3 >= compactPointBudget)
+        break;
       const float opacity = src.opacities.empty()
                                 ? 1.0f
                                 : src.opacities[src.opacities.size() > i ? i : 0];
@@ -1234,11 +1271,18 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
             std::sqrt(minor[0] * minor[0] + minor[1] * minor[1] +
                       minor[2] * minor[2]);
       } else {
-        for (int k = 0; k < 3; ++k) {
-          major[k] = src.world[0 * 4 + k];
-          normal[k] = src.world[0 * 4 + k] * src.normals[i * 3 + 0] +
-                     src.world[1 * 4 + k] * src.normals[i * 3 + 1] +
-                     src.world[2 * 4 + k] * src.normals[i * 3 + 2];
+        if (src.normals.size() >= (i + 1) * 3) {
+          for (int k = 0; k < 3; ++k) {
+            major[k] = src.world[0 * 4 + k];
+            normal[k] = src.world[0 * 4 + k] * src.normals[i * 3 + 0] +
+                       src.world[1 * 4 + k] * src.normals[i * 3 + 1] +
+                       src.world[2 * 4 + k] * src.normals[i * 3 + 2];
+          }
+        } else {
+          // Legacy point carriers often have no authored normal. Use a stable
+          // compact splat orientation rather than expanding them to triangles.
+          major[0] = src.world[0]; major[1] = src.world[1]; major[2] = src.world[2];
+          normal[0] = src.world[4]; normal[1] = src.world[5]; normal[2] = src.world[6];
         }
       }
       const float nl = std::sqrt(normal[0] * normal[0] +
@@ -1294,6 +1338,49 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       out->pointColors.push_back(opacity);
     }
   }
+  // Compact RT mode represents curve samples as analytic splats instead of
+  // expanding every segment into a triangle tube. This retains the authored
+  // locations and width while keeping host/GPU residency bounded.
+  if (compactCarriers && out->pointCenters.size() / 3 < compactPointBudget) {
+    for (const DrawCurvesCPU& src : scene.curves) {
+      const size_t n = src.points.size() / 3;
+      for (size_t i = 0; i < n && out->pointCenters.size() / 3 < compactPointBudget; ++i) {
+        float center[3];
+        CarrierWorldPoint(src.world, &src.points[i * 3], center);
+        float major[3] = {src.world[0], src.world[1], src.world[2]};
+        float normal[3] = {src.world[4], src.world[5], src.world[6]};
+        const float ml = std::sqrt(major[0] * major[0] + major[1] * major[1] +
+                                   major[2] * major[2]);
+        const float nl = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] +
+                                   normal[2] * normal[2]);
+        if (!std::isfinite(ml) || !std::isfinite(nl) || ml <= 1.0e-8f ||
+            nl <= 1.0e-8f) continue;
+        for (float& v : major) v /= ml;
+        for (float& v : normal) v /= nl;
+        const float width = (src.widths.empty()
+                                 ? 1.0f
+                                 : src.widths.size() == 1
+                                       ? src.widths[0]
+                                       : src.widths[std::min(i, src.widths.size() - 1)]) *
+                            CarrierWorldScale(src.world);
+        if (!std::isfinite(width) || std::fabs(width) <= 1.0e-8f) continue;
+        out->pointCenters.insert(out->pointCenters.end(), center, center + 3);
+        out->pointMajorAxes.insert(out->pointMajorAxes.end(), major, major + 3);
+        out->pointNormals.insert(out->pointNormals.end(), normal, normal + 3);
+        out->pointRadii.push_back(0.5f * std::fabs(width));
+        out->pointRadii.push_back(0.5f * std::fabs(width));
+        const size_t ci = src.colors.size() >= (i + 1) * 3 ? i * 3 : 0;
+        out->pointColors.push_back(src.colors.size() >= 3 ? src.colors[ci] : 1.0f);
+        out->pointColors.push_back(src.colors.size() >= 3 ? src.colors[ci + 1] : 1.0f);
+        out->pointColors.push_back(src.colors.size() >= 3 ? src.colors[ci + 2] : 1.0f);
+        out->pointColors.push_back(src.opacities.empty()
+                                       ? 1.0f
+                                       : src.opacities[src.opacities.size() > i ? i : 0]);
+      }
+    }
+    LOGI("RT compact carriers: %zu analytic point/curve sample(s), budget %zu",
+         out->pointCenters.size() / 3, compactPointBudget);
+  }
   out->pointCount = out->pointCenters.size() / 3;
   if (out->pointCount > 0) {
     const size_t chunkLimit = GaussianBvhChunkLimit();
@@ -1337,15 +1424,16 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // In a deliberately reduced RT build, proxying every point/curve carrier
   // before the global cap is counterproductive: large procedural carriers can
   // consume tens of GiB, only to be discarded when the instance/triangle cap
-  // is reached. Native analytic points remain supported; non-mesh carriers are
-  // omitted for the low-memory envelope and reported as truncated geometry.
+  // is reached. Native analytic points remain supported; compact mode keeps
+  // the carrier data in the bounded analytic representation above while
+  // preserving meshes as the higher-priority input.
   std::vector<DrawMeshCPU> nonMeshProxies;
-  const bool skipNonMeshProxies = maxTris > 0 && maxTris <= 10000000;
-  if (!skipNonMeshProxies) {
-    nonMeshProxies = BuildNonMeshRtProxyMeshes(scene);
-  } else {
-    LOGI("RT geometry: skipping point/curve proxy expansion for reduced "
-         "memory envelope (max-tris=%zu)", maxTris);
+  const bool compactNonMeshProxies = maxTris > 0 && maxTris <= 64000000;
+  if (!compactNonMeshProxies)
+    nonMeshProxies = BuildNonMeshRtProxyMeshes(scene, false, 0);
+  if (compactNonMeshProxies) {
+    LOGI("RT geometry: compact analytic point/curve carriers enabled "
+         "(sample budget=%zu, max-tris=%zu)", compactPointBudget, maxTris);
   }
   std::vector<const DrawMeshCPU*> sourceMeshes;
   sourceMeshes.reserve(scene.meshes.size() + nonMeshProxies.size());
@@ -1370,7 +1458,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // A reduced RT cap is also the memory contract: do not retain a worker-sized
   // set of large MeshBuild temporaries while assembling the next batch. The
   // environment variable below remains an explicit tuning escape hatch.
-  if (skipNonMeshProxies) buildBatchMeshes = 1;
+  if (compactNonMeshProxies) buildBatchMeshes = 1;
   if (const char *env = std::getenv("TUSDVIEW_RT_BUILD_BATCH_MESHES")) {
     char *end = nullptr;
     const unsigned long long parsed = std::strtoull(env, &end, 10);
