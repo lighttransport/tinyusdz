@@ -86,6 +86,74 @@ target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${TUSDVIEW_SHADER_EMBED_DIR}
     ${TUSDVIEW_VULKAN_INCLUDE}
     ${TUSDVIEW_VOLK_DIR})
+
+# Optional GPU texture preprocessing.  This reuses the headless processor used
+# by tools/tusdview-texture-bench, but its Vulkan commands use a local volk
+# device table so it cannot disturb the renderer's active dispatch table.
+find_program(TUSDVIEW_TEXTURE_GLSLANG glslangValidator)
+if(TUSDVIEW_TEXTURE_GLSLANG)
+  set(TUSDVIEW_TEXTURE_GPU_GEN ${CMAKE_CURRENT_BINARY_DIR}/texture_gpu_generated)
+  file(MAKE_DIRECTORY ${TUSDVIEW_TEXTURE_GPU_GEN})
+  add_custom_command(
+    OUTPUT ${TUSDVIEW_TEXTURE_GPU_GEN}/resize_comp.spv.h
+           ${TUSDVIEW_TEXTURE_GPU_GEN}/resize_hdr_comp.spv.h
+           ${TUSDVIEW_TEXTURE_GPU_GEN}/compress_comp.spv.h
+           ${TUSDVIEW_TEXTURE_GPU_GEN}/bc6h_comp.spv.h
+    COMMAND ${TUSDVIEW_TEXTURE_GLSLANG} -V --target-env vulkan1.2 --vn resize_comp_spv
+            -o ${TUSDVIEW_TEXTURE_GPU_GEN}/resize_comp.spv.h
+            ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/vk/resize.comp
+    COMMAND ${TUSDVIEW_TEXTURE_GLSLANG} -V --target-env vulkan1.2 --vn resize_hdr_comp_spv
+            -o ${TUSDVIEW_TEXTURE_GPU_GEN}/resize_hdr_comp.spv.h
+            ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/vk/resize_hdr.comp
+    COMMAND ${TUSDVIEW_TEXTURE_GLSLANG} -V --target-env vulkan1.2 --vn compress_comp_spv
+            -o ${TUSDVIEW_TEXTURE_GPU_GEN}/compress_comp.spv.h
+            ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/vk/compress.comp
+    COMMAND ${TUSDVIEW_TEXTURE_GLSLANG} -V --target-env vulkan1.2 --vn bc6h_comp_spv
+            -o ${TUSDVIEW_TEXTURE_GPU_GEN}/bc6h_comp.spv.h
+            ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/vk/bc6h.comp
+    DEPENDS ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/vk/resize.comp
+            ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/vk/resize_hdr.comp
+            ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/vk/compress.comp
+            ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/vk/bc6h.comp
+    VERBATIM)
+  add_custom_target(tusdview_texture_gpu_shaders_viewer
+    DEPENDS ${TUSDVIEW_TEXTURE_GPU_GEN}/resize_comp.spv.h
+            ${TUSDVIEW_TEXTURE_GPU_GEN}/resize_hdr_comp.spv.h
+            ${TUSDVIEW_TEXTURE_GPU_GEN}/compress_comp.spv.h
+            ${TUSDVIEW_TEXTURE_GPU_GEN}/bc6h_comp.spv.h)
+  target_sources(${EXAMPLE_TARGET} PRIVATE
+      ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/texture_gpu.cc
+      ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/vulkan_processor.cc)
+  add_dependencies(${EXAMPLE_TARGET} tusdview_texture_gpu_shaders_viewer)
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE TUSDVIEW_TEXTURE_GPU=1
+      TUSDVIEW_TEXTURE_GPU_VULKAN=1)
+  target_include_directories(${EXAMPLE_TARGET} PRIVATE
+      ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench
+      ${TUSDVIEW_TEXTURE_GPU_GEN})
+  include(CheckLanguage)
+  check_language(CUDA)
+  if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    target_sources(${EXAMPLE_TARGET} PRIVATE
+        ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/cuda_processor.cu)
+    set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/cuda_processor.cu
+        PROPERTIES LANGUAGE CUDA)
+    set_target_properties(${EXAMPLE_TARGET} PROPERTIES
+        CUDA_ARCHITECTURES "native")
+    target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
+        TUSDVIEW_TEXTURE_HAVE_CUDA=1)
+    message(STATUS "tusdview: CUDA texture preprocessing ENABLED")
+  endif()
+  # Do not link HIP directly into tusdview: the viewer already uses hipew for
+  # its dynamically-loaded HIP ray tracer, and both APIs export overlapping
+  # global symbols. The standalone benchmark remains the HIP integration point
+  # until the viewer gets a separate dynamically-loaded HIP texture plugin.
+  message(STATUS "tusdview: HIP texture preprocessing deferred to plugin (hipew symbol isolation)")
+  message(STATUS "tusdview: Vulkan GPU texture preprocessing ENABLED")
+else()
+  message(STATUS "tusdview: Vulkan GPU texture preprocessing disabled (glslangValidator missing)")
+endif()
 # volk uses dlopen() to find the loader at runtime on non-Windows platforms.
 if(UNIX AND NOT APPLE)
   target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})

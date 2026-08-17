@@ -46,7 +46,9 @@ std::unique_ptr<Processor> CreateProcessor(Backend backend, bool allowSoftware,
   if (backend == Backend::Vulkan) {
     auto processor = std::make_unique<VulkanProcessor>(allowSoftware, deviceSelector);
     if (processor->device().backend.empty()) {
-      if (error) *error = "Vulkan initialization failed";
+      if (error) *error = processor->device().driver.empty()
+                              ? "Vulkan initialization failed"
+                              : processor->device().driver;
       return nullptr;
     }
     return processor;

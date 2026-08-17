@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <atomic>
 #include <thread>
+#include <memory>
 
 #include "mesh_build.hh"
 
 #include "displacement_bake.hh"
 #include "lightrt_mtlx_bridge.hh"
 #include "texture_tools.hh"
+#if defined(TUSDVIEW_TEXTURE_GPU)
+#include "texture_gpu.hh"
+#endif
 
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
 extern "C" {
@@ -1122,6 +1126,114 @@ void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
 // live outside the anonymous namespace (external linkage).
 void ClassifyTextureUsage(DrawScene* out);  // defined below (near FinalizeDrawTextures)
 
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+namespace {
+DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
+                                            const TextureCompressCaps& caps,
+                                            bool opaque, bool normal_map);
+}  // namespace
+#endif
+
+#if defined(TUSDVIEW_TEXTURE_GPU)
+namespace {
+std::unique_ptr<tusdview_texture_bench::Processor> gTextureGpu;
+std::string gTextureGpuError;
+double gTextureGpuMs = 0.0;
+size_t gTextureGpuImages = 0;
+
+bool EnsureGpu(const TextureRuntimeOptions& opt) {
+  if (opt.gpuBackend == TextureGpuBackend::Off) return false;
+  if (gTextureGpu) return true;
+  tusdview_texture_bench::Backend backend = tusdview_texture_bench::Backend::Vulkan;
+  if (opt.gpuBackend == TextureGpuBackend::CUDA)
+    backend = tusdview_texture_bench::Backend::CUDA;
+  else if (opt.gpuBackend == TextureGpuBackend::HIP)
+    backend = tusdview_texture_bench::Backend::HIP;
+  gTextureGpu = tusdview_texture_bench::CreateProcessor(
+      backend, false, opt.gpuDevice, &gTextureGpuError);
+  if (!gTextureGpu) {
+    std::fprintf(stderr, "[tusdview] GPU texture processing unavailable: %s\n",
+                 gTextureGpuError.c_str());
+    return false;
+  }
+  std::fprintf(stderr, "[tusdview] GPU texture processing: %s %s\n",
+               gTextureGpu->device().backend.c_str(),
+               gTextureGpu->device().name.c_str());
+  return true;
+}
+
+bool GpuCompressImage(const TextureRuntimeOptions& opt, const light3d::Image& image,
+                     bool srgb, bool normalMap, DrawCompressedImageCPU* out) {
+  if (!EnsureGpu(opt) || !out || image.width <= 0 || image.height <= 0 ||
+      image.channels != 4 || image.data.empty()) return false;
+  bool opaque = true;
+  for (size_t i = 3; i < image.data.size(); i += 4) {
+    if (image.data[i] < 250) { opaque = false; break; }
+  }
+  const DrawCompressedFormat chosen = ChooseCompressedFormat(
+      opt.compression, opt.caps, opaque, normalMap);
+  tusdview_texture_bench::CompressionFormat format;
+  switch (chosen) {
+    case DrawCompressedFormat::BC1: format = tusdview_texture_bench::CompressionFormat::BC1; break;
+    case DrawCompressedFormat::BC3: format = tusdview_texture_bench::CompressionFormat::BC3; break;
+    case DrawCompressedFormat::BC5: format = tusdview_texture_bench::CompressionFormat::BC5; break;
+    case DrawCompressedFormat::ASTC_4x4: format = tusdview_texture_bench::CompressionFormat::ASTC; break;
+    case DrawCompressedFormat::BC7:
+    default: format = tusdview_texture_bench::CompressionFormat::BC7; break;
+  }
+  tusdview_texture_bench::TextureRequest request;
+  request.rgba = image.data.data();
+  request.rgbaBytes = image.data.size();
+  request.width = request.dstWidth = static_cast<uint32_t>(image.width);
+  request.height = request.dstHeight = static_cast<uint32_t>(image.height);
+  request.srgb = srgb;
+  request.format = format;
+  request.resize = false;
+  request.compress = true;
+  tusdview_texture_bench::TextureResult result;
+  if (!gTextureGpu->process(request, &result, &gTextureGpuError)) {
+    std::fprintf(stderr, "[tusdview] GPU texture processing failed: %s\n",
+                 gTextureGpuError.c_str());
+    return false;
+  }
+  gTextureGpuMs += result.timing.totalMs;
+  ++gTextureGpuImages;
+  out->format = chosen;
+  out->width = static_cast<int>(result.width);
+  out->height = static_cast<int>(result.height);
+  out->data = std::move(result.compressed);
+  return !out->data.empty();
+}
+
+bool GpuResizeImage(const TextureRuntimeOptions& opt, light3d::Image* image,
+                    int width, int height) {
+  if (!image || !EnsureGpu(opt) || image->channels != 4 ||
+      image->data.empty() || width <= 0 || height <= 0) return false;
+  tusdview_texture_bench::TextureRequest request;
+  request.rgba = image->data.data();
+  request.rgbaBytes = image->data.size();
+  request.width = static_cast<uint32_t>(image->width);
+  request.height = static_cast<uint32_t>(image->height);
+  request.dstWidth = static_cast<uint32_t>(width);
+  request.dstHeight = static_cast<uint32_t>(height);
+  request.srgb = true;
+  request.resize = true;
+  request.compress = false;
+  request.downloadResized = true;
+  tusdview_texture_bench::TextureResult result;
+  if (!gTextureGpu->process(request, &result, &gTextureGpuError) ||
+      result.resizedRGBA.empty()) return false;
+  gTextureGpuMs += result.timing.totalMs;
+  ++gTextureGpuImages;
+  image->width = width;
+  image->height = height;
+  image->channels = 4;
+  image->data = std::move(result.resizedRGBA);
+  return true;
+}
+}  // namespace
+#endif
+
 void CompressDrawTexture(const TextureRuntimeOptions& opt,
                          DrawTextureCPU* texture) {
   if (!texture || opt.compression == TextureCompressionMode::Off ||
@@ -1129,6 +1241,13 @@ void CompressDrawTexture(const TextureRuntimeOptions& opt,
     return;
   }
   texture->requestedCompressed = true;
+#if defined(TUSDVIEW_TEXTURE_GPU)
+  if (!texture->isUdim && GpuCompressImage(opt, texture->image, texture->srgb,
+                                           texture->isNormalMap,
+                                           &texture->compressed)) {
+    return;
+  }
+#endif
   CompressTexture(texture, opt.compression, opt.caps, texture->isNormalMap);
 }
 
@@ -1151,10 +1270,20 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
     if (tex.isPtex) return;
     if (tex.compressedFinal) return;  // kept-compressed KTX2 -- already final
     tex.requestedCompressed = true;
+#if defined(TUSDVIEW_TEXTURE_GPU)
+    if (!tex.isUdim && GpuCompressImage(opt, tex.image, tex.srgb,
+                                        tex.isNormalMap, &tex.compressed)) {
+      return;
+    }
+#endif
     CompressTexture(&tex, opt.compression, opt.caps, tex.isNormalMap);
   };
   const unsigned hw = std::thread::hardware_concurrency();
-  const size_t workers = std::min<size_t>(hw ? hw : 1u, texCount);
+  // The Vulkan processor owns one command buffer and descriptor set. Keep the
+  // GPU path serialized; CPU encoding remains fully parallel when disabled.
+  const size_t workers = opt.gpuBackend != TextureGpuBackend::Off
+                             ? 1u
+                             : std::min<size_t>(hw ? hw : 1u, texCount);
   if (workers <= 1) {
     for (DrawTextureCPU& tex : out->textures) encodeOne(tex);
   } else {
@@ -1192,6 +1321,16 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
                  double(comp) / (1024.0 * 1024.0),
                  comp ? double(raw) / double(comp) : 0.0);
   }
+#if defined(TUSDVIEW_TEXTURE_GPU)
+  if (gTextureGpuImages > 0) {
+    std::fprintf(stderr, "[tusdview] GPU texture timing: %zu operation(s), "
+                 "%.3f ms total, %.3f ms average\n",
+                 gTextureGpuImages, gTextureGpuMs,
+                 gTextureGpuMs / static_cast<double>(gTextureGpuImages));
+    gTextureGpuImages = 0;
+    gTextureGpuMs = 0.0;
+  }
+#endif
 }
 
 void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out) {
@@ -1208,6 +1347,9 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
         const int nh =
             std::max(1, static_cast<int>(std::floor(img->height * scale)));
         std::string err;
+#if defined(TUSDVIEW_TEXTURE_GPU)
+        if (GpuResizeImage(opt, img, nw, nh)) return;
+#endif
         if (!ResizeDrawImage(img, nw, nh, tex.srgb, &err)) {
           out->skipped.push_back("texture resize failed: " + err);
         }
@@ -1236,6 +1378,9 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
           const int nh =
               std::max(1, static_cast<int>(std::floor(img->height * scale)));
           std::string err;
+#if defined(TUSDVIEW_TEXTURE_GPU)
+          if (GpuResizeImage(opt, img, nw, nh)) return;
+#endif
           if (!ResizeDrawImage(img, nw, nh, tex.srgb, &err)) {
             out->skipped.push_back("texture budget resize failed: " + err);
           }
@@ -1332,7 +1477,16 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
       bool ok = true;
       for (const light3d::Image& mip : *mips) {
         DrawCompressedImageCPU c;
-        if (!TexToolsCompress(mip, srgb, compressed->format, &c)) {
+#if defined(TUSDVIEW_TEXTURE_GPU)
+        bool gpuOK = false;
+        if (opt.gpuBackend != TextureGpuBackend::Off) {
+          gpuOK = GpuCompressImage(opt, mip, srgb, usage.normalMap, &c) &&
+                  c.format == compressed->format;
+        }
+#else
+        bool gpuOK = false;
+#endif
+        if (!gpuOK && !TexToolsCompress(mip, srgb, compressed->format, &c)) {
           ok = false;
           break;
         }

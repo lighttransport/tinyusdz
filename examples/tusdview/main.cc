@@ -681,6 +681,22 @@ int main(int argc, char** argv) {
         LOGE("--texture-compress must be off, bc, bc7, astc, etc2 or auto");
         return 1;
       }
+    } else if (std::strcmp(argv[i], "--texture-gpu") == 0 && (i + 1) < argc) {
+      const char* backend = argv[++i];
+      if (std::strcmp(backend, "off") == 0) {
+        textureOptions.gpuBackend = tusdview::TextureGpuBackend::Off;
+      } else if (std::strcmp(backend, "vulkan") == 0) {
+        textureOptions.gpuBackend = tusdview::TextureGpuBackend::Vulkan;
+      } else if (std::strcmp(backend, "cuda") == 0) {
+        textureOptions.gpuBackend = tusdview::TextureGpuBackend::CUDA;
+      } else if (std::strcmp(backend, "hip") == 0) {
+        textureOptions.gpuBackend = tusdview::TextureGpuBackend::HIP;
+      } else {
+        LOGE("--texture-gpu must be off, vulkan, cuda or hip");
+        return 1;
+      }
+    } else if (std::strncmp(argv[i], "--texture-gpu-device=", 21) == 0) {
+      textureOptions.gpuDevice = argv[i] + 21;
     } else if (std::strcmp(argv[i], "--texture-keep-compressed") == 0 &&
                (i + 1) < argc) {
       const char* mode = argv[++i];
@@ -1027,6 +1043,10 @@ int main(int argc, char** argv) {
           "compression (default "
           "auto; selects a supported BC/ASTC/ETC2 format). Backends without "
           "block upload support fall back to resized RGBA8.\n"
+          "  --texture-gpu off|vulkan|cuda|hip  Use GPU texture preprocessing "
+          "with CPU fallback.\n"
+          "  --texture-gpu-device=NAME|INDEX  Select the Vulkan GPU used for "
+          "texture preprocessing.\n"
           "  --texture-mips on|off  Generate content-aware texture mip chains "
           "(default on; interactive --next default off).\n"
           "  --texture-keep-compressed  Preserve supported KTX2 block payloads "

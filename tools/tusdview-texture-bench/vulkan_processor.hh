@@ -2,6 +2,7 @@
 #pragma once
 
 #include "texture_gpu.hh"
+#include "volk.h"
 
 #include <vulkan/vulkan.h>
 
@@ -35,6 +36,10 @@ class VulkanProcessor final : public Processor {
 
   DeviceInfo info_;
   VkInstance instance_{VK_NULL_HANDLE};
+  // The viewer already has a Vulkan instance/device.  Keep this processor's
+  // device dispatch local so constructing it during scene loading cannot
+  // overwrite volk's process-global dispatch table used by the renderer.
+  VolkDeviceTable deviceTable_{};
   VkPhysicalDevice physical_{VK_NULL_HANDLE};
   VkDevice device_{VK_NULL_HANDLE};
   VkQueue queue_{VK_NULL_HANDLE};
