@@ -1,0 +1,72 @@
+#version 450
+
+// Fast unsigned BC6H mode-11 encoder. One invocation owns one 4x4 block.
+// It intentionally avoids the CPU encoder's multi-mode search; mode 11 is
+// standards-valid and provides a useful GPU baseline for the benchmark.
+layout(local_size_x = 1) in;
+layout(std430, set = 0, binding = 0) readonly buffer Src { float src[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Dst { uint dst[]; };
+
+layout(push_constant) uniform PC { uint sw; uint sh; uint dw; uint dh; } pc;
+
+uint quantUF16(float v) {
+  uint h = packHalf2x16(vec2(max(v, 0.0), 0.0)) & 0xffffu;
+  uint mag = min(h & 0x7fffu, 0x7bffu);
+  return (mag * 1023u + 15871u) / 31743u;
+}
+
+uint unquant(uint q) {
+  if (q == 0u) return 0u;
+  if (q >= 1023u) return 0xffffu;
+  return (((q << 16u) + 0x8000u) >> 10u) * 31u >> 6u;
+}
+
+uint weight(uint s) {
+  const uint w[16] = uint[16](0,4,9,13,17,21,26,30,34,38,43,47,51,55,60,64);
+  return w[s];
+}
+
+void putBits(inout uint words[4], inout uint bit, uint value, uint count) {
+  for (uint i = 0u; i < count; ++i) {
+    if (((value >> i) & 1u) != 0u) words[bit >> 5u] |= 1u << (bit & 31u);
+    ++bit;
+  }
+}
+
+void main() {
+  uint bx = gl_GlobalInvocationID.x;
+  uint by = gl_GlobalInvocationID.y;
+  if (bx * 4u >= pc.dw || by * 4u >= pc.dh) return;
+  uint q[16][3]; uint lo[3] = uint[3](1023u,1023u,1023u); uint hi[3] = uint[3](0u,0u,0u);
+  for (uint i = 0u; i < 16u; ++i) {
+    uint x = min(bx * 4u + (i & 3u), pc.dw - 1u);
+    uint y = min(by * 4u + (i >> 2u), pc.dh - 1u);
+    // BC6H is encoded at the requested output resolution. Nearest sampling
+    // keeps the shader independent of the RGBA8 resize pipeline.
+    uint sx = min((x * pc.sw) / pc.dw, pc.sw - 1u);
+    uint sy = min((y * pc.sh) / pc.dh, pc.sh - 1u);
+    uint p = (sy * pc.sw + sx) * 3u;
+    for (uint c = 0u; c < 3u; ++c) { q[i][c] = quantUF16(src[p + c]); lo[c] = min(lo[c], q[i][c]); hi[c] = max(hi[c], q[i][c]); }
+  }
+  uint llo[3] = uint[3](1023u,1023u,1023u); uint lhi[3] = uint[3](0u,0u,0u); uint minI=0u,maxI=0u; uint minL=0xffffffffu,maxL=0u;
+  for(uint i=0u;i<16u;++i){uint lum=unquant(q[i][0])*38u+unquant(q[i][1])*76u+unquant(q[i][2])*14u;if(lum<minL){minL=lum;minI=i;}if(lum>=maxL){maxL=lum;maxI=i;}}
+  for(uint c=0u;c<3u;++c){llo[c]=q[minI][c];lhi[c]=q[maxI][c];}
+  uint boxErr=0u,lineErr=0u;
+  for(uint i=0u;i<16u;++i)for(uint s=0u;s<16u;++s){uint w=weight(s);uint eb=0u,el=0u;for(uint c=0u;c<3u;++c){int db=int(unquant(q[i][c]))-int(unquant(((64u-w)*lo[c]+w*hi[c]+32u)>>6u));int dl=int(unquant(q[i][c]))-int(unquant(((64u-w)*llo[c]+w*lhi[c]+32u)>>6u));eb+=uint(db*db);el+=uint(dl*dl);}if((i==0u&&s==0u)||eb<boxErr)boxErr=eb;if((i==0u&&s==0u)||el<lineErr)lineErr=el;}
+  if(lineErr<boxErr)for(uint c=0u;c<3u;++c){lo[c]=llo[c];hi[c]=lhi[c];}
+  uint sel[16];
+  for (uint i = 0u; i < 16u; ++i) {
+    uint best = 0u; uint bestErr = 0xffffffffu;
+    for (uint s = 0u; s < 16u; ++s) {
+      uint w = weight(s); uint e = 0u;
+      for (uint c = 0u; c < 3u; ++c) { uint v = unquant(((64u-w)*lo[c] + w*hi[c] + 32u) >> 6u); int d = int(unquant(q[i][c])) - int(v); e += uint(d*d); }
+      if (e < bestErr) { bestErr = e; best = s; }
+    }
+    sel[i] = best;
+  }
+  if ((sel[0] & 8u) != 0u) { uint t[3]; for (uint c=0u;c<3u;++c){t[c]=lo[c];lo[c]=hi[c];hi[c]=t[c];} for(uint i=0u;i<16u;++i)sel[i]=15u-sel[i]; }
+  uint words[4] = uint[4](0u,0u,0u,0u); uint bit = 0u;
+  putBits(words, bit, 3u, 5u); for(uint c=0u;c<3u;++c)putBits(words,bit,lo[c],10u); for(uint c=0u;c<3u;++c)putBits(words,bit,hi[c],10u); putBits(words,bit,sel[0],3u); for(uint i=1u;i<16u;++i)putBits(words,bit,sel[i],4u);
+  uint block = by * ((pc.dw + 3u) / 4u) + bx;
+  for(uint i=0u;i<4u;++i)dst[block*4u+i]=words[i];
+}

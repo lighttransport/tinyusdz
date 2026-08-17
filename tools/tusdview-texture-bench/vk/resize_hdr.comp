@@ -1,0 +1,25 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(std430, set = 0, binding = 0) readonly buffer Src { float src[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Dst { float dst[]; };
+layout(push_constant) uniform PC { uint sw; uint sh; uint dw; uint dh; } pc;
+
+vec3 loadPixel(int x, int y) {
+  x = clamp(x, 0, int(pc.sw) - 1); y = clamp(y, 0, int(pc.sh) - 1);
+  uint p = (uint(y) * pc.sw + uint(x)) * 3u;
+  return vec3(src[p], src[p + 1u], src[p + 2u]);
+}
+
+void main() {
+  uvec2 p = gl_GlobalInvocationID.xy;
+  if (p.x >= pc.dw || p.y >= pc.dh) return;
+  float sx = (float(p.x) + 0.5) * float(pc.sw) / float(pc.dw) - 0.5;
+  float sy = (float(p.y) + 0.5) * float(pc.sh) / float(pc.dh) - 0.5;
+  int x0 = int(floor(sx)); int y0 = int(floor(sy));
+  float fx = sx - float(x0); float fy = sy - float(y0);
+  vec3 a = loadPixel(x0, y0), b = loadPixel(x0 + 1, y0);
+  vec3 c = loadPixel(x0, y0 + 1), d = loadPixel(x0 + 1, y0 + 1);
+  vec3 value = mix(mix(a, b, fx), mix(c, d, fx), fy);
+  uint outPixel = (p.y * pc.dw + p.x) * 3u;
+  dst[outPixel] = value.r; dst[outPixel + 1u] = value.g; dst[outPixel + 2u] = value.b;
+}

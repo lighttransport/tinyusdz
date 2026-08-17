@@ -30,6 +30,7 @@ set(TEST_SOURCES
 	unit-task-queue.cc
 	unit-png-stream.cc
 	unit-ptx.cc
+	unit-tiff.cc
 	unit-imageproc.cc
 	unit-tydra.cc
 	unit-tydra-subdivision.cc
