@@ -4607,6 +4607,32 @@ void App::applyNavCommand(const StreamNav& c) {
   }
 }
 
+// Stable, machine-readable capability line. Tests used to infer hardware from
+// prose log lines ("Vulkan ray tracing (ray query) enabled.", the GPU name), and
+// every time that prose was reworded the tests silently stopped covering
+// anything -- reporting missing hardware on a machine that had it. This line is
+// versioned and parsed instead. Emit it after renderer init and after any change
+// that alters what it reports (ray tracing on/off, backend switch).
+//
+// Contract for consumers -- do not reword, only extend:
+//   caps: v1 backend=<gl|vulkan|unknown> device=<discrete|integrated|virtual|cpu|gpu|other|unknown>
+//         rt=<off|hardware|software> rt_available=<0|1> gpu="<name>"
+// New keys append before gpu=; the gpu= value is quoted and last because it is
+// the only field that can contain spaces.
+void App::logCapabilities() const {
+  if (!renderer_) return;
+  const RendererCaps& c = renderer_->caps();
+  const char* backend = (backend_ == Backend::Vulkan) ? "vulkan" : "gl";
+  const bool rtOn = renderer_->rayTracingActive();
+  const char* rt = !rtOn ? "off"
+                         : (renderer_->rayTracingIsHardware() ? "hardware"
+                                                              : "software");
+  LOGI("caps: v1 backend=%s device=%s rt=%s rt_available=%d gpu=\"%s\"",
+       backend, c.device_type.empty() ? "unknown" : c.device_type.c_str(), rt,
+       renderer_->rayTracingAvailable() ? 1 : 0,
+       c.gpu_name.empty() ? "unknown" : c.gpu_name.c_str());
+}
+
 int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   runStart_ = std::chrono::steady_clock::now();
@@ -4766,6 +4792,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         LOGI("Vulkan ray tracing enabled (%s).",
              renderer_->rayTracingIsHardware() ? "hardware ray query"
                                                : "compute-BVH fallback");
+        logCapabilities();
       } else {
         LOGW("--rt requested but ray tracing is unavailable; using rasterization.");
       }
@@ -4795,6 +4822,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         LOGI("Vulkan ray tracing enabled (%s).",
              renderer_->rayTracingIsHardware() ? "hardware ray query"
                                                : "compute-BVH fallback");
+        logCapabilities();
       } else {
         LOGW("--rt requested but ray tracing is unavailable (needs the Vulkan "
              "backend + an RT-capable glslang at build time for either the "
@@ -4827,6 +4855,7 @@ int App::run(const std::string& initialFile, int maxFrames,
          rendererCaps.api_info.empty() ? "unknown"
                                        : rendererCaps.api_info.c_str());
   }
+  logCapabilities();
 
   gui_.setScene(&loaded_, &draw_);
   gui_.setNextStage(nextStageSnapshot_.get());

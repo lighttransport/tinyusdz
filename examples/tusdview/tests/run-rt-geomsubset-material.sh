@@ -123,7 +123,7 @@ fi
 
 ran=0
 fail=0
-for spec in "vk:--backend vk --rt:Vulkan ray tracing enabled (hardware ray query)" \
+for spec in "vk:--backend vk --rt:caps: v1 .*rt=hardware" \
             "cuda:--cuda:CUDA RT wrote" "hip:--hip:HIP RT wrote"; do
   backend="${spec%%:*}"
   rest="${spec#*:}"

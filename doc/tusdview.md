@@ -721,6 +721,36 @@ proxies. isCoral is baseline-identical at 4 (0.80ms) and marginally blockier at
 the value is the safe direction -- it draws more real geometry, costing speed
 rather than fidelity.
 
+## Machine-readable capability line
+
+Every run prints a versioned capability line after renderer init, and again
+whenever what it reports changes (ray tracing toggled, backend switched):
+
+```
+[tusdview] caps: v1 backend=vulkan device=discrete rt=hardware rt_available=1 gpu="NVIDIA GeForce RTX 5060 Ti"
+```
+
+| key | values |
+| --- | --- |
+| `backend` | `gl`, `vulkan`, `unknown` |
+| `device` | `discrete`, `integrated`, `virtual`, `cpu`, `gpu`, `other`, `unknown` |
+| `rt` | `off`, `hardware`, `software` (the mode currently active) |
+| `rt_available` | `0`, `1` (device capability, independent of whether RT is on) |
+| `gpu` | quoted device name; last, because it is the only value that can contain spaces |
+
+**This is a test contract: do not reword it, only extend it.** New keys append
+before `gpu=`; a breaking change takes a new version (`v2`), so a parser can
+reject what it does not understand instead of silently matching nothing.
+
+It exists because the test suite used to infer hardware from prose log lines.
+When `Vulkan ray tracing (ray query) enabled.` was reworded to
+`Vulkan ray tracing enabled (hardware ray query).`, seven tests stopped
+matching and reported missing hardware on a machine that had it -- while still
+exiting 0 or "skipped", so the suite looked green. Two more did the same when a
+profile was renamed and when a software-Vulkan probe asked whether llvmpipe was
+*installed* rather than *selected*. Tests now grep `caps: v1 .*rt=hardware` and
+`caps: v1 .*device=cpu` instead of driver marketing strings.
+
 ## Vulkan raster profiling
 
 `TUSDVIEW_TIME_GPU=1` prints a per-pass GPU breakdown from timestamp queries,

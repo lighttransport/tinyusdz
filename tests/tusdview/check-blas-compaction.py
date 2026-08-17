@@ -84,7 +84,7 @@ def main():
         print("SKIP: Vulkan RT probe timed out")
         return SKIP
     if ("ray tracing is unavailable" in on_log or
-            ("Vulkan ray tracing enabled (hardware ray query)" not in on_log and
+            (not re.search(r"caps: v1 .*rt=hardware", on_log) and
              "[vk_rt]" not in on_log)):
         print("SKIP: no ray-tracing capable Vulkan device")
         return SKIP

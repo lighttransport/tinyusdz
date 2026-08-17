@@ -25,7 +25,7 @@ if [ "$rc" -ne 0 ]; then
   echo "FAIL: Vulkan RT linked-light render failed"
   exit 1
 fi
-if ! grep -q 'Vulkan ray tracing enabled (hardware ray query)' <<<"$log"; then
+if ! grep -q 'caps: v1 .*rt=hardware' <<<"$log"; then
   echo "SKIP: Vulkan ray query was not enabled"
   exit "$SKIP"
 fi
