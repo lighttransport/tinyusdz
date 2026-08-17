@@ -1519,23 +1519,60 @@ bool App::finishPtexDecode(bool wait, bool discard) {
   decoded.rect.x += outerX;
   decoded.rect.y += outerY;
   std::vector<Renderer::TextureRegionUpdate> updates;
+  const bool compressedPtex =
+      texture.compressed.format != DrawCompressedFormat::None &&
+      !texture.compressed.data.empty();
   if (assignment.evictedFace != ~uint32_t{0}) {
-    AppendPtexFaceTableUpdates(texture, assignment.evictedFace,
-                               texture.ptexFaceRects[assignment.evictedFace],
-                               &updates);
+    if (compressedPtex) {
+      renderer_->updatePtexFaceRect(
+          static_cast<int>(decoded.texture), assignment.evictedFace,
+          texture.ptexFaceRects[assignment.evictedFace]);
+    } else {
+      AppendPtexFaceTableUpdates(texture, assignment.evictedFace,
+                                 texture.ptexFaceRects[assignment.evictedFace],
+                                 &updates);
+    }
   }
   Renderer::TextureRegionUpdate pageUpdate;
   pageUpdate.x = static_cast<int>(outerX);
   pageUpdate.y = static_cast<int>(outerY);
   pageUpdate.width = decoded.page.width;
   pageUpdate.height = decoded.page.height;
-  pageUpdate.rowBytes = size_t(decoded.page.width) * 4u;
-  pageUpdate.rgba = std::move(decoded.page.data);
+  if (compressedPtex) {
+    DrawTextureCPU pageTexture;
+    pageTexture.image = decoded.page;
+    pageTexture.srgb = texture.srgb;
+    pageTexture.isNormalMap = texture.isNormalMap;
+    CompressDrawTexture(loadOpts_.textureOptions, &pageTexture);
+    if (pageTexture.compressed.format != texture.compressed.format ||
+        pageTexture.compressed.data.empty()) {
+      LOGW("Ptex face %u GPU compression failed for residency page", decoded.face);
+      return true;
+    }
+    pageUpdate.compressedFormat = pageTexture.compressed.format;
+    pageUpdate.compressed = std::move(pageTexture.compressed.data);
+  } else {
+    pageUpdate.rowBytes = size_t(decoded.page.width) * 4u;
+    pageUpdate.rgba = std::move(decoded.page.data);
+  }
   updates.push_back(std::move(pageUpdate));
-  AppendPtexFaceTableUpdates(texture, decoded.face, decoded.rect, &updates);
+  if (compressedPtex) {
+    if (!renderer_->updatePtexFaceRect(static_cast<int>(decoded.texture),
+                                       decoded.face, decoded.rect)) {
+      LOGW("Ptex face %u metadata residency update failed", decoded.face);
+      return true;
+    }
+  } else {
+    AppendPtexFaceTableUpdates(texture, decoded.face, decoded.rect, &updates);
+  }
   if (!renderer_->updateTextureRegions(static_cast<int>(decoded.texture),
                                        updates)) {
-    LOGW("Ptex face %u residency upload failed", decoded.face);
+    LOGW("Ptex face %u residency upload failed (page=%dx%d, slot=%u, "
+         "atlas=%dx%d, cacheY=%u, slotEdge=%u)", decoded.face,
+         decoded.page.width, decoded.page.height, assignment.slot,
+         texture.image.width, texture.image.height,
+         texture.ptexPhysicalCacheOffsetY,
+         texture.ptexPhysicalCacheSlotEdge);
     return true;
   }
   ++texture.ptexGpuPageUploads;

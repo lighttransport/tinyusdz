@@ -447,6 +447,7 @@ void RunPhysicalCacheReservation() {
   CHECK(stats.physicalCacheSlotEdge == slotEdge);
   CHECK(stats.physicalCacheSlots == 2);
   CHECK(stats.physicalCacheOffsetY > 0);
+  CHECK((stats.physicalCacheOffsetY & 3u) == 0u);
   CHECK(stats.rectTexelOffset >=
         uint32_t(atlas.width) *
             (stats.physicalCacheOffsetY + stats.physicalCacheSlotEdge));

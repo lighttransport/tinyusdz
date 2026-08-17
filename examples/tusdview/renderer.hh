@@ -332,6 +332,10 @@ class Renderer {
     int x{0}, y{0}, width{0}, height{0};
     size_t rowBytes{0};
     std::vector<uint8_t> rgba;
+    // Optional block-compressed update. `width`/`height` remain logical texel
+    // dimensions; the backend derives block-row sizes from the texture format.
+    DrawCompressedFormat compressedFormat{DrawCompressedFormat::None};
+    std::vector<uint8_t> compressed;
   };
   virtual bool updateTextureRegions(
       int slot, const std::vector<TextureRegionUpdate>& updates) {
@@ -343,6 +347,12 @@ class Renderer {
       }
     }
     return true;
+  }
+  // Update the compact Ptex rectangle table used by compressed Vulkan Ptex
+  // images. Backends without a separate table keep their legacy atlas table.
+  virtual bool updatePtexFaceRect(int /*slot*/, uint32_t /*face*/,
+                                  const DrawPtexFaceRectCPU& /*rect*/) {
+    return false;
   }
   virtual void uploadSkinningFrame(const SkinningFrameCPU& /*skin*/) {}
   // Per-instance frustum culling: replace mesh `meshIndex`'s drawn instance set

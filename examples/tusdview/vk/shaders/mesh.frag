@@ -47,6 +47,9 @@ layout(set = 0, binding = 30) uniform sampler2DArray uCoatNormalUdimTex;
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
 layout(set = 1, binding = 6, std430) readonly buffer Faces { uint faceId[]; };
+// Compact Ptex face rectangles. Keeping this out of the sampled image permits
+// the atlas and its streamed physical pages to use BC7 block compression.
+layout(set = 1, binding = 7, std430) readonly buffer PtexRects { uvec4 rect[]; };
 
 // Frame-constant UBO (set 5): camera + scene bbox + renderMode (shared with the
 // vertex/tess stages). Per-draw material/ids come from the push block below.
@@ -241,16 +244,10 @@ vec2 ptexUv(sampler2D tex, vec2 uv, vec4 info) {
   uint face = sourceFaceForPtex();
   if (face >= uint(info.y)) return uv;
   ivec2 size = textureSize(tex, 0);
-  int base = int(info.x + 0.5) + int(face) * 8;
   uint value[4];
-  for (int component = 0; component < 4; ++component) {
-    int lo = base + component * 2;
-    float a = texelFetch(tex, ivec2(lo % size.x, lo / size.x), 0).a;
-    float b = texelFetch(tex, ivec2((lo + 1) % size.x,
-                                    (lo + 1) / size.x), 0).a;
-    value[component] = uint(a * 255.0 + 0.5) |
-                       (uint(b * 255.0 + 0.5) << 8u);
-  }
+  uvec4 rect = ptexRects.rect[uint(info.x + 0.5) + face];
+  value[0] = rect.x; value[1] = rect.y;
+  value[2] = rect.z; value[3] = rect.w;
   if (value[2] == 0u || value[3] == 0u) return uv;
   vec2 px = vec2(float(value[0]), float(value[1])) +
             vec2(clamp(uv.x, 0.0, 1.0), 1.0 - clamp(uv.y, 0.0, 1.0)) *
@@ -268,17 +265,10 @@ vec4 sampleBaseColor(vec2 uv) {
                    ptexFace < uint(m.ptexBaseInfo.y);
   if (validPtex) {
     uint values[4];
-    int base = int(m.ptexBaseInfo.x + 0.5) + int(ptexFace) * 8;
     ivec2 size = textureSize(uBaseColorTex, 0);
-    for (int component = 0; component < 4; ++component) {
-      int lo = base + component * 2;
-      float a = texelFetch(uBaseColorTex,
-                           ivec2(lo % size.x, lo / size.x), 0).a;
-      float b = texelFetch(uBaseColorTex,
-                           ivec2((lo + 1) % size.x, (lo + 1) / size.x), 0).a;
-      values[component] = uint(a * 255.0 + 0.5) |
-                          (uint(b * 255.0 + 0.5) << 8u);
-    }
+    uvec4 rect = ptexRects.rect[uint(m.ptexBaseInfo.x + 0.5) + ptexFace];
+    values[0] = rect.x; values[1] = rect.y;
+    values[2] = rect.z; values[3] = rect.w;
     vec2 px = vec2(float(values[0]), float(values[1])) +
               vec2(clamp(tuv.x, 0.0, 1.0),
                    1.0 - clamp(tuv.y, 0.0, 1.0)) *

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Camera-visible Ptex demand regression: one in-view and one off-camera mesh
 # share a generated Ptex source. Only the in-view mesh may enqueue its face.
-set -uo pipefail
+set -euo pipefail
 
 viewer="${TUSDVIEW:-build_ninja/tusdview}"
 generator="${TUSDVIEW_PTEX_GENERATOR:-build_ninja/tusdview_ptex_atlas_test}"
@@ -57,9 +57,14 @@ def Mesh "Far" (prepend apiSchemas = ["MaterialBindingAPI"]) {
 EOF
 
 log="$out/run.log"
+texture_args=()
+if [[ "${TUSDVIEW_PTEX_COMPRESS:-1}" != "0" ]]; then
+  texture_args=(--texture-compress bc7 --texture-gpu vulkan)
+fi
 if ! env TUSDVIEW_PTEX_FORCE_RESIDENCY=1 timeout 60s \
     "$viewer" --headless --backend vk --next \
     --large-scene-profile instance-heavy --ptex-initial-faces 1 --ptex-cache-mb 4 \
+    "${texture_args[@]}" \
     --frames 4 --size 192x128 --camera /Camera \
     --screenshot "$out/result.png" --render-report "$out/report.json" \
     "$out/scene.usda" >"$log" 2>&1; then
@@ -76,7 +81,7 @@ import json, sys
 with open(sys.argv[1], encoding="utf-8") as f:
     report = json.load(f)
 s = report["scene_stats"]
-r = report["render_stats"]
+r = report["render"]
 assert s["ptex_considered_meshes"] == 1, s
 assert s["ptex_requested_meshes"] == 1, s
 assert s["ptex_requested_faces"] == 1, s

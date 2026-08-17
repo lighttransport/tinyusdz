@@ -1325,7 +1325,8 @@ void ShutdownTextureGpu() {
 void CompressDrawTexture(const TextureRuntimeOptions& opt,
                          DrawTextureCPU* texture) {
   if (!texture || opt.compression == TextureCompressionMode::Off ||
-      texture->isPtex || texture->compressedFinal) {
+      texture->compressedFinal ||
+      (texture->isPtex && opt.gpuBackend != TextureGpuBackend::Vulkan)) {
     return;
   }
   texture->requestedCompressed = true;
@@ -1357,8 +1358,8 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
   // that drew the 4K pages running long after the rest have finished.
   const size_t texCount = out->textures.size();
   auto encodeOne = [&opt](DrawTextureCPU& tex) {
-    if (tex.isPtex) return;
     if (tex.compressedFinal) return;  // kept-compressed KTX2 -- already final
+    if (tex.isPtex && opt.gpuBackend != TextureGpuBackend::Vulkan) return;
     tex.requestedCompressed = true;
 #if defined(TUSDVIEW_TEXTURE_GPU)
     if ((tex.isUdim && GpuCompressUdim(opt, &tex)) ||
@@ -1395,7 +1396,7 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
   }
   size_t n = 0, raw = 0, comp = 0;
   for (const DrawTextureCPU& tex : out->textures) {
-    if (tex.isPtex || tex.compressedFinal) continue;
+    if (tex.compressedFinal) continue;
     if (!tex.compressed.data.empty()) {
       ++n;
       raw += tex.image.data.size();

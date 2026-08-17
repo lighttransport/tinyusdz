@@ -76,6 +76,8 @@ class VulkanRenderer final : public Renderer {
                            size_t rowBytes = 0) override;
   bool updateTextureRegions(
       int slot, const std::vector<TextureRegionUpdate>& updates) override;
+  bool updatePtexFaceRect(int slot, uint32_t face,
+                          const DrawPtexFaceRectCPU& rect) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
@@ -515,6 +517,7 @@ class VulkanRenderer final : public Renderer {
   VkCommandBuffer beginOneShot();
   void endOneShot(VkCommandBuffer cb);
   VkShaderModule createShader(const void* code, size_t bytes);
+  void rebuildPtexRectBuffer();
 
   GLFWwindow* window_{nullptr};
   // Window framebuffer size carried in from the main thread by presentThreaded()
@@ -859,10 +862,14 @@ class VulkanRenderer final : public Renderer {
   std::vector<int> texSlotWidths_;
   std::vector<int> texSlotHeights_;
   std::vector<uint8_t> texRegionUpdatable_;
+  std::vector<DrawCompressedFormat> texCompressedFormats_;
   std::vector<VkImageView> texUdimArrayViews_;
   std::vector<VkImage> texUdimArrayImgs_;
   std::vector<VkDeviceMemory> texUdimArrayMems_;
   std::vector<uint8_t> texIsUdim_;
+  VkBuffer ptexRectBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory ptexRectMem_{VK_NULL_HANDLE};
+  std::vector<uint32_t> ptexRectOffsets_;
   size_t rtTextureBudgetBytes_{0};
   VkImage udimLutAtlasImg_{VK_NULL_HANDLE};
   VkDeviceMemory udimLutAtlasMem_{VK_NULL_HANDLE};
