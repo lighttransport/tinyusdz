@@ -78,6 +78,11 @@ std::unique_ptr<Processor> CreateProcessor(Backend backend, bool allowSoftware,
 
 const char* BackendName(Backend backend);
 const char* FormatName(CompressionFormat format);
-size_t CompressedSize(CompressionFormat format, uint32_t width, uint32_t height);
+inline size_t CompressedSize(CompressionFormat format, uint32_t width,
+                             uint32_t height) {
+  const size_t blocks = static_cast<size_t>((width + 3u) / 4u) *
+                        static_cast<size_t>((height + 3u) / 4u);
+  return blocks * (format == CompressionFormat::BC1 ? 8u : 16u);
+}
 
 }  // namespace tusdview_texture_bench

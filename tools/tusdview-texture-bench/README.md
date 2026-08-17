@@ -32,8 +32,11 @@ viewer’s general-purpose CPU filter semantics more closely. The HIP adapter
 uses native ROCm kernels for resize and BC1/BC3/BC5/BC7 compression. It selects
 the first HIP device and supports BC6H mode-11 HDR encoding; use
 `--backend hip` to benchmark it. Set `LD_LIBRARY_PATH` to the ROCm library
-directory when the HIP runtime is not on the system loader path. The CUDA
-adapter uses native CUDA kernels for resize and BC1/BC3/BC5/BC7 compression.
+directory when the HIP runtime is not on the system loader path; hipew also
+searches `HIP_PATH`, `ROCM_PATH`, and versioned `/opt/rocm/core-*/lib` trees.
+The viewer build puts the HIP adapter in a load-on-demand module, so the main
+`tusdview` executable has no link-time ROCm dependency. The CUDA adapter uses
+native CUDA kernels for resize and BC1/BC3/BC5/BC7 compression.
 Its default architecture is `120` for Blackwell-class GPUs and can be changed
 with `-DTUSDVIEW_TEXTURE_CUDA_ARCHITECTURES=...`; select it with
 `--backend cuda`. CUDA also supports the BC6H mode-11 HDR path.

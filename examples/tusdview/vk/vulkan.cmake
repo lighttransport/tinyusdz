@@ -148,15 +148,22 @@ if(TUSDVIEW_TEXTURE_GLSLANG)
   check_language(HIP)
   if(CMAKE_HIP_COMPILER)
     enable_language(HIP)
-    target_sources(${EXAMPLE_TARGET} PRIVATE
-        ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/hip_processor.hip)
+    if(NOT TARGET tusdview_texture_hip_plugin)
+      add_library(tusdview_texture_hip_plugin MODULE
+          ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/hip_processor.hip)
+      target_include_directories(tusdview_texture_hip_plugin PRIVATE
+          ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench)
+      set_target_properties(tusdview_texture_hip_plugin PROPERTIES
+          HIP_ARCHITECTURES "native"
+          PREFIX "")
+    endif()
     set_source_files_properties(
         ${PROJECT_SOURCE_DIR}/tools/tusdview-texture-bench/hip_processor.hip
         PROPERTIES LANGUAGE HIP)
-    set_target_properties(${EXAMPLE_TARGET} PROPERTIES
-        HIP_ARCHITECTURES "native")
     target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
-        TUSDVIEW_TEXTURE_HAVE_HIP=1)
+        TUSDVIEW_TEXTURE_HAVE_HIP=1 TUSDVIEW_TEXTURE_HIP_DYNAMIC=1
+        TUSDVIEW_TEXTURE_HIP_PLUGIN_PATH="$<TARGET_FILE:tusdview_texture_hip_plugin>")
+    add_dependencies(${EXAMPLE_TARGET} tusdview_texture_hip_plugin)
     message(STATUS "tusdview: HIP texture preprocessing ENABLED via hipew-isolated runtime")
   endif()
   message(STATUS "tusdview: Vulkan GPU texture preprocessing ENABLED")
