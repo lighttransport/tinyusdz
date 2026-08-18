@@ -1,10 +1,21 @@
 #include "nanoimage.h"
 
+#include <stddef.h>
 #include <stdlib.h>
+
+#if defined(_MSC_VER) && !defined(__cplusplus)
+typedef union {
+  void *pointer;
+  double floating_point;
+  long long integer;
+} ni_max_align_t;
+#else
+typedef max_align_t ni_max_align_t;
+#endif
 
 typedef struct {
   size_t requested_size;
-  max_align_t _align;
+  ni_max_align_t _align;
 } ni_allocation_header;
 
 typedef struct {
