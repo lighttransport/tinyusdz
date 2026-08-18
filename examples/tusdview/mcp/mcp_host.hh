@@ -28,6 +28,8 @@ class McpHost {
   // Synthesize a keyboard key press (render-mode / wireframe / framing keys),
   // i.e. drive the viewer as if the user pressed a key.
   virtual nlohmann::json mcpInput(const nlohmann::json& args, std::string& err) = 0;
+  virtual nlohmann::json mcpMouse(const nlohmann::json& args, std::string& err) = 0;
+  virtual nlohmann::json mcpPick(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpListPrims(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpLoadPayloads(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpTimeline(const nlohmann::json& args, std::string& err) = 0;

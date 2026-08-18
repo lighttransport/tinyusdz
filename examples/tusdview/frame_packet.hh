@@ -38,6 +38,7 @@ struct FramePacket {
   std::vector<uint8_t> carrierVisible;
   std::vector<uint8_t> rtMeshVisible;
   uint32_t purposeVisibleMask{0xBu};
+  int curveMaxSegments{8};
   int viewportW{0};
   int viewportH{0};
   int fbW{0};
@@ -46,6 +47,7 @@ struct FramePacket {
   ImDrawData* drawData{nullptr};  // deep-cloned ImGui output; freed by the render thread
   bool wantCapture{false};        // render thread reads back the frame after present
   std::uint64_t seq{0};
+  std::uint64_t sceneKey{0};  // render-affecting state; unchanged => reuse viewport
 
   // Reconstruct a RenderFrameParams whose pointers reference this packet's buffers.
   RenderFrameParams params() const {
@@ -81,6 +83,7 @@ struct FramePacket {
     p.rtMeshVisible = rtMeshVisible.empty() ? nullptr : rtMeshVisible.data();
     p.rtMeshVisibleCount = static_cast<int>(rtMeshVisible.size());
     p.purposeVisibleMask = purposeVisibleMask;
+    p.curveMaxSegments = curveMaxSegments;
     return p;
   }
 };

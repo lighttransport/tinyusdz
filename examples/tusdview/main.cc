@@ -18,9 +18,11 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 
 #include "security-policy.hh"
@@ -84,6 +86,8 @@ static const std::pair<const char*, tusdview::RenderMode> kModeTable[] = {
     {"barycentric", tusdview::RenderMode::Barycentric},
     {"prim-id", tusdview::RenderMode::PrimId},
     {"mesh-id", tusdview::RenderMode::MeshId},
+    {"picking", tusdview::RenderMode::MeshId},
+    {"pick-id", tusdview::RenderMode::MeshId},
     {"purpose", tusdview::RenderMode::Purpose},
     {"missing-normals", tusdview::RenderMode::MissingNormals},
     {"double-sided", tusdview::RenderMode::DoubleSided},
@@ -982,6 +986,7 @@ int main(int argc, char** argv) {
           "  --mode NAME   Start in a render mode: shaded, wireframe, normals, "
           "material-id, geom-normal, uv, depth, albedo, facing, roughness, "
           "metallic, emissive, opacity, position, barycentric, prim-id, mesh-id, "
+          "picking, "
           "purpose, missing-normals, double-sided, skin-weights, tangent, "
           "uv-checker, ao, curvature, instance-id, bvh-heatmap, soft-shadow, "
           "kind, udim, uv1, blend-influence, texel-density, source-face-id, coat-normal, coat-weight, coat-color, coat-roughness, specular-f0, ior-f0.\n"
@@ -1373,6 +1378,13 @@ int main(int argc, char** argv) {
   }
 
   tusdview::App app(backend);
+  if (argc > 0 && argv[0] && argv[0][0]) {
+    std::error_code executablePathError;
+    const std::filesystem::path executablePath =
+        std::filesystem::absolute(argv[0], executablePathError);
+    app.setExecutablePath(executablePathError ? std::filesystem::path(argv[0])
+                                              : executablePath);
+  }
   if (config.status == tusdview::ConfigLoadStatus::Loaded) {
     if (config.config.fontSizePx) app.setFontSize(*config.config.fontSizePx);
     if (config.config.windowScale) app.setWindowScale(*config.config.windowScale);

@@ -1415,8 +1415,17 @@ void VulkanRenderer::drawLineSet(VkCommandBuffer cb,
                                  VkPipeline pipeline, const float vp[16],
                                  std::vector<NonMeshChunkUpload>* chunkUploads) {
   if (copy.empty() || !pipeline) return;
-  const size_t kVerticesPerUpload = VulkanHelperChunkVertexLimit();
-  if (chunkUploads && copy.size() > kVerticesPerUpload) {
+  size_t verticesPerUpload = VulkanHelperChunkVertexLimit();
+  // Native points/curves are expanded into a triangle list.  Chunk boundaries
+  // must not split a triangle: the next vkCmdDraw starts a fresh primitive and
+  // otherwise combines two vertices from the preceding ribbon quad with one
+  // vertex from the next one.  The default limit (262144) is deliberately a
+  // generic byte-friendly value and is not divisible by three.
+  if (pipeline == nonMeshPipeline_) {
+    verticesPerUpload -= verticesPerUpload % 3;
+    verticesPerUpload = std::max<size_t>(verticesPerUpload, 3);
+  }
+  if (chunkUploads && copy.size() > verticesPerUpload) {
     // The reusable monolithic buffer is not needed while this carrier uses
     // transient ranges. Drop it before allocating the per-range buffers so a
     // previous small/medium frame cannot remain resident alongside them.
@@ -1425,8 +1434,8 @@ void VulkanRenderer::drawLineSet(VkCommandBuffer cb,
     *buf = VK_NULL_HANDLE;
     *mem = VK_NULL_HANDLE;
     *cap = 0;
-    for (size_t first = 0; first < copy.size(); first += kVerticesPerUpload) {
-      const size_t count = std::min(kVerticesPerUpload, copy.size() - first);
+    for (size_t first = 0; first < copy.size(); first += verticesPerUpload) {
+      const size_t count = std::min(verticesPerUpload, copy.size() - first);
       NonMeshChunkUpload upload;
       const VkDeviceSize bytes = count * sizeof(HelperVertex);
       if (!createHostBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
@@ -10081,7 +10090,6 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   if (hasParams_) {
     const float right[3] = {view_[0], view_[4], view_[8]};
     const float up[3] = {view_[1], view_[5], view_[9]};
-    const float forward[3] = {-view_[2], -view_[6], -view_[10]};
     auto dot3 = [](const float a[3], const float b[3]) {
       return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     };
@@ -10143,13 +10151,27 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
         c[0] *= opacity; c[1] *= opacity; c[2] *= opacity;
       }
     };
-    auto addQuad = [&](const float p0[3], const float p1[3], const float side[3],
-                       float width, const float c[3]) {
-      const float h = std::max(width, 1.0e-6f) * 0.5f;
-      float a[3] = {p0[0] + side[0] * h, p0[1] + side[1] * h, p0[2] + side[2] * h};
-      float b[3] = {p0[0] - side[0] * h, p0[1] - side[1] * h, p0[2] - side[2] * h};
-      float d[3] = {p1[0] + side[0] * h, p1[1] + side[1] * h, p1[2] + side[2] * h};
-      float e[3] = {p1[0] - side[0] * h, p1[1] - side[1] * h, p1[2] - side[2] * h};
+    // Same stable hash used by the mesh shaders and the GL non-mesh shader.
+    // In the picking AOV, mesh IDs occupy [0, meshes_.size()) and native
+    // point/curve carrier IDs follow them in upload order.
+    auto pickingColor = [](uint32_t id, float c[3]) {
+      const uint32_t h = (id + 1u) * 2654435761u;
+      c[0] = static_cast<float>(h & 255u) * (1.0f / 255.0f);
+      c[1] = static_cast<float>((h >> 8u) & 255u) * (1.0f / 255.0f);
+      c[2] = static_cast<float>((h >> 16u) & 255u) * (1.0f / 255.0f);
+    };
+    auto addRibbonQuad = [&](const float p0[3], const float p1[3],
+                             const float side0[3], const float side1[3],
+                             float width0, float width1, const float c[3]) {
+      const float h0 = std::max(width0, 1.0e-6f) * 0.5f;
+      const float h1 = std::max(width1, 1.0e-6f) * 0.5f;
+      float a[3], b[3], d[3], e[3];
+      for (int k = 0; k < 3; ++k) {
+        a[k] = p0[k] + side0[k] * h0;
+        b[k] = p0[k] - side0[k] * h0;
+        d[k] = p1[k] + side1[k] * h1;
+        e[k] = p1[k] - side1[k] * h1;
+      }
       const auto v = [&](const float p[3]) {
         HelperVertex hv{};
         std::memcpy(hv.pos, p, sizeof(hv.pos));
@@ -10198,6 +10220,8 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
       const float scale = std::max(sx, std::max(sy, sz));
       for (size_t i = 0; i < s.points.size() / 3; ++i) {
         float p[3], c[3]; worldPoint(s, i, p); colorAt(s, i, c);
+        if (params.mode == RenderMode::MeshId)
+          pickingColor(static_cast<uint32_t>(meshes_.size() + carrierIndex), c);
         const float width = (s.widths.empty() ? 1.0f :
           (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)])) * scale;
         if (!rasterVisible(p, width)) continue;
@@ -10205,6 +10229,10 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
       }
       ++carrierIndex;
     }
+    std::vector<size_t> curveSampleIndices;
+    std::vector<float> curvePositions;
+    std::vector<float> curveSides;
+    std::vector<float> curveWidths;
     for (const DrawCurvesCPU& s : nativeCurves_) {
       if ((params.purposeVisibleMask & (1u << PurposeId(s.purpose))) == 0 ||
           (params.carrierVisible && carrierIndex < static_cast<size_t>(params.carrierVisibleCount) &&
@@ -10218,29 +10246,79 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
       const std::vector<uint32_t> counts = s.vertexCounts.empty()
           ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : s.vertexCounts;
       for (uint32_t count : counts) {
-        const size_t end = std::min(np, base + static_cast<size_t>(count));
-        for (size_t i = base; i + 1 < end; ++i) {
-          float p0[3], p1[3], c0[3]; worldPoint(s, i, p0); worldPoint(s, i + 1, p1);
-          float dir[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
-          const float dirLen2 = dot3(dir, dir);
-          // Bad/duplicate tessellation points are common in authored curve
-          // data.  Expanding them produces zero-area or non-finite helper
-          // triangles, which can expose unstable clipping at particular dolly
-          // distances on Vulkan.
-          if (!std::isfinite(dirLen2) || dirLen2 < 1.0e-12f) continue;
-          float side[3]; cross3(forward, dir, side); normalize3(side);
-          if (dot3(side, side) < 0.5f) std::memcpy(side, right, sizeof(side));
+        const size_t remaining = np - std::min(base, np);
+        const size_t end = base >= np ? np :
+            base + std::min(remaining, static_cast<size_t>(count));
+        const size_t strandCount = end - base;
+        if (strandCount < 2) { base = end; continue; }
+
+        // Dense cubic curves can contain thousands of already-tessellated
+        // samples per strand (the full Island scene has ~16M). Preserve every
+        // strand/prim for visibility and picking, but draw an evenly-spaced
+        // polyline budget. Endpoints are exact and the setting is independent
+        // of the loader's prim/strand preview caps.
+        const size_t segmentCount = params.curveMaxSegments > 0
+            ? std::min(strandCount - 1,
+                       static_cast<size_t>(params.curveMaxSegments))
+            : strandCount - 1;
+        const size_t sampleCount = segmentCount + 1;
+        curveSampleIndices.resize(sampleCount);
+        for (size_t j = 0; j < sampleCount; ++j) {
+          curveSampleIndices[j] = base +
+              (j * (strandCount - 1) + segmentCount / 2) / segmentCount;
+        }
+
+        // Build one continuous strip per authored strand. Adjacent segments
+        // share the exact same offset edge at their common point; independent
+        // per-segment quads leave the characteristic triangular sawtooth gaps
+        // on sharply curved XGen leaves.
+        curvePositions.resize(sampleCount * 3);
+        curveSides.resize(sampleCount * 3);
+        curveWidths.resize(sampleCount);
+        for (size_t j = 0; j < sampleCount; ++j) {
+          const size_t i = curveSampleIndices[j];
+          float* p = &curvePositions[j * 3];
+          worldPoint(s, i, p);
+          curveWidths[j] = (s.widths.empty() ? 1.0f :
+              (s.widths.size() == 1 ? s.widths[0] :
+               s.widths[std::min(i, s.widths.size() - 1)])) * scale;
+        }
+        for (size_t j = 0; j < sampleCount; ++j) {
+          const float* prev = &curvePositions[(j > 0 ? j - 1 : j) * 3];
+          const float* next = &curvePositions[(j + 1 < sampleCount ? j + 1 : j) * 3];
+          const float* p = &curvePositions[j * 3];
+          float tangent[3] = {next[0] - prev[0], next[1] - prev[1],
+                              next[2] - prev[2]};
+          float toCamera[3] = {cameraPos_[0] - p[0], cameraPos_[1] - p[1],
+                               cameraPos_[2] - p[2]};
+          normalize3(toCamera);
+          float* side = &curveSides[j * 3];
+          cross3(tangent, toCamera, side);
+          normalize3(side);
+          if (dot3(side, side) < 0.5f) std::memcpy(side, right, 3 * sizeof(float));
+          if (j > 0 && dot3(side, &curveSides[(j - 1) * 3]) < 0.0f) {
+            side[0] = -side[0]; side[1] = -side[1]; side[2] = -side[2];
+          }
+        }
+        for (size_t j = 0; j + 1 < sampleCount; ++j) {
+          const size_t i = curveSampleIndices[j];
+          const float* p0 = &curvePositions[j * 3];
+          const float* p1 = &curvePositions[(j + 1) * 3];
+          float c0[3];
           colorAt(s, i, c0);
-          const float w0 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)]);
-          const float w1 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i + 1, s.widths.size() - 1)]);
-          const float width = 0.5f * (w0 + w1) * scale;
-          if (!std::isfinite(width) || width < 0.0f) continue;
-          float pm[3] = {0.5f * (p0[0] + p1[0]), 0.5f * (p0[1] + p1[1]),
-                         0.5f * (p0[2] + p1[2])};
+          if (params.mode == RenderMode::MeshId)
+            pickingColor(static_cast<uint32_t>(meshes_.size() + carrierIndex), c0);
+          if (!std::isfinite(curveWidths[j]) || !std::isfinite(curveWidths[j + 1]) ||
+              curveWidths[j] < 0.0f || curveWidths[j + 1] < 0.0f) continue;
+          const float width = std::max(curveWidths[j], curveWidths[j + 1]);
+          const float pm[3] = {0.5f * (p0[0] + p1[0]),
+                               0.5f * (p0[1] + p1[1]),
+                               0.5f * (p0[2] + p1[2])};
           if (!rasterVisible(p0, width) && !rasterVisible(p1, width) &&
               !rasterVisible(pm, width))
             continue;
-          addQuad(p0, p1, side, width, c0);
+          addRibbonQuad(p0, p1, &curveSides[j * 3], &curveSides[(j + 1) * 3],
+                        curveWidths[j], curveWidths[j + 1], c0);
         }
         base = end;
       }

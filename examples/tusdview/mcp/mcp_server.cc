@@ -96,10 +96,34 @@ json MCPServer::buildToolsList() const {
       "input",
       "Synthesize a keyboard key as if pressed in the viewport. "
       "key=v (cycle wireframe: off/wire/wire+shade) | w/s (forward/backward) | "
-      "f or a (frame all) | "
+      "f or a (frame all) | i (show selected only) | u (show all) | "
       "0 (home) | 5 (isometric) | 1 (front) | 3 (right) | 7 (top).",
-      {{"key", strProp("v | w | s | f | a | 0 | 1 | 3 | 5 | 7")}},
+      {{"key", strProp("v | w | s | f | a | i | u | 0 | 1 | 3 | 5 | 7")}},
       json::array({"key"})));
+  tools.push_back(tool(
+      "mouse",
+      "Inject viewport mouse input. type=move or button; coordinates are viewport pixels. "
+      "For button use button=0 left, 1 middle, 2 right and down=true/false.",
+      {{"type", strProp("move | button")},
+       {"x", numProp("viewport pixel x")},
+       {"y", numProp("viewport pixel y")},
+       {"button", {{"type", "integer"}, {"description", "0 left, 1 middle, 2 right"}}},
+       {"down", {{"type", "boolean"}, {"description", "button press or release"}}},
+       {"shift", {{"type", "boolean"}}},
+       {"ctrl", {{"type", "boolean"}}},
+       {"alt", {{"type", "boolean"}}}},
+      json::array({"type", "x", "y"})));
+  tools.push_back(tool(
+      "pick",
+      "Pick a viewport pixel using the selection ID/depth buffer. Pass x1/y1 to "
+      "pick a rectangular region; the prim owning the most depth-tested covered "
+      "pixels wins. Set select=false for a read-only query.",
+      {{"x", numProp("viewport pixel x")},
+       {"y", numProp("viewport pixel y")},
+       {"x1", numProp("optional opposite region corner x")},
+       {"y1", numProp("optional opposite region corner y")},
+       {"select", {{"type", "boolean"}, {"description", "update viewer selection (default true)"}}}},
+      json::array({"x", "y"})));
   tools.push_back(tool("list_prims", "List renderable mesh prim paths in the scene.",
                        {{"max", {{"type", "integer"}, {"description", "cap (default 1000)"}}}}));
   tools.push_back(tool(
@@ -248,6 +272,10 @@ void MCPServer::drain() {
         payload = host_->mcpScreenshot(cmd->args, err);
       } else if (t == "input") {
         payload = host_->mcpInput(cmd->args, err);
+      } else if (t == "mouse") {
+        payload = host_->mcpMouse(cmd->args, err);
+      } else if (t == "pick") {
+        payload = host_->mcpPick(cmd->args, err);
       } else if (t == "list_prims") {
         payload = host_->mcpListPrims(cmd->args, err);
       } else if (t == "load_payloads") {

@@ -1132,9 +1132,19 @@ bool App::initImGui(std::string* err) {
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   imguiIniPath_.clear();
   std::optional<std::filesystem::path> iniPath;
-  if (!configPath_.empty()) {
+  // A portable layout beside the executable wins when present. This lets a
+  // packaged/local tusdview carry its preferred docking arrangement without
+  // replacing the user's normal per-platform layout merely by being launched.
+  if (!executablePath_.empty()) {
+    const std::filesystem::path localIni =
+        executablePath_.parent_path() / "imgui.ini";
+    std::error_code localEc;
+    if (std::filesystem::is_regular_file(localIni, localEc) && !localEc)
+      iniPath = localIni;
+  }
+  if (!iniPath && !configPath_.empty()) {
     iniPath = configPath_.parent_path() / "imgui.ini";
-  } else {
+  } else if (!iniPath) {
     iniPath = DefaultImGuiIniPath();
   }
   if (iniPath) {
@@ -1150,6 +1160,10 @@ bool App::initImGui(std::string* err) {
     } else {
       imguiIniPath_ = iniPath->string();
       io.IniFilename = imguiIniPath_.c_str();
+      if (std::filesystem::is_regular_file(*iniPath, ec) && !ec) {
+        ImGui::LoadIniSettingsFromDisk(io.IniFilename);
+        LOGI("loaded ImGui layout %s", io.IniFilename);
+      }
     }
   } else {
     io.IniFilename = nullptr;
@@ -2176,6 +2190,16 @@ void App::drainProgressiveLoad() {
     metadata.absPath = source.absPath;
     metadata.purpose = source.purpose;
     metadata.materialId = source.materialId;
+    // Curve picking rasterizes a compact carrier ID/depth buffer from the
+    // same preview strands that appendCurves() sends to the renderer.  Keep
+    // those sampled positions/counts/widths here: retaining only the AABB
+    // makes a visible curve impossible to identify and forces selection to
+    // fall through to an enclosing mesh bound.  The next loader has already
+    // applied --curve-preview-prims/--curve-preview-strands before this handoff,
+    // so this remains bounded by the requested preview budget.
+    metadata.points = source.points;
+    metadata.vertexCounts = source.vertexCounts;
+    metadata.widths = source.widths;
     std::memcpy(metadata.world, source.world, sizeof(metadata.world));
     std::memcpy(metadata.aabbMin, source.aabbMin, sizeof(metadata.aabbMin));
     std::memcpy(metadata.aabbMax, source.aabbMax, sizeof(metadata.aabbMax));
@@ -2420,19 +2444,29 @@ void App::drainProgressiveLoad() {
     } else if (event.type == ProgressiveSceneEvent::Type::Complete) {
       clearPtexDecode();
       std::vector<DrawMeshCPU> streamedMeshes = std::move(draw_.meshes);
+      std::vector<DrawPointsCPU> streamedPoints = std::move(draw_.points);
+      std::vector<DrawCurvesCPU> streamedCurves = std::move(draw_.curves);
       std::vector<DrawVolumeCPU> streamedVolumes = std::move(draw_.volumes);
       std::vector<DrawTextureCPU> streamedTextures = std::move(draw_.textures);
       DrawScene finalScene = std::move(event.scene);
       if (!conversionOnly) {
         renderer_->syncSceneResources(
             finalScene.materials, static_cast<int>(finalScene.textures.size()));
-        for (DrawPointsCPU& points : finalScene.points)
+        for (DrawPointsCPU& points : finalScene.points) {
+          DrawPointsCPU metadata = retainPointMetadata(points);
           renderer_->appendPoints(std::move(points));
-        for (DrawCurvesCPU& curves : finalScene.curves)
+          points = std::move(metadata);
+        }
+        for (DrawCurvesCPU& curves : finalScene.curves) {
+          DrawCurvesCPU metadata = retainCurveMetadata(curves);
           renderer_->appendCurves(std::move(curves));
+          curves = std::move(metadata);
+        }
       }
       draw_ = std::move(finalScene);
       draw_.meshes = std::move(streamedMeshes);
+      if (!streamedPoints.empty()) draw_.points = std::move(streamedPoints);
+      if (!streamedCurves.empty()) draw_.curves = std::move(streamedCurves);
       if (!streamedVolumes.empty()) draw_.volumes = std::move(streamedVolumes);
       if (draw_.textures.size() < streamedTextures.size())
         draw_.textures.resize(streamedTextures.size());
@@ -3825,6 +3859,44 @@ void App::openFileDialog() {
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
 // --- Experimental threaded GL rendering: the render thread owns the GL context ---
 
+static std::uint64_t FrameSceneKey(const FramePacket& p) {
+  std::uint64_t h = 1469598103934665603ull;
+  auto bytes = [&](const void* data, size_t size) {
+    const auto* b = static_cast<const unsigned char*>(data);
+    for (size_t i = 0; i < size; ++i) {
+      h ^= static_cast<std::uint64_t>(b[i]);
+      h *= 1099511628211ull;
+    }
+  };
+  bytes(p.view, sizeof(p.view));
+  bytes(p.proj, sizeof(p.proj));
+  bytes(p.cameraPos, sizeof(p.cameraPos));
+  bytes(&p.exposure, sizeof(p.exposure));
+  bytes(&p.mode, sizeof(p.mode));
+  bytes(p.clearColor, sizeof(p.clearColor));
+  bytes(p.lightDir, sizeof(p.lightDir));
+  bytes(p.lightColor, sizeof(p.lightColor));
+  bytes(&p.depthScale, sizeof(p.depthScale));
+  bytes(p.sceneMin, sizeof(p.sceneMin));
+  bytes(p.sceneExtent, sizeof(p.sceneExtent));
+  bytes(&p.curveMaxSegments, sizeof(p.curveMaxSegments));
+  bytes(&p.viewportW, sizeof(p.viewportW));
+  bytes(&p.viewportH, sizeof(p.viewportH));
+  bytes(&p.purposeVisibleMask, sizeof(p.purposeVisibleMask));
+  if (!p.meshVisible.empty()) bytes(p.meshVisible.data(), p.meshVisible.size());
+  if (!p.carrierVisible.empty())
+    bytes(p.carrierVisible.data(), p.carrierVisible.size());
+  if (!p.highlightIndices.empty())
+    bytes(p.highlightIndices.data(), p.highlightIndices.size() * sizeof(uint32_t));
+  if (!p.highlightLines.empty())
+    bytes(p.highlightLines.data(), p.highlightLines.size() * sizeof(HelperVertex));
+  if (!p.helperLines.empty())
+    bytes(p.helperLines.data(), p.helperLines.size() * sizeof(HelperVertex));
+  if (!p.overlayLines.empty())
+    bytes(p.overlayLines.data(), p.overlayLines.size() * sizeof(HelperVertex));
+  return h;
+}
+
 void App::postGpu(std::function<void()> op) {
   if (!renderThreadActive_) { op(); return; }  // inline on the single-threaded path
   std::lock_guard<std::mutex> lk(gpuOpMutex_);
@@ -3895,6 +3967,7 @@ void App::renderThreadMain() {
   renderInitDone_.store(true, std::memory_order_release);
   if (!ok) { if (glBackend) glfwMakeContextCurrent(nullptr); return; }
 
+  std::uint64_t renderedSceneKey = 0;
   while (renderRunning_.load()) {
     drainGpuOps();  // uploads/resize/instance-visibility, FIFO, before the frame
     std::unique_ptr<FramePacket> pkt;
@@ -3907,13 +3980,23 @@ void App::renderThreadMain() {
     }
     if (!pkt) continue;
     renderer_->newFrame();  // ImGui backend NewFrame (GL: ImGui_ImplOpenGL3, VK: ImGui_ImplVulkan)
-    if (pkt->hasParams) {
+    const bool renderedScene = pkt->hasParams && pkt->sceneKey != renderedSceneKey;
+    const auto renderStart = std::chrono::steady_clock::now();
+    if (renderedScene) {
       RenderFrameParams params = pkt->params();
       renderer_->renderFrame(params);
+      renderedSceneKey = pkt->sceneKey;
     }
     if (pkt->wantCapture)  // read the 3D offscreen target (GL FBO / VK offscreen img)
       renderer_->captureViewport(&renderCapture_, &renderCaptureW_, &renderCaptureH_);
     renderer_->presentThreaded(pkt->drawData, pkt->fbW, pkt->fbH);
+    if (renderedScene) {
+      const double seconds = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - renderStart).count();
+      if (seconds > 0.0)
+        measuredRenderFps_.store(static_cast<float>(1.0 / seconds),
+                                 std::memory_order_relaxed);
+    }
     FreeImDrawData(pkt->drawData);
     pkt->drawData = nullptr;
     {
@@ -5054,6 +5137,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   if (!modeSweep_.empty()) setRenderMode(modeSweep_[0].second);
   bool running = true;
   while (running) {
+    const auto uiFrameStart = std::chrono::steady_clock::now();
     // Apply a browser-requested headless composite resize (queued last frame):
     // recreate the VK swap at the new size and update the size ImGui draws at.
     if (headless_ && streamResizeW_ > 0 && streamResizeH_ > 0) {
@@ -5238,6 +5322,14 @@ int App::run(const std::string& initialFile, int maxFrames,
     // the instance cull). Idempotent; cheap.
     gui_.setRasterLod(rasterLodEnabled_, rasterLodFullPx_, rasterLodCullPx_);
 
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+    if (renderThreadActive_) {
+      renderFps_ = measuredRenderFps_.load(std::memory_order_relaxed);
+    }
+#endif
+    gui_.setFrameRates(renderThreadActive_ ? renderFps_ : ImGui::GetIO().Framerate,
+                       renderThreadActive_);
+
     gui_.frame(renderer_.get(), &camera_);
     ensureWireAuxReady();
 
@@ -5343,6 +5435,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       pkt->wantCapture = checkpointDue ||
           (maxFrames >= 0 && frameCount == maxFrames - 1 && !screenshot.empty());
       pkt->seq = ++pktSubmitSeq_;
+      pkt->sceneKey = FrameSceneKey(*pkt);
       ImGui::Render();
       pkt->drawData = CloneImDrawData(ImGui::GetDrawData());
       // Fixed-frame runs block until the render thread has drawn this packet so
@@ -5570,6 +5663,18 @@ int App::run(const std::string& initialFile, int maxFrames,
       running = false;
       if (!headless_) glfwSetWindowShouldClose(window_, GLFW_TRUE);
     }
+
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+    // The render thread is latest-wins and never blocks this loop. Without a
+    // UI cadence the main thread spins at 1000+ Hz cloning identical ImGui draw
+    // data and repeatedly rebuilding cull/visibility packets, stealing CPU and
+    // memory bandwidth from curve expansion. Cap packet production to 60 Hz;
+    // GLFW polling still happens at the start of every tick.
+    if (renderThreadActive_ && maxFrames < 0) {
+      constexpr auto kUiFrame = std::chrono::microseconds(16667);
+      std::this_thread::sleep_until(uiFrameStart + kUiFrame);
+    }
+#endif
   }
 
   // Headless determinism: a manual-blend (or animation) reconvert bakes the

@@ -369,6 +369,11 @@ location, or from `--config /path/to/config.json`.
 - **macOS:** `~/Library/Application Support/tusdview/config.json`
 - **Windows:** `%APPDATA%\\tusdview\\config.json` (falls back to `%LOCALAPPDATA%`)
 
+The ImGui docking layout is loaded and saved as `imgui.ini` in the same
+platform `tusdview` config directory. If an `imgui.ini` exists beside the
+tusdview executable, that portable/local layout takes precedence and is also
+the save target for that run.
+
 Supported keys (snake_case and kebab-case are both accepted):
 
 ```json
@@ -482,8 +487,10 @@ Tools (`tools/list` for schemas):
 | `list_prims {max?}` | renderable mesh prim paths |
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
 | `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |
-| `render_settings {mode?, grid?}` | change resettable render mode/grid state between captures without restarting the viewer |
+| `render_settings {mode?, grid?}` | change resettable render mode/grid state between captures without restarting the viewer; `mode:"picking"` displays the depth-tested mesh/curve/points picking-ID buffer |
 | `screenshot {path}` | capture the current viewport as PNG, JPEG, or PPM (selected by extension) |
+| `mouse {type,x,y,...}` | inject viewport-local mouse movement or button events; `type` is `move` or `button`, with `button=0/1/2` and `down=true/false` |
+| `pick {x,y,x1?,y1?,select?}` | query one pixel, or pass the opposite `x1,y1` corner to select the prim covering the most depth-tested pixels in a region; returns USD path, carrier kind, and `covered_pixels` |
 
 Example:
 
@@ -491,6 +498,22 @@ Example:
 curl -s -XPOST localhost:8080/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
        "params":{"name":"viewport","arguments":{"op":"fit"}}}'
+```
+
+Mouse coordinates are pixels relative to the captured 3D viewport, not the
+full application window. A click can be synthesized with a move followed by
+separate left-button press and release calls. For deterministic inspection,
+`pick` directly reports the carrier at a pixel and can update selection with
+`select:true` (the default):
+
+The View menu's **Show selected only** command (`Alt+H`) isolates the selected
+prim, including all renderable descendants when an Xform or Scope is selected.
+**Show all** restores meshes, curves, and points together.
+
+```bash
+curl -s -XPOST localhost:8080/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call",
+       "params":{"name":"pick","arguments":{"x":320,"y":240}}}'
 ```
 
 In addition to the viewer tools above, the server also exposes the **tinyusdz
@@ -550,11 +573,19 @@ headless Vulkan and Xvfb OpenGL regression.
 
 ## Threading model
 
-By default the render/UI loop stays on the main thread. USD parse, composition,
-Tydra conversion, and DrawScene construction run on a CPU worker. Builds made
-with `TUSDVIEW_ENABLE_GL_THREAD=ON` may opt into `--threaded`, where a dedicated
-render thread owns the GL context or Vulkan queue while GLFW events and ImGui
-frame construction remain on the main thread.
+USD parse, composition, Tydra conversion, and DrawScene construction run on a
+CPU worker. Builds include the dedicated render-thread path by default
+(`TUSDVIEW_ENABLE_GL_THREAD=ON`). Pass `--threaded` to let that thread own the
+GL context or Vulkan queue while GLFW events and ImGui frame construction remain
+responsive on the main thread. Disable the CMake option to omit this path.
+
+For dense BasisCurves, Vulkan raster retains every loaded prim and strand but
+limits camera-facing ribbon generation to 8 evenly distributed segments per
+strand, dropping temporarily to 2 while the camera moves. Change this live
+under **View > Curve quality** (8/16/32/64), or choose
+full tessellation for comparison. The same limit is used by selection coverage
+and wire highlights, avoiding repeated traversal of millions of intermediate
+tessellation samples without making prims disappear from the hierarchy.
 
 ## Known limitations
 
