@@ -257,6 +257,25 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
     // manifests set this in load_settings before calling load_usd.
     cameraName_ = args["camera"].get<std::string>();
   }
+  if (args.contains("adaptive_quality")) {
+    if (!args["adaptive_quality"].is_boolean()) {
+      err = "render_settings: adaptive_quality must be boolean";
+      return json::object();
+    }
+    adaptiveQuality_ = args["adaptive_quality"].get<bool>();
+  }
+  if (args.contains("target_render_fps")) {
+    if (!args["target_render_fps"].is_number()) {
+      err = "render_settings: target_render_fps must be numeric";
+      return json::object();
+    }
+    const float value = args["target_render_fps"].get<float>();
+    if (!(value >= 1.0f && value <= 240.0f)) {
+      err = "render_settings: target_render_fps must be in [1, 240]";
+      return json::object();
+    }
+    adaptiveTargetFps_ = value;
+  }
 
   const RenderMode current = gui_.renderMode();
   const char* currentName = "unknown";
@@ -266,7 +285,22 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
       break;
     }
   }
-  return json{{"mode", currentName}, {"camera", cameraName_}};
+  return json{{"mode", currentName}, {"camera", cameraName_},
+              {"adaptive_quality", adaptiveQuality_},
+              {"target_render_fps", adaptiveTargetFps_},
+              {"render_scale", adaptiveRenderScale_}};
+}
+
+json App::mcpRenderStats(const json&, std::string&) {
+  const char* tier = adaptiveTier_ == 2 ? "interactive" :
+                     (adaptiveTier_ == 1 ? "balanced" : "full");
+  return json{{"ui_fps", ImGui::GetIO().Framerate},
+              {"render_fps", renderFps_},
+              {"threaded", renderThreadActive_},
+              {"adaptive_quality", adaptiveQuality_},
+              {"adaptive_tier", tier},
+              {"render_scale", adaptiveRenderScale_},
+              {"target_render_fps", adaptiveTargetFps_}};
 }
 
 json App::mcpLoadPayloads(const json& args, std::string& err) {

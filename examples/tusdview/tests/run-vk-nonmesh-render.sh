@@ -8,37 +8,48 @@ SKIP=77
 TMP="$(mktemp -d /tmp/tusdview-vk-nonmesh.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 
-log="$(timeout 60s "$TUSDVIEW" --headless --backend vk --frames 2 \
-  --screenshot "$TMP/nonmesh.ppm" \
-  "$ROOT/tests/usda/tusdview-nonmesh-points-curves.usda" 2>&1)"
-rc=$?
-if [ "$rc" -ne 0 ]; then
-  if grep -Eqi 'Vulkan.*(unavailable|failed)|no Vulkan|renderer init failed' <<<"$log"; then
-    echo "SKIP: Vulkan backend unavailable"
-    exit "$SKIP"
+render_case() {
+  local output="$1"
+  shift
+  local log
+  log="$(timeout 60s "$@" "$TUSDVIEW" --headless --backend vk --frames 2 \
+    --curve-preview-prims 8 --screenshot "$output" \
+    "$ROOT/tests/usda/tusdview-nonmesh-points-curves.usda" 2>&1)"
+  local rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if grep -Eqi 'Vulkan.*(unavailable|failed)|no Vulkan|renderer init failed' <<<"$log"; then
+      echo "SKIP: Vulkan backend unavailable"
+      exit "$SKIP"
+    fi
+    echo "$log"
+    echo "FAIL: Vulkan non-mesh render failed"
+    exit 1
   fi
-  echo "$log"
-  echo "FAIL: Vulkan non-mesh render failed"
-  exit 1
-fi
+}
 
-python3 - "$TMP/nonmesh.ppm" <<'PY'
+render_case "$TMP/nonmesh.ppm" env
+render_case "$TMP/nonmesh-cpu.ppm" env TUSDVIEW_VK_CPU_CARRIERS=1
+
+python3 - "$TMP/nonmesh.ppm" "$TMP/nonmesh-cpu.ppm" <<'PY'
 import sys
-path = sys.argv[1]
-with open(path, "rb") as f:
-    if f.readline().strip() != b"P6":
-        raise SystemExit("FAIL: expected binary PPM")
-    width, height = map(int, f.readline().split())
-    if int(f.readline()) != 255:
-        raise SystemExit("FAIL: unexpected PPM range")
-    pixels = f.read()
-if len(pixels) != width * height * 3:
-    raise SystemExit("FAIL: truncated Vulkan screenshot")
-colored = sum(
-    max(pixels[i:i + 3]) > 80 and
-    max(pixels[i:i + 3]) - min(pixels[i:i + 3]) > 50
-    for i in range(0, len(pixels), 3))
-if colored < 800:
-    raise SystemExit(f"FAIL: Vulkan non-mesh carriers absent ({colored} colored pixels)")
-print(f"PASS: Vulkan non-mesh carriers rendered ({colored} colored pixels)")
+for path in sys.argv[1:]:
+    with open(path, "rb") as f:
+        if f.readline().strip() != b"P6":
+            raise SystemExit("FAIL: expected binary PPM")
+        width, height = map(int, f.readline().split())
+        if int(f.readline()) != 255:
+            raise SystemExit("FAIL: unexpected PPM range")
+        pixels = f.read()
+    if len(pixels) != width * height * 3:
+        raise SystemExit("FAIL: truncated Vulkan screenshot")
+    colored = sum(
+        max(pixels[i:i + 3]) > 80 and
+        max(pixels[i:i + 3]) - min(pixels[i:i + 3]) > 50
+        for i in range(0, len(pixels), 3))
+    if colored < 800:
+        raise SystemExit(
+            f"FAIL: Vulkan non-mesh carriers absent in {path} "
+            f"({colored} colored pixels)")
+    print(f"PASS: Vulkan non-mesh carriers rendered in {path} "
+          f"({colored} colored pixels)")
 PY

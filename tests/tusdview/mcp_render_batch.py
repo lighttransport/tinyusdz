@@ -158,6 +158,19 @@ def main():
     try:
         # A first request distinguishes transport/startup failure from a case.
         initial = client.call("get_scene_info", timeout=15)
+        stats = client.call("get_render_stats")
+        required_stats = {"ui_fps", "render_fps", "adaptive_quality",
+                          "adaptive_tier", "render_scale",
+                          "target_render_fps"}
+        missing_stats = required_stats.difference(stats)
+        if missing_stats:
+            raise RuntimeError(
+                f"get_render_stats missing fields: {sorted(missing_stats)}")
+        settings = client.call(
+            "render_settings",
+            {"adaptive_quality": False, "target_render_fps": 30})
+        if settings.get("adaptive_quality") is not False:
+            raise RuntimeError("render_settings did not disable adaptive quality")
         pid = client.proc.pid
         lifecycle = (initial.get("window_generation"),
                      initial.get("renderer_generation"))

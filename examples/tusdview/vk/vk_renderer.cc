@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -37,6 +38,8 @@
 #include "mesh_tess_tese.spv.h"
 #include "mesh_tess_vert.spv.h"
 #include "mesh_vert.spv.h"
+#include "nonmesh_frag.spv.h"
+#include "nonmesh_vert.spv.h"
 #include "volume_frag.spv.h"
 #include "volume_vert.spv.h"
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
@@ -63,6 +66,34 @@ size_t VulkanHelperChunkVertexLimit() {
   const unsigned long long maxSize =
       static_cast<unsigned long long>(std::numeric_limits<size_t>::max());
   return static_cast<size_t>(std::min(parsed, maxSize));
+}
+
+// Curves are static in the current native carrier path. Bake their authored
+// local-to-world transform once when the scene is uploaded instead of applying
+// a 4x3 matrix to every selected sample on every camera update. Besides cutting
+// the dominant CPU work for dense XGen carriers, this gives shaded, picking and
+// highlight rendering one unambiguous world-space representation.
+void BakeCurveWorld(DrawCurvesCPU* curves) {
+  if (!curves || curves->points.empty()) return;
+  const float* m = curves->world;
+  for (size_t i = 0; i + 2 < curves->points.size(); i += 3) {
+    const float x = curves->points[i + 0];
+    const float y = curves->points[i + 1];
+    const float z = curves->points[i + 2];
+    curves->points[i + 0] = m[0] * x + m[4] * y + m[8] * z + m[12];
+    curves->points[i + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+    curves->points[i + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+  }
+  const float sx = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+  const float sy = std::sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
+  const float sz = std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
+  const float scale = std::max(sx, std::max(sy, sz));
+  if (std::isfinite(scale) && scale > 0.0f && scale != 1.0f) {
+    for (float& width : curves->widths) width *= scale;
+  }
+  std::memset(curves->world, 0, sizeof(curves->world));
+  curves->world[0] = curves->world[5] = curves->world[10] =
+      curves->world[15] = 1.0f;
 }
 
 // ---------------------------------------------------------------------------
@@ -313,6 +344,15 @@ struct InstPushC {
   int32_t draw[4];     // 16  .x = baseDraw: base slot into the DrawMeta SSBO
 };
 static_assert(sizeof(InstPushC) == 16, "InstPushC must match mesh_inst shaders");
+
+struct NativeCarrierPushC {
+  int32_t ids[4];   // kind, material id, carrier id, purpose
+  int32_t mode[4];  // render mode, reserved
+  float cameraRight[4];
+  float cameraUp[4];
+};
+static_assert(sizeof(NativeCarrierPushC) == 64,
+              "NativeCarrierPushC must match nonmesh shaders");
 // The per-draw metadata entry (set 3) is VulkanRenderer::DrawMetaCPU {int32_t
 // ids[4]}, matching the shader's std430 DrawMeta{ivec4}: .x meshId, .y flag bits.
 
@@ -2139,6 +2179,113 @@ bool VulkanRenderer::createLinePipeline(std::string* err) {
   vkDestroyShaderModule(device_, fs, nullptr);
   if (r != VK_SUCCESS || rnm != VK_SUCCESS || r2 != VK_SUCCESS) {
     if (err) *err = "vkCreateGraphicsPipelines(line) failed";
+    return false;
+  }
+  return true;
+}
+
+bool VulkanRenderer::createNativeCarrierPipeline(std::string* err) {
+  VkShaderModule vs = createShader(nonmesh_vert_spv, sizeof(nonmesh_vert_spv));
+  VkShaderModule fs = createShader(nonmesh_frag_spv, sizeof(nonmesh_frag_spv));
+  if (!vs || !fs) {
+    if (vs) vkDestroyShaderModule(device_, vs, nullptr);
+    if (fs) vkDestroyShaderModule(device_, fs, nullptr);
+    if (err) *err = "native carrier shader module creation failed";
+    return false;
+  }
+
+  VkPipelineShaderStageCreateInfo stages[2]{};
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = vs;
+  stages[0].pName = "main";
+  stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = fs;
+  stages[1].pName = "main";
+
+  VkVertexInputBindingDescription binding{};
+  binding.binding = 0;
+  binding.stride = sizeof(NativeCarrierInstanceGPU);
+  binding.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+  VkVertexInputAttributeDescription attrs[7]{};
+  attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT,
+              static_cast<uint32_t>(offsetof(NativeCarrierInstanceGPU, p0))};
+  attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT,
+              static_cast<uint32_t>(offsetof(NativeCarrierInstanceGPU, p1))};
+  attrs[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT,
+              static_cast<uint32_t>(offsetof(NativeCarrierInstanceGPU, prev))};
+  attrs[3] = {3, 0, VK_FORMAT_R32G32B32_SFLOAT,
+              static_cast<uint32_t>(offsetof(NativeCarrierInstanceGPU, next))};
+  attrs[4] = {4, 0, VK_FORMAT_R32G32_SFLOAT,
+              static_cast<uint32_t>(offsetof(NativeCarrierInstanceGPU, widths))};
+  attrs[5] = {5, 0, VK_FORMAT_R32G32B32A32_SFLOAT,
+              static_cast<uint32_t>(offsetof(NativeCarrierInstanceGPU, color0))};
+  attrs[6] = {6, 0, VK_FORMAT_R32G32B32A32_SFLOAT,
+              static_cast<uint32_t>(offsetof(NativeCarrierInstanceGPU, color1))};
+  VkPipelineVertexInputStateCreateInfo vin{};
+  vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vin.vertexBindingDescriptionCount = 1;
+  vin.pVertexBindingDescriptions = &binding;
+  vin.vertexAttributeDescriptionCount = 7;
+  vin.pVertexAttributeDescriptions = attrs;
+
+  VkPipelineInputAssemblyStateCreateInfo ia{};
+  ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+  VkPipelineViewportStateCreateInfo vp{};
+  vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  vp.viewportCount = 1;
+  vp.scissorCount = 1;
+  VkPipelineRasterizationStateCreateInfo rs{};
+  rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rs.polygonMode = VK_POLYGON_MODE_FILL;
+  rs.cullMode = VK_CULL_MODE_NONE;
+  rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rs.lineWidth = 1.0f;
+  VkPipelineMultisampleStateCreateInfo ms{};
+  ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+  VkPipelineDepthStencilStateCreateInfo ds{};
+  ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  ds.depthTestEnable = VK_TRUE;
+  ds.depthWriteEnable = VK_TRUE;
+  ds.depthCompareOp = VK_COMPARE_OP_LESS;
+  VkPipelineColorBlendAttachmentState cba{};
+  cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo blend{};
+  blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  blend.attachmentCount = 1;
+  blend.pAttachments = &cba;
+  VkDynamicState states[2] = {VK_DYNAMIC_STATE_VIEWPORT,
+                              VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dyn{};
+  dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dyn.dynamicStateCount = 2;
+  dyn.pDynamicStates = states;
+  VkGraphicsPipelineCreateInfo ci{};
+  ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  ci.stageCount = 2;
+  ci.pStages = stages;
+  ci.pVertexInputState = &vin;
+  ci.pInputAssemblyState = &ia;
+  ci.pViewportState = &vp;
+  ci.pRasterizationState = &rs;
+  ci.pMultisampleState = &ms;
+  ci.pDepthStencilState = &ds;
+  ci.pColorBlendState = &blend;
+  ci.pDynamicState = &dyn;
+  ci.layout = pipelineLayout_;
+  ci.renderPass = offscreenPass_;
+  ci.subpass = 0;
+  const VkResult result = vkCreateGraphicsPipelines(
+      device_, VK_NULL_HANDLE, 1, &ci, nullptr, &nativeCarrierPipeline_);
+  vkDestroyShaderModule(device_, vs, nullptr);
+  vkDestroyShaderModule(device_, fs, nullptr);
+  if (result != VK_SUCCESS) {
+    nativeCarrierPipeline_ = VK_NULL_HANDLE;
+    if (err) *err = "native carrier graphics pipeline creation failed";
     return false;
   }
   return true;
@@ -4588,6 +4735,12 @@ void VulkanRenderer::destroyIblImages() {
 }
 
 bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
+  nativeCarrierCpuForced_ =
+      std::getenv("TUSDVIEW_VK_CPU_CARRIERS") != nullptr;
+  if (nativeCarrierCpuForced_) {
+    LOGI("[vk] native Points/Curves carriers disabled by "
+         "TUSDVIEW_VK_CPU_CARRIERS");
+  }
   window_ = window;
   headless_ = (window == nullptr);  // windowless: no surface/swapchain
   caps_.backend_name = "Vulkan";
@@ -4631,6 +4784,13 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   if (!createInstPipeline(err)) return false;   // instanced flat prototypes
   initBoxProxyRaster();                          // raster LOD box-proxy geometry
   if (!createLinePipeline(err)) return false;   // needs offscreenPass_
+  {
+    std::string carrierErr;
+    if (!createNativeCarrierPipeline(&carrierErr)) {
+      LOGW("Vulkan native-carrier pipeline unavailable: %s; using CPU fallback",
+           carrierErr.c_str());
+    }
+  }
   if (!createVolumePipeline(err)) return false; // UsdVol volume raymarch
   if (!createWhiteTexture(err)) return false;   // needs commandPool_ + texPool_
   {
@@ -5219,6 +5379,10 @@ void VulkanRenderer::destroyScene() {
     if (m.blasScratchMem) vkFreeMemory(device_, m.blasScratchMem, nullptr);
   }
   meshes_.clear();
+  destroyNativeCarrierResources();
+  nativeCarrierRequestedSegments_ = -1;
+  nativeCarrierBuildFailed_ = false;
+  nativeCarrierVisible_.clear();
   nativePoints_.clear();
   nativeCurves_.clear();
   nonMeshCopy_.clear();
@@ -6907,7 +7071,9 @@ void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
 }
 
 void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
-  if (curves.points.size() >= 6) nativeCurves_.push_back(curves);
+  if (curves.points.size() < 6) return;
+  nativeCurves_.push_back(curves);
+  BakeCurveWorld(&nativeCurves_.back());
 }
 
 void VulkanRenderer::appendPoints(DrawPointsCPU&& points) {
@@ -6915,7 +7081,249 @@ void VulkanRenderer::appendPoints(DrawPointsCPU&& points) {
 }
 
 void VulkanRenderer::appendCurves(DrawCurvesCPU&& curves) {
-  if (curves.points.size() >= 6) nativeCurves_.push_back(std::move(curves));
+  if (curves.points.size() < 6) return;
+  BakeCurveWorld(&curves);
+  nativeCurves_.push_back(std::move(curves));
+}
+
+void VulkanRenderer::destroyNativeCarrierResources() {
+  if (nativeCarrierBuf_) {
+    vkDestroyBuffer(device_, nativeCarrierBuf_, nullptr);
+    nativeCarrierBuf_ = VK_NULL_HANDLE;
+  }
+  if (nativeCarrierMem_) {
+    vkFreeMemory(device_, nativeCarrierMem_, nullptr);
+    nativeCarrierMem_ = VK_NULL_HANDLE;
+  }
+  nativeCarrierRanges_.clear();
+  nativeCarrierSegments_ = -1;
+}
+
+bool VulkanRenderer::rebuildNativeCarrierBuffer(int curveSegments) {
+  if (!nativeCarrierPipeline_ || curveSegments <= 0) return false;
+
+  constexpr size_t kMaxCarrierBytes = 512ull * 1024ull * 1024ull;
+  const size_t maxRecords = kMaxCarrierBytes / sizeof(NativeCarrierInstanceGPU);
+  size_t pointRecords = 0;
+  size_t strandRecords = 0;
+  for (const DrawPointsCPU& points : nativePoints_)
+    pointRecords += points.points.size() / 3;
+  for (const DrawCurvesCPU& curves : nativeCurves_)
+    strandRecords += curves.vertexCounts.empty() ? 1 : curves.vertexCounts.size();
+  if (pointRecords > maxRecords || strandRecords > maxRecords - pointRecords) {
+    LOGW("Vulkan native-carrier buffer floor exceeds %.0f MiB; using CPU fallback",
+         double(kMaxCarrierBytes) / (1024.0 * 1024.0));
+    nativeCarrierBuildFailed_ = true;
+    return false;
+  }
+  const size_t availableSegments = maxRecords - pointRecords;
+  const int effectiveSegments = strandRecords == 0
+      ? curveSegments
+      : std::max(1, std::min<int>(curveSegments,
+            static_cast<int>(availableSegments / strandRecords)));
+
+  std::vector<NativeCarrierInstanceGPU> records;
+  const size_t reserveCount = pointRecords + strandRecords *
+      static_cast<size_t>(effectiveSegments);
+  records.reserve(std::min(reserveCount, maxRecords));
+  std::vector<NativeCarrierRange> ranges;
+  ranges.reserve(nativePoints_.size() + nativeCurves_.size());
+
+  auto worldPoint = [](const auto& carrier, size_t i, float out[3]) {
+    const float x = carrier.points[i * 3 + 0];
+    const float y = carrier.points[i * 3 + 1];
+    const float z = carrier.points[i * 3 + 2];
+    const float* m = carrier.world;
+    out[0] = m[0] * x + m[4] * y + m[8] * z + m[12];
+    out[1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+    out[2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+  };
+  auto worldScale = [](const auto& carrier) {
+    const float* m = carrier.world;
+    const float sx = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+    const float sy = std::sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
+    const float sz = std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
+    return std::max(sx, std::max(sy, sz));
+  };
+  auto widthAt = [](const auto& carrier, size_t i) {
+    if (carrier.widths.empty()) return 1.0f;
+    return carrier.widths.size() == 1
+        ? carrier.widths[0]
+        : carrier.widths[std::min(i, carrier.widths.size() - 1)];
+  };
+  auto colorAt = [](const auto& carrier, size_t i, float out[4]) {
+    out[0] = out[1] = out[2] = 0.8f;
+    if (carrier.colors.size() >= 3) {
+      const size_t ci = carrier.colors.size() >= (i + 1) * 3 ? i : 0;
+      out[0] *= carrier.colors[ci * 3 + 0];
+      out[1] *= carrier.colors[ci * 3 + 1];
+      out[2] *= carrier.colors[ci * 3 + 2];
+    }
+    float opacity = 1.0f;
+    if (!carrier.opacities.empty()) {
+      const size_t oi = carrier.opacities.size() == 1
+          ? 0 : std::min(i, carrier.opacities.size() - 1);
+      opacity = std::max(0.0f, std::min(1.0f, carrier.opacities[oi]));
+    }
+    out[0] *= opacity;
+    out[1] *= opacity;
+    out[2] *= opacity;
+    out[3] = opacity;
+  };
+
+  int carrierId = 0;
+  for (const DrawPointsCPU& points : nativePoints_) {
+    const size_t count = points.points.size() / 3;
+    const bool orientedGaussian = points.gaussian &&
+        points.ellipseRadii.size() >= count * 2 &&
+        points.ellipseMajorAxes.size() >= count * 3 &&
+        points.ellipseNormals.size() >= count * 3;
+    NativeCarrierRange range;
+    range.first = static_cast<uint32_t>(records.size());
+    range.kind = orientedGaussian ? 2 : 0;
+    range.materialId = points.materialId;
+    range.carrierId = carrierId++;
+    range.purpose = PurposeId(points.purpose);
+    const float scale = worldScale(points);
+    for (size_t i = 0; i < count; ++i) {
+      NativeCarrierInstanceGPU rec{};
+      worldPoint(points, i, rec.p0);
+      std::memcpy(rec.p1, rec.p0, sizeof(rec.p0));
+      std::memcpy(rec.prev, rec.p0, sizeof(rec.p0));
+      std::memcpy(rec.next, rec.p0, sizeof(rec.p0));
+      rec.widths[0] = rec.widths[1] = widthAt(points, i) * scale;
+      if (orientedGaussian) {
+        std::memset(rec.prev, 0, sizeof(rec.prev));
+        std::memset(rec.next, 0, sizeof(rec.next));
+      }
+      if (orientedGaussian) {
+        const float* major = &points.ellipseMajorAxes[i * 3];
+        const float* normal = &points.ellipseNormals[i * 3];
+        const float minor[3] = {
+            normal[1] * major[2] - normal[2] * major[1],
+            normal[2] * major[0] - normal[0] * major[2],
+            normal[0] * major[1] - normal[1] * major[0]};
+        const float* m = points.world;
+        auto transformAxis = [&](const float axis[3], float radius,
+                                 float out[3]) {
+          out[0] = (m[0] * axis[0] + m[4] * axis[1] + m[8] * axis[2]) * radius;
+          out[1] = (m[1] * axis[0] + m[5] * axis[1] + m[9] * axis[2]) * radius;
+          out[2] = (m[2] * axis[0] + m[6] * axis[1] + m[10] * axis[2]) * radius;
+        };
+        transformAxis(major, points.ellipseRadii[i * 2], rec.prev);
+        transformAxis(minor, points.ellipseRadii[i * 2 + 1], rec.next);
+      }
+      colorAt(points, i, rec.color0);
+      std::memcpy(rec.color1, rec.color0, sizeof(rec.color0));
+      records.push_back(rec);
+    }
+    range.count = static_cast<uint32_t>(records.size() - range.first);
+    ranges.push_back(range);
+  }
+
+  for (const DrawCurvesCPU& curves : nativeCurves_) {
+    NativeCarrierRange range;
+    range.first = static_cast<uint32_t>(records.size());
+    range.kind = 1;
+    range.materialId = curves.materialId;
+    range.carrierId = carrierId++;
+    range.purpose = PurposeId(curves.purpose);
+    const float scale = worldScale(curves);
+    const size_t np = curves.points.size() / 3;
+    size_t base = 0;
+    const size_t strandCount = curves.vertexCounts.empty()
+        ? 1 : curves.vertexCounts.size();
+    std::vector<size_t> samples;
+    for (size_t strand = 0; strand < strandCount; ++strand) {
+      const uint32_t authoredCount = curves.vertexCounts.empty()
+          ? static_cast<uint32_t>(np) : curves.vertexCounts[strand];
+      const size_t end = base >= np ? np
+          : base + std::min(np - base, static_cast<size_t>(authoredCount));
+      const size_t n = end - base;
+      if (n < 2) { base = end; continue; }
+      const size_t segments = std::min(n - 1,
+          static_cast<size_t>(effectiveSegments));
+      samples.resize(segments + 1);
+      for (size_t j = 0; j <= segments; ++j)
+        samples[j] = base + (j * (n - 1) + segments / 2) / segments;
+      for (size_t j = 0; j < segments; ++j) {
+        NativeCarrierInstanceGPU rec{};
+        const size_t i0 = samples[j];
+        const size_t i1 = samples[j + 1];
+        const size_t ip = samples[j > 0 ? j - 1 : j];
+        const size_t in = samples[j + 2 <= segments ? j + 2 : j + 1];
+        worldPoint(curves, i0, rec.p0);
+        worldPoint(curves, i1, rec.p1);
+        worldPoint(curves, ip, rec.prev);
+        worldPoint(curves, in, rec.next);
+        rec.widths[0] = widthAt(curves, i0) * scale;
+        rec.widths[1] = widthAt(curves, i1) * scale;
+        colorAt(curves, i0, rec.color0);
+        colorAt(curves, i1, rec.color1);
+        records.push_back(rec);
+      }
+      base = end;
+    }
+    range.count = static_cast<uint32_t>(records.size() - range.first);
+    ranges.push_back(range);
+  }
+
+  VkBuffer buffer = VK_NULL_HANDLE;
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  const VkDeviceSize bytes = records.size() * sizeof(NativeCarrierInstanceGPU);
+  if (records.empty() || !createDeviceLocalBuffer(
+          bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, records.data(), &buffer,
+          &memory)) {
+    nativeCarrierBuildFailed_ = true;
+    return false;
+  }
+  destroyNativeCarrierResources();
+  nativeCarrierBuf_ = buffer;
+  nativeCarrierMem_ = memory;
+  nativeCarrierRanges_ = std::move(ranges);
+  nativeCarrierSegments_ = curveSegments;
+  nativeCarrierBuildFailed_ = false;
+  LOGI("[vk] native carriers: %zu persistent instance(s), %.1f MiB, "
+       "curve quality %d%s",
+       records.size(), double(bytes) / (1024.0 * 1024.0), effectiveSegments,
+       effectiveSegments < curveSegments ? " (budget-clamped)" : "");
+  return true;
+}
+
+void VulkanRenderer::drawNativeCarriers(VkCommandBuffer cb) {
+  if (!nativeCarrierPipeline_ || !nativeCarrierBuf_ ||
+      nativeCarrierSegments_ != nativeCarrierRequestedSegments_)
+    return;
+  vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    nativeCarrierPipeline_);
+  if (dispParamsSet_) {
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipelineLayout_, 2, 1, &dispParamsSet_, 0, nullptr);
+  }
+  VkDeviceSize offset = 0;
+  vkCmdBindVertexBuffers(cb, 0, 1, &nativeCarrierBuf_, &offset);
+  NativeCarrierPushC push{};
+  push.mode[0] = static_cast<int32_t>(nativeCarrierMode_);
+  push.cameraRight[0] = view_[0];
+  push.cameraRight[1] = view_[4];
+  push.cameraRight[2] = view_[8];
+  push.cameraUp[0] = view_[1];
+  push.cameraUp[1] = view_[5];
+  push.cameraUp[2] = view_[9];
+  for (const NativeCarrierRange& range : nativeCarrierRanges_) {
+    const size_t visibleIndex = static_cast<size_t>(range.carrierId);
+    if ((nativeCarrierPurposeMask_ & (1u << range.purpose)) == 0 ||
+        (visibleIndex < nativeCarrierVisible_.size() &&
+         !nativeCarrierVisible_[visibleIndex]))
+      continue;
+    if (range.count == 0) continue;
+    push.ids[0] = range.kind;
+    push.ids[1] = range.materialId;
+    push.ids[2] = range.carrierId;
+    push.ids[3] = range.purpose;
+    vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(push), &push);
+    vkCmdDraw(cb, 4, range.count, 0, range.first);
+  }
 }
 
 void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
@@ -10087,7 +10495,21 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   // the ribbon side changes with the camera.  The resulting vertices use the
   // existing unlit helper format and the dedicated triangle-list pipeline.
   nonMeshCopy_.clear();
-  if (hasParams_) {
+  nativeCarrierRequestedSegments_ = params.curveMaxSegments;
+  nativeCarrierPurposeMask_ = params.purposeVisibleMask;
+  nativeCarrierMode_ = params.mode;
+  if (params.carrierVisible && params.carrierVisibleCount > 0) {
+    nativeCarrierVisible_.assign(
+        params.carrierVisible,
+        params.carrierVisible + params.carrierVisibleCount);
+  } else {
+    nativeCarrierVisible_.clear();
+  }
+  const bool gpuNativeCarriers = !nativeCarrierCpuForced_ && !rtActive_ &&
+                                 nativeCarrierPipeline_ &&
+                                 params.curveMaxSegments > 0 &&
+                                 !nativeCarrierBuildFailed_;
+  if (hasParams_ && !gpuNativeCarriers) {
     const float right[3] = {view_[0], view_[4], view_[8]};
     const float up[3] = {view_[1], view_[5], view_[9]};
     auto dot3 = [](const float a[3], const float b[3]) {
@@ -10132,6 +10554,25 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
       const float my = std::abs(proj_[5]) * r + 0.02f * cw;
       return cx >= -cw - mx && cx <= cw + mx &&
              cy >= -cw - my && cy <= cw + my;
+    };
+    auto projectPixel = [&](const float p[3], float out[3]) {
+      const float vx = view_[0] * p[0] + view_[4] * p[1] +
+                       view_[8] * p[2] + view_[12];
+      const float vy = view_[1] * p[0] + view_[5] * p[1] +
+                       view_[9] * p[2] + view_[13];
+      const float vz = view_[2] * p[0] + view_[6] * p[1] +
+                       view_[10] * p[2] + view_[14];
+      const float cx = proj_[0] * vx + proj_[4] * vy + proj_[8] * vz + proj_[12];
+      const float cy = proj_[1] * vx + proj_[5] * vy + proj_[9] * vz + proj_[13];
+      const float cw = proj_[3] * vx + proj_[7] * vy + proj_[11] * vz + proj_[15];
+      if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(cw) ||
+          cw <= 1.0e-8f) {
+        return false;
+      }
+      out[0] = (cx / cw * 0.5f + 0.5f) * static_cast<float>(vpW_);
+      out[1] = (cy / cw * 0.5f + 0.5f) * static_cast<float>(vpH_);
+      out[2] = cw;
+      return std::isfinite(out[0]) && std::isfinite(out[1]);
     };
     auto colorAt = [](const auto& s, size_t i, float c[3]) {
       c[0] = c[1] = c[2] = 0.8f;
@@ -10243,9 +10684,10 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
       const float sz = std::sqrt(s.world[8] * s.world[8] + s.world[9] * s.world[9] + s.world[10] * s.world[10]);
       const float scale = std::max(sx, std::max(sy, sz));
       size_t base = 0;
-      const std::vector<uint32_t> counts = s.vertexCounts.empty()
-          ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : s.vertexCounts;
-      for (uint32_t count : counts) {
+      const size_t strandTotal = s.vertexCounts.empty() ? 1 : s.vertexCounts.size();
+      for (size_t strand = 0; strand < strandTotal; ++strand) {
+        const uint32_t count = s.vertexCounts.empty()
+            ? static_cast<uint32_t>(np) : s.vertexCounts[strand];
         const size_t remaining = np - std::min(base, np);
         const size_t end = base >= np ? np :
             base + std::min(remaining, static_cast<size_t>(count));
@@ -10317,6 +10759,26 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
           if (!rasterVisible(p0, width) && !rasterVisible(p1, width) &&
               !rasterVisible(pm, width))
             continue;
+          // Distant XGen strands often cover substantially less than one
+          // pixel, yet historically expanded into six uploaded vertices per
+          // segment. Reject only segments whose projected length AND width are
+          // sub-pixel. The interaction-quality pass is intentionally more
+          // aggressive; the idle refinement restores quarter-pixel coverage.
+          float sp0[3], sp1[3], spm[3];
+          if (projectPixel(p0, sp0) && projectPixel(p1, sp1) &&
+              projectPixel(pm, spm)) {
+            const float dx = sp1[0] - sp0[0];
+            const float dy = sp1[1] - sp0[1];
+            const float lengthPx = std::sqrt(dx * dx + dy * dy);
+            const float widthPx = std::abs(proj_[0]) * width /
+                                  std::max(spm[2], 1.0e-8f) *
+                                  0.5f * static_cast<float>(vpW_);
+            const float minPx = params.curveMaxSegments > 0 &&
+                                        params.curveMaxSegments <= 2
+                                    ? 0.75f
+                                    : 0.25f;
+            if (std::max(lengthPx, widthPx) < minPx) continue;
+          }
           addRibbonQuad(p0, p1, &curveSides[j * 3], &curveSides[(j + 1) * 3],
                         curveWidths[j], curveWidths[j + 1], c0);
         }
@@ -10810,6 +11272,15 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     if (upload.mem) vkFreeMemory(device_, upload.mem, nullptr);
   }
   nonMeshChunkUploads_[frame_].clear();
+  // The previous submission is retired here, so a quality change can safely
+  // replace the persistent carrier buffer without a device-wide idle. Camera
+  // motion itself never rebuilds this buffer; only scene upload/quality does.
+  if (!nativeCarrierCpuForced_ && !rtActive_ && nativeCarrierPipeline_ &&
+      nativeCarrierRequestedSegments_ > 0 &&
+      nativeCarrierSegments_ != nativeCarrierRequestedSegments_ &&
+      !nativeCarrierBuildFailed_) {
+    rebuildNativeCarrierBuffer(nativeCarrierRequestedSegments_);
+  }
   const double waitMs =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tw0)
           .count();
@@ -11593,6 +12064,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // Raster LOD box proxies (optimization B): distant instances the cull collapsed
     // to a shared unit cube, drawn as one instanced pass.
     drawBoxProxies(cb);
+    drawNativeCarriers(cb);
     // UsdVol volume raymarch (proxy-box, translucent "over" opaque geometry).
     recordVolumePass(cb, volumePipeline_);
 
@@ -12023,6 +12495,7 @@ void VulkanRenderer::shutdown() {
   if (translucentPipeline_) { vkDestroyPipeline(device_, translucentPipeline_, nullptr); translucentPipeline_ = VK_NULL_HANDLE; }
   if (gpuQueryPool_) { vkDestroyQueryPool(device_, gpuQueryPool_, nullptr); gpuQueryPool_ = VK_NULL_HANDLE; }
   if (tessPipeline_) { vkDestroyPipeline(device_, tessPipeline_, nullptr); tessPipeline_ = VK_NULL_HANDLE; }
+  if (nativeCarrierPipeline_) { vkDestroyPipeline(device_, nativeCarrierPipeline_, nullptr); nativeCarrierPipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
   if (instPipeline_) { vkDestroyPipeline(device_, instPipeline_, nullptr); instPipeline_ = VK_NULL_HANDLE; }
   if (instTranslucentPipeline_) { vkDestroyPipeline(device_, instTranslucentPipeline_, nullptr); instTranslucentPipeline_ = VK_NULL_HANDLE; }

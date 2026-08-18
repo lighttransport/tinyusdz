@@ -159,6 +159,11 @@ class App
   void setShowGrid(bool on) { gui_.setShowGrid(on); }
   void setShowSkeleton(bool on) { gui_.setShowSkeleton(on); }
   void setCamDolly(float f) { camDolly_ = f; }
+  void setAdaptiveQuality(bool on, float targetFps, float minScale) {
+    adaptiveQuality_ = on;
+    adaptiveTargetFps_ = std::max(1.0f, targetFps);
+    adaptiveMinScale_ = std::max(0.25f, std::min(1.0f, minScale));
+  }
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // --threaded: run GL rendering on a dedicated thread so the UI loop never blocks
   // on GPU work (experimental; default off). No-op unless built with the option.
@@ -283,6 +288,8 @@ class App
   // McpHost tool handlers (defined in mcp/app_mcp.cc; run on the main thread).
   nlohmann::json mcpLoadUsd(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpSceneInfo(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpRenderStats(const nlohmann::json& a,
+                                std::string& e) override;
   nlohmann::json mcpGetFocusedPrim(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpSetFocus(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpViewport(const nlohmann::json& a, std::string& e) override;
@@ -833,6 +840,13 @@ class App
 #else
   static constexpr bool renderThreadActive_ = false;
 #endif
+  bool adaptiveQuality_{true};
+  float adaptiveTargetFps_{30.0f};
+  float adaptiveMinScale_{0.5f};
+  float adaptiveRenderScale_{1.0f};
+  int adaptiveTier_{0};
+  int adaptiveOverBudgetFrames_{0};
+  int adaptiveUnderBudgetFrames_{0};
 
   // MCP server (transports started in run(); commands drained each frame).
   bool mcpStdio_{false};

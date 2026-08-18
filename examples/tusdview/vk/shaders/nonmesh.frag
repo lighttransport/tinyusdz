@@ -32,13 +32,10 @@ layout(set = 2, binding = 0) uniform Frame {
 } fr;
 
 layout(push_constant) uniform Push {
-  int uKind;
-  int uMaterialId;
-  int uCarrierId;
-  int uPurpose;
-  int uRenderMode;
-  vec3 uCameraRight;
-  vec3 uCameraUp;
+  ivec4 ids;
+  ivec4 mode;
+  vec4 cameraRight;
+  vec4 cameraUp;
 } pc;
 
 layout(location = 0) out vec4 fragColor;
@@ -74,12 +71,12 @@ vec3 F(float vh, vec3 f0) {
 
 void main() {
   vec3 N;
-  if (pc.uKind == 0) {
+  if (pc.ids.x == 0 || pc.ids.x == 2) {
     // Point billboard: circular discard + spherical normal proxy
     float rr = dot(vLocal, vLocal);
     if (rr > 1.0) discard;
-    vec3 camRight = normalize(pc.uCameraRight);
-    vec3 camUp = normalize(pc.uCameraUp);
+    vec3 camRight = normalize(pc.cameraRight.xyz);
+    vec3 camUp = normalize(pc.cameraUp.xyz);
     N = normalize(camRight * vLocal.x + camUp * vLocal.y +
                   normalize(vView) * sqrt(max(0.0, 1.0 - rr)));
   } else {
@@ -88,19 +85,25 @@ void main() {
   }
 
   // Render mode AOVs
-  if (pc.uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1); return; }
-  if (pc.uRenderMode == 3) { fragColor = vec4(idColor(pc.uMaterialId), 1); return; }
-  if (pc.uRenderMode == 15) { fragColor = vec4(idColor(vInstanceId), 1); return; }
-  if (pc.uRenderMode == 16) { fragColor = vec4(idColor(pc.uCarrierId), 1); return; }
-  if (pc.uRenderMode == 18) {
-    vec3 c = pc.uPurpose == 1 ? vec3(0.3,0.7,1) :
-             pc.uPurpose == 2 ? vec3(1,0.6,0.2) :
-             pc.uPurpose == 3 ? vec3(0.8,0.3,1) : vec3(0.7);
+  if (pc.mode.x == 2) { fragColor = vec4(N * 0.5 + 0.5, 1); return; }
+  if (pc.mode.x == 3) { fragColor = vec4(idColor(pc.ids.y), 1); return; }
+  if (pc.mode.x == 15) { fragColor = vec4(idColor(vInstanceId), 1); return; }
+  if (pc.mode.x == 16) { fragColor = vec4(idColor(pc.ids.z), 1); return; }
+  if (pc.mode.x == 18) {
+    vec3 c = pc.ids.w == 1 ? vec3(0.3,0.7,1) :
+             pc.ids.w == 2 ? vec3(1,0.6,0.2) :
+             pc.ids.w == 3 ? vec3(0.8,0.3,1) : vec3(0.7);
     fragColor = vec4(c, 1); return;
   }
-  if (pc.uRenderMode == 7) { fragColor = vec4(vColor.rgb, 1); return; }
-  if (pc.uRenderMode == 12) { fragColor = vec4(vec3(vColor.a), 1); return; }
-  if (pc.uRenderMode != 0) { fragColor = vec4(0.18, 0.18, 0.18, 1); return; }
+  if (pc.mode.x == 7) { fragColor = vec4(vColor.rgb, 1); return; }
+  if (pc.mode.x == 12) { fragColor = vec4(vec3(vColor.a), 1); return; }
+  if (pc.mode.x != 0) { fragColor = vec4(0.18, 0.18, 0.18, 1); return; }
+
+  // The existing Vulkan non-mesh fallback is an unlit RGB overlay. Preserve
+  // those color semantics so switching to persistent carriers changes only
+  // geometry generation/performance, not authored displayColor appearance.
+  fragColor = vec4(vColor.rgb, 1.0);
+  return;
 
   vec3 V = normalize(vView);
   float nv = max(dot(N, V), 1e-4);

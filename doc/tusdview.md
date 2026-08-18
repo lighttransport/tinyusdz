@@ -52,16 +52,17 @@ cmake --build build_ninja -j16 --target tusdview
   UDIM mip chains use trilinear filtering: ray-differential footprint LOD in
   Vulkan and projected-triangle LOD in CUDA/HIP. Raster-style anisotropy
   remains future work.
-- **Experimental threaded render path** (a dedicated render thread owns the GL
-  context / Vulkan queue so the UI never blocks on the GPU; opt-in `--threaded`)
-  is gated behind a default-OFF option:
+- **Threaded render path** (a dedicated render thread owns the GL context /
+  Vulkan queue so the UI never blocks on the GPU) is enabled by default for
+  interactive Vulkan and can be overridden with `--threaded` or
+  `--no-threaded`. It is gated behind this build option:
 
   ```sh
   cmake -S . -B build_ninja -DTUSDVIEW_ENABLE_GL_THREAD=ON   # + the flags above
   ```
 
   See [`threading-stage2.md`](../examples/tusdview/doc/threading-stage2.md). When
-  OFF, `--threaded` is a no-op and the single-threaded path is unchanged.
+  OFF, the thread flags are no-ops and the single-threaded path is unchanged.
 
 ## Vulkan run test (verified working on NVIDIA)
 

@@ -298,7 +298,14 @@ int main(int argc, char** argv) {
   int streamMotionQuality = 45;      // motion-frame JPEG quality (1-100)
   int streamIdleMs = 350;            // ms of input quiet before the lossless refine
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
-  bool threaded = false;      // --threaded: experimental render-thread GL path
+  bool threaded = false;
+  bool threadedExplicit = false;
+  bool adaptiveQuality = true;
+  bool adaptiveQualityExplicit = false;
+  float targetRenderFps = 30.0f;
+  bool targetRenderFpsExplicit = false;
+  float minRenderScale = 0.5f;
+  bool minRenderScaleExplicit = false;
   bool useNextLoader = true;              // next-core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
   bool showGrid = true;                    // --no-grid: deterministic clean capture
@@ -535,6 +542,32 @@ int main(int argc, char** argv) {
       headless = true;
     } else if (std::strcmp(argv[i], "--threaded") == 0) {
       threaded = true;
+      threadedExplicit = true;
+    } else if (std::strcmp(argv[i], "--no-threaded") == 0) {
+      threaded = false;
+      threadedExplicit = true;
+    } else if (std::strcmp(argv[i], "--adaptive-quality") == 0) {
+      adaptiveQuality = true;
+      adaptiveQualityExplicit = true;
+    } else if (std::strcmp(argv[i], "--no-adaptive-quality") == 0) {
+      adaptiveQuality = false;
+      adaptiveQualityExplicit = true;
+    } else if (std::strcmp(argv[i], "--target-render-fps") == 0 &&
+               (i + 1) < argc) {
+      targetRenderFps = static_cast<float>(std::atof(argv[++i]));
+      targetRenderFpsExplicit = true;
+      if (!(targetRenderFps >= 1.0f && targetRenderFps <= 240.0f)) {
+        LOGE("--target-render-fps must be in [1, 240]");
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--min-render-scale") == 0 &&
+               (i + 1) < argc) {
+      minRenderScale = static_cast<float>(std::atof(argv[++i]));
+      minRenderScaleExplicit = true;
+      if (!(minRenderScale >= 0.25f && minRenderScale <= 1.0f)) {
+        LOGE("--min-render-scale must be in [0.25, 1]");
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--next") == 0) {
       useNextLoader = true;
       useNextExplicit = true;
@@ -990,8 +1023,14 @@ int main(int argc, char** argv) {
           "purpose, missing-normals, double-sided, skin-weights, tangent, "
           "uv-checker, ao, curvature, instance-id, bvh-heatmap, soft-shadow, "
           "kind, udim, uv1, blend-influence, texel-density, source-face-id, coat-normal, coat-weight, coat-color, coat-roughness, specular-f0, ior-f0.\n"
-          "  --threaded    Use the optional dedicated GL/Vulkan render thread "
-          "when built with TUSDVIEW_ENABLE_GL_THREAD.\n"
+          "  --threaded / --no-threaded  Enable or disable the dedicated render "
+          "thread (default on for interactive Vulkan when built with "
+          "TUSDVIEW_ENABLE_GL_THREAD).\n"
+          "  --adaptive-quality / --no-adaptive-quality  Dynamically lower the "
+          "Vulkan viewport scale while navigating (default on interactively).\n"
+          "  --target-render-fps N  Adaptive rendering floor (default 30).\n"
+          "  --min-render-scale S  Lowest adaptive 3D viewport scale, 0.25..1 "
+          "(default 0.5; UI remains full resolution).\n"
           "  --blend NAME=W  Manually set a blendshape weight (repeatable), "
           "overriding the SkelAnimation; honors in-between shapes. Also editable "
           "live in the Inspector's Blend Shapes panel.\n"
@@ -1386,6 +1425,12 @@ int main(int argc, char** argv) {
                                               : executablePath);
   }
   if (config.status == tusdview::ConfigLoadStatus::Loaded) {
+    if (config.config.adaptiveQuality && !adaptiveQualityExplicit)
+      adaptiveQuality = *config.config.adaptiveQuality;
+    if (config.config.targetRenderFps && !targetRenderFpsExplicit)
+      targetRenderFps = *config.config.targetRenderFps;
+    if (config.config.minRenderScale && !minRenderScaleExplicit)
+      minRenderScale = *config.config.minRenderScale;
     if (config.config.fontSizePx) app.setFontSize(*config.config.fontSizePx);
     if (config.config.windowScale) app.setWindowScale(*config.config.windowScale);
     if (!windowSizeExplicit && config.config.windowWidth &&
@@ -1622,7 +1667,12 @@ int main(int argc, char** argv) {
   app.setStreamMotionQuality(streamMotionQuality);
   app.setStreamIdleMs(streamIdleMs);
   app.setHeadless(headless);
-  app.setThreaded(threaded);
+  const bool useThreaded = threadedExplicit
+      ? threaded
+      : backend == tusdview::Backend::Vulkan && !headless && maxFrames < 0;
+  app.setThreaded(useThreaded);
+  app.setAdaptiveQuality(adaptiveQuality && !headless && maxFrames < 0,
+                         targetRenderFps, minRenderScale);
   app.setCudaRt(wantCuda);
   app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);

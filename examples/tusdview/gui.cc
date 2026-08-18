@@ -3116,6 +3116,12 @@ void Gui::drawStats() {
     ImGui::Text("Render FPS: %.1f%s", renderFps_,
                 renderFps_ <= 0.0f ? " (warming up)" : "");
     ImGui::Text("UI FPS: %.1f (60 Hz cap)", uiFps);
+    if (adaptiveQuality_) {
+      const char* tier = adaptiveTier_ == 2 ? "interactive" :
+                         (adaptiveTier_ == 1 ? "balanced" : "full");
+      ImGui::Text("Adaptive: %s, scale %.2f, target %.0f FPS", tier,
+                  renderScale_, adaptiveTargetFps_);
+    }
   } else {
     ImGui::Text("FPS: %.1f (%.2f ms)", uiFps,
                 uiFps > 0.0f ? 1000.0f / uiFps : 0.0f);
@@ -4878,7 +4884,9 @@ void Gui::drawViewport() {
     // here on the UI thread. gpu() routes it to the op-queue (inline when single
     // threaded). viewportTexture()'s id is stable across resizes, so ImGui::Image
     // can reference it now and the render thread fills it.
-    gpu([this, w, h] { renderer_->resizeViewport(w, h); });
+    const int rw = std::max(1, static_cast<int>(std::lround(w * renderScale_)));
+    const int rh = std::max(1, static_cast<int>(std::lround(h * renderScale_)));
+    gpu([this, rw, rh] { renderer_->resizeViewport(rw, rh); });
 
     const ImTextureID tex = static_cast<ImTextureID>(renderer_->viewportTexture());
     const bool flip = renderer_->caps().flipViewportV;
@@ -5100,7 +5108,11 @@ void Gui::renderViewportScene(FramePacket* packet) {
 
   cam_->setAspect(static_cast<float>(viewportW_) / static_cast<float>(viewportH_));
   const int vpW = viewportW_, vpH = viewportH_;
-  gpu([this, vpW, vpH] { renderer_->resizeViewport(vpW, vpH); });
+  const int renderW = std::max(
+      1, static_cast<int>(std::lround(vpW * renderScale_)));
+  const int renderH = std::max(
+      1, static_cast<int>(std::lround(vpH * renderScale_)));
+  gpu([this, renderW, renderH] { renderer_->resizeViewport(renderW, renderH); });
 
   const light3d::Mat4 viewM = cam_->view();
   const light3d::Mat4 projM = cam_->proj(renderer_->caps().usesZeroToOneDepth);
@@ -5137,8 +5149,13 @@ void Gui::renderViewportScene(FramePacket* packet) {
     haveLastCurveView_ = true;
     lastCurveViewChangeTime_ = curveNow;
   }
-  const bool curveInteractive = lastCurveViewChangeTime_ >= 0.0 &&
+  // Fixed-frame/headless captures must render the requested quality.  Their
+  // startup camera is technically changing, but there is no interactive UI to
+  // protect and reducing the first frames makes screenshots nondeterministic.
+  const bool curveInteractive = !captureViewportOnly_ &&
+                                lastCurveViewChangeTime_ >= 0.0 &&
                                 curveNow - lastCurveViewChangeTime_ < 0.20;
+  cameraInteractive_ = curveInteractive;
   p.curveMaxSegments = curveInteractive && curveMaxSegments_ > 0
                            ? std::min(curveMaxSegments_, 2)
                            : curveMaxSegments_;
@@ -5263,8 +5280,8 @@ void Gui::renderViewportScene(FramePacket* packet) {
                                  p.rtMeshVisible + p.rtMeshVisibleCount);
   packet->purposeVisibleMask = p.purposeVisibleMask;
   packet->curveMaxSegments = p.curveMaxSegments;
-  packet->viewportW = vpW;
-  packet->viewportH = vpH;
+  packet->viewportW = renderW;
+  packet->viewportH = renderH;
   packet->hasParams = true;
 }
 
