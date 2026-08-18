@@ -487,7 +487,8 @@ Tools (`tools/list` for schemas):
 | `list_prims {max?}` | renderable mesh prim paths |
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
 | `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |
-| `render_settings {mode?, grid?}` | change resettable render mode/grid state between captures without restarting the viewer; `mode:"picking"` displays the depth-tested mesh/curve/points picking-ID buffer |
+| `render_settings {mode?, grid?, adaptive_quality?, target_render_fps?}` | change resettable render state between captures without restarting the viewer; `mode:"picking"` displays the depth-tested mesh/curve/points picking-ID buffer |
+| `get_render_stats {}` | report UI/render FPS, threaded-render state, adaptive tier, render scale, and target FPS |
 | `screenshot {path}` | capture the current viewport as PNG, JPEG, or PPM (selected by extension) |
 | `mouse {type,x,y,...}` | inject viewport-local mouse movement or button events; `type` is `move` or `button`, with `button=0/1/2` and `down=true/false` |
 | `pick {x,y,x1?,y1?,select?}` | query one pixel, or pass the opposite `x1,y1` corner to select the prim covering the most depth-tested pixels in a region; returns USD path, carrier kind, and `covered_pixels` |
@@ -575,17 +576,19 @@ headless Vulkan and Xvfb OpenGL regression.
 
 USD parse, composition, Tydra conversion, and DrawScene construction run on a
 CPU worker. Builds include the dedicated render-thread path by default
-(`TUSDVIEW_ENABLE_GL_THREAD=ON`). Pass `--threaded` to let that thread own the
-GL context or Vulkan queue while GLFW events and ImGui frame construction remain
-responsive on the main thread. Disable the CMake option to omit this path.
+(`TUSDVIEW_ENABLE_GL_THREAD=ON`). Interactive Vulkan uses it by default so the
+render thread owns the Vulkan queue while GLFW events and ImGui frame
+construction remain responsive on the main thread. Use `--no-threaded` to opt
+out, or `--threaded` to opt in for OpenGL. Disable the CMake option to omit this
+path.
 
-For dense BasisCurves, Vulkan raster retains every loaded prim and strand but
-limits camera-facing ribbon generation to 8 evenly distributed segments per
-strand, dropping temporarily to 2 while the camera moves. Change this live
-under **View > Curve quality** (8/16/32/64), or choose
-full tessellation for comparison. The same limit is used by selection coverage
-and wire highlights, avoiding repeated traversal of millions of intermediate
-tessellation samples without making prims disappear from the hierarchy.
+For dense BasisCurves, Vulkan raster retains every loaded prim and strand in a
+persistent device-local carrier buffer. The vertex shader expands sampled
+segments into camera-facing ribbons, avoiding per-frame CPU tessellation and
+uploads. Quality defaults to 8 evenly distributed segments per strand and drops
+temporarily to 2 while the camera moves. Change it live under **View > Curve
+quality** (8/16/32/64), or choose full tessellation for comparison. Set
+`TUSDVIEW_VK_CPU_CARRIERS=1` to exercise the compatibility fallback.
 
 ## Known limitations
 

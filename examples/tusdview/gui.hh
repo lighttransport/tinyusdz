@@ -234,6 +234,14 @@ class Gui {
     renderFps_ = renderFps;
     threadedFrameRate_ = threaded;
   }
+  void setAdaptiveQuality(bool enabled, float renderScale, int tier,
+                          float targetFps) {
+    adaptiveQuality_ = enabled;
+    renderScale_ = std::max(0.25f, std::min(1.0f, renderScale));
+    adaptiveTier_ = tier;
+    adaptiveTargetFps_ = targetFps;
+  }
+  bool cameraInteractive() const { return cameraInteractive_; }
   // True once App::poseNextDrawForTracer has written POSED vertices back into
   // draw_ for a CUDA/HIP/CPU RT build. The selection-highlight re-pose must
   // then NOT deform draw_ again (it would double-deform); see
@@ -438,6 +446,11 @@ class Gui {
   double lastCurveViewChangeTime_{-1.0};
   float renderFps_{0.0f};
   bool threadedFrameRate_{false};
+  bool adaptiveQuality_{false};
+  bool cameraInteractive_{false};
+  float renderScale_{1.0f};
+  float adaptiveTargetFps_{30.0f};
+  int adaptiveTier_{0};
   // Transform manipulator mode.
   TransformMode xformMode_{TransformMode::None};
   int gizmoAxis_{-1};         // -1 = none, 0=X, 1=Y, 2=Z

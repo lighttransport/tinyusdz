@@ -8729,12 +8729,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
   if (texCache.decoder && !draw->textures.empty()) {
     const tydn::TextureDecoder& dec = *texCache.decoder;
-    LOGI("next: textures %zu, decoded %.1f MB (cap %u px, budget %.0f MB, "
+    // TextureDecoder::decoded_bytes() is transient decode residency. Its lease
+    // is released when DecodeNextImage moves the pixels into DrawTextureCPU,
+    // so it normally reaches zero here even though the scene still owns all of
+    // those pixels. Report the retained payload measured above instead. Also
+    // query the live budget: SetBudgetBytes() may have reduced it after the
+    // geometry estimate, while options().budget_bytes remains the initial cap.
+    LOGI("next: textures %zu, retained decoded %.1f MB (cap %u px, budget %.0f MB, "
          "%llu downscaled)",
          draw->textures.size(),
-         double(dec.decoded_bytes()) / (1024.0 * 1024.0),
+         double(decodedTextureBytes) / (1024.0 * 1024.0),
          dec.options().max_edge,
-         double(dec.options().budget_bytes) / (1024.0 * 1024.0),
+         double(dec.budget_bytes()) / (1024.0 * 1024.0),
          static_cast<unsigned long long>(dec.downscaled_count()));
   }
   if (streamedTexturePayloadCount > 0) {

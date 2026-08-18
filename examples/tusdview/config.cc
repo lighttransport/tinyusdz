@@ -178,6 +178,41 @@ bool ParseConfigFile(const fs::path& path, StartupConfig* cfg,
     cfg->cameraConform = value;
   }
 
+  if (const json* render = FindMember(root, {"render"}); render) {
+    if (!render->is_object()) {
+      *err = "render must be an object";
+      return false;
+    }
+    if (const json* adaptive =
+            FindMember(*render, {"adaptive_quality", "adaptive-quality"})) {
+      bool on = false;
+      if (!ParseBool(*adaptive, "render.adaptive_quality", &on, err)) return false;
+      cfg->adaptiveQuality = on;
+    }
+    if (const json* target =
+            FindMember(*render, {"target_fps", "target-fps"})) {
+      float value = 0.0f;
+      if (!ParsePositiveFloat(*target, "render.target_fps", &value, err))
+        return false;
+      if (value > 240.0f) {
+        *err = "render.target_fps must be <= 240";
+        return false;
+      }
+      cfg->targetRenderFps = value;
+    }
+    if (const json* scale =
+            FindMember(*render, {"min_scale", "min-scale"})) {
+      float value = 0.0f;
+      if (!ParsePositiveFloat(*scale, "render.min_scale", &value, err))
+        return false;
+      if (value < 0.25f || value > 1.0f) {
+        *err = "render.min_scale must be in [0.25, 1]";
+        return false;
+      }
+      cfg->minRenderScale = value;
+    }
+  }
+
   if (const json* orbit = FindMember(*navObj, {"orbit_sensitivity", "orbit-sensitivity"})) {
     float v = 0.0f;
     if (!ParsePositiveFloat(*orbit, "orbit_sensitivity", &v, err)) return false;

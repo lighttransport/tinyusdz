@@ -19,6 +19,8 @@ class McpHost {
 
   virtual nlohmann::json mcpLoadUsd(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpSceneInfo(const nlohmann::json& args, std::string& err) = 0;
+  virtual nlohmann::json mcpRenderStats(const nlohmann::json& args,
+                                        std::string& err) = 0;
   virtual nlohmann::json mcpGetFocusedPrim(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpSetFocus(const nlohmann::json& args, std::string& err) = 0;
   virtual nlohmann::json mcpViewport(const nlohmann::json& args, std::string& err) = 0;

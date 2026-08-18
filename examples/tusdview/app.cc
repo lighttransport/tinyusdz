@@ -5327,6 +5327,41 @@ int App::run(const std::string& initialFile, int maxFrames,
       renderFps_ = measuredRenderFps_.load(std::memory_order_relaxed);
     }
 #endif
+    const bool adaptiveActive = adaptiveQuality_ && renderThreadActive_ &&
+                                backend_ == Backend::Vulkan && !headless_;
+    if (!adaptiveActive || !gui_.cameraInteractive()) {
+      adaptiveRenderScale_ = 1.0f;
+      adaptiveTier_ = 0;
+      adaptiveOverBudgetFrames_ = 0;
+      adaptiveUnderBudgetFrames_ = 0;
+    } else if (renderFps_ > 0.0f) {
+      if (renderFps_ < adaptiveTargetFps_ * 0.90f) {
+        ++adaptiveOverBudgetFrames_;
+        adaptiveUnderBudgetFrames_ = 0;
+      } else if (renderFps_ > adaptiveTargetFps_ * 1.25f) {
+        ++adaptiveUnderBudgetFrames_;
+        adaptiveOverBudgetFrames_ = 0;
+      } else {
+        adaptiveOverBudgetFrames_ = adaptiveUnderBudgetFrames_ = 0;
+      }
+      if (adaptiveOverBudgetFrames_ >= 3) {
+        if (adaptiveTier_ == 0) {
+          adaptiveTier_ = 1;
+          adaptiveRenderScale_ = std::max(adaptiveMinScale_, 0.75f);
+        } else {
+          adaptiveTier_ = 2;
+          adaptiveRenderScale_ = adaptiveMinScale_;
+        }
+        adaptiveOverBudgetFrames_ = 0;
+      } else if (adaptiveUnderBudgetFrames_ >= 30 && adaptiveTier_ > 0) {
+        --adaptiveTier_;
+        adaptiveRenderScale_ = adaptiveTier_ == 0
+            ? 1.0f : std::max(adaptiveMinScale_, 0.75f);
+        adaptiveUnderBudgetFrames_ = 0;
+      }
+    }
+    gui_.setAdaptiveQuality(adaptiveActive, adaptiveRenderScale_, adaptiveTier_,
+                            adaptiveTargetFps_);
     gui_.setFrameRates(renderThreadActive_ ? renderFps_ : ImGui::GetIO().Framerate,
                        renderThreadActive_);
 

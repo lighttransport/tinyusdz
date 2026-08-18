@@ -61,6 +61,9 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool("get_scene_bbox", "Get the scene world-space bounding box "
                                          "(alias of get_scene_info).",
                        json::object()));
+  tools.push_back(tool("get_render_stats",
+                       "Get UI/render FPS and the current adaptive-quality tier, "
+                       "render scale, and target FPS.", json::object()));
   tools.push_back(tool("get_focused_prim",
                        "Info about the currently focused/selected prim: path, "
                        "vertex/triangle counts, bbox, and material.",
@@ -150,6 +153,8 @@ json MCPServer::buildToolsList() const {
       "Query or set resettable per-capture options without restarting tusdview.",
       {{"mode", strProp("shaded | wireframe | normals | material-id | geom-normal | uv | depth | albedo | facing | roughness | metallic | emissive | opacity")},
        {"grid", {{"type", "boolean"}, {"description", "show the ground grid"}}},
+       {"adaptive_quality", {{"type", "boolean"}, {"description", "enable adaptive Vulkan quality"}}},
+       {"target_render_fps", numProp("adaptive render FPS floor")},
        {"camera", strProp("named USD camera to resolve on the next load")}}));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
@@ -262,6 +267,8 @@ void MCPServer::drain() {
         payload = host_->mcpLoadUsd(cmd->args, err);
       } else if (t == "get_scene_info" || t == "get_scene_bbox") {
         payload = host_->mcpSceneInfo(cmd->args, err);
+      } else if (t == "get_render_stats") {
+        payload = host_->mcpRenderStats(cmd->args, err);
       } else if (t == "get_focused_prim") {
         payload = host_->mcpGetFocusedPrim(cmd->args, err);
       } else if (t == "set_focus") {

@@ -334,6 +334,10 @@ class VulkanRenderer final : public Renderer {
   void createTessPipeline();  // best-effort GPU-tessellation pipeline (non-fatal)
   bool createInstPipeline(std::string* err);
   bool createLinePipeline(std::string* err);
+  bool createNativeCarrierPipeline(std::string* err);
+  bool rebuildNativeCarrierBuffer(int curveSegments);
+  void drawNativeCarriers(VkCommandBuffer cb);
+  void destroyNativeCarrierResources();
   bool createSampler(std::string* err);
   bool createDescriptorInfra(std::string* err);
   VkDescriptorSet allocDeformDescriptor(const VkMeshGPU& mesh);
@@ -613,9 +617,10 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout lineLayout_{VK_NULL_HANDLE};
   VkPipeline linePipeline_{VK_NULL_HANDLE};
   VkPipeline linePipelineNoDepth_{VK_NULL_HANDLE};  // X-ray overlay (skeleton)
-  // Camera-facing native Points/Curves raster carrier.  The CPU expands the
-  // carriers into quads each frame; this deliberately stays independent of the
-  // mesh material descriptor sets.
+  // Camera-facing native Points/Curves raster carrier. The persistent Vulkan
+  // path stores one compact instance per point/selected curve segment and lets
+  // the vertex shader expand it; the old CPU triangle expansion remains as a
+  // fallback for allocation/pipeline failure and full-tessellation requests.
   VkPipeline nonMeshPipeline_{VK_NULL_HANDLE};
   VkBuffer nonMeshBuf_[kFramesInFlight]{};
   VkDeviceMemory nonMeshMem_[kFramesInFlight]{};
@@ -624,6 +629,34 @@ class VulkanRenderer final : public Renderer {
   std::vector<HelperVertex> nonMeshCopy_;
   std::vector<DrawPointsCPU> nativePoints_;
   std::vector<DrawCurvesCPU> nativeCurves_;
+  struct NativeCarrierInstanceGPU {
+    float p0[3];
+    float p1[3];
+    float prev[3];
+    float next[3];
+    float widths[2];
+    float color0[4];
+    float color1[4];
+  };
+  struct NativeCarrierRange {
+    uint32_t first{0};
+    uint32_t count{0};
+    int kind{0};
+    int materialId{-1};
+    int carrierId{0};
+    int purpose{0};
+  };
+  VkPipeline nativeCarrierPipeline_{VK_NULL_HANDLE};
+  VkBuffer nativeCarrierBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory nativeCarrierMem_{VK_NULL_HANDLE};
+  std::vector<NativeCarrierRange> nativeCarrierRanges_;
+  int nativeCarrierSegments_{-1};
+  int nativeCarrierRequestedSegments_{-1};
+  bool nativeCarrierBuildFailed_{false};
+  bool nativeCarrierCpuForced_{false};
+  uint32_t nativeCarrierPurposeMask_{0xffffffffu};
+  RenderMode nativeCarrierMode_{RenderMode::Shaded};
+  std::vector<uint8_t> nativeCarrierVisible_;
 
   // --- UsdVol volume raymarch (proxy-box, 3D density texture) ---
   struct VkVolumeGPU {
