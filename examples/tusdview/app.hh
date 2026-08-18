@@ -230,6 +230,7 @@ class App
   // Recently-opened scenes: the config file path to persist to, and the initial
   // list loaded from it. setRecentScenes also seeds the File > Open Recent menu.
   void setConfigPath(const std::filesystem::path& p) { configPath_ = p; }
+  void setExecutablePath(const std::filesystem::path& p) { executablePath_ = p; }
   void setRecentScenes(const std::vector<std::string>& v) {
     recentScenes_ = v;
     gui_.setRecentScenes(recentScenes_);
@@ -287,6 +288,8 @@ class App
   nlohmann::json mcpViewport(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpScreenshot(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpInput(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpMouse(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpPick(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpTimeline(const nlohmann::json& a, std::string& e) override;
@@ -492,6 +495,7 @@ class App
   bool viewDirExplicit_{false};
   float viewDir_[3]{0.0f, 0.0f, -1.0f};  // normalized eye-to-target direction
   std::filesystem::path configPath_;        // where to persist recent scenes
+  std::filesystem::path executablePath_;    // local imgui.ini lookup anchor
   std::string imguiIniPath_;                // storage backing ImGuiIO::IniFilename
   std::vector<std::string> recentScenes_;   // newest first; File > Open Recent
   CudaRayTracer cudaTracer_;
@@ -817,8 +821,12 @@ class App
   std::condition_variable pktCv_;
   std::unique_ptr<FramePacket> pendingPacket_;
   std::condition_variable pktDoneCv_;
-  std::uint64_t pktRenderedSeq_{0};
+  std::atomic<std::uint64_t> pktRenderedSeq_{0};
   std::uint64_t pktSubmitSeq_{0};
+  std::chrono::steady_clock::time_point renderFpsSampleTime_{};
+  std::uint64_t renderFpsSampleSeq_{0};
+  float renderFps_{0.0f};
+  std::atomic<float> measuredRenderFps_{0.0f};
   std::vector<uint8_t> renderCapture_;
   int renderCaptureW_{0};
   int renderCaptureH_{0};

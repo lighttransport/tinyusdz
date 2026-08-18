@@ -211,6 +211,9 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
       {"metallic", RenderMode::Metallic},
       {"emissive", RenderMode::Emissive},
       {"opacity", RenderMode::Opacity},
+      {"mesh-id", RenderMode::MeshId},
+      {"picking", RenderMode::MeshId},
+      {"pick-id", RenderMode::MeshId},
       {"coat-normal", RenderMode::CoatNormal},
       {"coat-weight", RenderMode::CoatWeight},
       {"coat-color", RenderMode::CoatColor},
@@ -474,6 +477,15 @@ json App::mcpInput(const json& args, std::string& err) {
   } else if (key == "f" || key == "a") {
     if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
     action = "frame_all";
+  } else if (key == "i") {
+    if (!gui_.isolateSelected()) {
+      err = "input: no selected renderable prim to isolate";
+      return json::object();
+    }
+    action = "show_selected_only";
+  } else if (key == "u") {
+    gui_.showAllRenderables();
+    action = "show_all";
   } else if (key == "0") {
     camera_.setPreset(CameraViewPreset::Isometric);
     if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
@@ -513,6 +525,77 @@ json App::mcpInput(const json& args, std::string& err) {
     return json::object();
   }
   return json{{"key", key}, {"action", action}, {"wireframe", gui_.wireframeMode()}};
+}
+
+json App::mcpMouse(const json& args, std::string& err) {
+  const std::string type = args.value("type", std::string());
+  if (type != "move" && type != "button") {
+    err = "mouse: type must be 'move' or 'button'";
+    return json::object();
+  }
+  const float x = args.value("x", -1.0f);
+  const float y = args.value("y", -1.0f);
+  int w = 0, h = 0;
+  gui_.viewportPixelSize(&w, &h);
+  if (!std::isfinite(x) || !std::isfinite(y) || x < 0.0f || y < 0.0f ||
+      x >= static_cast<float>(w) ||
+      y >= static_cast<float>(h)) {
+    err = "mouse: coordinates are outside the viewport";
+    return json::object();
+  }
+  ImGuiIO& io = ImGui::GetIO();
+  float screenX = x, screenY = y;
+  gui_.viewportPixelToScreen(x, y, &screenX, &screenY);
+  io.AddMousePosEvent(screenX, screenY);
+  if (type == "button") {
+    const int button = args.value("button", 0);
+    if (button < 0 || button > 2) {
+      err = "mouse: button must be 0 (left), 1 (middle), or 2 (right)";
+      return json::object();
+    }
+    const int imguiButton = button == 1 ? 2 : button == 2 ? 1 : 0;
+    io.AddKeyEvent(ImGuiMod_Shift, args.value("shift", false));
+    io.AddKeyEvent(ImGuiMod_Ctrl, args.value("ctrl", false));
+    io.AddKeyEvent(ImGuiMod_Alt, args.value("alt", false));
+    io.AddMouseButtonEvent(imguiButton, args.value("down", false));
+  }
+  return json{{"type", type}, {"x", x}, {"y", y},
+              {"viewport_width", w}, {"viewport_height", h}};
+}
+
+json App::mcpPick(const json& args, std::string& err) {
+  const float x = args.value("x", -1.0f);
+  const float y = args.value("y", -1.0f);
+  int w = 0, h = 0;
+  gui_.viewportPixelSize(&w, &h);
+  if (!std::isfinite(x) || !std::isfinite(y) || x < 0.0f || y < 0.0f ||
+      x >= static_cast<float>(w) ||
+      y >= static_cast<float>(h)) {
+    err = "pick: coordinates are outside the viewport";
+    return json::object();
+  }
+  const bool region = args.contains("x1") || args.contains("y1");
+  const float x1 = args.value("x1", x);
+  const float y1 = args.value("y1", y);
+  if (region && (!std::isfinite(x1) || !std::isfinite(y1) || x1 < 0.0f ||
+                 y1 < 0.0f || x1 > static_cast<float>(w) ||
+                 y1 > static_cast<float>(h))) {
+    err = "pick: region coordinates are outside the viewport";
+    return json::object();
+  }
+  const Gui::PickReport report = region
+      ? gui_.pickViewportRegion(x, y, x1, y1, args.value("select", true))
+      : gui_.pickViewportPixel(x, y, args.value("select", true));
+  return json{{"hit", !report.path.empty()},
+              {"path", report.path},
+              {"kind", report.kind},
+              {"mesh_index", report.meshIndex},
+              {"x", report.x},
+              {"y", report.y},
+              {"viewport_width", report.viewportWidth},
+              {"viewport_height", report.viewportHeight},
+              {"covered_pixels", report.coveredPixels},
+              {"selected", args.value("select", true) && !report.path.empty()}};
 }
 
 json App::mcpListPrims(const json& args, std::string&) {

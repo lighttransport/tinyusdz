@@ -252,6 +252,11 @@ struct RenderFrameParams {
   bool displacement{true};
   float displacementScale{1.0f};
   int maxTessLevel{1};
+  // Maximum camera-facing ribbon segments emitted per curve strand by raster
+  // backends. Zero preserves every tessellated sample. This is independent of
+  // loader preview limits: all prims/strands remain selectable while dense
+  // basis-curve tessellation is decimated only for drawing.
+  int curveMaxSegments{8};
 };
 
 // Opaque texture handle for ImGui::Image. GL: a GLuint texture id. Vulkan: a

@@ -111,6 +111,9 @@ class Gui {
   // screenshot dimensions.
   void setCaptureViewportOnly(bool on) { captureViewportOnly_ = on; }
 
+  // Flush the current dock/window arrangement to ImGui's configured ini file.
+  bool saveImGuiLayout(std::string* err = nullptr);
+
   void frame(Renderer* renderer, OrbitCamera* camera);
   // Build the viewport render inputs. `packet` null (single-threaded) renders the
   // scene inline via renderer_->renderFrame; non-null (threaded) copies the inputs
@@ -122,6 +125,10 @@ class Gui {
   void viewportPixelSize(int* w, int* h) const {
     if (w) *w = viewportW_;
     if (h) *h = viewportH_;
+  }
+  void viewportPixelToScreen(float x, float y, float* sx, float* sy) const {
+    if (sx) *sx = x + viewportImageMin_.x;
+    if (sy) *sy = y + viewportImageMin_.y;
   }
   // Route a GPU op to the render thread (threaded); runs inline if unset.
   void setPostGpu(std::function<void(std::function<void()>)> fn) {
@@ -223,6 +230,10 @@ class Gui {
   // points, so the switch must hand over the new pointer or the rest of the
   // frame runs on freed memory.
   void setRenderer(Renderer* renderer) { renderer_ = renderer; }
+  void setFrameRates(float renderFps, bool threaded) {
+    renderFps_ = renderFps;
+    threadedFrameRate_ = threaded;
+  }
   // True once App::poseNextDrawForTracer has written POSED vertices back into
   // draw_ for a CUDA/HIP/CPU RT build. The selection-highlight re-pose must
   // then NOT deform draw_ again (it would double-deform); see
@@ -268,6 +279,21 @@ class Gui {
   }
 
   void selectByPath(const std::string& absPath, int meshIndex);
+  struct PickReport {
+    std::string path;
+    std::string kind;
+    int meshIndex{-1};
+    float x{0.0f};
+    float y{0.0f};
+    int viewportWidth{0};
+    int viewportHeight{0};
+    int coveredPixels{0};
+  };
+  PickReport pickViewportPixel(float x, float y, bool select);
+  PickReport pickViewportRegion(float x0, float y0, float x1, float y1,
+                                bool select);
+  bool isolateSelected();
+  void showAllRenderables();
   void clearSelection();
   void requestVariantSwitch(
       const std::string& primPath,
@@ -338,6 +364,9 @@ class Gui {
   bool meshVisibleForView(size_t meshIndex) const;
   bool carrierVisibleForView(size_t carrierIndex) const;
   size_t carrierIndexForPath(const std::string& path) const;
+  bool selectionHasRenderable() const;
+  void isolateSelection();
+  void setSelectionVisibility(bool visible);
   void buildViewVisibilityMask();
   void rebuildInspectorCache();
   void setSelectionListSingle(const std::string& absPath, int meshIndex);
@@ -403,6 +432,12 @@ class Gui {
   RenderMode mode_{RenderMode::Shaded};
   // Wireframe overlay state cycled by the 'v' key: 0 off / 1 wire-only / 2 wire+shaded.
   int wireCycle_{0};
+  int curveMaxSegments_{8};
+  std::array<float, 16> lastCurveView_{};
+  bool haveLastCurveView_{false};
+  double lastCurveViewChangeTime_{-1.0};
+  float renderFps_{0.0f};
+  bool threadedFrameRate_{false};
   // Transform manipulator mode.
   TransformMode xformMode_{TransformMode::None};
   int gizmoAxis_{-1};         // -1 = none, 0=X, 1=Y, 2=Z
@@ -581,6 +616,7 @@ class Gui {
   int navMode_{0};
   int viewportW_{0};
   int viewportH_{0};
+  ImVec2 viewportImageMin_{0.0f, 0.0f};
   bool regionSelecting_{false};
   bool regionSelectionMoved_{false};
   ImVec2 regionStart_{0.0f, 0.0f};
@@ -626,6 +662,7 @@ class Gui {
 
   LoadStatus loadStatus_;
   UploadStatus upload_;
+  std::string imguiLayoutStatus_;
   LoadControl* budget_{nullptr};
   LoadOptions* loadOptions_{nullptr};
 };

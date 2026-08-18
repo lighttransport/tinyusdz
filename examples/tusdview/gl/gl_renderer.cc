@@ -2241,7 +2241,9 @@ void GLRenderer::appendCurves(const DrawCurvesCPU& src) {
   bool translucent=mat&&mat->alpha<0.999f;
   auto wp=[&](size_t i,float p[3]){float x=src.points[i*3],y=src.points[i*3+1],z=src.points[i*3+2];p[0]=src.world[0]*x+src.world[4]*y+src.world[8]*z+src.world[12];p[1]=src.world[1]*x+src.world[5]*y+src.world[9]*z+src.world[13];p[2]=src.world[2]*x+src.world[6]*y+src.world[10]*z+src.world[14];};
   size_t base=0;
-  for(uint32_t count:src.vertexCounts){
+  const std::vector<uint32_t> counts = src.vertexCounts.empty()
+      ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : src.vertexCounts;
+  for(uint32_t count:counts){
     size_t end=std::min(np,base+static_cast<size_t>(count));
     for(size_t i=base;i+1<end;++i){
       float p0[3],p1[3];wp(i,p0);wp(i+1,p1);
@@ -2250,6 +2252,7 @@ void GLRenderer::appendCurves(const DrawCurvesCPU& src) {
       const float dz = p1[2] - p0[2];
       if (dx * dx + dy * dy + dz * dz <= 1.0e-16f) continue;
       float width=(src.widths.empty()?1.0f:(src.widths.size()==1?src.widths[0]:0.5f*(src.widths[std::min(i,src.widths.size()-1)]+src.widths[std::min(i+1,src.widths.size()-1)])))*worldScale;
+      if (!std::isfinite(width) || width < 0.0f) continue;
       float c[4]={mat?mat->baseColor[0]:0.8f,mat?mat->baseColor[1]:0.8f,mat?mat->baseColor[2]:0.8f,mat?mat->alpha:1.0f};
       if(src.colors.size()>=np*3){c[0]*=.5f*(src.colors[i*3]+src.colors[(i+1)*3]);c[1]*=.5f*(src.colors[i*3+1]+src.colors[(i+1)*3+1]);c[2]*=.5f*(src.colors[i*3+2]+src.colors[(i+1)*3+2]);}
       if (!src.opacities.empty()) {

@@ -288,6 +288,7 @@ if(TINYUSDZ_BUILD_TESTS)
       lightrt_mtlx_bridge.cc
       rt_scene_build.cc
       rt_bvh.cc
+      ptex_atlas.cc
       displacement_bake.cc
       skinning.cc
       ${COMMON_DIR}/light3d/math.cpp
@@ -633,7 +634,7 @@ endif()
 # off. See doc/threading-stage2.md. (Macro name kept GL_THREAD for compat.)
 # ---------------------------------------------------------------------------
 option(TUSDVIEW_ENABLE_GL_THREAD
-       "Build the experimental threaded GL/Vulkan render path (--threaded)" OFF)
+       "Build the dedicated GL/Vulkan render thread (--threaded)" ON)
 if(TUSDVIEW_ENABLE_GL_THREAD)
   target_compile_definitions(${EXAMPLE_TARGET} PRIVATE TUSDVIEW_ENABLE_GL_THREAD=1)
   if(UNIX)

@@ -532,6 +532,17 @@ void Gui::drawDockspaceAndMenu() {
         ImGui::EndMenu();
       }
       if (ImGui::MenuItem("Reload", "Ctrl+R", false, loaded_ != nullptr)) wantReload_ = true;
+      if (ImGui::MenuItem("Save ImGui Layout", "Ctrl+Shift+S")) {
+        std::string err;
+        if (saveImGuiLayout(&err)) {
+          imguiLayoutStatus_ = "Layout saved";
+        } else {
+          imguiLayoutStatus_ = "Layout save failed: " + err;
+        }
+      }
+      if (!imguiLayoutStatus_.empty()) {
+        ImGui::TextDisabled("%s", imguiLayoutStatus_.c_str());
+      }
       {
         const bool haveDeferred =
             !deferredPayloadPaths_.empty() ||
@@ -554,6 +565,7 @@ void Gui::drawDockspaceAndMenu() {
         struct AovItem { const char* label; RenderMode m; };
         static const AovItem kAovs[] = {
             {"Material ID", RenderMode::MaterialId},
+            {"Picking buffer", RenderMode::MeshId},
             {"Normals (shading)", RenderMode::Normals},
             {"Normals (coat)", RenderMode::CoatNormal},
             {"Coat weight", RenderMode::CoatWeight},
@@ -643,6 +655,24 @@ void Gui::drawDockspaceAndMenu() {
         if (!skinning_.reason.empty()) ImGui::TextDisabled("%s", skinning_.reason.c_str());
         ImGui::EndMenu();
       }
+      if (ImGui::BeginMenu("Curve quality")) {
+        ImGui::TextDisabled("Maximum ribbon segments per strand");
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::SliderInt("##curve_segments", &curveMaxSegments_, 2, 128))
+          rebuildSubsetHighlight();
+        if (ImGui::MenuItem("Full tessellation (slow)", nullptr,
+                            curveMaxSegments_ == 0))
+          curveMaxSegments_ = 0;
+        if (ImGui::MenuItem("Preview (8)", nullptr, curveMaxSegments_ == 8))
+          curveMaxSegments_ = 8;
+        if (ImGui::MenuItem("Low (16)", nullptr, curveMaxSegments_ == 16))
+          curveMaxSegments_ = 16;
+        if (ImGui::MenuItem("Medium (32)", nullptr, curveMaxSegments_ == 32))
+          curveMaxSegments_ = 32;
+        if (ImGui::MenuItem("High (64)", nullptr, curveMaxSegments_ == 64))
+          curveMaxSegments_ = 64;
+        ImGui::EndMenu();
+      }
       ImGui::Separator();
       if (ImGui::BeginMenu("Navigation help")) {
         if (ImGui::MenuItem("Full", "F1",
@@ -716,16 +746,15 @@ void Gui::drawDockspaceAndMenu() {
       if (ImGui::MenuItem("Frame all", "A", false, haveBounds)) frameAll();
       ImGui::Separator();
       // Hide family (Maya): also available via H / Ctrl+H / Shift+H / Alt+H.
-      const bool haveSel = selMeshIndex_ >= 0 &&
-                           static_cast<size_t>(selMeshIndex_) < meshVisible_.size();
+      const bool haveSel = selectionHasRenderable();
       if (ImGui::MenuItem("Hide selection", "Ctrl+H", false, haveSel)) {
-        meshVisible_[static_cast<size_t>(selMeshIndex_)] = 0;
+        setSelectionVisibility(false);
       }
-      if (ImGui::MenuItem("Isolate selection", "Alt+H", false, haveSel)) {
-        for (size_t i = 0; i < meshVisible_.size(); ++i)
-          meshVisible_[i] = (static_cast<int>(i) == selMeshIndex_) ? 1 : 0;
+      if (ImGui::MenuItem("Show selected only", "Alt+H", false, haveSel)) {
+        isolateSelection();
       }
-      if (ImGui::MenuItem("Unhide all", nullptr, false, !meshVisible_.empty())) {
+      if (ImGui::MenuItem("Show all", nullptr, false,
+                          !meshVisible_.empty() || !carrierVisible_.empty())) {
         unhideAll();
       }
       if (ImGui::MenuItem("Show RenderScene nodes", nullptr, &showRenderNodes_)) {
@@ -808,6 +837,184 @@ void Gui::drawDockspaceAndMenu() {
 void Gui::selectByPath(const std::string& absPath, int meshIndex) {
   applySelection(absPath, meshIndex, /*recordHistory=*/true);
   setSelectionListSingle(selPath_, selMeshIndex_);
+}
+
+bool Gui::saveImGuiLayout(std::string* err) {
+  const char* ini = ImGui::GetIO().IniFilename;
+  if (!ini || !*ini) {
+    if (err) *err = "ImGui layout persistence is disabled";
+    return false;
+  }
+  const std::filesystem::path path(ini);
+  std::error_code ec;
+  const std::filesystem::path parent = path.parent_path();
+  if (!parent.empty()) std::filesystem::create_directories(parent, ec);
+  if (ec) {
+    if (err) *err = "could not create " + parent.string() + ": " + ec.message();
+    return false;
+  }
+  ImGui::SaveIniSettingsToDisk(ini);
+  if (!std::filesystem::is_regular_file(path, ec) || ec) {
+    if (err) *err = "ImGui did not write " + path.string();
+    return false;
+  }
+  return true;
+}
+
+Gui::PickReport Gui::pickViewportPixel(float x, float y, bool select) {
+  PickReport report;
+  report.x = x;
+  report.y = y;
+  report.viewportWidth = viewportW_;
+  report.viewportHeight = viewportH_;
+  if (!draw_ || !cam_ || !renderer_ || viewportW_ <= 0 || viewportH_ <= 0 ||
+      !std::isfinite(x) || !std::isfinite(y) ||
+      x < 0.0f || y < 0.0f || x >= static_cast<float>(viewportW_) ||
+      y >= static_cast<float>(viewportH_)) {
+    return report;
+  }
+  report.path = pickCarrierPath(x, y, viewportW_, viewportH_);
+  if (report.path.empty()) return report;
+  for (size_t i = 0; i < draw_->curves.size(); ++i) {
+    if (draw_->curves[i].absPath == report.path) {
+      report.kind = "curve";
+      break;
+    }
+  }
+  if (report.kind.empty()) {
+    for (size_t i = 0; i < draw_->points.size(); ++i) {
+      if (draw_->points[i].absPath == report.path) {
+        report.kind = "points";
+        break;
+      }
+    }
+  }
+  if (report.kind.empty()) {
+    for (size_t i = 0; i < draw_->meshes.size(); ++i) {
+      if (draw_->meshes[i].absPath == report.path) {
+        report.kind = "mesh";
+        report.meshIndex = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  if (report.kind.empty()) report.kind = "prim";
+  if (select) selectByPath(report.path, report.meshIndex);
+  return report;
+}
+
+Gui::PickReport Gui::pickViewportRegion(float x0, float y0, float x1, float y1,
+                                        bool select) {
+  PickReport report;
+  report.viewportWidth = viewportW_;
+  report.viewportHeight = viewportH_;
+  if (!draw_ || !cam_ || !renderer_ || viewportW_ <= 0 || viewportH_ <= 0)
+    return report;
+  const int rx0 = std::max(0, std::min(viewportW_ - 1,
+      static_cast<int>(std::floor(std::min(x0, x1)))));
+  const int ry0 = std::max(0, std::min(viewportH_ - 1,
+      static_cast<int>(std::floor(std::min(y0, y1)))));
+  const int rx1 = std::max(rx0 + 1, std::min(viewportW_,
+      static_cast<int>(std::ceil(std::max(x0, x1)))));
+  const int ry1 = std::max(ry0 + 1, std::min(viewportH_,
+      static_cast<int>(std::ceil(std::max(y0, y1)))));
+  report.x = 0.5f * static_cast<float>(rx0 + rx1);
+  report.y = 0.5f * static_cast<float>(ry0 + ry1);
+  const int rw = rx1 - rx0, rh = ry1 - ry0;
+  const size_t pixels = static_cast<size_t>(rw) * static_cast<size_t>(rh);
+  constexpr size_t kMaxRegionPixels = size_t{16} * 1024 * 1024;
+  if (pixels > kMaxRegionPixels) return report;
+
+  std::vector<uint32_t> ids(pixels, 0);
+  std::vector<float> depths(pixels, 1.0e30f);
+  const bool z01 = renderer_->caps().usesZeroToOneDepth;
+  const light3d::Mat4 VP = cam_->proj(z01) * cam_->view();
+  const light3d::Vec3 eye = cam_->eye();
+  const light3d::Mat4 view = cam_->view();
+  const light3d::Vec3 cameraRight{view.m[0], view.m[4], view.m[8]};
+  auto project = [&](const light3d::Vec3& p, float& sx, float& sy,
+                     float& depth) {
+    const float* m = VP.m;
+    const float cx=m[0]*p.x+m[4]*p.y+m[8]*p.z+m[12];
+    const float cy=m[1]*p.x+m[5]*p.y+m[9]*p.z+m[13];
+    const float cz=m[2]*p.x+m[6]*p.y+m[10]*p.z+m[14];
+    const float cw=m[3]*p.x+m[7]*p.y+m[11]*p.z+m[15];
+    if (!std::isfinite(cw) || cw <= 1.0e-7f) return false;
+    const float iw=1.0f/cw;
+    sx=(cx*iw*0.5f+0.5f)*viewportW_;
+    sy=(1.0f-(cy*iw*0.5f+0.5f))*viewportH_;
+    depth=cz*iw;
+    return std::isfinite(sx) && std::isfinite(sy) && std::isfinite(depth);
+  };
+  for (size_t ci=0; ci<draw_->curves.size(); ++ci) {
+    const DrawCurvesCPU& c=draw_->curves[ci];
+    if (!carrierVisibleForView(draw_->points.size()+ci) || c.points.size()<6)
+      continue;
+    const size_t np=c.points.size()/3;
+    const std::vector<uint32_t> counts=c.vertexCounts.empty()
+        ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : c.vertexCounts;
+    const float sx=std::sqrt(c.world[0]*c.world[0]+c.world[1]*c.world[1]+c.world[2]*c.world[2]);
+    const float sy=std::sqrt(c.world[4]*c.world[4]+c.world[5]*c.world[5]+c.world[6]*c.world[6]);
+    const float sz=std::sqrt(c.world[8]*c.world[8]+c.world[9]*c.world[9]+c.world[10]*c.world[10]);
+    const float scale=std::max(sx,std::max(sy,sz));
+    auto point=[&](size_t i) {
+      const float x=c.points[i*3], y=c.points[i*3+1], z=c.points[i*3+2];
+      return light3d::Vec3{c.world[0]*x+c.world[4]*y+c.world[8]*z+c.world[12],
+        c.world[1]*x+c.world[5]*y+c.world[9]*z+c.world[13],
+        c.world[2]*x+c.world[6]*y+c.world[10]*z+c.world[14]};
+    };
+    size_t base=0;
+    for (uint32_t count:counts) {
+      const size_t end=base>=np?np:base+std::min(np-base,static_cast<size_t>(count));
+      const size_t strandPoints=end-base;
+      const size_t pickSegments=curveMaxSegments_>0&&strandPoints>1
+          ?std::min(strandPoints-1,static_cast<size_t>(curveMaxSegments_))
+          :(strandPoints>1?strandPoints-1:0);
+      for (size_t sj=0;sj<pickSegments;++sj) {
+        const size_t i=base+(sj*(strandPoints-1)+pickSegments/2)/pickSegments;
+        const size_t ni=base+((sj+1)*(strandPoints-1)+pickSegments/2)/pickSegments;
+        const light3d::Vec3 a=point(i), b=point(ni), mid=(a+b)*0.5f;
+        float ax,ay,az,bx,by,bz;
+        if (!project(a,ax,ay,az)||!project(b,bx,by,bz)) continue;
+        const float w0=c.widths.empty()?1.0f:(c.widths.size()==1?c.widths[0]:c.widths[std::min(i,c.widths.size()-1)]);
+        const float w1=c.widths.empty()?1.0f:(c.widths.size()==1?c.widths[0]:c.widths[std::min(ni,c.widths.size()-1)]);
+        const float width=0.5f*(w0+w1)*scale;
+        light3d::Vec3 side=light3d::cross(b-a,eye-mid);
+        side=light3d::dot(side,side)>1.0e-10f?light3d::normalize(side):cameraRight;
+        float ex,ey,ez; float radius=2.0f;
+        if (project(mid+side*(0.5f*width),ex,ey,ez))
+          radius=std::max(2.0f,std::min(64.0f,std::hypot(ex-(ax+bx)*0.5f,ey-(ay+by)*0.5f)));
+        const int ix0=std::max(rx0,static_cast<int>(std::floor(std::min(ax,bx)-radius)));
+        const int ix1=std::min(rx1-1,static_cast<int>(std::ceil(std::max(ax,bx)+radius)));
+        const int iy0=std::max(ry0,static_cast<int>(std::floor(std::min(ay,by)-radius)));
+        const int iy1=std::min(ry1-1,static_cast<int>(std::ceil(std::max(ay,by)+radius)));
+        const float dx=bx-ax,dy=by-ay,len2=dx*dx+dy*dy;
+        for(int y=iy0;y<=iy1;++y) for(int x=ix0;x<=ix1;++x) {
+          const float qx=x+0.5f,qy=y+0.5f;
+          const float u=len2>1.0e-8f?std::max(0.0f,std::min(1.0f,((qx-ax)*dx+(qy-ay)*dy)/len2)):0.0f;
+          const float ddx=ax+u*dx-qx,ddy=ay+u*dy-qy;
+          if(ddx*ddx+ddy*ddy>radius*radius) continue;
+          const float depth=az*(1.0f-u)+bz*u;
+          const size_t pi=static_cast<size_t>(y-ry0)*rw+static_cast<size_t>(x-rx0);
+          if(depth<depths[pi]) { depths[pi]=depth; ids[pi]=static_cast<uint32_t>(ci+1); }
+        }
+      }
+      base=end;
+    }
+  }
+  std::vector<int> coverage(draw_->curves.size(),0);
+  for(uint32_t id:ids) if(id>0&&id<=coverage.size()) ++coverage[id-1];
+  const auto best=std::max_element(coverage.begin(),coverage.end());
+  if(best!=coverage.end()&&*best>0) {
+    const size_t ci=static_cast<size_t>(best-coverage.begin());
+    report.path=draw_->curves[ci].absPath;
+    report.kind="curve";
+    report.coveredPixels=*best;
+    if(select) selectByPath(report.path,-1);
+    return report;
+  }
+  // No curve pixels: use the center pixel's exact mesh triangle picker.
+  return pickViewportPixel(report.x,report.y,select);
 }
 
 void Gui::pushSelectionHistory(const std::string& absPath) {
@@ -950,8 +1157,36 @@ void Gui::rebuildSubsetHighlight() {
       return;
     }
     for (const DrawCurvesCPU& c : draw_->curves) if (c.absPath == selPath_) {
-      for (size_t i = 0; i + 1 < c.points.size()/3; ++i) {
-        float a[3], b[3]; wp(c, i, a); wp(c, i + 1, b); addLine(a, b);
+      const size_t pointCount = c.points.size() / 3;
+      const std::vector<uint32_t> counts = c.vertexCounts.empty()
+          ? std::vector<uint32_t>{static_cast<uint32_t>(pointCount)}
+          : c.vertexCounts;
+      size_t base = 0;
+      for (uint32_t count : counts) {
+        const size_t remaining = pointCount - std::min(base, pointCount);
+        const size_t end = base >= pointCount
+                               ? pointCount
+                               : base + std::min(remaining,
+                                                 static_cast<size_t>(count));
+        // Each curve is an independent strand. Never add an edge from the end
+        // of one strand to the start of the next: on XGen leaf bundles such as
+        // xgLeavesI those bogus edges span the whole plant as giant loops.
+        const size_t strandPoints = end - base;
+        const size_t segments = curveMaxSegments_ > 0 && strandPoints > 1
+            ? std::min(strandPoints - 1,
+                       static_cast<size_t>(curveMaxSegments_))
+            : (strandPoints > 1 ? strandPoints - 1 : 0);
+        for (size_t j = 0; j < segments; ++j) {
+          const size_t i = base +
+              (j * (strandPoints - 1) + segments / 2) / segments;
+          const size_t next = base +
+              ((j + 1) * (strandPoints - 1) + segments / 2) / segments;
+          float a[3], b[3];
+          wp(c, i, a);
+          wp(c, next, b);
+          addLine(a, b);
+        }
+        base = end;
       }
       return;
     }
@@ -2876,8 +3111,15 @@ static bool ReadAmdgpuVramMB(size_t* usedMB, size_t* totalMB) {
 
 void Gui::drawStats() {
   ImGui::Begin("Stats");
-  ImGui::Text("FPS: %.1f (%.2f ms)", ImGui::GetIO().Framerate,
-              1000.0f / ImGui::GetIO().Framerate);
+  const float uiFps = ImGui::GetIO().Framerate;
+  if (threadedFrameRate_) {
+    ImGui::Text("Render FPS: %.1f%s", renderFps_,
+                renderFps_ <= 0.0f ? " (warming up)" : "");
+    ImGui::Text("UI FPS: %.1f (60 Hz cap)", uiFps);
+  } else {
+    ImGui::Text("FPS: %.1f (%.2f ms)", uiFps,
+                uiFps > 0.0f ? 1000.0f / uiFps : 0.0f);
+  }
   ImGui::Text("Backend: %s", renderer_ ? renderer_->caps().backend_name : "?");
   // CPU RSS + GPU VRAM, refreshed a few times a second (the queries touch /proc
   // and the driver, so they are throttled rather than run every frame).
@@ -3029,6 +3271,16 @@ void Gui::handleNavigation() {
   ImGuiIO& io = ImGui::GetIO();
   const bool alt = io.KeyAlt;
 
+  if (!io.WantTextInput && io.KeyCtrl && io.KeyShift &&
+      ImGui::IsKeyPressed(ImGuiKey_S)) {
+    std::string err;
+    if (saveImGuiLayout(&err)) {
+      imguiLayoutStatus_ = "Layout saved";
+    } else {
+      imguiLayoutStatus_ = "Layout save failed: " + err;
+    }
+  }
+
   if (ImGui::IsKeyPressed(ImGuiKey_F1)) cycleNavigationHelpMode();
   if (!io.WantTextInput && timeline_.hasAnimation &&
       ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
@@ -3124,22 +3376,12 @@ void Gui::handleNavigation() {
       const bool haveCarrier = carrier != static_cast<size_t>(-1) &&
                                carrier < carrierVisible_.size();
       if (io.KeyAlt) {
-        // Alt+H: isolate the selection (hide everything else).
-        if (haveSel) {
-          for (size_t i = 0; i < meshVisible_.size(); ++i)
-            meshVisible_[i] = (static_cast<int>(i) == sel) ? 1 : 0;
-          for (auto& v : carrierVisible_) v = 0;
-        } else if (haveCarrier) {
-          for (auto& v : meshVisible_) v = 0;
-          for (size_t i = 0; i < carrierVisible_.size(); ++i)
-            carrierVisible_[i] = i == carrier ? 1 : 0;
-        }
+        // Alt+H: isolate the selected prim, including renderable descendants.
+        isolateSelection();
       } else if (io.KeyCtrl) {
-        if (haveSel) meshVisible_[static_cast<size_t>(sel)] = 0;  // hide selection
-        else if (haveCarrier) carrierVisible_[carrier] = 0;
+        setSelectionVisibility(false);
       } else if (io.KeyShift) {
-        if (haveSel) meshVisible_[static_cast<size_t>(sel)] = 1;  // show selection
-        else if (haveCarrier) carrierVisible_[carrier] = 1;
+        setSelectionVisibility(true);
       } else if (haveSel) {
         // Plain H: toggle the selection's visibility.
         meshVisible_[static_cast<size_t>(sel)] =
@@ -3197,6 +3439,62 @@ void Gui::frameAll() {
 void Gui::unhideAll() {
   for (auto& v : meshVisible_) v = 1;
   for (auto& v : carrierVisible_) v = 1;
+}
+
+bool Gui::isolateSelected() {
+  if (!selectionHasRenderable()) return false;
+  isolateSelection();
+  return true;
+}
+
+void Gui::showAllRenderables() { unhideAll(); }
+
+bool Gui::selectionHasRenderable() const {
+  if (!draw_ || selPath_.empty()) return false;
+  for (const DrawMeshCPU& mesh : draw_->meshes)
+    if (PathIsSameOrDescendant(mesh.absPath, selPath_)) return true;
+  for (const DrawPointsCPU& points : draw_->points)
+    if (PathIsSameOrDescendant(points.absPath, selPath_)) return true;
+  for (const DrawCurvesCPU& curves : draw_->curves)
+    if (PathIsSameOrDescendant(curves.absPath, selPath_)) return true;
+  return false;
+}
+
+void Gui::setSelectionVisibility(bool visible) {
+  if (!draw_ || selPath_.empty()) return;
+  const uint8_t value = visible ? uint8_t{1} : uint8_t{0};
+  for (size_t i = 0; i < draw_->meshes.size() && i < meshVisible_.size(); ++i)
+    if (PathIsSameOrDescendant(draw_->meshes[i].absPath, selPath_))
+      meshVisible_[i] = value;
+  size_t carrier = 0;
+  for (const DrawPointsCPU& points : draw_->points) {
+    if (carrier < carrierVisible_.size() &&
+        PathIsSameOrDescendant(points.absPath, selPath_))
+      carrierVisible_[carrier] = value;
+    ++carrier;
+  }
+  for (const DrawCurvesCPU& curves : draw_->curves) {
+    if (carrier < carrierVisible_.size() &&
+        PathIsSameOrDescendant(curves.absPath, selPath_))
+      carrierVisible_[carrier] = value;
+    ++carrier;
+  }
+}
+
+void Gui::isolateSelection() {
+  if (!selectionHasRenderable()) return;
+  for (size_t i = 0; i < meshVisible_.size(); ++i)
+    meshVisible_[i] = PathIsSameOrDescendant(draw_->meshes[i].absPath, selPath_)
+                          ? uint8_t{1} : uint8_t{0};
+  size_t carrier = 0;
+  for (const DrawPointsCPU& points : draw_->points) {
+    carrierVisible_[carrier++] =
+        PathIsSameOrDescendant(points.absPath, selPath_) ? uint8_t{1} : uint8_t{0};
+  }
+  for (const DrawCurvesCPU& curves : draw_->curves) {
+    carrierVisible_[carrier++] =
+        PathIsSameOrDescendant(curves.absPath, selPath_) ? uint8_t{1} : uint8_t{0};
+  }
 }
 
 bool Gui::meshPurposeVisible(const std::string& purpose) const {
@@ -4007,7 +4305,38 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
         float instanceT = 0.0f;
         if (hitAabb(imn, imx, bestT, &instanceT)) {
           boundsHit = true;
-          if (instanceT < bestBoundsT) {
+          bool exactInstanceHit = false;
+          if (!gpuDeformed && !m.vertices.empty() && m.indices.size() >= 3) {
+            auto instancePoint = [&](const DrawVertex& v) {
+              return light3d::Vec3{
+                  x[0] * v.px + x[1] * v.py + x[2] * v.pz + x[3],
+                  x[4] * v.px + x[5] * v.py + x[6] * v.pz + x[7],
+                  x[8] * v.px + x[9] * v.py + x[10] * v.pz + x[11]};
+            };
+            for (size_t ti = 0; ti + 2 < m.indices.size(); ti += 3) {
+              const uint32_t ia = m.indices[ti + 0];
+              const uint32_t ib = m.indices[ti + 1];
+              const uint32_t ic = m.indices[ti + 2];
+              if (ia >= m.vertices.size() || ib >= m.vertices.size() ||
+                  ic >= m.vertices.size()) continue;
+              float triangleT = 0.0f;
+              if (rayTri(instancePoint(m.vertices[ia]),
+                         instancePoint(m.vertices[ib]),
+                         instancePoint(m.vertices[ic]), triangleT) &&
+                  triangleT < bestT) {
+                bestT = triangleT;
+                best = static_cast<int>(mi);
+                exactInstanceHit = true;
+              }
+            }
+          }
+          // Retain bounds-only picking for released/deformed prototype data,
+          // but never let an exact miss on retained triangles turn the whole
+          // instance box into a selectable solid.
+          if ((!m.vertices.empty() && !gpuDeformed) && !exactInstanceHit) {
+            continue;
+          }
+          if (!exactInstanceHit && instanceT < bestBoundsT) {
             bestBoundsT = instanceT;
             bestBounds = static_cast<int>(mi);
           }
@@ -4049,7 +4378,11 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
     }
   }
   const int result = best >= 0 ? best : bestBounds;
-  if (hitDistance) *hitDistance = best >= 0 ? bestT : bestBoundsT;
+  // A negative distance explicitly denotes a bounds-only fallback.  It is
+  // useful to callers that have a real selection buffer for curves: a broad
+  // cached mesh bound must not occlude a curve merely because the camera is
+  // currently inside that bound (which makes its entry distance zero).
+  if (hitDistance) *hitDistance = best >= 0 ? bestT : -bestBoundsT;
   return result;
 }
 
@@ -4121,9 +4454,146 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
     ndcZ = z * iw;
     return std::isfinite(sx) && std::isfinite(sy) && std::isfinite(ndcZ);
   };
+  // Full viewport-sized curve selection buffer.  This is intentionally keyed
+  // by raster pixel, rather than by a ray/AABB approximation: the carrier ID
+  // and linear ray depth are written for every covered pixel in the same
+  // viewport extent that the user sees.  Mesh bounds are not consulted here;
+  // the raster mesh picker is only used when this buffer has no curve ID.
+  const size_t pixelCount = static_cast<size_t>(vpW) *
+                            static_cast<size_t>(vpH);
+  // Keep the temporary ID/depth attachment bounded.  A normal 4K viewport is
+  // well below this limit; for an unusually large remote/headless viewport,
+  // fall through to the bounded local curve picker below instead of trying to
+  // reserve hundreds of megabytes (or failing inside vector allocation).
+  constexpr size_t kMaxSelectionPixels = size_t{16} * 1024 * 1024;
+  if (vpW > 0 && vpH > 0 && pixelCount <= kMaxSelectionPixels) {
+    std::vector<uint32_t> curveIds(pixelCount, 0);
+    std::vector<float> curveDepth(pixelCount, 1.0e30f);
+    const light3d::Mat4 view = cam_->view();
+    // Rows of the column-major view matrix are the camera basis vectors.
+    const light3d::Vec3 cameraRight{view.m[0], view.m[4], view.m[8]};
+    for (size_t ci = 0; ci < draw_->curves.size(); ++ci) {
+      const DrawCurvesCPU& c = draw_->curves[ci];
+      if (!carrierVisibleForView(draw_->points.size() + ci) ||
+          c.points.size() < 6) continue;
+      const size_t np = c.points.size() / 3;
+      const std::vector<uint32_t> counts = c.vertexCounts.empty()
+          ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : c.vertexCounts;
+      const float sx = std::sqrt(c.world[0] * c.world[0] + c.world[1] * c.world[1] + c.world[2] * c.world[2]);
+      const float sy = std::sqrt(c.world[4] * c.world[4] + c.world[5] * c.world[5] + c.world[6] * c.world[6]);
+      const float sz = std::sqrt(c.world[8] * c.world[8] + c.world[9] * c.world[9] + c.world[10] * c.world[10]);
+      const float worldScale = std::max(sx, std::max(sy, sz));
+      auto point = [&](size_t i) {
+        const float x = c.points[i * 3], y = c.points[i * 3 + 1],
+                    z = c.points[i * 3 + 2];
+        return light3d::Vec3{
+            c.world[0] * x + c.world[4] * y + c.world[8] * z + c.world[12],
+            c.world[1] * x + c.world[5] * y + c.world[9] * z + c.world[13],
+            c.world[2] * x + c.world[6] * y + c.world[10] * z + c.world[14]};
+      };
+      size_t base = 0;
+      for (uint32_t count : counts) {
+        const size_t remaining = np - std::min(base, np);
+        const size_t end = base >= np ? np :
+            base + std::min(remaining, static_cast<size_t>(count));
+        const size_t strandPoints = end - base;
+        const size_t pickSegments = curveMaxSegments_ > 0 && strandPoints > 1
+            ? std::min(strandPoints - 1,
+                       static_cast<size_t>(curveMaxSegments_))
+            : (strandPoints > 1 ? strandPoints - 1 : 0);
+        for (size_t sj = 0; sj < pickSegments; ++sj) {
+          const size_t i = base +
+              (sj * (strandPoints - 1) + pickSegments / 2) / pickSegments;
+          const size_t ni = base +
+              ((sj + 1) * (strandPoints - 1) + pickSegments / 2) / pickSegments;
+          const light3d::Vec3 a = point(i), b = point(ni);
+          float ax, ay, az, bx, by, bz;
+          if (!project(a, ax, ay, az) || !project(b, bx, by, bz)) continue;
+          const float w0 = c.widths.empty() ? 1.0f :
+              (c.widths.size() == 1 ? c.widths[0] : c.widths[std::min(i, c.widths.size() - 1)]);
+          const float w1 = c.widths.empty() ? 1.0f :
+              (c.widths.size() == 1 ? c.widths[0] : c.widths[std::min(ni, c.widths.size() - 1)]);
+          const float width = 0.5f * (w0 + w1) * worldScale;
+          if (!std::isfinite(width) || width < 0.0f) continue;
+          const light3d::Vec3 mid = (a + b) * 0.5f;
+          light3d::Vec3 side = light3d::cross(b - a, ro - mid);
+          if (light3d::dot(side, side) > 1.0e-10f)
+            side = light3d::normalize(side);
+          else
+            side = cameraRight;
+          const light3d::Vec3 edge = mid + side * (0.5f * width);
+          float ex, ey, ez;
+          float radius = 2.0f;
+          if (project(edge, ex, ey, ez)) {
+            radius = std::max(2.0f, std::min(64.0f,
+                std::sqrt((ex - (ax + bx) * 0.5f) * (ex - (ax + bx) * 0.5f) +
+                          (ey - (ay + by) * 0.5f) * (ey - (ay + by) * 0.5f))));
+          }
+          const int x0 = std::max(0, static_cast<int>(std::floor(std::min(ax, bx) - radius)));
+          const int x1 = std::min(vpW - 1, static_cast<int>(std::ceil(std::max(ax, bx) + radius)));
+          const int y0 = std::max(0, static_cast<int>(std::floor(std::min(ay, by) - radius)));
+          const int y1 = std::min(vpH - 1, static_cast<int>(std::ceil(std::max(ay, by) + radius)));
+          const float dx = bx - ax, dy = by - ay;
+          const float len2 = dx * dx + dy * dy;
+          for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+              const float qx = static_cast<float>(x) + 0.5f;
+              const float qy = static_cast<float>(y) + 0.5f;
+              float u = 0.0f;
+              if (len2 > 1.0e-8f)
+                u = std::max(0.0f, std::min(1.0f,
+                    ((qx - ax) * dx + (qy - ay) * dy) / len2));
+              const float rx = ax + u * dx - qx, ry = ay + u * dy - qy;
+              if (rx * rx + ry * ry > radius * radius) continue;
+              // Depth belongs to this raster pixel, not to the ray through the
+              // original click.  Using that one ray for the entire viewport
+              // made overlapping curve prims exchange ownership as the click
+              // moved, even though their ID coverage was otherwise correct.
+              const float depth = az * (1.0f - u) + bz * u;
+              if (!std::isfinite(depth)) continue;
+              const size_t pi = static_cast<size_t>(y) * static_cast<size_t>(vpW) +
+                                static_cast<size_t>(x);
+              if (depth < curveDepth[pi]) {
+                curveDepth[pi] = depth;
+                curveIds[pi] = static_cast<uint32_t>(ci + 1);
+              }
+            }
+          }
+        }
+        base = end;
+      }
+    }
+    const int centerX = std::max(0, std::min(vpW - 1, static_cast<int>(std::floor(px))));
+    const int centerY = std::max(0, std::min(vpH - 1, static_cast<int>(std::floor(py))));
+    uint32_t selectedId = 0;
+    float selectedDepth = 1.0e30f;
+    for (int radius = 0; radius <= 2 && selectedId == 0; ++radius) {
+      for (int y = std::max(0, centerY - radius);
+           y <= std::min(vpH - 1, centerY + radius); ++y) {
+        for (int x = std::max(0, centerX - radius);
+             x <= std::min(vpW - 1, centerX + radius); ++x) {
+          const size_t pi = static_cast<size_t>(y) * static_cast<size_t>(vpW) +
+                            static_cast<size_t>(x);
+          if (curveIds[pi] != 0 && curveDepth[pi] < selectedDepth) {
+            selectedId = curveIds[pi];
+            selectedDepth = curveDepth[pi];
+          }
+        }
+      }
+    }
+    if (selectedId > 0 && selectedId <= draw_->curves.size()) {
+      bool curveVisible = meshT < 0.0f;
+      if (meshT >= 0.0f) {
+        const light3d::Vec3 meshPoint = ro + rd * meshT;
+        float meshX = 0.0f, meshY = 0.0f, meshDepth = 0.0f;
+        curveVisible = !project(meshPoint, meshX, meshY, meshDepth) ||
+                       selectedDepth <= meshDepth + 1.0e-5f;
+      }
+      if (curveVisible)
+        return draw_->curves[static_cast<size_t>(selectedId - 1)].absPath;
+    }
+  }
   auto curveHit = [&](const DrawCurvesCPU& c, float& outT) -> bool {
-    float broadT = 0.0f;
-    if (!hit(c.aabbMin, c.aabbMax, &broadT)) return false;
     const size_t np = c.points.size() / 3;
     if (np < 2) return false;
     const std::vector<uint32_t> counts = c.vertexCounts.empty()
@@ -4147,7 +4617,7 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
     float depthBuffer[kPickWidth * kPickWidth];
     std::fill(std::begin(depthBuffer), std::end(depthBuffer), 1.0e30f);
     const light3d::Mat4 view = cam_->view();
-    const light3d::Vec3 cameraRight{view.m[0], view.m[1], view.m[2]};
+    const light3d::Vec3 cameraRight{view.m[0], view.m[4], view.m[8]};
     const float sx = std::sqrt(c.world[0] * c.world[0] + c.world[1] * c.world[1] + c.world[2] * c.world[2]);
     const float sy = std::sqrt(c.world[4] * c.world[4] + c.world[5] * c.world[5] + c.world[6] * c.world[6]);
     const float sz = std::sqrt(c.world[8] * c.world[8] + c.world[9] * c.world[9] + c.world[10] * c.world[10]);
@@ -4155,9 +4625,20 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
     float best = 1.0e30f;
     size_t base = 0;
     for (uint32_t count : counts) {
-      const size_t end = std::min(np, base + static_cast<size_t>(count));
-      for (size_t i = base; i + 1 < end; ++i) {
-        const light3d::Vec3 a = point(i), b = point(i + 1);
+      const size_t remaining = np - std::min(base, np);
+      const size_t end = base >= np ? np :
+          base + std::min(remaining, static_cast<size_t>(count));
+      const size_t strandPoints = end - base;
+      const size_t pickSegments = curveMaxSegments_ > 0 && strandPoints > 1
+          ? std::min(strandPoints - 1,
+                     static_cast<size_t>(curveMaxSegments_))
+          : (strandPoints > 1 ? strandPoints - 1 : 0);
+      for (size_t sj = 0; sj < pickSegments; ++sj) {
+        const size_t i = base +
+            (sj * (strandPoints - 1) + pickSegments / 2) / pickSegments;
+        const size_t ni = base +
+            ((sj + 1) * (strandPoints - 1) + pickSegments / 2) / pickSegments;
+        const light3d::Vec3 a = point(i), b = point(ni);
         float ax, ay, az, bx, by, bz;
         if (!project(a, ax, ay, az) || !project(b, bx, by, bz)) continue;
         const float dx = bx - ax, dy = by - ay;
@@ -4165,11 +4646,16 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
         const float w0 = c.widths.empty() ? 1.0f :
             (c.widths.size() == 1 ? c.widths[0] : c.widths[std::min(i, c.widths.size() - 1)]);
         const float w1 = c.widths.empty() ? 1.0f :
-            (c.widths.size() == 1 ? c.widths[0] : c.widths[std::min(i + 1, c.widths.size() - 1)]);
+            (c.widths.size() == 1 ? c.widths[0] : c.widths[std::min(ni, c.widths.size() - 1)]);
         const float width = 0.5f * (w0 + w1) * worldScale;
         if (!std::isfinite(width) || width < 0.0f) continue;
         const light3d::Vec3 mid = (a + b) * 0.5f;
-        const light3d::Vec3 edge = mid + cameraRight * (0.5f * width);
+        light3d::Vec3 side = light3d::cross(b - a, ro - mid);
+        if (light3d::dot(side, side) > 1.0e-10f)
+          side = light3d::normalize(side);
+        else
+          side = cameraRight;
+        const light3d::Vec3 edge = mid + side * (0.5f * width);
         float mx, my, mz;
         float radius = 2.0f;
         if (project(mid, mx, my, mz) && project(edge, mx, my, mz)) {
@@ -4249,7 +4735,9 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
   // Do not let a broad mesh/container bound hide a visible curve carrier. The
   // curve path is only preferred when its bounds enter the ray before the mesh
   // hit; otherwise normal mesh picking remains authoritative.
-  if (!bestPath.empty() && bestT < meshT) return bestPath;
+  const bool meshHasExactDepth = meshT >= 0.0f;
+  if (!bestPath.empty() && (!meshHasExactDepth || bestT < meshT))
+    return bestPath;
   if (mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size())
     return draw_->meshes[static_cast<size_t>(mesh)].absPath;
   return bestPath;
@@ -4341,46 +4829,12 @@ void Gui::finishRegionSelection(const ImVec2& imageMin, int vpW, int vpH) {
   regionSelectionMoved_ = false;
 
   if (wasDrag) {
-    if (!draw_) return;
-    const std::vector<int> meshHits = regionPickMeshes(imageMin, vpW, vpH);
-    std::vector<std::string> paths;
-    for (int mi : meshHits) {
-      if (mi >= 0 && static_cast<size_t>(mi) < draw_->meshes.size())
-        paths.push_back(draw_->meshes[static_cast<size_t>(mi)].absPath);
-    }
-    const ImVec2 r0(std::max(0.0f, std::min(std::min(regionStart_.x, regionEnd_.x) - imageMin.x,
-                                           static_cast<float>(vpW))),
-                    std::max(0.0f, std::min(std::min(regionStart_.y, regionEnd_.y) - imageMin.y,
-                                           static_cast<float>(vpH))));
-    const ImVec2 r1(std::max(0.0f, std::min(std::max(regionStart_.x, regionEnd_.x) - imageMin.x,
-                                           static_cast<float>(vpW))),
-                    std::max(0.0f, std::min(std::max(regionStart_.y, regionEnd_.y) - imageMin.y,
-                                           static_cast<float>(vpH))));
-    const light3d::Mat4 VP = cam_->proj(renderer_->caps().usesZeroToOneDepth) * cam_->view();
-    auto intersects = [&](const auto& carrier) {
-      const float xs[2] = {carrier.aabbMin[0], carrier.aabbMax[0]};
-      const float ys[2] = {carrier.aabbMin[1], carrier.aabbMax[1]};
-      const float zs[2] = {carrier.aabbMin[2], carrier.aabbMax[2]};
-      ImVec2 mn(1e30f, 1e30f), mx(-1e30f, -1e30f); bool any = false;
-      for (float x : xs) for (float y : ys) for (float z : zs) {
-        const float* m = VP.m;
-        const float cx = m[0]*x + m[4]*y + m[8]*z + m[12];
-        const float cy = m[1]*x + m[5]*y + m[9]*z + m[13];
-        const float cw = m[3]*x + m[7]*y + m[11]*z + m[15];
-        if (cw <= 1e-6f) continue;
-        const float iw = 1.0f / cw;
-        const float sx = (cx*iw*0.5f + 0.5f) * vpW;
-        const float sy = (1.0f - (cy*iw*0.5f + 0.5f)) * vpH;
-        mn.x = std::min(mn.x, sx); mn.y = std::min(mn.y, sy);
-        mx.x = std::max(mx.x, sx); mx.y = std::max(mx.y, sy); any = true;
-      }
-      return any && mx.x >= r0.x && mn.x <= r1.x && mx.y >= r0.y && mn.y <= r1.y;
-    };
-    for (size_t i = 0; i < draw_->points.size(); ++i)
-      if (carrierVisibleForView(i) && intersects(draw_->points[i])) paths.push_back(draw_->points[i].absPath);
-    for (size_t i = 0; i < draw_->curves.size(); ++i)
-      if (carrierVisibleForView(draw_->points.size() + i) && intersects(draw_->curves[i])) paths.push_back(draw_->curves[i].absPath);
-    setSelectionListFromPaths(std::move(paths));
+    const float x0 = regionStart_.x - imageMin.x;
+    const float y0 = regionStart_.y - imageMin.y;
+    const float x1 = regionEnd_.x - imageMin.x;
+    const float y1 = regionEnd_.y - imageMin.y;
+    const PickReport picked = pickViewportRegion(x0, y0, x1, y1, true);
+    if (picked.path.empty()) clearSelection();
     return;
   }
 
@@ -4440,6 +4894,7 @@ void Gui::drawViewport() {
     const bool imageHovered = ImGui::IsItemHovered();
     const ImVec2 imageMin = ImGui::GetItemRectMin();
     const ImVec2 imageMax = ImGui::GetItemRectMax();
+    viewportImageMin_ = imageMin;
     bool navButtonHovered = false;
     {
       const float buttonSize = ImGui::GetFrameHeight();
@@ -4660,25 +5115,48 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.exposure = cam_->exposure();
   p.cameraLens = cameraLens_;
   p.mode = mode_;
-  p.wireMode = wireCycle_;  // 'v' key: 0 off / 1 wire-only / 2 wire+shaded
+  const bool pickingAov = mode_ == RenderMode::MeshId;
+  // A picking-buffer view must contain only pickable, depth-tested carriers.
+  // Wireframe and helper/highlight overlays have no selection ID.
+  p.wireMode = pickingAov ? 0 : wireCycle_;
   p.displacement = displacementEnabled_;
   p.displacementScale = displacementScale_;
   p.maxTessLevel = maxTessLevel_;
+  bool curveViewChanged = !haveLastCurveView_;
+  if (!curveViewChanged) {
+    for (size_t i = 0; i < lastCurveView_.size(); ++i) {
+      if (std::fabs(lastCurveView_[i] - viewM.m[i]) > 1.0e-6f) {
+        curveViewChanged = true;
+        break;
+      }
+    }
+  }
+  const double curveNow = ImGui::GetTime();
+  if (curveViewChanged) {
+    std::copy(viewM.m, viewM.m + 16, lastCurveView_.begin());
+    haveLastCurveView_ = true;
+    lastCurveViewChangeTime_ = curveNow;
+  }
+  const bool curveInteractive = lastCurveViewChangeTime_ >= 0.0 &&
+                                curveNow - lastCurveViewChangeTime_ < 0.20;
+  p.curveMaxSegments = curveInteractive && curveMaxSegments_ > 0
+                           ? std::min(curveMaxSegments_, 2)
+                           : curveMaxSegments_;
   // Don't outline a hidden selection.
   const bool selHidden =
       selMeshIndex_ >= 0 &&
       !meshVisibleForView(static_cast<size_t>(selMeshIndex_));
-  p.highlightMeshIndex = selHidden ? -1 : selMeshIndex_;
+  p.highlightMeshIndex = pickingAov || selHidden ? -1 : selMeshIndex_;
   // A selected GeomSubset highlights just its faces on the parent mesh (GL
   // polygon-mode path).
-  if (highlightSubsetMesh_ >= 0 && !highlightSubsetIndices_.empty() &&
+  if (!pickingAov && highlightSubsetMesh_ >= 0 && !highlightSubsetIndices_.empty() &&
       meshVisibleForView(static_cast<size_t>(highlightSubsetMesh_))) {
     p.highlightMeshIndex = highlightSubsetMesh_;
     p.highlightIndices = highlightSubsetIndices_.data();
     p.highlightIndexCount = static_cast<int>(highlightSubsetIndices_.size());
   }
   // Vulkan highlight: world-space edge lines (whole mesh or subset).
-  if (!highlightLinesData_.empty()) {
+  if (!pickingAov && !highlightLinesData_.empty()) {
     p.highlightLines = highlightLinesData_.data();
     p.highlightLineVertexCount = static_cast<int>(highlightLinesData_.size());
   }
@@ -4730,10 +5208,12 @@ void Gui::renderViewportScene(FramePacket* packet) {
                          (showPurposeProxy_ ? 4u : 0u) |
                          (showPurposeGuide_ ? 8u : 0u);
   buildHelpers();
-  p.helperLines = helperLines_.empty() ? nullptr : helperLines_.data();
-  p.helperLineVertexCount = static_cast<int>(helperLines_.size());
-  p.overlayLines = overlayLines_.empty() ? nullptr : overlayLines_.data();
-  p.overlayLineVertexCount = static_cast<int>(overlayLines_.size());
+  if (!pickingAov) {
+    p.helperLines = helperLines_.empty() ? nullptr : helperLines_.data();
+    p.helperLineVertexCount = static_cast<int>(helperLines_.size());
+    p.overlayLines = overlayLines_.empty() ? nullptr : overlayLines_.data();
+    p.overlayLineVertexCount = static_cast<int>(overlayLines_.size());
+  }
 
   if (!packet) {
     renderer_->renderFrame(p);  // single-threaded: render inline
@@ -4782,6 +5262,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
     packet->rtMeshVisible.assign(p.rtMeshVisible,
                                  p.rtMeshVisible + p.rtMeshVisibleCount);
   packet->purposeVisibleMask = p.purposeVisibleMask;
+  packet->curveMaxSegments = p.curveMaxSegments;
   packet->viewportW = vpW;
   packet->viewportH = vpH;
   packet->hasParams = true;
