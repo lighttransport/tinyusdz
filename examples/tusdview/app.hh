@@ -841,6 +841,7 @@ class App
   int renderCaptureH_{0};
 #else
   static constexpr bool renderThreadActive_ = false;
+  float renderFps_{0.0f};
 #endif
   bool adaptiveQuality_{true};
   float adaptiveTargetFps_{30.0f};

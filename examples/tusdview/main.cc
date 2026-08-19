@@ -355,9 +355,9 @@ int main(int argc, char** argv) {
         return 1;
       }
       configPath = argv[++i];
-    } else if (std::strncmp(argv[i], "--config=", 9) == 0) {
+    } if (std::strncmp(argv[i], "--config=", 9) == 0) {
       configPath = argv[i] + 9;
-    } else if (std::strcmp(argv[i], "--backend") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--backend") == 0 && (i + 1) < argc) {
       ++i;
       if (std::strcmp(argv[i], "vk") == 0 || std::strcmp(argv[i], "vulkan") == 0) {
         backend = tusdview::Backend::Vulkan;
@@ -369,98 +369,98 @@ int main(int argc, char** argv) {
         return 1;
       }
       backendExplicit = true;
-    } else if (std::strcmp(argv[i], "--vk-device") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--vk-device") == 0 && (i + 1) < argc) {
       devicePreference.vulkanDevice = argv[++i];
       vkDeviceExplicit = true;
       backend = tusdview::Backend::Vulkan;
       backendExplicit = true;
-    } else if (std::strncmp(argv[i], "--vk-device=", 12) == 0) {
+    } if (std::strncmp(argv[i], "--vk-device=", 12) == 0) {
       devicePreference.vulkanDevice = argv[i] + 12;
       vkDeviceExplicit = true;
       backend = tusdview::Backend::Vulkan;
       backendExplicit = true;
-    } else if (std::strcmp(argv[i], "--frames") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--frames") == 0 && (i + 1) < argc) {
       maxFrames = std::atoi(argv[++i]);
-    } else if (std::strcmp(argv[i], "--size") == 0) {
+    } if (std::strcmp(argv[i], "--size") == 0) {
       if ((i + 1) >= argc ||
           !ParseWindowSize(argv[++i], &windowWidth, &windowHeight)) {
         LOGE("--size must be WxH with dimensions in the range 1..32768");
         return 1;
       }
       windowSizeExplicit = true;
-    } else if (std::strcmp(argv[i], "--screenshot") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--screenshot") == 0 && (i + 1) < argc) {
       screenshot = argv[++i];
-    } else if (std::strcmp(argv[i], "--render-report") == 0 &&
+    } if (std::strcmp(argv[i], "--render-report") == 0 &&
                (i + 1) < argc) {
       renderReport = argv[++i];
-    } else if (std::strcmp(argv[i], "--checkpoint-every") == 0 &&
+    } if (std::strcmp(argv[i], "--checkpoint-every") == 0 &&
                (i + 1) < argc) {
       checkpointEvery = std::atoi(argv[++i]);
       if (checkpointEvery < 1) {
         LOGE("--checkpoint-every must be at least 1");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--checkpoint-pattern") == 0 &&
+    } if (std::strcmp(argv[i], "--checkpoint-pattern") == 0 &&
                (i + 1) < argc) {
       checkpointPattern = argv[++i];
-    } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
       maxTris = std::atoll(argv[++i]);
       maxTrisExplicit = true;
-    } else if (std::strcmp(argv[i], "--max-asset-bytes") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--max-asset-bytes") == 0 && (i + 1) < argc) {
       // Override per-asset composition/resolver read cap (default 512MB).
       // Accepts a byte count with optional K/M/G suffix, e.g. 2G.
       maxAssetReadBytes = ParseByteCount(argv[++i]);
       maxAssetBytesExplicit = true;
-    } else if (std::strcmp(argv[i], "--max-gpu-mem") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--max-gpu-mem") == 0 && (i + 1) < argc) {
       maxGpuMemGiB = std::atof(argv[++i]);
       maxGpuMemExplicit = true;
-    } else if (std::strcmp(argv[i], "--vram-budget") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--vram-budget") == 0 && (i + 1) < argc) {
       vramBudgetGiB = std::atof(argv[++i]);
       vramBudgetExplicit = true;
-    } else if (std::strcmp(argv[i], "--max-draw-meshes") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--max-draw-meshes") == 0 && (i + 1) < argc) {
       maxDrawMeshes = std::atoll(argv[++i]);
       maxDrawMeshesExplicit = true;
-    } else if (std::strcmp(argv[i], "--no-robust-frame") == 0) {
+    } if (std::strcmp(argv[i], "--no-robust-frame") == 0) {
       robustFrame = false;
-    } else if (std::strcmp(argv[i], "--rt-lod") == 0) {
+    } if (std::strcmp(argv[i], "--rt-lod") == 0) {
       rtLod = true;
       rtLodExplicit = true;
-    } else if (std::strcmp(argv[i], "--no-rt-lod") == 0) {
+    } if (std::strcmp(argv[i], "--no-rt-lod") == 0) {
       rtLod = false;
       rtLodExplicit = true;
-    } else if (std::strcmp(argv[i], "--rt-lod-full-px") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--rt-lod-full-px") == 0 && (i + 1) < argc) {
       rtLodFullPx = static_cast<float>(std::atof(argv[++i]));
       rtLodFullExplicit = true;
-    } else if (std::strcmp(argv[i], "--rt-lod-cull-px") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--rt-lod-cull-px") == 0 && (i + 1) < argc) {
       rtLodCullPx = static_cast<float>(std::atof(argv[++i]));
       rtLodCullExplicit = true;
-    } else if (std::strcmp(argv[i], "--rt-lod-band") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--rt-lod-band") == 0 && (i + 1) < argc) {
       rtLodBand = static_cast<float>(std::atof(argv[++i]));
       rtLodBandExplicit = true;
-    } else if (std::strcmp(argv[i], "--raster-lod") == 0) {
+    } if (std::strcmp(argv[i], "--raster-lod") == 0) {
       rasterLod = true;
       rasterLodExplicit = true;
-    } else if (std::strcmp(argv[i], "--raster-lod-full-px") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--raster-lod-full-px") == 0 && (i + 1) < argc) {
       rasterLodFullPx = static_cast<float>(std::atof(argv[++i]));
       rasterLodFullExplicit = true;
-    } else if (std::strcmp(argv[i], "--raster-lod-cull-px") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--raster-lod-cull-px") == 0 && (i + 1) < argc) {
       rasterLodCullPx = static_cast<float>(std::atof(argv[++i]));
       rasterLodCullExplicit = true;
-    } else if (std::strcmp(argv[i], "--large-scene-profile") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--large-scene-profile") == 0 && (i + 1) < argc) {
       if (!ParseProfile(argv[++i], &largeSceneProfile)) {
         LOGE("--large-scene-profile must be off, auto, balanced, "
              "instance-heavy, or procedural-heavy");
         return 1;
       }
       largeSceneProfileExplicit = true;
-    } else if (std::strncmp(argv[i], "--large-scene-profile=", 22) == 0) {
+    } if (std::strncmp(argv[i], "--large-scene-profile=", 22) == 0) {
       if (!ParseProfile(argv[i] + 22, &largeSceneProfile)) {
         LOGE("--large-scene-profile must be off, auto, balanced, "
              "instance-heavy, or procedural-heavy");
         return 1;
       }
       largeSceneProfileExplicit = true;
-    } else if (std::strcmp(argv[i], "--preview-cache") == 0) {
+    } if (std::strcmp(argv[i], "--preview-cache") == 0) {
       if ((i + 1) >= argc) {
         LOGE("--preview-cache requires auto, off, or refresh");
         return 1;
@@ -471,88 +471,88 @@ int main(int argc, char** argv) {
       else if (mode == "refresh") previewCacheMode = tusdview::PreviewCacheMode::Refresh;
       else { LOGE("--preview-cache must be auto, off, or refresh"); return 1; }
       previewCacheExplicit = true;
-    } else if (std::strncmp(argv[i], "--preview-cache=", 16) == 0) {
+    } if (std::strncmp(argv[i], "--preview-cache=", 16) == 0) {
       const std::string mode = argv[i] + 16;
       if (mode == "auto") previewCacheMode = tusdview::PreviewCacheMode::Auto;
       else if (mode == "off") previewCacheMode = tusdview::PreviewCacheMode::Off;
       else if (mode == "refresh") previewCacheMode = tusdview::PreviewCacheMode::Refresh;
       else { LOGE("--preview-cache must be auto, off, or refresh"); return 1; }
       previewCacheExplicit = true;
-    } else if (std::strcmp(argv[i], "--preview-cache-dir") == 0) {
+    } if (std::strcmp(argv[i], "--preview-cache-dir") == 0) {
       if ((i + 1) >= argc || argv[i + 1][0] == '\0') {
         LOGE("--preview-cache-dir requires a non-empty path");
         return 1;
       }
       previewCacheDir = argv[++i];
-    } else if (std::strcmp(argv[i], "--preview-cache-max-gb") == 0) {
+    } if (std::strcmp(argv[i], "--preview-cache-max-gb") == 0) {
       if ((i + 1) >= argc) {
         LOGE("--preview-cache-max-gb requires a number");
         return 1;
       }
       previewCacheMaxGiB = std::max(0.0, std::atof(argv[++i]));
-    } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
-    } else if (std::strcmp(argv[i], "--compose-threads") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--compose-threads") == 0 && (i + 1) < argc) {
       compositionThreads = static_cast<unsigned>(std::max(1, std::atoi(argv[++i])));
-    } else if (std::strcmp(argv[i], "--convert-threads") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--convert-threads") == 0 && (i + 1) < argc) {
       conversionThreads = static_cast<unsigned>(std::max(1, std::atoi(argv[++i])));
-    } else if (std::strcmp(argv[i], "--compose-opinion-batch") == 0 &&
+    } if (std::strcmp(argv[i], "--compose-opinion-batch") == 0 &&
                (i + 1) < argc) {
       compositionOpinionBatch = static_cast<size_t>(
           std::strtoull(argv[++i], nullptr, 10));
-    } else if (std::strcmp(argv[i], "--instance-chunk-samples") == 0 &&
+    } if (std::strcmp(argv[i], "--instance-chunk-samples") == 0 &&
                (i + 1) < argc) {
       instanceChunkSamples = static_cast<size_t>(
           std::strtoull(argv[++i], nullptr, 10));
-    } else if (std::strcmp(argv[i], "--mesh-convert-chunk-prims") == 0 &&
+    } if (std::strcmp(argv[i], "--mesh-convert-chunk-prims") == 0 &&
                (i + 1) < argc) {
       meshConversionChunkPrims = static_cast<size_t>(
           std::strtoull(argv[++i], nullptr, 10));
-    } else if (std::strcmp(argv[i], "--mesh-convert-chunk-mb") == 0 &&
+    } if (std::strcmp(argv[i], "--mesh-convert-chunk-mb") == 0 &&
                (i + 1) < argc) {
       meshConversionChunkMB = static_cast<size_t>(
           std::strtoull(argv[++i], nullptr, 10));
-    } else if (std::strcmp(argv[i], "--curve-parallel-min-prims") == 0 &&
+    } if (std::strcmp(argv[i], "--curve-parallel-min-prims") == 0 &&
                (i + 1) < argc) {
       curveParallelMinPrims = static_cast<size_t>(
           std::strtoull(argv[++i], nullptr, 10));
-    } else if (std::strcmp(argv[i], "--upload-budget-ms") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--upload-budget-ms") == 0 && (i + 1) < argc) {
       uploadBudgetMs = std::clamp(std::atof(argv[++i]), 1.0, 33.0);
-    } else if (std::strcmp(argv[i], "--stream-buffer-mb") == 0 &&
+    } if (std::strcmp(argv[i], "--stream-buffer-mb") == 0 &&
                (i + 1) < argc) {
       streamBufferMB = static_cast<size_t>(
           std::clamp(std::atoi(argv[++i]), 4, 1024));
-    } else if (std::strcmp(argv[i], "--preview-boxes") == 0 &&
+    } if (std::strcmp(argv[i], "--preview-boxes") == 0 &&
                (i + 1) < argc) {
       previewMaxBoxes = static_cast<size_t>(
           std::strtoull(argv[++i], nullptr, 10));
-    } else if (std::strcmp(argv[i], "--quit-after-full-upload") == 0) {
+    } if (std::strcmp(argv[i], "--quit-after-full-upload") == 0) {
       quitAfterFullUpload = true;
-    } else if (std::strcmp(argv[i], "--quit-after-convert") == 0) {
+    } if (std::strcmp(argv[i], "--quit-after-convert") == 0) {
       quitAfterConvert = true;
-    } else if (std::strcmp(argv[i], "--full-fidelity") == 0) {
+    } if (std::strcmp(argv[i], "--full-fidelity") == 0) {
       fullFidelity = true;
-    } else if (std::strcmp(argv[i], "--timing") == 0) {
+    } if (std::strcmp(argv[i], "--timing") == 0) {
       timing = true;
-    } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
       uiScale = static_cast<float>(std::atof(argv[++i]));
-    } else if (std::strcmp(argv[i], "--window-shot") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--window-shot") == 0 && (i + 1) < argc) {
       windowShot = argv[++i];
-    } else if (std::strcmp(argv[i], "--headless") == 0) {
+    } if (std::strcmp(argv[i], "--headless") == 0) {
       headless = true;
-    } else if (std::strcmp(argv[i], "--threaded") == 0) {
+    } if (std::strcmp(argv[i], "--threaded") == 0) {
       threaded = true;
       threadedExplicit = true;
-    } else if (std::strcmp(argv[i], "--no-threaded") == 0) {
+    } if (std::strcmp(argv[i], "--no-threaded") == 0) {
       threaded = false;
       threadedExplicit = true;
-    } else if (std::strcmp(argv[i], "--adaptive-quality") == 0) {
+    } if (std::strcmp(argv[i], "--adaptive-quality") == 0) {
       adaptiveQuality = true;
       adaptiveQualityExplicit = true;
-    } else if (std::strcmp(argv[i], "--no-adaptive-quality") == 0) {
+    } if (std::strcmp(argv[i], "--no-adaptive-quality") == 0) {
       adaptiveQuality = false;
       adaptiveQualityExplicit = true;
-    } else if (std::strcmp(argv[i], "--target-render-fps") == 0 &&
+    } if (std::strcmp(argv[i], "--target-render-fps") == 0 &&
                (i + 1) < argc) {
       targetRenderFps = static_cast<float>(std::atof(argv[++i]));
       targetRenderFpsExplicit = true;
@@ -560,7 +560,7 @@ int main(int argc, char** argv) {
         LOGE("--target-render-fps must be in [1, 240]");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--min-render-scale") == 0 &&
+    } if (std::strcmp(argv[i], "--min-render-scale") == 0 &&
                (i + 1) < argc) {
       minRenderScale = static_cast<float>(std::atof(argv[++i]));
       minRenderScaleExplicit = true;
@@ -568,24 +568,24 @@ int main(int argc, char** argv) {
         LOGE("--min-render-scale must be in [0.25, 1]");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--next") == 0) {
+    } if (std::strcmp(argv[i], "--next") == 0) {
       useNextLoader = true;
       useNextExplicit = true;
-    } else if (std::strcmp(argv[i], "--legacy-load") == 0 ||
+    } if (std::strcmp(argv[i], "--legacy-load") == 0 ||
                std::strcmp(argv[i], "--legacyLoad") == 0) {
       useNextLoader = false;
       useNextExplicit = true;
-    } else if (std::strcmp(argv[i], "--no-cull") == 0) {
+    } if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
-    } else if (std::strcmp(argv[i], "--no-grid") == 0) {
+    } if (std::strcmp(argv[i], "--no-grid") == 0) {
       showGrid = false;
-    } else if (std::strcmp(argv[i], "--no-skeleton") == 0) {
+    } if (std::strcmp(argv[i], "--no-skeleton") == 0) {
       showSkeleton = false;
-    } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
-    } else if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
       cameraName = argv[++i];
-    } else if (std::strcmp(argv[i], "--camera-conform") == 0 &&
+    } if (std::strcmp(argv[i], "--camera-conform") == 0 &&
                (i + 1) < argc) {
       cameraConformExplicit = true;
       const std::string value = argv[++i];
@@ -600,7 +600,7 @@ int main(int argc, char** argv) {
         LOGE("--camera-conform must be fit, crop, horizontal, vertical, or none");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--view-dir") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--view-dir") == 0 && (i + 1) < argc) {
       char trailing = '\0';
       const char* value = argv[++i];
       if (std::sscanf(value, "%f,%f,%f%c", &viewDir[0], &viewDir[1],
@@ -621,55 +621,55 @@ int main(int argc, char** argv) {
       viewDir[1] /= len;
       viewDir[2] /= len;
       viewDirExplicit = true;
-    } else if (std::strcmp(argv[i], "--no-composition") == 0) {
+    } if (std::strcmp(argv[i], "--no-composition") == 0) {
       noComposition = true;
-    } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
+    } if (std::strcmp(argv[i], "--defer-payloads") == 0) {
       deferPayloads = true;
-    } else if (std::strcmp(argv[i], "--load-payloads") == 0) {
+    } if (std::strcmp(argv[i], "--load-payloads") == 0) {
       deferPayloads = false;
-    } else if (std::strcmp(argv[i], "--defer-references") == 0) {
+    } if (std::strcmp(argv[i], "--defer-references") == 0) {
       deferReferences = true;
-    } else if (std::strcmp(argv[i], "--allow-parent-paths") == 0) {
+    } if (std::strcmp(argv[i], "--allow-parent-paths") == 0) {
       allowParentPaths = true;
-    } else if (std::strcmp(argv[i], "--texture-max-size") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--texture-max-size") == 0 && (i + 1) < argc) {
       textureOptions.maxTextureSize = std::atoi(argv[++i]);
       if (textureOptions.maxTextureSize < 0) {
         textureOptions.maxTextureSize = 0;
       }
       maxTextureSizeExplicit = true;
-    } else if (std::strcmp(argv[i], "--texture-budget-mb") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--texture-budget-mb") == 0 && (i + 1) < argc) {
       textureOptions.textureBudgetMB = std::atoi(argv[++i]);
       if (textureOptions.textureBudgetMB < 0) {
         textureOptions.textureBudgetMB = 0;
       }
       textureBudgetExplicit = true;
-    } else if (std::strcmp(argv[i], "--async-texture-decode") == 0) {
+    } if (std::strcmp(argv[i], "--async-texture-decode") == 0) {
       asyncTextureDecode = true;
-    } else if (std::strcmp(argv[i], "--ptex-initial-faces") == 0 &&
+    } if (std::strcmp(argv[i], "--ptex-initial-faces") == 0 &&
                (i + 1) < argc) {
       ptexInitialFaces = static_cast<size_t>(
           std::max(0, std::atoi(argv[++i])));
-    } else if (std::strcmp(argv[i], "--ptex-cache-mb") == 0 &&
+    } if (std::strcmp(argv[i], "--ptex-cache-mb") == 0 &&
                (i + 1) < argc) {
       ptexCacheMB = static_cast<size_t>(
           std::clamp(std::atoi(argv[++i]), 1, 4096));
-    } else if (std::strcmp(argv[i], "--subdivision-level") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--subdivision-level") == 0 && (i + 1) < argc) {
       subdivisionLevel = std::max(0, std::atoi(argv[++i]));
-    } else if (std::strncmp(argv[i], "--subdivision-level=", 20) == 0) {
+    } if (std::strncmp(argv[i], "--subdivision-level=", 20) == 0) {
       subdivisionLevel = std::max(0, std::atoi(argv[i] + 20));
-    } else if (std::strcmp(argv[i], "--subdivision-auto") == 0) {
+    } if (std::strcmp(argv[i], "--subdivision-auto") == 0) {
       subdivisionAuto = true;
       subdivisionAutoExplicit = true;
-    } else if (std::strcmp(argv[i], "--no-subdivision-auto") == 0) {
+    } if (std::strcmp(argv[i], "--no-subdivision-auto") == 0) {
       subdivisionAuto = false;
       subdivisionAutoExplicit = true;
-    } else if (std::strcmp(argv[i], "--subdivision-auto-max-level") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--subdivision-auto-max-level") == 0 && (i + 1) < argc) {
       subdivisionAutoMaxLevel = std::max(0, std::atoi(argv[++i]));
       subdivisionAutoMaxExplicit = true;
-    } else if (std::strncmp(argv[i], "--subdivision-auto-max-level=", 29) == 0) {
+    } if (std::strncmp(argv[i], "--subdivision-auto-max-level=", 29) == 0) {
       subdivisionAutoMaxLevel = std::max(0, std::atoi(argv[i] + 29));
       subdivisionAutoMaxExplicit = true;
-    } else if (std::strcmp(argv[i], "--subdivision-prim") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--subdivision-prim") == 0 && (i + 1) < argc) {
       std::string prim;
       int level = 0;
       if (!ParsePrimLevel(argv[++i], &prim, &level)) {
@@ -677,7 +677,7 @@ int main(int argc, char** argv) {
         return 1;
       }
       subdivisionPrimLevels[prim] = level;
-    } else if (std::strncmp(argv[i], "--subdivision-prim=", 19) == 0) {
+    } if (std::strncmp(argv[i], "--subdivision-prim=", 19) == 0) {
       std::string prim;
       int level = 0;
       if (!ParsePrimLevel(argv[i] + 19, &prim, &level)) {
@@ -685,21 +685,21 @@ int main(int argc, char** argv) {
         return 1;
       }
       subdivisionPrimLevels[prim] = level;
-    } else if (std::strcmp(argv[i], "--texture-fit") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--texture-fit") == 0 && (i + 1) < argc) {
       if (!tinyusdz::tydra::next::ParseTextureFit(argv[++i], &textureFit)) {
         LOGE("--texture-fit must be modest|default|aggressive|never|always or a "
              "byte threshold like 4G");
         return 1;
       }
       textureFitExplicit = true;
-    } else if (std::strncmp(argv[i], "--texture-fit=", 14) == 0) {
+    } if (std::strncmp(argv[i], "--texture-fit=", 14) == 0) {
       if (!tinyusdz::tydra::next::ParseTextureFit(argv[i] + 14, &textureFit)) {
         LOGE("--texture-fit must be modest|default|aggressive|never|always or a "
              "byte threshold like 4G");
         return 1;
       }
       textureFitExplicit = true;
-    } else if (std::strcmp(argv[i], "--texture-compress") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--texture-compress") == 0 && (i + 1) < argc) {
       textureCompressionExplicit = true;
       const char* mode = argv[++i];
       if (std::strcmp(mode, "off") == 0) {
@@ -718,7 +718,7 @@ int main(int argc, char** argv) {
         LOGE("--texture-compress must be off, bc, bc7, astc, etc2 or auto");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--texture-gpu") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--texture-gpu") == 0 && (i + 1) < argc) {
       const char* backend = argv[++i];
       if (std::strcmp(backend, "off") == 0) {
         textureOptions.gpuBackend = tusdview::TextureGpuBackend::Off;
@@ -732,9 +732,9 @@ int main(int argc, char** argv) {
         LOGE("--texture-gpu must be off, vulkan, cuda or hip");
         return 1;
       }
-    } else if (std::strncmp(argv[i], "--texture-gpu-device=", 21) == 0) {
+    } if (std::strncmp(argv[i], "--texture-gpu-device=", 21) == 0) {
       textureOptions.gpuDevice = argv[i] + 21;
-    } else if (std::strcmp(argv[i], "--texture-keep-compressed") == 0 &&
+    } if (std::strcmp(argv[i], "--texture-keep-compressed") == 0 &&
                (i + 1) < argc) {
       const char* mode = argv[++i];
       if (std::strcmp(mode, "on") == 0) {
@@ -745,7 +745,7 @@ int main(int argc, char** argv) {
         LOGE("--texture-keep-compressed must be on or off");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--texture-mips") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--texture-mips") == 0 && (i + 1) < argc) {
       mipsExplicit = true;
       const char* mode = argv[++i];
       if (std::strcmp(mode, "off") == 0) {
@@ -756,7 +756,7 @@ int main(int argc, char** argv) {
         LOGE("--texture-mips must be on or off");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--dome-ibl") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--dome-ibl") == 0 && (i + 1) < argc) {
       domeIblExplicit = true;
       const char* mode = argv[++i];
       if (std::strcmp(mode, "off") == 0) {
@@ -769,7 +769,7 @@ int main(int argc, char** argv) {
         LOGE("--dome-ibl must be off, low or high");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--udim") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--udim") == 0 && (i + 1) < argc) {
       const char* mode = argv[++i];
       if (std::strcmp(mode, "sparse") == 0) {
         textureOptions.udimMode = tusdview::UdimMode::Sparse;
@@ -779,11 +779,11 @@ int main(int argc, char** argv) {
         LOGE("--udim must be sparse or atlas");
         return 1;
       }
-    } else if ((std::strcmp(argv[i], "--time") == 0 ||
+    } if ((std::strcmp(argv[i], "--time") == 0 ||
                 std::strcmp(argv[i], "--frame") == 0) &&
                (i + 1) < argc) {
       timeCode = std::atof(argv[++i]);
-    } else if (std::strcmp(argv[i], "--skinning") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--skinning") == 0 && (i + 1) < argc) {
       const char* mode = argv[++i];
       if (std::strcmp(mode, "cpu") == 0) {
         skinningMode = tusdview::SkinningMode::CPU;
@@ -795,13 +795,13 @@ int main(int argc, char** argv) {
         LOGE("--skinning must be auto, cpu, or gpu");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--play") == 0) {
+    } if (std::strcmp(argv[i], "--play") == 0) {
       playAnim = true;
-    } else if (std::strcmp(argv[i], "--rt") == 0) {
+    } if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
-    } else if (std::strcmp(argv[i], "--cuda") == 0) {
+    } if (std::strcmp(argv[i], "--cuda") == 0) {
       wantCuda = true;
-    } else if (std::strcmp(argv[i], "--cuda-cache-dir") == 0) {
+    } if (std::strcmp(argv[i], "--cuda-cache-dir") == 0) {
       if (i + 1 >= argc) {
         LOGE("--cuda-cache-dir requires a non-empty path");
         return 1;
@@ -811,42 +811,42 @@ int main(int argc, char** argv) {
         LOGE("--cuda-cache-dir requires a non-empty path");
         return 1;
       }
-    } else if (std::strncmp(argv[i], "--cuda-cache-dir=", 17) == 0) {
+    } if (std::strncmp(argv[i], "--cuda-cache-dir=", 17) == 0) {
       cudaCacheDir = argv[i] + 17;
       if (cudaCacheDir.empty()) {
         LOGE("--cuda-cache-dir requires a non-empty path");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--hip") == 0) {
+    } if (std::strcmp(argv[i], "--hip") == 0) {
       wantHip = true;
-    } else if (std::strcmp(argv[i], "--cpu-rt") == 0) {
+    } if (std::strcmp(argv[i], "--cpu-rt") == 0) {
       wantCpuRt = true;
-    } else if (std::strcmp(argv[i], "--rt-samples") == 0 && i + 1 < argc) {
+    } if (std::strcmp(argv[i], "--rt-samples") == 0 && i + 1 < argc) {
       rtSamples = std::atoi(argv[++i]);
       if (rtSamples < 1) rtSamples = 1;
-    } else if (std::strcmp(argv[i], "--lod-stream") == 0) {
+    } if (std::strcmp(argv[i], "--lod-stream") == 0) {
       lodStream = true;
-    } else if (std::strcmp(argv[i], "--curve-preview-prims") == 0 &&
+    } if (std::strcmp(argv[i], "--curve-preview-prims") == 0 &&
                i + 1 < argc) {
       curvePreviewPrims = static_cast<size_t>(std::strtoull(argv[++i], nullptr, 10));
-    } else if (std::strcmp(argv[i], "--curve-preview-strands") == 0 &&
+    } if (std::strcmp(argv[i], "--curve-preview-strands") == 0 &&
                i + 1 < argc) {
       curvePreviewStrands =
           static_cast<size_t>(std::strtoull(argv[++i], nullptr, 10));
-    } else if (std::strcmp(argv[i], "--max-mem") == 0 && i + 1 < argc) {
+    } if (std::strcmp(argv[i], "--max-mem") == 0 && i + 1 < argc) {
       lodMaxMem = std::atof(argv[++i]);
       lodMaxMemExplicit = true;
-    } else if (std::strcmp(argv[i], "--max-vram") == 0 && i + 1 < argc) {
+    } if (std::strcmp(argv[i], "--max-vram") == 0 && i + 1 < argc) {
       lodMaxVram = std::atof(argv[++i]);
       lodMaxVramExplicit = true;
-    } else if (std::strcmp(argv[i], "--max-instances") == 0 && i + 1 < argc) {
+    } if (std::strcmp(argv[i], "--max-instances") == 0 && i + 1 < argc) {
       rtMaxInstances = std::atoll(argv[++i]);
       if (rtMaxInstances < 0) rtMaxInstances = 0;
-    } else if (std::strcmp(argv[i], "--wireframe") == 0) {
+    } if (std::strcmp(argv[i], "--wireframe") == 0) {
       wantWireframe = true;
-    } else if (std::strcmp(argv[i], "--material-id") == 0) {
+    } if (std::strcmp(argv[i], "--material-id") == 0) {
       wantMaterialId = true;
-    } else if (std::strcmp(argv[i], "--mode") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--mode") == 0 && (i + 1) < argc) {
       const char* m = argv[++i];
       tusdview::RenderMode parsed{};
       if (!ParseRenderModeName(m, &parsed)) {
@@ -854,7 +854,7 @@ int main(int argc, char** argv) {
         return 1;
       }
       wantMode = parsed;
-    } else if (std::strcmp(argv[i], "--mode-sweep") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--mode-sweep") == 0 && (i + 1) < argc) {
       // Comma-separated mode list rendered from ONE load. Each mode gets
       // --frames frames and its own screenshot, so a caller that wants N AOVs
       // of the same scene pays one process start and one Vulkan device
@@ -881,11 +881,11 @@ int main(int argc, char** argv) {
         LOGE("--mode-sweep: empty mode list");
         return 1;
       }
-    } else if (std::strcmp(argv[i], "--select") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--select") == 0 && (i + 1) < argc) {
       // Select a prim by absolute path once loaded (highlights it; a GeomSubset
       // highlights just its faces). Also handy for headless screenshots.
       wantSelect = argv[++i];
-    } else if (std::strcmp(argv[i], "--blend") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--blend") == 0 && (i + 1) < argc) {
       // --blend NAME=WEIGHT (repeatable): manually drive a blendshape weight,
       // overriding the SkelAnimation. Honors in-between shapes. For headless
       // posing + the Maya-like blend editor.
@@ -893,16 +893,16 @@ int main(int argc, char** argv) {
       const char* eq = std::strchr(spec, '=');
       if (!eq) { LOGE("--blend expects NAME=WEIGHT, got '%s'", spec); return 1; }
       wantBlend.emplace_back(std::string(spec, eq), std::atof(eq + 1));
-    } else if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
+    } if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
       mcpStdio = true;
-    } else if (std::strncmp(argv[i], "--mcp-http", 10) == 0) {
+    } if (std::strncmp(argv[i], "--mcp-http", 10) == 0) {
       const char* eq = std::strchr(argv[i], '=');
       mcpHttpPort = eq ? std::atoi(eq + 1) : 8080;
       if (mcpHttpPort <= 0) mcpHttpPort = 8080;
-    } else if (std::strcmp(argv[i], "--mcp") == 0) {
+    } if (std::strcmp(argv[i], "--mcp") == 0) {
       mcpStdio = true;
       if (mcpHttpPort == 0) mcpHttpPort = 8080;
-    } else if (std::strncmp(argv[i], "--stream-http", 13) == 0) {
+    } if (std::strncmp(argv[i], "--stream-http", 13) == 0) {
       // Optional value: `--stream-http=PORT`, `--stream-http PORT`, or bare
       // `--stream-http` (defaults to 8090). The space form consumes the next
       // argument only when it starts with a digit (else it's a positional/flag).
@@ -915,16 +915,16 @@ int main(int argc, char** argv) {
         streamHttpPort = 8090;
       }
       if (streamHttpPort <= 0) streamHttpPort = 8090;
-    } else if (std::strcmp(argv[i], "--stream-codec") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--stream-codec") == 0 && (i + 1) < argc) {
       streamCodec = argv[++i];
-    } else if (std::strcmp(argv[i], "--stream-motion-res") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--stream-motion-res") == 0 && (i + 1) < argc) {
       streamMotionRes = std::atoi(argv[++i]);
-    } else if (std::strcmp(argv[i], "--stream-idle-ms") == 0 && (i + 1) < argc) {
+    } if (std::strcmp(argv[i], "--stream-idle-ms") == 0 && (i + 1) < argc) {
       streamIdleMs = std::atoi(argv[++i]);
-    } else if (std::strcmp(argv[i], "--stream-motion-quality") == 0 &&
+    } if (std::strcmp(argv[i], "--stream-motion-quality") == 0 &&
                (i + 1) < argc) {
       streamMotionQuality = std::atoi(argv[++i]);
-    } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
+    } if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
           "Usage: tusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
           "[--size WxH] [--screenshot out.png|out.jpg|out.ppm]\n"
