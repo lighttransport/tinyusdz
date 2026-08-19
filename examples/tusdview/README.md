@@ -128,11 +128,15 @@ displays it with an ImGui docking UI.
   lights are evaluated in stage order with diffuse/specular multipliers,
   shaping cones, and per-mesh `collection:lightLink` masks, alongside
   DomeLight IBL. DistantLight and finite sphere/point, rect, disk, and cylinder
-  records share the same packed GL/Vulkan interface; finite area shapes are
-  currently represented by their light position. GeometryLight, PortalLight,
-  IES profiles, emissive-mesh sampling, and raster shadow maps remain explicit
-  roadmap items. Native Points/Curves currently receive all packed direct
-  lights because their light-link carrier mapping has not landed yet.
+  records share the same packed GL/Vulkan interface; finite area shapes use
+  deterministic eight-point rectangle/disk/cylinder samples in raster and
+  stochastic samples in RT. GeometryLight targets are resolved to emissive
+  triangle ranges in the software-BVH path, IES profiles are parsed and packed
+  into the shared light record, and PortalLight uses a rectangular opening
+  sample when dome-guided sampling is unavailable. Vulkan hardware ray-query
+  scenes carrying these extended payloads use the hardware shader when
+  available, with compute-BVH as the capability fallback. Native Points/Curves currently receive all packed direct lights
+  because their light-link carrier mapping has not landed yet.
 - **UsdGeomPoints and curves (`--next`)** — Points plus BasisCurves,
   HermiteCurves, and NurbsCurves retain evaluated widths, displayColor,
   displayOpacity, material binding, purpose, animation time, and transforms.
@@ -598,6 +602,21 @@ quality** (8/16/32/64), or choose full tessellation for comparison. Set
   without raster anisotropy.
 - Vulkan raster uses four bound descriptor sets and runs on low-limit software
   devices as well as desktop GPUs.
-- Alpha-blended ray-traced surfaces use a nearest-layer approximation.
-- MaterialX image nodes beyond the extracted Preview/OpenPBR semantic slots,
-  and multi-viewport UI, remain incomplete.
+- Hardware and compute-BVH Vulkan rays traverse a bounded stack of
+  alpha-blended layers (eight layers, with a conservative opaque tail).
+  The nearest primary layer receives full shading; deeper primary layers use
+  a resolved albedo/emission underlay, so complex lighting/refraction through
+  those layers remains an approximation.
+- CUDA/HIP primary rays use the same bounded front-to-back layer policy: the
+  nearest layer is fully shaded and up to seven deeper accepted layers receive
+  resolved albedo/emission underlay shading. Mask layers are rejected during
+  traversal and do not occlude later layers.
+- MaterialX image/procedural graphs are evaluated at asset-relative UV samples
+  and baked into bounded 16x16 semantic maps when no extracted slot exists.
+  Vulkan hardware ray-query and compute-BVH paths additionally evaluate the
+  packed graph IR per hit for constants, resident image/tiled-image nodes,
+  arithmetic, mix, clamp, dot, and normalize operations. CUDA/HIP consume the
+  same packed IR, including resident UDIM/Ptex image sampling; the CPU fallback
+  evaluates the same graph lanes needed by its preview path. Vulkan raster still
+  uses semantic/bake bindings. Refraction, true MaterialX tile-placement
+  semantics, and full procedural-node parity remain open.

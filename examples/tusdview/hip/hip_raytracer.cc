@@ -71,7 +71,7 @@ void HipRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { hipFree(reinterpret_cast<void*>(p)); p = 0; } };
   F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dBackMat_);
   F(dMatPbr_); F(dMatBase_);
-  F(dMatLightRt_); F(dMatTex_);
+  F(dMatLightRt_); F(dMatGraph_); F(dMatTex_);
   F(dMatTexParam_); F(dLightParams_);
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_); F(dAccum_);
@@ -328,6 +328,8 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.matBase.data(), hs.matBase.size() * sizeof(float), &dMatBase_)) return false;
   if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
           &dMatLightRt_)) return false;
+  if (!up(hs.matGraph.data(), hs.matGraph.size() * sizeof(float),
+          &dMatGraph_)) return false;
   if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
           &dLightParams_)) return false;
   if (progress) progress->phase = 4;  // done
@@ -340,7 +342,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
     drop(r.cols); drop(r.uv); drop(r.uv1); drop(r.infl); drop(r.domw);
     drop(r.geo); drop(r.emask); drop(r.mat); drop(r.backMat); drop(r.face);
     drop(r.domj);
-    drop(r.matPbr); drop(r.matBase); drop(r.matLightRt); drop(r.matTex);
+    drop(r.matPbr); drop(r.matBase); drop(r.matLightRt); drop(r.matGraph); drop(r.matTex);
     drop(r.matTexParam);
     drop(r.texels); drop(r.textures); drop(r.lightParams);
     drop(r.volDens); drop(r.volParams);
@@ -427,6 +429,7 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
         *dM = reinterpret_cast<void*>(dMat_), *dBM = reinterpret_cast<void*>(dBackMat_),
         *dMP = reinterpret_cast<void*>(dMatPbr_), *dMB = reinterpret_cast<void*>(dMatBase_),
         *dML = reinterpret_cast<void*>(dMatLightRt_),
+        *dMG = reinterpret_cast<void*>(dMatGraph_),
         *dLP = reinterpret_cast<void*>(dLightParams_),
         *dMT = reinterpret_cast<void*>(dMatTex_), *dTx = reinterpret_cast<void*>(dTexels_),
         *dMTP = reinterpret_cast<void*>(dMatTexParam_),
@@ -459,7 +462,7 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
   // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
   // volDens,volParams,numVols,emask,point arrays,pointCount,accum,sampleIdx,numSamples,hitDepth.
-  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dBM, &dMP, &dMB, &dML, &numMats, &dLP,
+  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dBM, &dMP, &dMB, &dML, &dMG, &numMats, &dLP,
                   &numLights, &dMT, &dMTP, &dTx, &dTD, &numTextures, &dU, &dU1,
                   &dIn, &dF,  &dDw,
                   &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,

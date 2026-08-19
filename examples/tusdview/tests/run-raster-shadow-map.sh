@@ -39,7 +39,11 @@ OUT="$(mktemp -d)"
 mkdir -p "$OUT/config"
 trap 'rm -rf "$OUT"' EXIT
 XVFB=""
-command -v xvfb-run >/dev/null 2>&1 && XVFB="xvfb-run -a"
+if { [ -z "${DISPLAY:-}" ] || ! command -v xdpyinfo >/dev/null 2>&1 ||
+     ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; } &&
+   command -v xvfb-run >/dev/null 2>&1; then
+  XVFB="xvfb-run -a"
+fi
 
 cp "$REPO_ROOT/tests/usda/tusdview-raster-shadow.usda" "$OUT/shadow.usda"
 

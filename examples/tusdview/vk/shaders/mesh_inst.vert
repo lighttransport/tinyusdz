@@ -18,7 +18,8 @@ layout(location = 9) in vec4 aInstColor;  // per-instance color/opacity (instanc
 layout(location = 10) in vec4 aVtxColor;  // displayColor.rgb + displayOpacity
 layout(location = 8) in uvec2 aMorphOffsetCount;  // GPU morph (offset,count); 0=none
 struct RasterLight { vec4 positionType; vec4 directionAngle;
-                     vec4 colorDiffuse; vec4 specularShape; };
+                     vec4 colorDiffuse; vec4 specularShape; vec4 areaParams;
+                     vec4 iesAxisX; vec4 iesAxisY; vec4 iesProfile[6]; };
 
 // Skeletal skinning of the PROTOTYPE, in prototype-LOCAL space (before the
 // per-instance transform), so all instances of a prototype share one bone block --

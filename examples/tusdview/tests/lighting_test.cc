@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "mesh_build.hh"
+#include "lighting_eval.hh"
+#include "lighting_ies.hh"
 #include "raster_lighting.hh"
 #include "rt_scene_build.hh"
 #include "texture_tools.hh"
@@ -7,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -110,6 +113,187 @@ int main() {
     return 1;
   }
 
+  // The legacy and `--next` loaders share this derivation contract. Portal
+  // rectangles use the same area normalization as authored rect lights, while
+  // invalid negative dimensions/radii are clamped instead of producing a
+  // physically nonsensical positive area.
+  tusdview::DrawLightCPU portal;
+  portal.type = tusdview::DrawLightCPU::Type::Portal;
+  portal.width = 3.0f;
+  portal.height = 2.0f;
+  portal.normalize = true;
+  portal.intensity = 6.0f;
+  tusdview::ApplyDerivedLightParams(&portal);
+  if (!Near(portal.area, 6.0f) || !Near(portal.invArea, 1.0f / 6.0f) ||
+      !Near(portal.effectiveIntensity, 6.0f)) {
+    std::fprintf(stderr, "canonical portal-light derivation mismatch\n");
+    return 1;
+  }
+  tusdview::DrawLightCPU invalid;
+  invalid.type = tusdview::DrawLightCPU::Type::Rect;
+  invalid.width = -2.0f;
+  invalid.height = 3.0f;
+  tusdview::ApplyDerivedLightParams(&invalid);
+  if (!Near(invalid.area, 0.0f) || !Near(invalid.invArea, 0.0f)) {
+    std::fprintf(stderr, "invalid light dimensions were not clamped\n");
+    return 1;
+  }
+
+  const std::string iesPath = "/tmp/tusdview-lighting-test.ies";
+  {
+    std::ofstream ies(iesPath);
+    ies << "IESNA:LM-63-1995\nTILT=NONE\n"
+        << "1 1000 1 3 1 1 2 1 1 1 1 1 1\n"
+        << "0 45 90\n0\n1 0.5 0.25\n";
+  }
+  tusdview::DrawLightCPU iesLight;
+  iesLight.shapingIesNormalize = true;
+  iesLight.shapingIesAngleScale = 1.2f;
+  std::string iesError;
+  const bool iesLoaded = tusdview::LoadIesProfile(iesPath, &iesLight, &iesError);
+  const float iesMid = tusdview::EvaluateIesProfile(iesLight, 45.0f, 0.0f);
+  const float iesTop = tusdview::EvaluateIesProfile(iesLight, 90.0f, 180.0f);
+  if (!iesLoaded || !Near(iesMid, 0.6f) || !Near(iesTop, 0.3f)) {
+    std::fprintf(stderr, "IES profile parsing/interpolation mismatch: loaded=%d mid=%f top=%f (%s)\n",
+                 iesLoaded ? 1 : 0, iesMid, iesTop, iesError.c_str());
+    std::remove(iesPath.c_str());
+    return 1;
+  }
+  std::remove(iesPath.c_str());
+  tusdview::DrawLightCPU cachedIesLight;
+  const bool cachedIesLoaded =
+      tusdview::LoadIesProfile(iesPath, &cachedIesLight, &iesError);
+  if (!cachedIesLoaded || !cachedIesLight.iesValid) {
+    std::fprintf(stderr, "IES profile cache lookup failed: %s\n",
+                 iesError.c_str());
+    return 1;
+  }
+  std::vector<float> iesPacked(tusdview::kRtLightParamFloats, 0.0f);
+  tusdview::PackRtLightParams(iesLight, -1, iesPacked.data());
+  if (!Near(iesPacked[52], 2.0f) || !Near(iesPacked[53], 4.0f) ||
+      !Near(iesPacked[54], 6.0f) || !Near(iesPacked[56], 1.2f) ||
+      !Near(iesPacked[74], 0.3f)) {
+    std::fprintf(stderr, "IES LUT packing mismatch\n");
+    return 1;
+  }
+
+  const std::string iesAzimuthPath = "/tmp/tusdview-lighting-azimuth.ies";
+  {
+    std::ofstream ies(iesAzimuthPath);
+    ies << "IESNA:LM-63-1995\nTILT=NONE\n"
+        << "1 1000 1 3 2 1 2 1 1 1 1 1 1\n"
+        << "0 45 90\n0 180\n"
+        << "1 0.5 0.25 0.2 0.4 0.8\n";
+  }
+  tusdview::DrawLightCPU azimuthLight;
+  azimuthLight.shapingIesNormalize = true;
+  std::string azimuthError;
+  const bool azimuthLoaded =
+      tusdview::LoadIesProfile(iesAzimuthPath, &azimuthLight, &azimuthError);
+  const float azimuth0 =
+      tusdview::EvaluateIesProfile(azimuthLight, 0.0f, 0.0f);
+  const float azimuth180 =
+      tusdview::EvaluateIesProfile(azimuthLight, 0.0f, 180.0f);
+  const float azimuth240 =
+      tusdview::EvaluateIesProfile(azimuthLight, 0.0f, 240.0f);
+  std::remove(iesAzimuthPath.c_str());
+  if (!azimuthLoaded || !Near(azimuth0, 1.0f) || !Near(azimuth180, 0.2f) ||
+      !Near(azimuth240, 0.46666667f, 1.0e-4f)) {
+    std::fprintf(stderr,
+                 "IES azimuth interpolation mismatch: loaded=%d h0=%f h180=%f h240=%f (%s)\n",
+                 azimuthLoaded ? 1 : 0, azimuth0, azimuth180, azimuth240,
+                 azimuthError.c_str());
+    return 1;
+  }
+  azimuthLight.transform[0] = 1.0f;
+  azimuthLight.transform[5] = 1.0f;
+  const tusdview::RasterLightSet azimuthRaster =
+      tusdview::PackRasterLights({azimuthLight}, 0);
+  if (azimuthRaster.count != 1 ||
+      !Near(azimuthRaster.lights[0].iesProfile[0], 1.0f) ||
+      !Near(azimuthRaster.lights[0].iesProfile[3], 0.2f) ||
+      !Near(azimuthRaster.lights[0].iesProfile[4], 0.46666667f, 1.0e-4f) ||
+      !Near(azimuthRaster.lights[0].iesAxisX[0], 1.0f) ||
+      !Near(azimuthRaster.lights[0].iesAxisY[1], 1.0f)) {
+    std::fprintf(stderr, "raster IES azimuth packing mismatch\n");
+    return 1;
+  }
+
+  const std::string malformedIesPath = "/tmp/tusdview-lighting-malformed.ies";
+  {
+    std::ofstream ies(malformedIesPath);
+    ies << "IESNA:LM-63-1995\nTILT=NONE\n"
+        << "1 1000 1 3 1 1 2 1 1 1 1 1 1\n"
+        << "0 45 45\n0\n1 0.5 0.25\n";
+  }
+  const bool malformedLoaded =
+      tusdview::LoadIesProfile(malformedIesPath, &azimuthLight, &azimuthError);
+  std::remove(malformedIesPath.c_str());
+  if (malformedLoaded || azimuthLight.iesValid ||
+      !azimuthLight.iesCandela.empty()) {
+    std::fprintf(stderr, "malformed IES reload retained stale profile\n");
+    return 1;
+  }
+  tusdview::DrawLightCPU emptyPathReload = iesLight;
+  const bool emptyPathLoaded =
+      tusdview::LoadIesProfile(std::string(), &emptyPathReload, &iesError);
+  if (emptyPathLoaded || emptyPathReload.iesValid ||
+      !emptyPathReload.iesCandela.empty()) {
+    std::fprintf(stderr, "empty IES reload retained stale profile\n");
+    return 1;
+  }
+  const std::string crlfIesPath = "/tmp/tusdview-lighting-crlf.ies";
+  {
+    std::ofstream ies(crlfIesPath, std::ios::binary);
+    ies << "IESNA:LM-63-1995\r\nTILT=NONE\r\n"
+        << "1 1000 1 3 1 1 2 1 1 1 1 1 1\r\n"
+        << "0 45 90\r\n0\r\n1 0.5 0.25\r\n";
+  }
+  tusdview::DrawLightCPU crlfLight;
+  const bool crlfLoaded =
+      tusdview::LoadIesProfile(crlfIesPath, &crlfLight, &iesError);
+  std::remove(crlfIesPath.c_str());
+  if (!crlfLoaded || !crlfLight.iesValid) {
+    std::fprintf(stderr, "CRLF IES profile was rejected: %s\n",
+                 iesError.c_str());
+    return 1;
+  }
+  const std::string tiltIesPath = "/tmp/tusdview-lighting-tilt.ies";
+  {
+    std::ofstream ies(tiltIesPath);
+    ies << "IESNA:LM-63-1995\nTILT=INCLUDE\n"
+        << "2\n0 90\n1 0.5\n"
+        << "1 1000 1 3 1 1 2 1 1 1 1 1 1\n"
+        << "0 45 90\n0\n1 0.5 0.25\n";
+  }
+  tusdview::DrawLightCPU tiltLight;
+  const bool tiltLoaded =
+      tusdview::LoadIesProfile(tiltIesPath, &tiltLight, &iesError);
+  std::remove(tiltIesPath.c_str());
+  if (!tiltLoaded || !Near(tusdview::EvaluateIesProfile(tiltLight, 90.0f, 0.0f),
+                           0.125f)) {
+    std::fprintf(stderr, "IES TILT interpolation mismatch: loaded=%d value=%f (%s)\n",
+                 tiltLoaded ? 1 : 0,
+                 tusdview::EvaluateIesProfile(tiltLight, 90.0f, 0.0f),
+                 iesError.c_str());
+    return 1;
+  }
+
+  tusdview::DrawLightCPU geometry;
+  geometry.type = tusdview::DrawLightCPU::Type::Geometry;
+  geometry.geometryTriOffset = 17;
+  geometry.geometryTriCount = 9;
+  geometry.geometryInstance = 3;
+  std::vector<float> geometryPacked(tusdview::kRtLightParamFloats, 0.0f);
+  tusdview::PackRtLightParams(geometry, -1, geometryPacked.data());
+  if (!Near(geometryPacked[52], 3.0f) ||
+      !Near(geometryPacked[53], 17.0f) ||
+      !Near(geometryPacked[54], 9.0f) ||
+      !Near(geometryPacked[55], 3.0f)) {
+    std::fprintf(stderr, "GeometryLight payload packing mismatch\n");
+    return 1;
+  }
+
   // Raster light packing is shared by GL/Vulkan. Dome lights are excluded from
   // direct evaluation, and authored collections become a compact per-mesh mask.
   const tusdview::RasterLightSet raster =
@@ -120,11 +304,37 @@ int main() {
     std::fprintf(stderr, "raster light packing/link mask mismatch\n");
     return 1;
   }
+
+  std::vector<tusdview::DrawLightCPU> rasterFallbacks = draw.lights;
+  tusdview::DrawLightCPU geometryRaster = geometry;
+  geometryRaster.position[0] = 2.0f;
+  geometryRaster.normalizedColor[0] = 0.8f;
+  geometryRaster.normalizedColor[1] = 0.7f;
+  geometryRaster.normalizedColor[2] = 0.6f;
+  tusdview::DrawLightCPU portalRaster = portal;
+  portalRaster.position[2] = 3.0f;
+  portalRaster.normalizedColor[0] = 0.4f;
+  portalRaster.normalizedColor[1] = 0.5f;
+  portalRaster.normalizedColor[2] = 0.6f;
+  rasterFallbacks.push_back(geometryRaster);
+  rasterFallbacks.push_back(portalRaster);
+  const tusdview::RasterLightSet fallbackLights =
+      tusdview::PackRasterLights(rasterFallbacks, 1);
+  if (fallbackLights.count != 3 ||
+      static_cast<int>(fallbackLights.lights[1].positionType[3] + 0.5f) !=
+          static_cast<int>(tusdview::DrawLightCPU::Type::Geometry) ||
+      static_cast<int>(fallbackLights.lights[2].positionType[3] + 0.5f) !=
+          static_cast<int>(tusdview::DrawLightCPU::Type::Portal)) {
+    std::fprintf(stderr, "raster GeometryLight/PortalLight fallback mismatch\n");
+    return 1;
+  }
   if (!Near(raster.lights[0].positionType[0], key.position[0]) ||
       !Near(raster.lights[0].colorDiffuse[0], key.normalizedColor[0]) ||
       !Near(raster.lights[0].colorDiffuse[3], key.diffuse) ||
       !Near(raster.lights[0].specularShape[0], key.specular) ||
-      raster.lights[0].specularShape[3] != 1.0f) {
+      raster.lights[0].specularShape[3] != 1.0f ||
+      !Near(raster.lights[0].areaParams[1], key.width) ||
+      !Near(raster.lights[0].areaParams[2], key.height)) {
     std::fprintf(stderr, "raster packed light fields mismatch\n");
     return 1;
   }
@@ -243,6 +453,16 @@ int main() {
   }
   if (!oppositeFacesDiffer) {
     std::fprintf(stderr, "opposite point-light cube faces are identical\n");
+    return 1;
+  }
+  std::vector<tusdview::DrawLightCPU> rectShadow(1);
+  rectShadow[0].type = tusdview::DrawLightCPU::Type::Rect;
+  rectShadow[0].position[1] = 4.0f;
+  const tusdview::RasterLightSet rectShadowLights =
+      tusdview::PackRasterLights(rectShadow, 0);
+  if (!tusdview::BuildRasterPointShadowCameras(
+          rectShadowLights, shadowMin, shadowExtent, true, &pointCubeVk)) {
+    std::fprintf(stderr, "area-light center shadow camera was not built\n");
     return 1;
   }
   if (tusdview::BuildRasterPointShadowCameras(bounded, shadowMin,

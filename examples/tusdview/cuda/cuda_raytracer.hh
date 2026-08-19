@@ -7,8 +7,9 @@
 // unavailable the tracer reports `available() == false` and the caller falls back
 // to another backend.
 //
-// Geometry is flattened to world-space triangles (instances expanded) and stored
-// in a single BVH -- simple and correct; full two-level instancing is future work.
+// Geometry is stored once per prototype in local-space BLAS nodes, with a TLAS
+// and affine instance records providing two-level traversal without expanding
+// repeated instances into duplicate world-space triangles.
 #pragma once
 
 #include <cstdint>
@@ -42,9 +43,9 @@ class CudaRayTracer {
   void setCacheDirectory(const std::string& path) { cacheDirectory_ = path; }
   void setTextureBudgetBytes(size_t bytes) { textureBudgetBytes_ = bytes; }
 
-  // Flatten `scene` into world-space triangles, build a BVH, and upload everything
-  // to the device. `maxTris` caps the flattened triangle count (instances are
-  // expanded, so heavily-instanced scenes can explode); 0 = no cap. Returns false
+  // Build prototype-local BLASes plus a world-space instance TLAS and upload
+  // everything to the device. `maxTris` caps unique prototype triangles; 0 = no
+  // cap. Returns false
   // on OOM / build failure. Replaces any previously built scene.
   // displacementScale > 0 bakes coarse UsdPreviewSurface displacement into the
   // traced geometry (ray tracers intersect real triangles, so displacement can't
@@ -94,6 +95,7 @@ class CudaRayTracer {
   uintptr_t dMatPbr_{0};     // float[6] per material: metal,rough,emitRGB,alpha
   uintptr_t dMatBase_{0};    // float[3] per material: base color
   uintptr_t dMatLightRt_{0};  // float[56] per material: LightRT/OpenPBR params
+  uintptr_t dMatGraph_{0};    // fixed-size per-material MaterialX graph IR
   uintptr_t dMatTex_{0};     // int[6]: base,metal,rough,normal,emissive,opacity
   uintptr_t dMatTexParam_{0}; // float[56] per material: texture UV/channel params
   int numMats_{0};           // material count (matPbr index bound)

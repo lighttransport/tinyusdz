@@ -159,13 +159,13 @@ class ChunkedArray {
 
   // Reserve space for n elements (pre-allocates chunks)
   bool reserve(size_t n) {
-    detach_if_shared();
+    if (!detach_if_shared()) return false;
     return ensure_capacity(n);
   }
 
   // Add element, returns index (SIZE_MAX on allocation failure)
   size_t push_back(const T& value) {
-    detach_if_shared();
+    if (!detach_if_shared()) return static_cast<size_t>(-1);
     size_t idx = size_;
     if (size_ == (std::numeric_limits<size_t>::max)()) {
       alloc_failed_ = true;
@@ -178,7 +178,7 @@ class ChunkedArray {
   }
 
   size_t push_back(T&& value) {
-    detach_if_shared();
+    if (!detach_if_shared()) return static_cast<size_t>(-1);
     size_t idx = size_;
     if (size_ == (std::numeric_limits<size_t>::max)()) {
       alloc_failed_ = true;
@@ -193,7 +193,7 @@ class ChunkedArray {
   // Add multiple elements from contiguous array
   bool append(const T* data, size_t count) {
     if (count == 0) return true;
-    detach_if_shared();
+    if (!detach_if_shared()) return false;
     if (!data || count > (std::numeric_limits<size_t>::max)() - size_) {
       alloc_failed_ = true;
       return false;
@@ -222,14 +222,14 @@ class ChunkedArray {
   // Resize (may add uninitialized elements). On allocation failure the size
   // stays unchanged and false is returned — resize+fill callers must check.
   bool resize(size_t n) {
-    detach_if_shared();
+    if (!detach_if_shared()) return false;
     if (!ensure_capacity(n)) return false;
     size_ = n;
     return true;
   }
 
   bool resize(size_t n, const T& value) {
-    detach_if_shared();
+    if (!detach_if_shared()) return false;
     size_t old_size = size_;
     if (!ensure_capacity(n)) return false;
     size_ = n;
@@ -256,7 +256,7 @@ class ChunkedArray {
   // the tail chunk transparently.
   void shrink_to_fit() {
     if (!chunks_storage_) return;
-    detach_if_shared();
+    if (!detach_if_shared()) return;
     const size_t needed_chunks =
         size_ / kElementsPerChunk + (size_ % kElementsPerChunk != 0);
     while (chunks_mut().size() > needed_chunks) {
@@ -299,7 +299,14 @@ class ChunkedArray {
 
   // Access
   T& operator[](size_t idx) {
-    detach_if_shared();
+    // A mutable reference cannot report a recoverable allocation failure.
+    // Aborting is preferable to returning a reference into shared storage and
+    // silently corrupting the other copy-on-write owner.
+    if (!detach_if_shared()) {
+      std::fprintf(stderr,
+                   "ChunkedArray: unable to detach shared storage for write\\n");
+      std::abort();
+    }
     size_t chunk_idx = idx / kElementsPerChunk;
     size_t offset = idx % kElementsPerChunk;
     return chunks_storage_->v[chunk_idx][offset];
@@ -394,7 +401,11 @@ class ChunkedArray {
 
   // Get pointer to chunk data (for direct GPU upload)
   T* chunk_data(size_t chunk_idx) {
-    detach_if_shared();
+    if (!detach_if_shared()) {
+      std::fprintf(stderr,
+                   "ChunkedArray: unable to detach shared storage for write\\n");
+      std::abort();
+    }
     return chunks_storage_->v[chunk_idx].get();
   }
 
@@ -538,10 +549,12 @@ class ChunkedArray {
   // point calls this FIRST -- including ones that only overwrite existing
   // elements (append after clear(), operator[] writes), not just ones that
   // grow, since those write through the shared buffers just the same.
-  void detach_if_shared() {
-    if (!maybe_shared_) return;
-    maybe_shared_ = false;
-    if (!chunks_storage_ || chunks_storage_.use_count() <= 1) return;
+  bool detach_if_shared() {
+    if (!maybe_shared_) return true;
+    if (!chunks_storage_ || chunks_storage_.use_count() <= 1) {
+      maybe_shared_ = false;
+      return true;
+    }
     auto copy = std::make_shared<Chunks>();
     const std::vector<std::unique_ptr<T[]>>& src = chunks_storage_->v;
     copy->v.reserve(src.size());
@@ -553,21 +566,24 @@ class ChunkedArray {
       T* c = AllocChunkElems<T>(n);
       if (!c) {
         alloc_failed_ = true;
-        // Keep sharing rather than hand back a truncated array; the caller's
-        // write is dropped along with the latched failure flag. `copy` is
+        // Keep sharing rather than hand back a truncated array. Callers with
+        // a recoverable API return failure; mutable-reference APIs abort so
+        // they can never write through this shared storage. `copy` is
         // discarded here and its ~Chunks unwinds whatever it charged.
-        return;
+        return false;
       }
       copy->charged_bytes += n * sizeof(T);
       if (src[i]) std::memcpy(c, src[i].get(), n * sizeof(T));
       copy->v.push_back(std::unique_ptr<T[]>(c));
     }
     chunks_storage_ = std::move(copy);
+    maybe_shared_ = false;
+    return true;
   }
 
   bool ensure_capacity(size_t n) {
     if (capacity() >= n) return true;
-    detach_if_shared();  // defensive: every caller already detached
+    if (!detach_if_shared()) return false;  // defensive: every caller detached
     // No single C++ object may exceed PTRDIFF_MAX bytes. Reject before the
     // allocator probe: ASan and several wasm allocators abort (even for
     // nothrow new/malloc) when asked to probe an address-space-sized block.

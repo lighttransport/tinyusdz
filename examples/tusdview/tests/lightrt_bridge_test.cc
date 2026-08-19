@@ -556,6 +556,18 @@ int main() {
         "input": "base_color",
         "nodegraph": "NG_interface",
         "output": "out"
+      },
+      {
+        "input": "roughness",
+        "nodegraph": "NG_interface",
+        "output": "out",
+        "channels": "g"
+      },
+      {
+        "input": "metalness",
+        "nodegraph": "NG_interface",
+        "output": "out",
+        "channels": "r"
       }
     ]
   })json";
@@ -563,7 +575,9 @@ int main() {
   if (!ifaceGraphMat.hasLightRtOpenPBR ||
       !Near(ifaceGraphMat.lightRtOpenPBR.baseColor[0], 0.5f) ||
       !Near(ifaceGraphMat.lightRtOpenPBR.baseColor[1], 0.25f) ||
-      !Near(ifaceGraphMat.lightRtOpenPBR.baseColor[2], 0.1875f)) {
+      !Near(ifaceGraphMat.lightRtOpenPBR.baseColor[2], 0.1875f) ||
+      !Near(ifaceGraphMat.lightRtOpenPBR.specularRoughness, 0.25f) ||
+      !Near(ifaceGraphMat.lightRtOpenPBR.metalness, 0.5f)) {
     std::fprintf(stderr,
                  "MaterialX interface input graph was not evaluated\n");
     return 1;
@@ -698,6 +712,35 @@ int main() {
       }
     ]
   })json";
+  std::string graphCompileError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&imageGraphMat,
+                                               &graphCompileError) ||
+      !imageGraphMat.materialXGraph.valid ||
+      imageGraphMat.materialXGraph.nodes.size() != 2 ||
+      imageGraphMat.materialXGraph.output[0] < 0 ||
+      imageGraphMat.materialXGraph.output[1] < 0) {
+    std::fprintf(stderr, "MaterialX graph IR compilation failed: %s\n",
+                 graphCompileError.c_str());
+    return 1;
+  }
+  std::vector<float> packedGraph(tusdview::kRtMaterialGraphFloats, 0.0f);
+  tusdview::PackMaterialXGraphRuntime(imageGraphMat, packedGraph.data());
+  if (packedGraph[0] != 2.0f || packedGraph[1] < 0.0f ||
+      packedGraph[2] < 0.0f) {
+    std::fprintf(stderr, "MaterialX graph runtime packing failed\n");
+    return 1;
+  }
+  imageGraphMat.materialXGraph.nodes[0].textureId = 3;
+  std::vector<int> sourceToTable = {-1, 7, -1, 2};
+  std::fill(packedGraph.begin(), packedGraph.end(), 0.0f);
+  tusdview::PackMaterialXGraphRuntime(imageGraphMat, packedGraph.data(),
+                                      &sourceToTable);
+  const size_t imageNodePacked =
+      tusdview::kRtMaterialGraphHeaderFloats + 16;
+  if (packedGraph[imageNodePacked] != 2.0f) {
+    std::fprintf(stderr, "MaterialX graph source texture remapping failed\n");
+    return 1;
+  }
   tusdview::BakeLightRtOpenPBR(&imageGraphMat);
   if (!imageGraphMat.hasLightRtOpenPBR ||
       !imageGraphMat.lightRtOpenPBR.hasTextureInputs) {
@@ -714,6 +757,113 @@ int main() {
   if (!Near(imageGraphMat.lightRtOpenPBR.metalness, 0.42f)) {
     std::fprintf(stderr,
                  "MaterialX mixed graph constant lane was not baked\n");
+    return 1;
+  }
+
+  // Keep the canonical IR operation table aligned across CPU, Vulkan, CUDA,
+  // and HIP interpreters. These scalar nodes are deliberately independent of
+  // LightRT's legacy bake evaluator.
+  tusdview::DrawMaterialCPU extendedGraphMat;
+  extendedGraphMat.materialXNodeGraphJson = R"json({
+    "nodegraph": {"nodes": [
+      {"name":"pow","category":"power","inputs":[{"value":2.0},{"value":3.0},{"name":"scale","value":[2.0,3.0]},{"name":"offset","value":[0.1,0.2]}]},
+      {"name":"min","category":"minimum","inputs":[{"nodename":"pow"},{"value":9.0}]},
+      {"name":"max","category":"maximum","inputs":[{"nodename":"min"},{"value":1.0}]},
+      {"name":"abs","category":"abs","inputs":[{"nodename":"max"}]},
+      {"name":"sqrt","category":"sqrt","inputs":[{"nodename":"abs"}]},
+      {"name":"sin","category":"sin","inputs":[{"nodename":"sqrt"}]},
+      {"name":"cos","category":"cos","inputs":[{"nodename":"sin"}]},
+      {"name":"lum","category":"luminance","inputs":[{"value":[1.0,2.0,3.0]}]},
+      {"name":"sel","category":"select","inputs":[{"value":1.0},{"value":2.0},{"value":3.0}]},
+      {"name":"remap","category":"remap","inputs":[{"value":0.5},{"value":0.0},{"value":1.0}]}
+    ], "outputs": []}, "connections": []
+  })json";
+  std::string extendedError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&extendedGraphMat,
+                                               &extendedError) ||
+      extendedGraphMat.materialXGraph.nodes.size() != 10 ||
+      extendedGraphMat.materialXGraph.nodes[0].op !=
+          tusdview::MaterialXGraphOpCPU::Power ||
+      extendedGraphMat.materialXGraph.nodes[8].op !=
+          tusdview::MaterialXGraphOpCPU::Select ||
+      extendedGraphMat.materialXGraph.nodes[9].op !=
+          tusdview::MaterialXGraphOpCPU::Remap ||
+      !Near(extendedGraphMat.materialXGraph.nodes[0].uvScale[0], 2.0f) ||
+      !Near(extendedGraphMat.materialXGraph.nodes[0].uvOffset[1], 0.2f) ||
+      !Near(extendedGraphMat.materialXGraph.nodes[7].value[0][1], 2.0f) ||
+      !Near(extendedGraphMat.materialXGraph.nodes[8].value[2][0], 3.0f)) {
+    std::fprintf(stderr, "extended MaterialX graph operators failed: %s\n",
+                 extendedError.c_str());
+    return 1;
+  }
+
+  // Image evaluation must use the owning asset directory.  This exercises
+  // the real vendored texture cache (rather than the historical no-image
+  // stub) while keeping the graph's live texture lane marked as a runtime
+  // dependency in BakeRealtimePbrMaterial.
+  const char* imageXml =
+      "<materialx version=\"1.39\">"
+      "<nodegraph name=\"NG_asset_image\">"
+      "<image name=\"img\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"checkerboard.png\"/>"
+      "<input name=\"default\" type=\"color3\" value=\"0.123,0.234,0.345\"/>"
+      "</image>"
+      "<output name=\"base_out\" type=\"color3\" nodename=\"img\"/>"
+      "</nodegraph>"
+      "<open_pbr_surface name=\"surface\" type=\"surfaceshader\">"
+      "<input name=\"base_color\" type=\"color3\" nodegraph=\"NG_asset_image\" output=\"base_out\"/>"
+      "</open_pbr_surface>"
+      "<surfacematerial name=\"material\" type=\"material\">"
+      "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"surface\"/>"
+      "</surfacematerial>"
+      "</materialx>";
+  tinyusdz::tydra::LightRtOpenPBRParams imageParams{};
+  std::string imageErr;
+  if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
+          imageXml, "material", "../../../models/textures", &imageParams,
+          &imageErr)) {
+    std::fprintf(stderr, "asset-relative MaterialX image eval failed: %s\n",
+                 imageErr.c_str());
+    return 1;
+  }
+  if (Near(imageParams.baseColor[0], 0.123f, 1.0e-3f) &&
+      Near(imageParams.baseColor[1], 0.234f, 1.0e-3f) &&
+      Near(imageParams.baseColor[2], 0.345f, 1.0e-3f)) {
+    std::fprintf(stderr,
+                 "asset-relative MaterialX image unexpectedly used default\n");
+    return 1;
+  }
+  tinyusdz::tydra::LightRtOpenPBRParams uvImageParams{};
+  if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBRAtUv(
+          imageXml, "material", "../../../models/textures", 0.13f, 0.87f,
+          &uvImageParams, &imageErr) ||
+      !std::isfinite(uvImageParams.baseColor[0]) ||
+      !std::isfinite(uvImageParams.baseColor[1]) ||
+      !std::isfinite(uvImageParams.baseColor[2])) {
+    std::fprintf(stderr, "UV-aware MaterialX image eval failed: %s\n",
+                 imageErr.c_str());
+    return 1;
+  }
+
+  tusdview::DrawScene graphBakeScene;
+  tusdview::DrawMaterialCPU graphBakeMat = imageGraphMat;
+  graphBakeMat.absPath = "../../../models/textures/material.usda";
+  const std::string missingName = "missing_base.png";
+  const size_t missingPos = graphBakeMat.materialXNodeGraphJson.find(missingName);
+  if (missingPos != std::string::npos) {
+    graphBakeMat.materialXNodeGraphJson.replace(
+        missingPos, missingName.size(), "checkerboard.png");
+  }
+  tusdview::BakeMaterialXGraphTextures(&graphBakeMat, &graphBakeScene);
+  if (graphBakeMat.baseColorTex < 0 || graphBakeScene.textures.size() != 2 ||
+      graphBakeScene.textures[0].image.width != 16 ||
+      graphBakeScene.textures[0].image.height != 16 ||
+      graphBakeMat.materialXGraph.nodes[0].textureId < 0) {
+    std::fprintf(stderr,
+                 "MaterialX graph texture bake did not produce a map (base=%d textures=%zu nodeTex=%d)\n",
+                 graphBakeMat.baseColorTex, graphBakeScene.textures.size(),
+                 graphBakeMat.materialXGraph.nodes.empty()
+                     ? -1 : graphBakeMat.materialXGraph.nodes[0].textureId);
     return 1;
   }
 
@@ -993,6 +1143,16 @@ int main() {
       udimTable.textures[4].mipCount != 3 ||
       udimTable.textures[4].firstMip != 5) {
     std::fprintf(stderr, "shared RT UDIM mip-chain packing is incorrect\n");
+    return 1;
+  }
+  tusdview::DrawMaterialCPU udimOpacityMaterial;
+  udimOpacityMaterial.opacityTex = 0;
+  tusdview::HostTextureTable udimOpacityTable;
+  tusdview::BuildHostTextureTable({udimTexture}, {udimOpacityMaterial},
+                                  &udimOpacityTable);
+  if (udimOpacityTable.matTex.size() < tusdview::kRtMaterialTexSlots ||
+      udimOpacityTable.matTex[5] != 0) {
+    std::fprintf(stderr, "shared RT UDIM opacity-slot mapping is incorrect\n");
     return 1;
   }
 

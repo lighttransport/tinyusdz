@@ -161,10 +161,40 @@ std::string RtPipelineCachePath(const VkPhysicalDeviceProperties& props,
 }
 
 constexpr uint32_t kRasterDescriptorSetCount = 4;
-constexpr uint32_t kMaterialBindingCount = 32;
+constexpr uint32_t kMaterialBindingCount =
+    32 + 2 * kRasterMaterialGraphImageCount;
 constexpr uint32_t kDeformBindingCount = 8;
 constexpr uint32_t kMaxMaterialSets = 8192;
 constexpr uint32_t kMaxDeformSets = 16384;
+
+std::string MaterialDescriptorKey(const DrawMaterialCPU& material) {
+  const int ids[] = {
+      material.baseColorTex, material.metallicTex, material.roughnessTex,
+      material.normalTex, material.coatNormalTex, material.emissiveTex,
+      material.opacityTex, material.occlusionTex, material.specularColorTex,
+      material.coatWeightTex, material.coatColorTex,
+      material.coatRoughnessTex, material.displacementTex};
+  std::string key(reinterpret_cast<const char*>(ids), sizeof(ids));
+  for (const MaterialXGraphNodeCPU& node : material.materialXGraph.nodes) {
+    key.append(reinterpret_cast<const char*>(&node.textureId),
+               sizeof(node.textureId));
+  }
+  const uint32_t graphUdimMask =
+      (material.baseColorSample.isUdim ? 1u : 0u) |
+      (material.metallicSample.isUdim ? 2u : 0u) |
+      (material.roughnessSample.isUdim ? 4u : 0u) |
+      (material.normalSample.isUdim ? 8u : 0u) |
+      (material.emissiveSample.isUdim ? 16u : 0u) |
+      (material.opacitySample.isUdim ? 32u : 0u) |
+      (material.occlusionSample.isUdim ? 64u : 0u) |
+      (material.specularColorSample.isUdim ? 128u : 0u) |
+      (material.coatWeightSample.isUdim ? 256u : 0u) |
+      (material.coatColorSample.isUdim ? 512u : 0u) |
+      (material.coatRoughnessSample.isUdim ? 1024u : 0u) |
+      (material.coatNormalSample.isUdim ? 2048u : 0u);
+  key.append(reinterpret_cast<const char*>(&graphUdimMask), sizeof(graphUdimMask));
+  return key;
+}
 
 #define VK_CHECK(expr, msg)                                  \
   do {                                                       \
@@ -407,17 +437,17 @@ struct RtPushC {
   uint32_t pointParams[4]; // native Gaussian point count, node count, chunk count
 };
 
-// Push constants for the compute-BVH fallback's milestone-1 debug shader
-// (raytrace_swbvh.comp): just enough to generate camera rays and test the
-// TLAS root AABB. Grows toward RtPushC's shape as later milestones add real
-// traversal + shared shading.
+// Push constants for the compute-BVH fallback. The final fields mirror the
+// hardware path's accumulation controls.
 struct SwRtPushC {
   float invViewProj[16];
   float camPos[4];      // xyz + .w RenderMode
   float lightDir[4];    // xyz = unit direction *towards* the key light
   float clearColor[4];
   uint32_t tlasNodeCount;
-  uint32_t pad[3];
+  uint32_t sampleIndex;
+  uint32_t accumEnabled;
+  uint32_t pad;
 };
 
 // Per-mesh descriptor for the RT shader (scalar layout, must match raytrace.comp).
@@ -560,6 +590,22 @@ uint64_t QueryDeviceLocalVramBytes() {
   }
   vkDestroyInstance(inst, nullptr);
   return bytes;
+}
+
+VulkanProbeResult ProbeVulkanBackend(
+    GLFWwindow* window, const RendererDevicePreference& preference) {
+  VulkanProbeResult result;
+  VulkanRenderer probe;
+  probe.setDevicePreference(preference);
+  std::string error;
+  if (!probe.init(window, &error)) {
+    result.error = error.empty() ? "Vulkan initialization failed" : error;
+    return result;
+  }
+  result.rasterAvailable = true;
+  result.rtAvailable = probe.rayTracingAvailable();
+  probe.shutdown();
+  return result;
 }
 
 VulkanRenderer::~VulkanRenderer() { shutdown(); }
@@ -828,6 +874,7 @@ void VulkanRenderer::detectRtSupport() {
 
   rtSupported_ = true;  // device-side OK; PFN load in createDevice may still veto
   rtTechnique_ = RtTechnique::kHardware;
+  rtHardwareCapable_ = true;
 #endif
 }
 
@@ -1001,6 +1048,17 @@ bool VulkanRenderer::createDevice(std::string* err) {
     enabledFeatures.tessellationShader = VK_TRUE;
     tessSupported_ = true;
   }
+  if (supported.samplerAnisotropy) {
+    enabledFeatures.samplerAnisotropy = VK_TRUE;
+    samplerAnisotropySupported_ = true;
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(phys_, &properties);
+    maxSamplerAnisotropy_ = std::min(properties.limits.maxSamplerAnisotropy, 16.0f);
+    if (!std::isfinite(maxSamplerAnisotropy_) || maxSamplerAnisotropy_ < 1.0f) {
+      maxSamplerAnisotropy_ = 1.0f;
+      samplerAnisotropySupported_ = false;
+    }
+  }
   // mesh.frag / mesh_inst.frag read gl_PrimitiveID in the fragment stage, which
   // requires the geometryShader feature (SPIR-V Geometry capability). Enable it
   // when available; ubiquitous on desktop GPUs.
@@ -1077,6 +1135,7 @@ bool VulkanRenderer::createDevice(std::string* err) {
     if (!pfnGetBufferDeviceAddress_ || !pfnGetASBuildSizes_ || !pfnCreateAS_ ||
         !pfnDestroyAS_ || !pfnCmdBuildAS_ || !pfnGetASDeviceAddress_) {
       rtSupported_ = false;  // any missing entrypoint -> compute-BVH / rasterization
+      rtHardwareCapable_ = false;
       rtTechnique_ = RtTechnique::kNone;
       LOGD("ray tracing: PFN load failed: bda=%p sizes=%p create=%p destroy=%p "
            "build=%p addr=%p",
@@ -1378,6 +1437,10 @@ bool VulkanRenderer::createOffscreenRenderPass(std::string* err) {
   ci.pDependencies = deps;
   VK_CHECK(vkCreateRenderPass(device_, &ci, nullptr, &offscreenPass_),
            "offscreen render pass");
+  // The shadow pass only samples its depth attachment. Keeping the throwaway
+  // color attachment in COLOR_ATTACHMENT_OPTIMAL avoids requiring SAMPLED
+  // usage (VUID-vkCmdBeginRenderPass-initialLayout-00897).
+  atts[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   atts[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   atts[1].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   deps[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
@@ -2713,6 +2776,8 @@ bool VulkanRenderer::createSampler(std::string* err) {
   // single-level images are unaffected (LOD clamps to the available levels).
   ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
   ci.maxLod = VK_LOD_CLAMP_NONE;
+  ci.anisotropyEnable = samplerAnisotropySupported_ ? VK_TRUE : VK_FALSE;
+  ci.maxAnisotropy = maxSamplerAnisotropy_;
   VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &sampler_), "sampler");
   auto addressMode = [](int wrap) {
     switch (static_cast<WrapMode>(wrap)) {
@@ -2977,23 +3042,27 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
     }
   }
 
-  // Raster set 3: per-material texture scale/bias SSBO,
-  // read in the vertex + tess-eval stages, indexed by pc.matId.
-  VkDescriptorSetLayoutBinding mb{};
-  mb.binding = 0;
-  mb.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  mb.descriptorCount = 1;
-  mb.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-  if (tessSupported_) mb.stageFlags |= VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+  // Raster set 3: per-material texture scale/bias plus the compact MaterialX
+  // graph block, both indexed by pc.matId.
+  VkDescriptorSetLayoutBinding mb[2]{};
+  mb[0].binding = 0;
+  mb[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  mb[0].descriptorCount = 1;
+  mb[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  if (tessSupported_) mb[0].stageFlags |= VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+  mb[1].binding = 1;
+  mb[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  mb[1].descriptorCount = 1;
+  mb[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
   VkDescriptorSetLayoutCreateInfo mlci{};
   mlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  mlci.bindingCount = 1;
-  mlci.pBindings = &mb;
+  mlci.bindingCount = 2;
+  mlci.pBindings = mb;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &mlci, nullptr, &dispMatSetLayout_),
            "displacement-material set layout");
   VkDescriptorPoolSize mps{};
   mps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  mps.descriptorCount = 1;
+  mps.descriptorCount = 2;
   VkDescriptorPoolCreateInfo mpci{};
   mpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   mpci.maxSets = 1;
@@ -3001,16 +3070,25 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   mpci.pPoolSizes = &mps;
   VK_CHECK(vkCreateDescriptorPool(device_, &mpci, nullptr, &dispMatPool_),
            "displacement-material descriptor pool");
-  const VkDeviceSize dispMatBytes =
-      kMaxDispMaterials * kVkMatTexParamFloats * sizeof(float);
-  std::vector<float> dispMatInit(kMaxDispMaterials * kVkMatTexParamFloats,
-                                 0.0f);
-  for (uint32_t i = 0; i < kMaxDispMaterials; ++i) {
+  const VkDeviceSize dispMatBytes = kVkMatTexParamFloats * sizeof(float);
+  std::vector<float> dispMatInit(kVkMatTexParamFloats, 0.0f);
+  for (uint32_t i = 0; i < 1; ++i) {
     InitVkMatTexParam(dispMatInit.data() + i * kVkMatTexParamFloats);
   }
   if (createHostBuffer(dispMatBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                        dispMatInit.data(), &dispMatSsbo_, &dispMatSsboMem_)) {
-    vkMapMemory(device_, dispMatSsboMem_, 0, dispMatBytes, 0, &dispMatMapped_);
+    if (vkMapMemory(device_, dispMatSsboMem_, 0, dispMatBytes, 0,
+                    &dispMatMapped_) != VK_SUCCESS) {
+      vkDestroyBuffer(device_, dispMatSsbo_, nullptr);
+      vkFreeMemory(device_, dispMatSsboMem_, nullptr);
+      dispMatSsbo_ = VK_NULL_HANDLE;
+      dispMatSsboMem_ = VK_NULL_HANDLE;
+      dispMatMapped_ = nullptr;
+    } else {
+      dispMatCapacity_ = 1;
+    }
+  }
+  if (dispMatSsbo_) {
     VkDescriptorSetAllocateInfo mai{};
     mai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     mai.descriptorPool = dispMatPool_;
@@ -3028,6 +3106,11 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
       mw.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       mw.pBufferInfo = &mbi;
       vkUpdateDescriptorSets(device_, 1, &mw, 0, nullptr);
+      VkWriteDescriptorSet gw = mw;
+      gw.dstBinding = 1;
+      // A valid fallback keeps the descriptor complete before the first scene
+      // upload; updateMaterialTables replaces it with the graph buffer.
+      vkUpdateDescriptorSets(device_, 1, &gw, 0, nullptr);
     }
   }
 
@@ -3268,7 +3351,9 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
       material.opacityTex, material.roughnessTex, -1, -1, -1,
       material.roughnessTex, material.displacementTex, material.occlusionTex,
       material.occlusionTex};
-  static_assert(kMaterialBindingCount == 32, "material descriptor table drift");
+  // The first 32 bindings are the established semantic table. Bindings
+  // 32..39 and 40..47 are the bounded per-material graph image and UDIM
+  // image slots respectively.
   views[19] = shadowDepthView_ ? shadowDepthView_ : whiteView_;
   // Extra 2D-only material slots. UDIM sources fall back to white (treated as
   // unbound) rather than sampling the wrong image.
@@ -3303,6 +3388,62 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
   textureSlots[29] = material.coatRoughnessTex;
   textureSlots[30] = material.coatNormalTex;
   textureSlots[31] = material.displacementTex;
+  std::vector<int> graphTextureIds;
+  graphTextureIds.reserve(kRasterMaterialGraphImageCount);
+  auto graphIsUdim = [&](int slot) {
+    for (const MaterialXGraphNodeCPU& node : material.materialXGraph.nodes) {
+      if (node.textureId == slot && node.isUdim) return true;
+    }
+    return (slot >= 0 && slot == material.baseColorTex &&
+            material.baseColorSample.isUdim) ||
+           (slot >= 0 && slot == material.metallicTex &&
+            material.metallicSample.isUdim) ||
+           (slot >= 0 && slot == material.roughnessTex &&
+            material.roughnessSample.isUdim) ||
+           (slot >= 0 && slot == material.normalTex &&
+            material.normalSample.isUdim) ||
+           (slot >= 0 && slot == material.emissiveTex &&
+            material.emissiveSample.isUdim) ||
+           (slot >= 0 && slot == material.opacityTex &&
+            material.opacitySample.isUdim) ||
+           (slot >= 0 && slot == material.occlusionTex &&
+            material.occlusionSample.isUdim) ||
+           (slot >= 0 && slot == material.specularColorTex &&
+            material.specularColorSample.isUdim) ||
+           (slot >= 0 && slot == material.coatWeightTex &&
+            material.coatWeightSample.isUdim) ||
+           (slot >= 0 && slot == material.coatColorTex &&
+            material.coatColorSample.isUdim) ||
+           (slot >= 0 && slot == material.coatRoughnessTex &&
+            material.coatRoughnessSample.isUdim) ||
+           (slot >= 0 && slot == material.coatNormalTex &&
+            material.coatNormalSample.isUdim);
+  };
+  for (const MaterialXGraphNodeCPU& node : material.materialXGraph.nodes) {
+    if (node.textureId < 0) continue;
+    if (std::find(graphTextureIds.begin(), graphTextureIds.end(),
+                  node.textureId) == graphTextureIds.end() &&
+        graphTextureIds.size() < kRasterMaterialGraphImageCount)
+      graphTextureIds.push_back(node.textureId);
+  }
+  for (size_t i = 0; i < graphTextureIds.size(); ++i) {
+    const int slot = graphTextureIds[i];
+    if (graphIsUdim(slot)) {
+      views[40 + i] = udimView(slot);
+      views[32 + i] = whiteView_;
+    } else {
+      views[32 + i] = textureView(slot, whiteView_);
+      views[40 + i] = dummyArrayView_;
+    }
+    textureSlots[32 + i] = slot;
+    textureSlots[40 + i] = slot;
+  }
+  for (size_t i = graphTextureIds.size(); i < kRasterMaterialGraphImageCount; ++i) {
+    views[32 + i] = whiteView_;
+    views[40 + i] = dummyArrayView_;
+    textureSlots[32 + i] = -1;
+    textureSlots[40 + i] = -1;
+  }
   VkDescriptorImageInfo infos[kMaterialBindingCount]{};
   VkWriteDescriptorSet writes[kMaterialBindingCount]{};
   for (uint32_t i = 0; i < kMaterialBindingCount; ++i) {
@@ -3465,8 +3606,17 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
                                         VkDeviceMemory* outMem, VkImageView* outView,
                                         const std::vector<light3d::Image>* mips,
                                         bool srgb) {
-  if (img.width <= 0 || img.height <= 0) return false;
+  if (!outImg || !outMem || !outView || img.width <= 0 || img.height <= 0)
+    return false;
   const bool allocateOnly = img.data.empty();
+  size_t basePixels = 0;
+  size_t baseBytes = 0;
+  if (!CheckedMulSize(static_cast<size_t>(img.width),
+                      static_cast<size_t>(img.height), &basePixels) ||
+      !CheckedMulSize(basePixels, size_t{4}, &baseBytes) ||
+      (!allocateOnly && (img.channels != 4 || img.data.size() < baseBytes))) {
+    return false;
+  }
   // sRGB color textures (base color / emissive) upload as _SRGB so the sampler
   // linearizes them for the linear-space lighting (T11); normal / metal-rough
   // stay _UNORM. Mirrors the compressed path, which already keyed on srgb.
@@ -3482,8 +3632,13 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
     for (const light3d::Image& m : *mips) {
       w = std::max(1, w / 2);
       h = std::max(1, h / 2);
+      size_t mipPixels = 0;
+      size_t mipBytes = 0;
       if (m.width != w || m.height != h || m.channels != 4 ||
-          m.data.size() < static_cast<size_t>(w) * h * 4) {
+          !CheckedMulSize(static_cast<size_t>(w), static_cast<size_t>(h),
+                          &mipPixels) ||
+          !CheckedMulSize(mipPixels, size_t{4}, &mipBytes) ||
+          m.data.size() < mipBytes) {
         valid = false;
         break;
       }
@@ -4880,12 +5035,15 @@ bool VulkanRenderer::poolSubAlloc(VkDeviceSize size, VkDeviceSize align,
                                   uint32_t memoryTypeIndex, bool deviceAddress,
                                   VkDeviceMemory* outMem, VkDeviceSize* outOffset,
                                   void** outMapped) {
+  if (size == 0) return false;
   if (align == 0) align = 1;
+  if ((align & (align - 1)) != 0) return false;
   for (HostMemBlock& b : hostBlocks_) {
     if (b.memoryTypeIndex != memoryTypeIndex || b.deviceAddress != deviceAddress)
       continue;
+    if (b.used > std::numeric_limits<VkDeviceSize>::max() - (align - 1)) continue;
     const VkDeviceSize off = (b.used + align - 1) & ~(align - 1);
-    if (off + size <= b.size) {
+    if (off <= b.size && size <= b.size - off) {
       b.used = off + size;
       *outMem = b.mem;
       *outOffset = off;
@@ -4897,7 +5055,9 @@ bool VulkanRenderer::poolSubAlloc(VkDeviceSize size, VkDeviceSize align,
   HostMemBlock nb;
   nb.memoryTypeIndex = memoryTypeIndex;
   nb.deviceAddress = deviceAddress;
-  nb.size = std::max<VkDeviceSize>(kHostBlockBytes, (size + align - 1) & ~(align - 1));
+  if (size > std::numeric_limits<VkDeviceSize>::max() - (align - 1)) return false;
+  nb.size = std::max<VkDeviceSize>(kHostBlockBytes,
+                                   (size + align - 1) & ~(align - 1));
   VkMemoryAllocateInfo ai{};
   ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   ai.allocationSize = nb.size;
@@ -4967,12 +5127,15 @@ VkDeviceSize VulkanRenderer::deviceLocalFloorBytes() {
 bool VulkanRenderer::deviceSubAlloc(VkDeviceSize size, VkDeviceSize align,
                                     uint32_t memoryTypeIndex, bool deviceAddress,
                                     VkDeviceMemory* outMem, VkDeviceSize* outOffset) {
+  if (size == 0) return false;
   if (align == 0) align = 1;
+  if ((align & (align - 1)) != 0) return false;
   for (HostMemBlock& b : deviceBlocks_) {
     if (b.memoryTypeIndex != memoryTypeIndex || b.deviceAddress != deviceAddress)
       continue;
+    if (b.used > std::numeric_limits<VkDeviceSize>::max() - (align - 1)) continue;
     const VkDeviceSize off = (b.used + align - 1) & ~(align - 1);
-    if (off + size <= b.size) {
+    if (off <= b.size && size <= b.size - off) {
       b.used = off + size;
       *outMem = b.mem;
       *outOffset = off;
@@ -4982,7 +5145,9 @@ bool VulkanRenderer::deviceSubAlloc(VkDeviceSize size, VkDeviceSize align,
   HostMemBlock nb;
   nb.memoryTypeIndex = memoryTypeIndex;
   nb.deviceAddress = deviceAddress;
-  nb.size = std::max<VkDeviceSize>(kHostBlockBytes, (size + align - 1) & ~(align - 1));
+  if (size > std::numeric_limits<VkDeviceSize>::max() - (align - 1)) return false;
+  nb.size = std::max<VkDeviceSize>(kHostBlockBytes,
+                                   (size + align - 1) & ~(align - 1));
   VkMemoryAllocateInfo ai{};
   ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   ai.allocationSize = nb.size;
@@ -5085,6 +5250,13 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
                                       const void* data, VkBuffer* buf,
                                       VkDeviceMemory* mem, bool deviceAddress,
                                       bool poolable, void** mappedOut) {
+  if (!buf || !mem || size == 0 || !data ||
+      size > static_cast<VkDeviceSize>(std::numeric_limits<size_t>::max())) {
+    return false;
+  }
+  *buf = VK_NULL_HANDLE;
+  *mem = VK_NULL_HANDLE;
+  if (mappedOut) *mappedOut = nullptr;
   static const bool timeit = std::getenv("TUSDVIEW_TIME_UPLOAD") != nullptr;
   double ta = timeit ? NowS() : 0;
 
@@ -5194,7 +5366,11 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
       return false;
     }
     if (timeit) { g_chb.alloc += NowS() - ta; ta = NowS(); }
-    vkBindBufferMemory(device_, *buf, blockMem, off);
+    if (vkBindBufferMemory(device_, *buf, blockMem, off) != VK_SUCCESS) {
+      vkDestroyBuffer(device_, *buf, nullptr);
+      *buf = VK_NULL_HANDLE;
+      return false;
+    }
     if (timeit) { g_chb.bind += NowS() - ta; ta = NowS(); }
     std::memcpy(mapped, data, static_cast<size_t>(size));
     *mem = VK_NULL_HANDLE;
@@ -5223,11 +5399,23 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
     return false;
   }
   if (timeit) { g_chb.alloc += NowS() - ta; ta = NowS(); }
-  vkBindBufferMemory(device_, *buf, *mem, 0);
+  if (vkBindBufferMemory(device_, *buf, *mem, 0) != VK_SUCCESS) {
+    vkFreeMemory(device_, *mem, nullptr);
+    vkDestroyBuffer(device_, *buf, nullptr);
+    *mem = VK_NULL_HANDLE;
+    *buf = VK_NULL_HANDLE;
+    return false;
+  }
   if (timeit) { g_chb.bind += NowS() - ta; ta = NowS(); }
 
   void* mapped = nullptr;
-  vkMapMemory(device_, *mem, 0, size, 0, &mapped);
+  if (vkMapMemory(device_, *mem, 0, size, 0, &mapped) != VK_SUCCESS || !mapped) {
+    vkFreeMemory(device_, *mem, nullptr);
+    vkDestroyBuffer(device_, *buf, nullptr);
+    *mem = VK_NULL_HANDLE;
+    *buf = VK_NULL_HANDLE;
+    return false;
+  }
   std::memcpy(mapped, data, static_cast<size_t>(size));
   vkUnmapMemory(device_, *mem);
   if (mappedOut) *mappedOut = nullptr;
@@ -5465,6 +5653,10 @@ void VulkanRenderer::destroyScene() {
   if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
   if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
   if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
+  if (rtMatGraphBuf_) { vkDestroyBuffer(device_, rtMatGraphBuf_, nullptr); rtMatGraphBuf_ = VK_NULL_HANDLE; }
+  if (rtMatGraphMem_) { vkFreeMemory(device_, rtMatGraphMem_, nullptr); rtMatGraphMem_ = VK_NULL_HANDLE; }
+  if (rasterMatGraphBuf_) { vkDestroyBuffer(device_, rasterMatGraphBuf_, nullptr); rasterMatGraphBuf_ = VK_NULL_HANDLE; }
+  if (rasterMatGraphMem_) { vkFreeMemory(device_, rasterMatGraphMem_, nullptr); rasterMatGraphMem_ = VK_NULL_HANDLE; }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
   if (rtPointBuf_) { vkDestroyBuffer(device_, rtPointBuf_, nullptr); rtPointBuf_ = VK_NULL_HANDLE; }
@@ -5542,6 +5734,7 @@ void VulkanRenderer::destroyScene() {
   // Free all per-texture descriptor sets (incl. whiteDesc_) in one shot.
   if (texPool_) vkResetDescriptorPool(device_, texPool_, 0);
   materialSets_.clear();
+  materialSetCache_.clear();
   if (materialPool_) vkResetDescriptorPool(device_, materialPool_, 0);
   if (influencePool_) vkResetDescriptorPool(device_, influencePool_, 0);
   if (facePool_) {
@@ -5610,12 +5803,18 @@ void VulkanRenderer::syncSceneResources(
 
 void VulkanRenderer::updateMaterialTables(
     const std::vector<DrawMaterialCPU>& materials) {
+  if (!ensureRasterMaterialCapacity(materials.size())) {
+    LOGE("Vulkan material parameter table cannot hold %zu material(s); "
+         "out-of-range shader accesses will use material zero",
+         materials.size());
+  }
   // RT materials SSBO: 3 vec4 (12 floats) per material -- baseColor.rgb+alpha,
   // (metallic, roughness, alphaMode, alphaCutoff), emissive.rgb+0. The raster
   // path's per-draw push constants still read the shared scalar material lanes
   // with stride 12.
   matColor_.resize(materials.size() * 12);
   matLightRt_.resize(materials.size() * kVkLightRtOpenPBRFloats);
+  matGraph_.resize(materials.size() * kRtMaterialGraphFloats);
   matBaseTex_.resize(materials.size());
   matMetallicTex_.resize(materials.size());
   matRoughnessTex_.resize(materials.size());
@@ -5643,6 +5842,8 @@ void VulkanRenderer::updateMaterialTables(
     matColor_[i * 12 + 10] = materials[i].emissive[2];
     PackLightRtOpenPBR(materials[i],
                        &matLightRt_[i * kVkLightRtOpenPBRFloats]);
+    PackMaterialXGraphRuntime(materials[i],
+                              &matGraph_[i * kRtMaterialGraphFloats]);
     matBaseTex_[i] = materials[i].baseColorTex;
     matMetallicTex_[i] = materials[i].metallicTex;
     matRoughnessTex_[i] = materials[i].roughnessTex;
@@ -5657,7 +5858,7 @@ void VulkanRenderer::updateMaterialTables(
     matDispTex_[i] = materials[i].displacementTex;
     matDispConst_[i] = materials[i].displacementConst;
     // Per-material texture sampling params -> raster set 3 SSBO.
-    if (dispMatMapped_ && i < kMaxDispMaterials) {
+    if (dispMatMapped_ && i < dispMatCapacity_) {
       float* dst = static_cast<float*>(dispMatMapped_) +
                    i * kVkMatTexParamFloats;
       DrawMaterialCPU packed = materials[i];
@@ -5681,20 +5882,150 @@ void VulkanRenderer::updateMaterialTables(
     }
   }
 
-  const uint32_t materialCount = static_cast<uint32_t>(std::min<size_t>(
-      std::max<size_t>(materials.size(), 1), kMaxMaterialSets));
-  std::vector<VkDescriptorSetLayout> layouts(materialCount,
-                                              materialSetLayout_);
-  materialSets_.resize(materialCount, VK_NULL_HANDLE);
-  VkDescriptorSetAllocateInfo ai{};
-  ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  ai.descriptorPool = materialPool_;
-  ai.descriptorSetCount = materialCount;
-  ai.pSetLayouts = layouts.data();
-  if (vkAllocateDescriptorSets(device_, &ai, materialSets_.data()) != VK_SUCCESS) {
-    materialSets_.clear();
+  rasterMatGraph_.assign(std::max<size_t>(materials.size(), 1) *
+                             kRtMaterialGraphFloats,
+                         0.0f);
+  for (size_t i = 0; i < materials.size(); ++i) {
+    PackRasterMaterialXGraphRuntime(
+        materials[i], &rasterMatGraph_[i * kRtMaterialGraphFloats]);
+  }
+  if (rasterMatGraphBuf_) {
+    vkDeviceWaitIdle(device_);
+    vkDestroyBuffer(device_, rasterMatGraphBuf_, nullptr);
+  }
+  if (rasterMatGraphMem_) vkFreeMemory(device_, rasterMatGraphMem_, nullptr);
+  rasterMatGraphBuf_ = VK_NULL_HANDLE;
+  rasterMatGraphMem_ = VK_NULL_HANDLE;
+  if (createHostBuffer(rasterMatGraph_.size() * sizeof(float),
+                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                       rasterMatGraph_.data(), &rasterMatGraphBuf_,
+                       &rasterMatGraphMem_) && dispMatSet_) {
+    VkDescriptorBufferInfo graphInfo{rasterMatGraphBuf_, 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet graphWrite{};
+    graphWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    graphWrite.dstSet = dispMatSet_;
+    graphWrite.dstBinding = 1;
+    graphWrite.descriptorCount = 1;
+    graphWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    graphWrite.pBufferInfo = &graphInfo;
+    vkUpdateDescriptorSets(device_, 1, &graphWrite, 0, nullptr);
+  }
+
+  const size_t materialCount = std::max<size_t>(materials.size(), 1);
+  materialSets_.assign(materialCount, VK_NULL_HANDLE);
+  std::vector<size_t> missing;
+  std::vector<std::string> missingKeys;
+  std::unordered_map<std::string, size_t> pendingKeys;
+  for (size_t i = 0; i < materialCount; ++i) {
+    const DrawMaterialCPU fallback;
+    const DrawMaterialCPU& material = materials.empty() ? fallback : materials[i];
+    const std::string key = MaterialDescriptorKey(material);
+    const auto found = materialSetCache_.find(key);
+    if (found != materialSetCache_.end()) {
+      materialSets_[i] = found->second;
+    } else if (pendingKeys.emplace(key, i).second) {
+      missing.push_back(i);
+      missingKeys.push_back(key);
+    }
+  }
+  if (materialSetCache_.size() + missing.size() > kMaxMaterialSets) {
+    LOGE("Vulkan scene needs %zu unique material descriptor signatures; limit is %u",
+         materialSetCache_.size() + missing.size(), kMaxMaterialSets);
+    missing.resize(std::min<size_t>(missing.size(),
+                                    kMaxMaterialSets - materialSetCache_.size()));
+    missingKeys.resize(missing.size());
+  }
+  if (!missing.empty()) {
+    std::vector<VkDescriptorSetLayout> layouts(missing.size(),
+                                                materialSetLayout_);
+    std::vector<VkDescriptorSet> allocated(missing.size(), VK_NULL_HANDLE);
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool = materialPool_;
+    ai.descriptorSetCount = static_cast<uint32_t>(missing.size());
+    ai.pSetLayouts = layouts.data();
+    if (vkAllocateDescriptorSets(device_, &ai, allocated.data()) == VK_SUCCESS) {
+      for (size_t i = 0; i < missing.size(); ++i) {
+        materialSets_[missing[i]] = allocated[i];
+        materialSetCache_.emplace(missingKeys[i], allocated[i]);
+      }
+    } else {
+      LOGE("Vulkan material descriptor allocation failed for %zu signature(s)",
+           missing.size());
+    }
+  }
+  VkDescriptorSet fallbackSet = VK_NULL_HANDLE;
+  for (size_t i = 0; i < materialCount; ++i) {
+    if (materialSets_[i]) continue;
+    const DrawMaterialCPU fallback;
+    const DrawMaterialCPU& material = materials.empty() ? fallback : materials[i];
+    const auto found = materialSetCache_.find(MaterialDescriptorKey(material));
+    if (found != materialSetCache_.end()) materialSets_[i] = found->second;
+  }
+  for (VkDescriptorSet set : materialSets_) {
+    if (set) { fallbackSet = set; break; }
+  }
+  for (VkDescriptorSet& set : materialSets_) {
+    if (!set) set = fallbackSet;
   }
   refreshMaterialDescriptors();
+}
+
+bool VulkanRenderer::ensureRasterMaterialCapacity(size_t materialCount) {
+  const size_t wanted = std::max<size_t>(materialCount, 1);
+  if (dispMatMapped_ && wanted <= dispMatCapacity_) return true;
+  size_t floatCount = 0;
+  if (wanted > std::numeric_limits<size_t>::max() / kVkMatTexParamFloats) {
+    return false;
+  }
+  floatCount = wanted * kVkMatTexParamFloats;
+  if (floatCount > std::numeric_limits<size_t>::max() / sizeof(float)) {
+    return false;
+  }
+  const VkDeviceSize bytes = static_cast<VkDeviceSize>(floatCount * sizeof(float));
+  VkPhysicalDeviceProperties props{};
+  vkGetPhysicalDeviceProperties(phys_, &props);
+  if (bytes > props.limits.maxStorageBufferRange) return false;
+
+  std::vector<float> initial(floatCount, 0.0f);
+  for (size_t i = 0; i < wanted; ++i) {
+    InitVkMatTexParam(initial.data() + i * kVkMatTexParamFloats);
+  }
+  VkBuffer buffer = VK_NULL_HANDLE;
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  void* mapped = nullptr;
+  if (!createHostBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        initial.data(), &buffer, &memory) ||
+      vkMapMemory(device_, memory, 0, bytes, 0, &mapped) != VK_SUCCESS ||
+      !mapped) {
+    if (buffer) vkDestroyBuffer(device_, buffer, nullptr);
+    if (memory) vkFreeMemory(device_, memory, nullptr);
+    return false;
+  }
+
+  if (device_) vkDeviceWaitIdle(device_);
+  if (dispMatMapped_) vkUnmapMemory(device_, dispMatSsboMem_);
+  if (dispMatSsbo_) vkDestroyBuffer(device_, dispMatSsbo_, nullptr);
+  if (dispMatSsboMem_) vkFreeMemory(device_, dispMatSsboMem_, nullptr);
+  dispMatSsbo_ = buffer;
+  dispMatSsboMem_ = memory;
+  dispMatMapped_ = mapped;
+  dispMatCapacity_ = wanted;
+
+  if (dispMatSet_) {
+    VkDescriptorBufferInfo info{};
+    info.buffer = dispMatSsbo_;
+    info.range = bytes;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = dispMatSet_;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &info;
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  }
+  return true;
 }
 
 void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
@@ -5753,6 +6084,25 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
 void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
                                size_t meshCount) {
   rtLightsCpu_ = lights;
+  const bool hasGeometryLight = std::any_of(
+      lights.begin(), lights.end(), [](const DrawLightCPU& light) {
+        return light.type == DrawLightCPU::Type::Geometry;
+      });
+  // Hardware and compute-BVH now consume the same extended light payload. Do
+  // not reselect hardware here: device capability detection owns this state,
+  // and a late light update must not resurrect a path whose entrypoints failed
+  // during device creation.
+  if (!rtHardwareCapable_ && rtTechnique_ == RtTechnique::kHardware) {
+    rtTechnique_ = RtTechnique::kComputeBvh;
+  }
+  // Exact GeometryLight sampling needs the canonical prototype triangle stream
+  // and instance transforms. The hardware ray-query descriptor set intentionally
+  // does not carry that duplicate stream; compute-BVH already has it and samples
+  // a real source triangle with barycentrics. Prefer that path for fidelity.
+  if (hasGeometryLight && rtTechnique_ == RtTechnique::kHardware && !rtActive_) {
+    rtTechnique_ = RtTechnique::kComputeBvh;
+    LOGI("Vulkan RT: GeometryLight uses compute-BVH for exact mesh emission sampling");
+  }
   rasterLights_ = PackRasterLights(lights, meshCount);
   if (std::getenv("TUSDVIEW_DEBUG_LIGHTS"))
     {
@@ -6574,6 +6924,13 @@ void VulkanRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
 }
 
 void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
+  std::string validationError;
+  if (!ValidateDrawMesh(sm, rtMaterialsCpu_.size(), &validationError)) {
+    LOGE("Vulkan rejected unsafe draw mesh: %s", validationError.c_str());
+    reportSceneUploadError(validationError);
+    meshes_.push_back(VkMeshGPU{});
+    return;
+  }
   if (sm.vertices.empty() || sm.indices.empty()) {
     // Keep the SLOT: meshes_ must stay 1:1 with DrawScene/appendMesh order --
     // every per-mesh index (visibility mask, highlight, updateMeshWorld/
@@ -6588,6 +6945,26 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   gm.submeshes = sm.submeshes;
   gm.matId = sm.submeshes.empty() ? -1 : sm.submeshes.front().materialId;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
+  auto failAuxBuffer = [&](const char* resource) {
+    auto destroyBuffer = [&](VkBuffer* buffer, VkDeviceMemory* memory) {
+      if (*buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, *buffer, nullptr);
+      if (*memory != VK_NULL_HANDLE) vkFreeMemory(device_, *memory, nullptr);
+      *buffer = VK_NULL_HANDLE;
+      *memory = VK_NULL_HANDLE;
+    };
+    destroyBuffer(&gm.morphOffsetVbo, &gm.morphOffsetVboMem);
+    destroyBuffer(&gm.morphInflVbo, &gm.morphInflVboMem);
+    destroyBuffer(&gm.uv1Vbo, &gm.uv1VboMem);
+    destroyBuffer(&gm.influenceVbo, &gm.influenceVboMem);
+    destroyBuffer(&gm.weightVbo, &gm.weightVboMem);
+    destroyBuffer(&gm.jointVbo, &gm.jointVboMem);
+    destroyBuffer(&gm.vbo, &gm.vboMem);
+    LOGE("Vulkan mesh upload failed for '%s': %s allocation",
+         sm.absPath.c_str(), resource);
+    reportSceneUploadError("mesh '" + sm.absPath + "': " + resource +
+                           " allocation failed");
+    meshes_.push_back(VkMeshGPU{});
+  };
   {
     float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
     float hi[3] = {lo[0], lo[1], lo[2]};
@@ -6652,6 +7029,11 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   if (!createHostBuffer(rasterVertices.size() * sizeof(DrawVertex), vboUsage,
                         rasterVertices.data(), &gm.vbo, &gm.vboMem,
                         rtSupported_, pool)) {
+    LOGE("Vulkan mesh upload failed for '%s': vertex buffer allocation",
+         sm.absPath.c_str());
+    reportSceneUploadError("mesh '" + sm.absPath +
+                           "': vertex buffer allocation failed");
+    meshes_.push_back(VkMeshGPU{});
     return;
   }
   std::vector<uint32_t> zeroJoints;
@@ -6678,6 +7060,11 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
                         &gm.jointVbo, &gm.jointVboMem, skinAddressable, poolStatic)) {
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
+    LOGE("Vulkan mesh upload failed for '%s': joint buffer allocation",
+         sm.absPath.c_str());
+    reportSceneUploadError("mesh '" + sm.absPath +
+                           "': joint buffer allocation failed");
+    meshes_.push_back(VkMeshGPU{});
     return;
   }
   if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(float), skinUsage, weights,
@@ -6686,6 +7073,11 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     vkFreeMemory(device_, gm.jointVboMem, nullptr);
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
+    LOGE("Vulkan mesh upload failed for '%s': weight buffer allocation",
+         sm.absPath.c_str());
+    reportSceneUploadError("mesh '" + sm.absPath +
+                           "': weight buffer allocation failed");
+    meshes_.push_back(VkMeshGPU{});
     return;
   }
   std::vector<uint32_t> zeroInfluence;
@@ -6703,6 +7095,11 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     vkFreeMemory(device_, gm.jointVboMem, nullptr);
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
+    LOGE("Vulkan mesh upload failed for '%s': influence buffer allocation",
+         sm.absPath.c_str());
+    reportSceneUploadError("mesh '" + sm.absPath +
+                           "': influence buffer allocation failed");
+    meshes_.push_back(VkMeshGPU{});
     return;
   }
   // uv1 (multi-UV, binding 4) + blendshape influence (binding 5) per-vertex
@@ -6719,10 +7116,17 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     const VkBufferUsageFlags auxUsage =
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
         (rtSupported_ ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
-    createHostBuffer(uv1.size() * sizeof(float), auxUsage, uv1.data(),
-                     &gm.uv1Vbo, &gm.uv1VboMem, rtSupported_, poolStatic);
-    createHostBuffer(infl.size() * sizeof(float), auxUsage, infl.data(),
-                     &gm.morphInflVbo, &gm.morphInflVboMem, rtSupported_, poolStatic);
+    if (!createHostBuffer(uv1.size() * sizeof(float), auxUsage, uv1.data(),
+                          &gm.uv1Vbo, &gm.uv1VboMem, rtSupported_, poolStatic)) {
+      failAuxBuffer("UV1 buffer");
+      return;
+    }
+    if (!createHostBuffer(infl.size() * sizeof(float), auxUsage, infl.data(),
+                          &gm.morphInflVbo, &gm.morphInflVboMem, rtSupported_,
+                          poolStatic)) {
+      failAuxBuffer("morph influence buffer");
+      return;
+    }
   }
   // GPU blendshape morph: per-vertex (offset,count) vertex buffer (binding 6, always
   // created) + static delta and per-frame coefficient buffers (set 1 bindings 2/3,
@@ -6730,9 +7134,13 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   {
     std::vector<uint32_t> oc = sm.morphOffsetCount;
     if (oc.size() != sm.vertices.size() * 2) oc.assign(sm.vertices.size() * 2, 0u);
-    createHostBuffer(oc.size() * sizeof(uint32_t),
-                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, oc.data(),
-                     &gm.morphOffsetVbo, &gm.morphOffsetVboMem, false, poolStatic);
+    if (!createHostBuffer(oc.size() * sizeof(uint32_t),
+                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, oc.data(),
+                          &gm.morphOffsetVbo, &gm.morphOffsetVboMem, false,
+                          poolStatic)) {
+      failAuxBuffer("morph offset buffer");
+      return;
+    }
   }
   gm.morphDeltaDesc = dummyMorphDesc_;
   gm.morphCoeffDesc = dummyMorphDesc_;
@@ -6817,6 +7225,11 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     vkFreeMemory(device_, gm.jointVboMem, nullptr);
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
+    LOGE("Vulkan mesh upload failed for '%s': index buffer allocation",
+         sm.absPath.c_str());
+    reportSceneUploadError("mesh '" + sm.absPath +
+                           "': index buffer allocation failed");
+    meshes_.push_back(VkMeshGPU{});
     return;
   }
 
@@ -7030,7 +7443,16 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     // per-mesh buffers below and are drawn by the per-mesh fallback loop.
     // Skinned prototypes are excluded: MDI merges geometry into one shared VBO, so
     // gl_VertexIndex would no longer index the mesh's own joint/weight arrays.
-    if (mdiSupported_ && !gm.hasMorph && !gm.hasTranslucentInstances && !gm.skinned) {
+    const bool mdiCountsFit =
+        ni <= std::numeric_limits<uint32_t>::max() &&
+        sm.vertices.size() <= std::numeric_limits<uint32_t>::max() &&
+        sm.indices.size() <= std::numeric_limits<uint32_t>::max() &&
+        mdiInstTotal_ <= std::numeric_limits<uint32_t>::max() - ni &&
+        mdiVertTotal_ <= std::numeric_limits<uint32_t>::max() - sm.vertices.size() &&
+        mdiIdxStage_.size() <=
+            std::numeric_limits<uint32_t>::max() - sm.indices.size();
+    if (mdiSupported_ && mdiCountsFit && !gm.hasMorph &&
+        !gm.hasTranslucentInstances && !gm.skinned) {
       gm.mdiEligible = true;
       gm.mdiInstFirst = mdiInstTotal_;
       gm.mdiVertBase = mdiVertTotal_;
@@ -7047,6 +7469,10 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       mdiVertTotal_ += static_cast<uint32_t>(sm.vertices.size());
       mdiBuilt_ = false;
     } else {
+      if (mdiSupported_ && !mdiCountsFit) {
+        LOGW("Vulkan MDI offsets exceed 32-bit limits for '%s'; using the "
+             "per-mesh instancing path", sm.absPath.c_str());
+      }
       // Legacy per-mesh instance buffers, pool-suballocated (so the 83801-prototype
       // upload doesn't allocate per mesh); cull re-maps the visible subset through
       // the persistent pool mapping (gm.instVboMapped).
@@ -8049,6 +8475,8 @@ void VulkanRenderer::rebuildRtTextureTable() {
   if (rtMatTexMem_) vkFreeMemory(device_, rtMatTexMem_, nullptr);
   if (rtMatTexParamBuf_) vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr);
   if (rtMatTexParamMem_) vkFreeMemory(device_, rtMatTexParamMem_, nullptr);
+  if (rtMatGraphBuf_) vkDestroyBuffer(device_, rtMatGraphBuf_, nullptr);
+  if (rtMatGraphMem_) vkFreeMemory(device_, rtMatGraphMem_, nullptr);
   rtTexelBuf_ = VK_NULL_HANDLE;
   rtTexelMem_ = VK_NULL_HANDLE;
   rtTexDescBuf_ = VK_NULL_HANDLE;
@@ -8057,10 +8485,17 @@ void VulkanRenderer::rebuildRtTextureTable() {
   rtMatTexMem_ = VK_NULL_HANDLE;
   rtMatTexParamBuf_ = VK_NULL_HANDLE;
   rtMatTexParamMem_ = VK_NULL_HANDLE;
+  rtMatGraphBuf_ = VK_NULL_HANDLE;
+  rtMatGraphMem_ = VK_NULL_HANDLE;
 
   HostTextureTable textures;
   BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &textures,
                         &rtLightsCpu_, rtTextureBudgetBytes_);
+  matGraph_.assign(rtMaterialsCpu_.size() * kRtMaterialGraphFloats, 0.0f);
+  for (size_t i = 0; i < rtMaterialsCpu_.size(); ++i)
+    PackMaterialXGraphRuntime(rtMaterialsCpu_[i],
+                              &matGraph_[i * kRtMaterialGraphFloats],
+                              &textures.sourceToTable);
   auto mapEnvmap = [&](int sourceId) -> int {
     return (sourceId >= 0 && static_cast<size_t>(sourceId) <
                                     textures.sourceToTable.size())
@@ -8101,6 +8536,13 @@ void VulkanRenderer::rebuildRtTextureTable() {
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    textures.matTexParam.data(), &rtMatTexParamBuf_,
                    &rtMatTexParamMem_);
+  const float dummyGraph = 0.0f;
+  createHostBuffer(matGraph_.empty() ? sizeof(dummyGraph)
+                                     : matGraph_.size() * sizeof(float),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   matGraph_.empty() ? static_cast<const void*>(&dummyGraph)
+                                     : static_cast<const void*>(matGraph_.data()),
+                   &rtMatGraphBuf_, &rtMatGraphMem_);
 
   const VkDescriptorBufferInfo infos[4] = {
       {rtTexelBuf_, 0, VK_WHOLE_SIZE},
@@ -8195,6 +8637,8 @@ void VulkanRenderer::rebuildTlas() {
     if (rtMatTexBuf_) { vkDestroyBuffer(device_, rtMatTexBuf_, nullptr); rtMatTexBuf_ = VK_NULL_HANDLE; }
     if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
     if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
+    if (rtMatGraphBuf_) { vkDestroyBuffer(device_, rtMatGraphBuf_, nullptr); rtMatGraphBuf_ = VK_NULL_HANDLE; }
+    if (rtMatGraphMem_) { vkFreeMemory(device_, rtMatGraphMem_, nullptr); rtMatGraphMem_ = VK_NULL_HANDLE; }
     if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
   }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
@@ -8840,6 +9284,11 @@ void VulkanRenderer::rebuildTlas() {
     HostTextureTable rtTextures;
     BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures,
                           &rtLightsCpu_, rtTextureBudgetBytes_);
+    matGraph_.assign(rtMaterialsCpu_.size() * kRtMaterialGraphFloats, 0.0f);
+    for (size_t i = 0; i < rtMaterialsCpu_.size(); ++i)
+      PackMaterialXGraphRuntime(rtMaterialsCpu_[i],
+                                &matGraph_[i * kRtMaterialGraphFloats],
+                                &rtTextures.sourceToTable);
     auto mapEnvmap = [&](int sourceId) -> int {
       return (sourceId >= 0 && static_cast<size_t>(sourceId) <
                                       rtTextures.sourceToTable.size())
@@ -8879,6 +9328,13 @@ void VulkanRenderer::rebuildTlas() {
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                      rtTextures.matTexParam.data(), &rtMatTexParamBuf_,
                      &rtMatTexParamMem_);
+    const float dummyGraph = 0.0f;
+    createHostBuffer(matGraph_.empty() ? sizeof(dummyGraph)
+                                       : matGraph_.size() * sizeof(float),
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                     matGraph_.empty() ? static_cast<const void*>(&dummyGraph)
+                                       : static_cast<const void*>(matGraph_.data()),
+                     &rtMatGraphBuf_, &rtMatGraphMem_);
   }
   createHostBuffer(instInfos.size() * sizeof(InstanceInfoGPU),
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, instInfos.data(),
@@ -8977,11 +9433,12 @@ void VulkanRenderer::rebuildTlas() {
   VkDescriptorBufferInfo texDescInfo{rtTexDescBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo matTexInfo{rtMatTexBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo matTexParamInfo{rtMatTexParamBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo graphInfo{rtMatGraphBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo pointInfo{rtPointBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo pointNodeInfo{rtPointNodeBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo pointOrderInfo{rtPointOrderBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo pointChunkInfo{rtPointChunkBuf_, 0, VK_WHOLE_SIZE};
-  VkWriteDescriptorSet w[18]{};
+  VkWriteDescriptorSet w[19]{};
   w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   w[0].pNext = &asInfo;
   w[0].dstSet = rtSet_;
@@ -9101,7 +9558,13 @@ void VulkanRenderer::rebuildTlas() {
   w[17].descriptorCount = static_cast<uint32_t>(ptexImages.size());
   w[17].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   w[17].pImageInfo = ptexImages.data();
-  vkUpdateDescriptorSets(device_, 18, w, 0, nullptr);
+  w[18].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[18].dstSet = rtSet_;
+  w[18].dstBinding = 20;
+  w[18].descriptorCount = 1;
+  w[18].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  w[18].pBufferInfo = &graphInfo;
+  vkUpdateDescriptorSets(device_, 19, w, 0, nullptr);
   if (directPtexCount > 0) {
     std::fprintf(stderr, "[vk_rt] direct compressed Ptex images: %zu\n",
                  directPtexCount);
@@ -9115,7 +9578,7 @@ void VulkanRenderer::rebuildTlas() {
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
   constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
-  VkDescriptorSetLayoutBinding b[20]{};
+  VkDescriptorSetLayoutBinding b[21]{};
   b[0].binding = 0;
   b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   b[0].descriptorCount = kMaxTlasChunks;
@@ -9157,9 +9620,11 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   b[19].binding = 19;
   b[19].descriptorCount = TUSDVIEW_RT_PTEXTURE_IMAGE_CAP;
   b[19].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  b[20] = b[2];
+  b[20].binding = 20;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 20;
+  lci.bindingCount = 21;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &rtSetLayout_),
            "rt descriptor set layout");
@@ -9167,7 +9632,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   VkDescriptorPoolSize ps[4]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxTlasChunks};
   ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
-  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 13};
+  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 14};
   ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
            3 + TUSDVIEW_RT_PTEXTURE_IMAGE_CAP};
   VkDescriptorPoolCreateInfo pci{};
@@ -9311,7 +9776,7 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   // SW-technique-specific (BVH/triangle data) and free to reuse numbers the
   // hardware layout spends on AS(0)/MeshDesc(2)/InstInfo(4)/points(15-18),
   // since the two layouts never coexist in one pipeline.
-  VkDescriptorSetLayoutBinding b[22]{};
+  VkDescriptorSetLayoutBinding b[23]{};
   auto img = [](VkDescriptorSetLayoutBinding& x, uint32_t bnd) {
     x.binding = bnd; x.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     x.descriptorCount = 1; x.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -9348,16 +9813,20 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   b[21] = b[10];
   b[21].binding = 21;
   b[21].descriptorCount = TUSDVIEW_RT_PTEXTURE_IMAGE_CAP;
+  b[22] = b[10];
+  b[22].binding = 22;
+  b[22].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  b[22].descriptorCount = 1;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 22;
+  lci.bindingCount = 23;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &swRtSetLayout_),
            "sw-rt descriptor set layout");
 
   VkDescriptorPoolSize ps[3]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
-  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16};
+  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 17};
   ps[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
            3 + TUSDVIEW_RT_PTEXTURE_IMAGE_CAP};
   VkDescriptorPoolCreateInfo pci{};
@@ -9460,6 +9929,8 @@ void VulkanRenderer::rebuildSwMaterialLightSSBOs() {
   if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
   if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
   if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
+  if (rtMatGraphBuf_) { vkDestroyBuffer(device_, rtMatGraphBuf_, nullptr); rtMatGraphBuf_ = VK_NULL_HANDLE; }
+  if (rtMatGraphMem_) { vkFreeMemory(device_, rtMatGraphMem_, nullptr); rtMatGraphMem_ = VK_NULL_HANDLE; }
 
   std::vector<float> mats = matColor_;       // 3 vec4 per material (see beginScene)
   if (mats.empty()) mats.assign(12, 0.0f);
@@ -9477,6 +9948,11 @@ void VulkanRenderer::rebuildSwMaterialLightSSBOs() {
   HostTextureTable rtTextures;
   BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures,
                         &rtLightsCpu_, rtTextureBudgetBytes_);
+  matGraph_.assign(rtMaterialsCpu_.size() * kRtMaterialGraphFloats, 0.0f);
+  for (size_t i = 0; i < rtMaterialsCpu_.size(); ++i)
+    PackMaterialXGraphRuntime(rtMaterialsCpu_[i],
+                              &matGraph_[i * kRtMaterialGraphFloats],
+                              &rtTextures.sourceToTable);
   auto mapEnvmap = [&](int sourceId) -> int {
     return (sourceId >= 0 &&
             static_cast<size_t>(sourceId) < rtTextures.sourceToTable.size())
@@ -9520,6 +9996,13 @@ void VulkanRenderer::rebuildSwMaterialLightSSBOs() {
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    rtTextures.matTexParam.data(), &rtMatTexParamBuf_,
                    &rtMatTexParamMem_);
+  const float dummyGraph = 0.0f;
+  createHostBuffer(matGraph_.empty() ? sizeof(dummyGraph)
+                                     : matGraph_.size() * sizeof(float),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   matGraph_.empty() ? static_cast<const void*>(&dummyGraph)
+                                     : static_cast<const void*>(matGraph_.data()),
+                   &rtMatGraphBuf_, &rtMatGraphMem_);
 }
 
 // Rebuilds the compute-BVH scene data (triangle SoA + BLAS/TLAS + instances)
@@ -9678,6 +10161,7 @@ void VulkanRenderer::rebuildSwBvh() {
   VkDescriptorBufferInfo texDescInfo{rtTexDescBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo matTexInfo{rtMatTexBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo matTexParamInfo{rtMatTexParamBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo graphInfo{rtMatGraphBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swTrisInfo{swTriBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swNrmsInfo{swNrmBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swColsInfo{swColBuf_, 0, VK_WHOLE_SIZE};
@@ -9724,7 +10208,7 @@ void VulkanRenderer::rebuildSwBvh() {
                                                         : whiteView_;
     ptexImages[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   }
-  VkWriteDescriptorSet w[22]{};
+  VkWriteDescriptorSet w[23]{};
   bufW(w[0], 0, &tlasInfo);
   imgW(w[1], 1, &outImgInfo);
   bufW(w[2], 2, &blasInfo);
@@ -9746,13 +10230,14 @@ void VulkanRenderer::rebuildSwBvh() {
   bufW(w[18], 18, &swUvInfo);
   bufW(w[19], 19, &swMatIdInfo);
   bufW(w[20], 20, &swFaceInfo);
-  w[21].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  w[21].dstSet = swRtSet_;
-  w[21].dstBinding = 21;
-  w[21].descriptorCount = static_cast<uint32_t>(ptexImages.size());
-  w[21].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  w[21].pImageInfo = ptexImages.data();
-  vkUpdateDescriptorSets(device_, 22, w, 0, nullptr);
+  bufW(w[21], 22, &graphInfo);
+  w[22].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[22].dstSet = swRtSet_;
+  w[22].dstBinding = 21;
+  w[22].descriptorCount = static_cast<uint32_t>(ptexImages.size());
+  w[22].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  w[22].pImageInfo = ptexImages.data();
+  vkUpdateDescriptorSets(device_, 23, w, 0, nullptr);
   if (directPtexCount > 0) {
     std::fprintf(stderr, "[vk_swrt] direct compressed Ptex images: %zu\n",
                  directPtexCount);
@@ -9981,10 +10466,9 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
              VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 }
 
-// Compute-BVH fallback dispatch. Milestone-1 scope: no progressive
-// accumulation, overlay pass, or shading yet (see raytrace_swbvh.comp) --
-// just enough to validate rebuildSwBvh()'s uploaded SSBOs render *something*
-// via the same rtImage_ -> colorImg_ copy path traceRt() uses.
+// Compute-BVH fallback dispatch. The software traversal/shading shader writes
+// the same RT image pair as the hardware path; the caller adds the common
+// overlay pass after the dispatch.
 void VulkanRenderer::traceRtBvh(VkCommandBuffer cb) {
 #if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
   vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, swRtPipeline_);
@@ -9996,6 +10480,14 @@ void VulkanRenderer::traceRtBvh(VkCommandBuffer cb) {
   std::memcpy(pc.invViewProj, invPV.m, sizeof(pc.invViewProj));
   pc.camPos[0] = cameraPos_[0]; pc.camPos[1] = cameraPos_[1]; pc.camPos[2] = cameraPos_[2];
   pc.camPos[3] = static_cast<float>(rtMode_);
+  bool reset = !rtAccumEnabled_ || rtMode_ != lastRtMode_ ||
+               rtAccumGen_ != lastRtAccumGen_ ||
+               std::memcmp(PV.m, lastRtPV_, sizeof(lastRtPV_)) != 0;
+  if (reset) rtAccumFrame_ = 0;
+  else ++rtAccumFrame_;
+  std::memcpy(lastRtPV_, PV.m, sizeof(lastRtPV_));
+  lastRtMode_ = rtMode_;
+  lastRtAccumGen_ = rtAccumGen_;
   float lx = lightDir_[0], ly = lightDir_[1], lz = lightDir_[2];
   float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
   if (ll <= 1.0e-12f) {
@@ -10005,6 +10497,8 @@ void VulkanRenderer::traceRtBvh(VkCommandBuffer cb) {
   pc.lightDir[0] = lx / ll; pc.lightDir[1] = ly / ll; pc.lightDir[2] = lz / ll;
   for (int i = 0; i < 4; ++i) pc.clearColor[i] = clear_[i];
   pc.tlasNodeCount = swTlasNodeCount_;
+  pc.sampleIndex = rtAccumFrame_;
+  pc.accumEnabled = rtAccumEnabled_ ? 1u : 0u;
   vkCmdPushConstants(cb, swRtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                      sizeof(SwRtPushC), &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
@@ -10130,6 +10624,8 @@ void VulkanRenderer::destroyRt() {
   if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
   if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
   if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
+  if (rtMatGraphBuf_) { vkDestroyBuffer(device_, rtMatGraphBuf_, nullptr); rtMatGraphBuf_ = VK_NULL_HANDLE; }
+  if (rtMatGraphMem_) { vkFreeMemory(device_, rtMatGraphMem_, nullptr); rtMatGraphMem_ = VK_NULL_HANDLE; }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
   if (rtPointBuf_) { vkDestroyBuffer(device_, rtPointBuf_, nullptr); rtPointBuf_ = VK_NULL_HANDLE; }
@@ -10433,6 +10929,36 @@ void VulkanRenderer::resizeViewport(int width, int height) {
       if (pointImg) vkDestroyImage(device_, pointImg, nullptr);
       if (pointMem) vkFreeMemory(device_, pointMem, nullptr);
       LOGE("[vk] resizeViewport: point-shadow cube allocation failed");
+    }
+    // Shadow descriptors are installed immediately, including in scenes that
+    // have no shadow-casting light and therefore never execute shadowPass_.
+    // Give every sampled depth subresource a defined layout up front. A later
+    // render pass uses initialLayout=UNDEFINED and may discard/transition the
+    // rendered layer independently.
+    if (shadowDepthImg_ || pointShadowDepthImg_) {
+      VkCommandBuffer init = beginOneShot();
+      VkImageMemoryBarrier barriers[2]{};
+      uint32_t barrierCount = 0;
+      const auto addDepthBarrier = [&](VkImage image, uint32_t layers) {
+        if (!image) return;
+        VkImageMemoryBarrier& barrier = barriers[barrierCount++];
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.layerCount = layers;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      };
+      addDepthBarrier(shadowDepthImg_, 1);
+      addDepthBarrier(pointShadowDepthImg_, 6);
+      vkCmdPipelineBarrier(init, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                           0, nullptr, barrierCount, barriers);
+      endOneShot(init);
     }
     refreshMaterialDescriptors();
   }
@@ -11380,11 +11906,47 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   } else if (rtFrame && rtTechnique_ == RtTechnique::kComputeBvh &&
              swTlasNodeCount_ > 0) {
     // Compute-BVH fallback: same offscreen-image target as traceRt(), just a
-    // different trace step (no hardware acceleration structure). Milestone-1
-    // scope has no overlay/volume pass yet -- that lands alongside real
-    // shading (see rebuildSwBvh()/traceRtBvh() TODOs).
+    // different trace step (no hardware acceleration structure).
     traceRtBvh(cb);
-  } else if (rtFrame && tlas_ != VK_NULL_HANDLE) {
+    const bool anyOverlay = !nonMeshCopy_.empty() || !helperCopy_.empty() ||
+                            !overlayCopy_.empty() || !highlightLineCopy_.empty() ||
+                            !volumes_.empty();
+    if (overlayLoadPass_ && offscreenFb_ && hasParams_ && anyOverlay) {
+      VkRenderPassBeginInfo orp{};
+      orp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+      orp.renderPass = overlayLoadPass_;
+      orp.framebuffer = offscreenFb_;
+      orp.renderArea.extent = {static_cast<uint32_t>(vpW_),
+                               static_cast<uint32_t>(vpH_)};
+      vkCmdBeginRenderPass(cb, &orp, VK_SUBPASS_CONTENTS_INLINE);
+      VkViewport vpRect{};
+      vpRect.x = 0.0f;
+      vpRect.y = static_cast<float>(vpH_);
+      vpRect.width = static_cast<float>(vpW_);
+      vpRect.height = -static_cast<float>(vpH_);
+      vpRect.minDepth = 0.0f;
+      vpRect.maxDepth = 1.0f;
+      vkCmdSetViewport(cb, 0, 1, &vpRect);
+      VkRect2D sc{{0, 0}, {static_cast<uint32_t>(vpW_),
+                           static_cast<uint32_t>(vpH_)}};
+      vkCmdSetScissor(cb, 0, 1, &sc);
+      const light3d::Mat4 VP = ToMat4(proj_) * ToMat4(view_);
+      recordVolumePass(cb, volumePipelineNoDepth_);
+      drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_], &nonMeshMem_[frame_],
+                  &nonMeshCap_[frame_], nonMeshPipeline_, VP.m,
+                  &nonMeshChunkUploads_[frame_]);
+      drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
+                  &helperCap_[frame_], linePipelineNoDepth_, VP.m);
+      drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
+                  &overlayCap_[frame_], linePipelineNoDepth_, VP.m);
+      drawLineSet(cb, highlightLineCopy_, &highlightLineBuf_[frame_],
+                  &highlightLineMem_[frame_], &highlightLineCap_[frame_],
+                  linePipelineNoDepth_, VP.m);
+      vkCmdEndRenderPass(cb);
+    }
+  } else if (rtFrame && (tlas_ != VK_NULL_HANDLE ||
+                         (rtTechnique_ == RtTechnique::kComputeBvh &&
+                          swTlasNodeCount_ > 0))) {
     traceRt(cb);
     // Overlay pass: ray query writes the offscreen color image via compute (no
     // render pass), so helpers/skeleton/selection-highlight would be missing.
@@ -11558,7 +12120,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           }
           PushC push{};
           std::memcpy(push.model, mesh.world, sizeof(push.model));
-          push.ids[0] = sub.materialId;
+          push.ids[0] = sub.materialId >= 0 &&
+                                static_cast<size_t>(sub.materialId) <
+                                    dispMatCapacity_
+                            ? sub.materialId
+                            : 0;
           push.ids[2] = renderPointShadow ? -3 - shadowFace : -2;
           if (sub.materialId >= 0 &&
               static_cast<size_t>(sub.materialId) * 12u + 7u < matColor_.size()) {
@@ -11899,7 +12465,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           flags |= (1 << 7) |
                    (static_cast<int>((sub.indexOffset / 3) & 0xFFFFFFu) << 8);
         }
-        pc.ids[0] = materialId;
+        pc.ids[0] = materialId >= 0 &&
+                            static_cast<size_t>(materialId) < dispMatCapacity_
+                        ? materialId
+                        : 0;
         pc.ids[1] = flags;
         pc.ids[2] = static_cast<int>(mi);
         pc.ids[3] = 0;
@@ -12220,7 +12789,12 @@ bool VulkanRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
 bool VulkanRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) {
   if (!device_ || !colorImg_ || vpW_ < 1 || vpH_ < 1) return false;
   vkDeviceWaitIdle(device_);
-  const VkDeviceSize size = static_cast<VkDeviceSize>(vpW_) * vpH_ * 4;
+  if (!rgba || !w || !h || vpW_ <= 0 || vpH_ <= 0) return false;
+  const VkDeviceSize size = static_cast<VkDeviceSize>(vpW_) *
+                            static_cast<VkDeviceSize>(vpH_) * 4u;
+  if (size > static_cast<VkDeviceSize>(std::numeric_limits<size_t>::max())) {
+    return false;
+  }
 
   VkBuffer buf = VK_NULL_HANDLE;
   VkDeviceMemory mem = VK_NULL_HANDLE;
@@ -12238,8 +12812,12 @@ bool VulkanRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h)
   ai.memoryTypeIndex = findMemoryType(
       req.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-  vkAllocateMemory(device_, &ai, nullptr, &mem);
-  vkBindBufferMemory(device_, buf, mem, 0);
+  if (vkAllocateMemory(device_, &ai, nullptr, &mem) != VK_SUCCESS ||
+      vkBindBufferMemory(device_, buf, mem, 0) != VK_SUCCESS) {
+    if (mem) vkFreeMemory(device_, mem, nullptr);
+    vkDestroyBuffer(device_, buf, nullptr);
+    return false;
+  }
 
   VkCommandBufferAllocateInfo cai{};
   cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -12247,11 +12825,20 @@ bool VulkanRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h)
   cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
   cai.commandBufferCount = 1;
   VkCommandBuffer cb = VK_NULL_HANDLE;
-  vkAllocateCommandBuffers(device_, &cai, &cb);
+  if (vkAllocateCommandBuffers(device_, &cai, &cb) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, buf, nullptr);
+    vkFreeMemory(device_, mem, nullptr);
+    return false;
+  }
   VkCommandBufferBeginInfo cbi{};
   cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-  vkBeginCommandBuffer(cb, &cbi);
+  if (vkBeginCommandBuffer(cb, &cbi) != VK_SUCCESS) {
+    vkFreeCommandBuffers(device_, commandPool_, 1, &cb);
+    vkDestroyBuffer(device_, buf, nullptr);
+    vkFreeMemory(device_, mem, nullptr);
+    return false;
+  }
 
   VkImageMemoryBarrier toSrc{};
   toSrc.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -12285,16 +12872,31 @@ bool VulkanRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h)
                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
                        1, &back);
 
-  vkEndCommandBuffer(cb);
+  if (vkEndCommandBuffer(cb) != VK_SUCCESS) {
+    vkFreeCommandBuffers(device_, commandPool_, 1, &cb);
+    vkDestroyBuffer(device_, buf, nullptr);
+    vkFreeMemory(device_, mem, nullptr);
+    return false;
+  }
   VkSubmitInfo si{};
   si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   si.commandBufferCount = 1;
   si.pCommandBuffers = &cb;
-  vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE);
-  vkQueueWaitIdle(queue_);
+  if (vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS ||
+      vkQueueWaitIdle(queue_) != VK_SUCCESS) {
+    vkFreeCommandBuffers(device_, commandPool_, 1, &cb);
+    vkDestroyBuffer(device_, buf, nullptr);
+    vkFreeMemory(device_, mem, nullptr);
+    return false;
+  }
 
   void* mapped = nullptr;
-  vkMapMemory(device_, mem, 0, size, 0, &mapped);
+  if (vkMapMemory(device_, mem, 0, size, 0, &mapped) != VK_SUCCESS || !mapped) {
+    vkFreeCommandBuffers(device_, commandPool_, 1, &cb);
+    vkDestroyBuffer(device_, buf, nullptr);
+    vkFreeMemory(device_, mem, nullptr);
+    return false;
+  }
   rgba->resize(static_cast<size_t>(size));
   std::memcpy(rgba->data(), mapped, static_cast<size_t>(size));
   vkUnmapMemory(device_, mem);
@@ -12316,8 +12918,13 @@ bool VulkanRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
     return false;
   }
   vkDeviceWaitIdle(device_);
+  if (!rgba || !w || !h) return false;
   const uint32_t cw = swapExtent_.width, ch = swapExtent_.height;
+  if (cw == 0 || ch == 0) return false;
   const VkDeviceSize size = static_cast<VkDeviceSize>(cw) * ch * 4;
+  if (size > static_cast<VkDeviceSize>(std::numeric_limits<size_t>::max())) {
+    return false;
+  }
 
   VkBuffer buf = VK_NULL_HANDLE;
   VkDeviceMemory mem = VK_NULL_HANDLE;
@@ -12335,8 +12942,12 @@ bool VulkanRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
   ai.memoryTypeIndex = findMemoryType(
       req.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-  vkAllocateMemory(device_, &ai, nullptr, &mem);
-  vkBindBufferMemory(device_, buf, mem, 0);
+  if (vkAllocateMemory(device_, &ai, nullptr, &mem) != VK_SUCCESS ||
+      vkBindBufferMemory(device_, buf, mem, 0) != VK_SUCCESS) {
+    if (mem) vkFreeMemory(device_, mem, nullptr);
+    vkDestroyBuffer(device_, buf, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkBufferImageCopy region{};
@@ -12348,7 +12959,11 @@ bool VulkanRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
   endOneShot(cb);
 
   void* mapped = nullptr;
-  vkMapMemory(device_, mem, 0, size, 0, &mapped);
+  if (vkMapMemory(device_, mem, 0, size, 0, &mapped) != VK_SUCCESS || !mapped) {
+    vkDestroyBuffer(device_, buf, nullptr);
+    vkFreeMemory(device_, mem, nullptr);
+    return false;
+  }
   rgba->resize(static_cast<size_t>(size));
   std::memcpy(rgba->data(), mapped, static_cast<size_t>(size));
   vkUnmapMemory(device_, mem);
@@ -12473,7 +13088,7 @@ void VulkanRenderer::shutdown() {
   if (dispMatPool_) { vkDestroyDescriptorPool(device_, dispMatPool_, nullptr); dispMatPool_ = VK_NULL_HANDLE; }
   if (dispMatSetLayout_) { vkDestroyDescriptorSetLayout(device_, dispMatSetLayout_, nullptr); dispMatSetLayout_ = VK_NULL_HANDLE; }
   if (dispMatSsbo_) { vkDestroyBuffer(device_, dispMatSsbo_, nullptr); dispMatSsbo_ = VK_NULL_HANDLE; }
-  if (dispMatSsboMem_) { vkFreeMemory(device_, dispMatSsboMem_, nullptr); dispMatSsboMem_ = VK_NULL_HANDLE; dispMatMapped_ = nullptr; }
+  if (dispMatSsboMem_) { vkFreeMemory(device_, dispMatSsboMem_, nullptr); dispMatSsboMem_ = VK_NULL_HANDLE; dispMatMapped_ = nullptr; dispMatCapacity_ = 0; }
   if (drawMetaBuf_) { vkDestroyBuffer(device_, drawMetaBuf_, nullptr); drawMetaBuf_ = VK_NULL_HANDLE; }
   if (drawMetaBufMem_) { vkFreeMemory(device_, drawMetaBufMem_, nullptr); drawMetaBufMem_ = VK_NULL_HANDLE; }
   if (drawMetaPool_) { vkDestroyDescriptorPool(device_, drawMetaPool_, nullptr); drawMetaPool_ = VK_NULL_HANDLE; }

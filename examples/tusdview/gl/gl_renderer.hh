@@ -385,6 +385,7 @@ class GLRenderer final : public Renderer {
   GLuint whiteTex_{0}, boneTex_{0};
   int boneTexWidth_{0}, boneTexHeight_{0}, boneMatrixCount_{0};
   int maxTextureSize_{4096};
+  float maxTextureAnisotropy_{1.0f};
   std::vector<float> boneUploadScratch_;
   bool skinningFrameEnabled_{false};
 

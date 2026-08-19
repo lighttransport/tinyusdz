@@ -267,6 +267,43 @@ void TestChunkedArrayShareCow() {
   std::cout << "  ChunkedArray copy-on-write sharing passed!\n";
 }
 
+// A failed copy-on-write detachment must not let a recoverable mutator write
+// into the still-shared chunks. This happens under a tight conversion budget.
+void TestChunkedArrayShareCowBudgetFailure() {
+  std::cout << "Testing ChunkedArray copy-on-write budget failure...\n";
+
+  ChunkedArray<uint32_t> source;
+  assert(source.push_back(7u) == 0);
+  ChunkedArray<uint32_t> copy;
+  copy.share_from(source);
+  assert(source.is_shared() && copy.is_shared());
+
+  const size_t saved_cap = MemBudget::Get().Cap();
+  MemBudget::Get().InitBytes(1);
+  MemBudget::InstallChunkedArrayTracking();
+
+  const uint32_t appended = 9u;
+  assert(!copy.append(&appended, 1));
+  assert(copy.alloc_failed());
+  assert(copy.size() == 1);
+  {
+    const ChunkedArray<uint32_t>& source_read = source;
+    const ChunkedArray<uint32_t>& copy_read = copy;
+    assert(source_read[0] == 7u);
+    assert(copy_read[0] == 7u);
+  }
+
+  MemBudget::UninstallChunkedArrayTracking();
+  MemBudget::Get().InitBytes(saved_cap);
+
+  // The failed clone remains shareable and can detach once resources return.
+  copy[0] = 11u;
+  assert(copy[0] == 11u);
+  assert(source[0] == 7u);
+
+  std::cout << "  ChunkedArray copy-on-write budget failure: PASSED\n";
+}
+
 // Budget-tracked chunk allocation. Two properties matter: the accounting
 // must BALANCE (every charge released, including through copy-on-write shares
 // and shrink_to_fit's tail rewrite), and a refusal must surface as
@@ -6837,6 +6874,7 @@ int main() {
   TestChunkedArrayLarge();
   TestChunkedArrayStraddlingReads();
   TestChunkedArrayShareCow();
+  TestChunkedArrayShareCowBudgetFailure();
   TestChunkedArrayBudgetTracking();
   TestChunkedArrayAppend();
   TestChunkedArrayIterator();

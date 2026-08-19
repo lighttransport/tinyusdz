@@ -9,7 +9,8 @@ layout(location = 5) in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
 layout(location = 6) in float vMorphInfl;     // blendshape influence (world units)
 layout(location = 7) in vec4 vColor;          // displayColor.rgb + displayOpacity
 struct RasterLight { vec4 positionType; vec4 directionAngle;
-                     vec4 colorDiffuse; vec4 specularShape; };
+                     vec4 colorDiffuse; vec4 specularShape; vec4 areaParams;
+                     vec4 iesAxisX; vec4 iesAxisY; vec4 iesProfile[6]; };
 
 // Base-color texture (white 1x1 when the material is untextured).
 layout(set = 0, binding = 0) uniform sampler2D uBaseColorTex;
@@ -44,12 +45,33 @@ layout(set = 0, binding = 27) uniform sampler2DArray uCoatWeightUdimTex;
 layout(set = 0, binding = 28) uniform sampler2DArray uCoatColorUdimTex;
 layout(set = 0, binding = 29) uniform sampler2DArray uCoatRoughnessUdimTex;
 layout(set = 0, binding = 30) uniform sampler2DArray uCoatNormalUdimTex;
+// Bounded per-material graph image slots. They avoid descriptor indexing on
+// low-limit raster devices while allowing arbitrary graph images to be sampled
+// independently of the semantic material slots.
+layout(set = 0, binding = 32) uniform sampler2D uGraphTex0;
+layout(set = 0, binding = 33) uniform sampler2D uGraphTex1;
+layout(set = 0, binding = 34) uniform sampler2D uGraphTex2;
+layout(set = 0, binding = 35) uniform sampler2D uGraphTex3;
+layout(set = 0, binding = 36) uniform sampler2D uGraphTex4;
+layout(set = 0, binding = 37) uniform sampler2D uGraphTex5;
+layout(set = 0, binding = 38) uniform sampler2D uGraphTex6;
+layout(set = 0, binding = 39) uniform sampler2D uGraphTex7;
+layout(set = 0, binding = 40) uniform sampler2DArray uGraphUdim0;
+layout(set = 0, binding = 41) uniform sampler2DArray uGraphUdim1;
+layout(set = 0, binding = 42) uniform sampler2DArray uGraphUdim2;
+layout(set = 0, binding = 43) uniform sampler2DArray uGraphUdim3;
+layout(set = 0, binding = 44) uniform sampler2DArray uGraphUdim4;
+layout(set = 0, binding = 45) uniform sampler2DArray uGraphUdim5;
+layout(set = 0, binding = 46) uniform sampler2DArray uGraphUdim6;
+layout(set = 0, binding = 47) uniform sampler2DArray uGraphUdim7;
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
 layout(set = 1, binding = 6, std430) readonly buffer Faces { uint faceId[]; };
 // Compact Ptex face rectangles. Keeping this out of the sampled image permits
 // the atlas and its streamed physical pages to use BC7 block compression.
-layout(set = 1, binding = 7, std430) readonly buffer PtexRects { uvec4 rect[]; };
+layout(set = 1, binding = 7, std430) readonly buffer PtexRects {
+  uvec4 rect[];
+} ptexRects;
 
 // Frame-constant UBO (set 5): camera + scene bbox + renderMode (shared with the
 // vertex/tess stages). Per-draw material/ids come from the push block below.
@@ -132,6 +154,7 @@ struct MaterialTexParam {
   vec4 ptexCoatRoughInfo;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
+layout(set = 3, binding = 1, std430) readonly buffer MatGraph { float graphRows[]; } mgraph;
 
 layout(push_constant) uniform PushConstants {
   mat4 model;
@@ -182,6 +205,104 @@ vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
   int layer = int(texelFetch(uUdimLutAtlas, ivec2(idx, slot), 0).r * 255.0 + 0.5) - 1;
   if (layer < 0) return missing;
   return texture(tex, vec3(fract(uv), float(layer)));
+}
+
+vec4 sampleGraphImage(int slot, float udimRow, vec2 uv, vec4 missing) {
+  if (slot < 0 || slot >= 8) return missing;
+  bool udim = udimRow >= 0.0;
+  if (slot == 0) return udim ? sampleUdim(uGraphUdim0, int(udimRow + 0.5), uv, missing) : texture(uGraphTex0, uv);
+  if (slot == 1) return udim ? sampleUdim(uGraphUdim1, int(udimRow + 0.5), uv, missing) : texture(uGraphTex1, uv);
+  if (slot == 2) return udim ? sampleUdim(uGraphUdim2, int(udimRow + 0.5), uv, missing) : texture(uGraphTex2, uv);
+  if (slot == 3) return udim ? sampleUdim(uGraphUdim3, int(udimRow + 0.5), uv, missing) : texture(uGraphTex3, uv);
+  if (slot == 4) return udim ? sampleUdim(uGraphUdim4, int(udimRow + 0.5), uv, missing) : texture(uGraphTex4, uv);
+  if (slot == 5) return udim ? sampleUdim(uGraphUdim5, int(udimRow + 0.5), uv, missing) : texture(uGraphTex5, uv);
+  if (slot == 6) return udim ? sampleUdim(uGraphUdim6, int(udimRow + 0.5), uv, missing) : texture(uGraphTex6, uv);
+  return udim ? sampleUdim(uGraphUdim7, int(udimRow + 0.5), uv, missing) : texture(uGraphTex7, uv);
+}
+
+bool hasGraphRoute(int route) {
+  int mid = max(pc.ids.x, 0);
+  uint base = uint(mid) * 1352u;
+  return route >= 0 && route < 6 && base + uint(route) + 1u < uint(mgraph.graphRows.length()) &&
+         mgraph.graphRows[base + uint(route) + 1u] >= 0.0;
+}
+
+vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
+  int mid = max(pc.ids.x, 0);
+  uint base = uint(mid) * 1352u;
+  if (!hasGraphRoute(route)) return vec4(0.0);
+  int count = int(clamp(mgraph.graphRows[base], 0.0, 64.0));
+  int wanted = int(mgraph.graphRows[base + uint(route) + 1u] + 0.5);
+  if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
+  vec4 v[64];
+  for (int i = 0; i < 64; ++i) v[i] = vec4(0.0);
+  for (int pass = 0; pass < 64; ++pass) {
+    for (int i = 0; i < 64; ++i) {
+      if (i >= count) continue;
+      uint p = base + 8u + uint(i) * 21u;
+      int op = int(mgraph.graphRows[p] + 0.5);
+      int a = int(mgraph.graphRows[p + 1u] + 0.5);
+      int b = int(mgraph.graphRows[p + 2u] + 0.5);
+      int c = int(mgraph.graphRows[p + 3u] + 0.5);
+      vec4 av = (a >= 0 && a < count) ? v[a] : vec4(mgraph.graphRows[p + 4u], mgraph.graphRows[p + 5u], mgraph.graphRows[p + 6u], mgraph.graphRows[p + 7u]);
+      vec4 bv = (b >= 0 && b < count) ? v[b] : vec4(mgraph.graphRows[p + 8u], mgraph.graphRows[p + 9u], mgraph.graphRows[p + 10u], mgraph.graphRows[p + 11u]);
+      vec4 cv = (c >= 0 && c < count) ? v[c] : vec4(mgraph.graphRows[p + 12u], mgraph.graphRows[p + 13u], mgraph.graphRows[p + 14u], mgraph.graphRows[p + 15u]);
+      vec4 value = av;
+      int encoded = int(mgraph.graphRows[p + 16u] + (mgraph.graphRows[p + 16u] < 0.0 ? -0.5 : 0.5));
+      vec2 graphUv = uv * vec2(mgraph.graphRows[p + 17u], mgraph.graphRows[p + 18u]) +
+                     vec2(mgraph.graphRows[p + 19u], mgraph.graphRows[p + 20u]);
+      if (op == 0) v[i] = value;
+      else if (op == 1 || op == 2) {
+        int slot = encoded;
+        float row = -1.0;
+        if (encoded < 0) { slot = -encoded - 1; row = value.w; }
+        v[i] = sampleGraphImage(slot, row, graphUv, value);
+      } else if (op == 3) v[i] = vec4(normalize(av.xyz * 2.0 - 1.0) * 0.5 + 0.5, av.w);
+      else if (op == 4) v[i] = av + bv;
+      else if (op == 5) v[i] = av - bv;
+      else if (op == 6) v[i] = av * bv;
+      else if (op == 7) v[i] = av / max(abs(bv), vec4(1e-6));
+      else if (op == 8) v[i] = mix(av, bv, cv);
+      else if (op == 9) v[i] = clamp(av, bv, cv);
+      else if (op == 10) v[i] = vec4(dot(av.xyz, bv.xyz));
+      else if (op == 11) v[i] = vec4(normalize(av.xyz), av.w);
+      else if (op == 12) v[i] = pow(max(av, vec4(0.0)), bv);
+      else if (op == 13) v[i] = min(av, bv);
+      else if (op == 14) v[i] = max(av, bv);
+      else if (op == 15) v[i] = abs(av);
+      else if (op == 16) v[i] = sqrt(max(av, vec4(0.0)));
+      else if (op == 17) v[i] = sin(av);
+      else if (op == 18) v[i] = cos(av);
+      else if (op == 19) { float l = dot(av.xyz, vec3(0.2126, 0.7152, 0.0722)); v[i] = vec4(l, l, l, av.w); }
+      else if (op == 20) v[i] = av.x >= 0.5 ? bv : cv;
+      else if (op == 21) v[i] = vec4(uv, 0.0, 1.0);
+      else if (op == 22) v[i] = floor(av);
+      else if (op == 23) v[i] = ceil(av);
+      else if (op == 24) v[i] = fract(av);
+      else if (op == 25) v[i] = step(av, bv);
+      else if (op == 26) v[i] = smoothstep(bv, cv, av);
+      else if (op == 27) v[i] = vec4(cross(av.xyz, bv.xyz), av.w);
+      else if (op == 28) v[i] = vec4(length(av.xyz));
+      else if (op == 29) v[i] = vec4(fract(sin(dot(av.xy + uv, vec2(127.1, 311.7))) * 43758.5453));
+      else if (op == 30) v[i] = tan(av);
+      else if (op == 31) v[i] = exp(av);
+      else if (op == 32) v[i] = log(max(av, vec4(1e-6)));
+      else if (op == 33) v[i] = mod(av, max(abs(bv), vec4(1e-6)));
+      else if (op == 34) v[i] = vec4(1.0) - av;
+      else if (op == 35) v[i] = (av - bv) / max(cv - bv, vec4(1e-6));
+      else if (op == 36) v[i] = vec4(0.0, 0.0, 1.0, 1.0);
+      else if (op == 37) v[i] = vec4(1.0, 0.0, 0.0, 1.0);
+      else if (op == 38) {
+        vec3 axis = normalize(bv.xyz);
+        float ang = radians(av.x);
+        vec3 q = cv.xyz;
+        v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
+                    axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+      }
+      else v[i] = value;
+    }
+  }
+  return v[wanted];
 }
 
 // Specular F0 (T12): specular workflow -> specularColor directly; else the
@@ -490,6 +611,13 @@ void main() {
                    ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
                    : normalize(vNormalW);
   vec3 N = applyNormalMap(Nbase);
+  vec4 graphBase = evalRasterMaterialXGraph(0, vUV);
+  vec4 graphMetal = evalRasterMaterialXGraph(1, vUV);
+  vec4 graphRough = evalRasterMaterialXGraph(2, vUV);
+  vec4 graphOpacity = evalRasterMaterialXGraph(3, vUV);
+  vec4 graphEmission = evalRasterMaterialXGraph(4, vUV);
+  vec4 graphNormal = evalRasterMaterialXGraph(5, vUV);
+  if (hasGraphRoute(5)) N = normalize(graphNormal.xyz * 2.0 - 1.0);
   vec3 coatN = applyCoatNormalMap(N);
   // Debug AOVs.
   if (fr.mode.x != 0 && fr.mode.x != 36 && fr.mode.x != 37 &&
@@ -506,7 +634,8 @@ void main() {
     }
     if (fr.mode.x == 5) { outColor = vec4(fract(vUV), 0.0, 1.0); return; }
     if (fr.mode.x == 7) {  // albedo (unlit)
-      outColor = vec4(pc.baseColor.rgb * vColor.rgb * sampleBaseColor(vUV).rgb, 1.0);
+      vec3 a = hasGraphRoute(0) ? graphBase.rgb : sampleBaseColor(vUV).rgb;
+      outColor = vec4(pc.baseColor.rgb * vColor.rgb * a, 1.0);
       return;
     }
     if (fr.mode.x == 8) {  // facing
@@ -618,19 +747,24 @@ void main() {
   vec4 baseSample = sampleBaseColor(vUV);
   float opacity = clamp(pc.baseColor.a * baseSample.a * sampleOpacity(vUV) *
                         vColor.a, 0.0, 1.0);
+  if (hasGraphRoute(3)) opacity = clamp(graphOpacity.x, 0.0, 1.0);
   if (pc.matAux.z > 0.5 && pc.matAux.z < 1.5) {
     if (opacity < pc.matAux.w) discard;
     opacity = 1.0;
   }
   // Per-vertex displayColor multiplies the base color (GL parity: attrib 9's
   // vColor does the same in material.cpp). White when the mesh has none.
-  vec3 base = pc.baseColor.rgb * vColor.rgb * baseSample.rgb;
+  vec3 base = pc.baseColor.rgb * vColor.rgb *
+              (hasGraphRoute(0) ? graphBase.rgb : baseSample.rgb);
   MaterialTexParam m = matTexParam();
   vec4 mt = sampleMetallic(vUV);
   vec4 rt = sampleRoughness(vUV);
   float metallic = pc.matAux.x * (channelOf(mt, m.scalar0.x) * m.scalar0.z + m.scalar0.w);
   float roughness = pc.matAux.y * (channelOf(rt, m.scalar0.y) * m.scalar1.x + m.scalar1.y);
   vec3 emissive = pc.emissive.xyz * sampleEmissive(vUV).rgb;
+  if (hasGraphRoute(1)) metallic = clamp(graphMetal.x, 0.0, 1.0);
+  if (hasGraphRoute(2)) roughness = clamp(graphRough.x, 0.02, 1.0);
+  if (hasGraphRoute(4)) emissive = max(graphEmission.rgb, vec3(0.0));
   vec3 V = normalize(fr.camPos.xyz - vWorldPos);
 
   // Real-time Cook-Torrance preview, matching light3d/material.cpp.
@@ -711,12 +845,35 @@ void main() {
     vec4 lc = fr.rasterLights[li].colorDiffuse;
     vec4 ss = fr.rasterLights[li].specularShape;
     int lightType = int(pt.w + 0.5);
+    int sampleCount = (lightType == 2 || lightType == 3 || lightType == 4) ? 8 : 1;
+    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+    vec3 samplePos = pt.xyz;
+    vec3 areaX = normalize(fr.rasterLights[li].iesAxisX.xyz);
+    vec3 areaY = normalize(fr.rasterLights[li].iesAxisY.xyz);
+    if (lightType == 3) {
+      float sx = (float(sampleIndex % 4) + 0.5) * 0.25 - 0.5;
+      float sy = (float(sampleIndex / 4) + 0.5) * 0.5 - 0.5;
+      samplePos += areaX * (sx * fr.rasterLights[li].areaParams.y) +
+                   areaY * (sy * fr.rasterLights[li].areaParams.z);
+    } else if (lightType == 2) {
+      const float k = 0.5;
+      float a = 6.28318530718 * (float(sampleIndex) + 0.5) / 8.0;
+      float sx = cos(a) * k * fr.rasterLights[li].areaParams.x;
+      float sy = sin(a) * k * fr.rasterLights[li].areaParams.x;
+      samplePos += areaX * sx + areaY * sy;
+    } else if (lightType == 4) {
+      const float k = 0.5;
+      float a = 6.28318530718 * (float(sampleIndex) + 0.5) / 8.0;
+      float sx = cos(a) * k * fr.rasterLights[li].areaParams.x;
+      float sy = sin(a) * k * fr.rasterLights[li].areaParams.x;
+      samplePos += areaX * sx + areaY * sy;
+    }
     vec3 L;
     float attenuation = 1.0;
     if (lightType == 5) {
       L = normalize(da.xyz);
     } else {
-      vec3 toLight = pt.xyz - vWorldPos;
+      vec3 toLight = samplePos - vWorldPos;
       float dist2 = max(dot(toLight, toLight), 1e-6);
       L = toLight * inversesqrt(dist2);
       attenuation = 1.0 / dist2;
@@ -729,6 +886,27 @@ void main() {
                                       0.0, 180.0)));
       shape = smoothstep(outer, max(inner, outer + 1e-5), coneCos) *
               pow(max(coneCos, 0.0), max(ss.z, 0.0));
+    }
+    float ies = 1.0;
+    if (lightType != 5 && dot(fr.rasterLights[li].iesProfile[0],
+                              fr.rasterLights[li].iesProfile[0]) > 1e-8) {
+      vec3 iesDir = normalize(-L);
+      float v = degrees(acos(clamp(dot(iesDir, normalize(da.xyz)), -1.0, 1.0)));
+      float fy = clamp(v / 60.0, 0.0, 3.0);
+      int y0 = int(floor(fy));
+      int y1 = min(y0 + 1, 3);
+      float az = degrees(atan(dot(iesDir, fr.rasterLights[li].iesAxisY.xyz),
+                              dot(iesDir, fr.rasterLights[li].iesAxisX.xyz)));
+      if (az < 0.0) az += 360.0;
+      float fx = az / 60.0;
+      int x0 = min(int(floor(fx)), 5);
+      int x1 = (x0 + 1) % 6;
+      float tx = fx - float(x0);
+      float a0 = mix(fr.rasterLights[li].iesProfile[y0][x0],
+                     fr.rasterLights[li].iesProfile[y0][x1], tx);
+      float a1 = mix(fr.rasterLights[li].iesProfile[y1][x0],
+                     fr.rasterLights[li].iesProfile[y1][x1], tx);
+      ies = mix(a0, a1, fy - float(y0));
     }
     float NoL = max(dot(Nf, L), 0.0);
     if (NoL <= 0.0 || shape <= 0.0) continue;
@@ -754,7 +932,8 @@ void main() {
     float visibility = (int(li) == int(fr.iblParams.z + 0.5))
                            ? sampleShadow(vWorldPos, Nf, L) : 1.0;
     direct += (baseBrdf * NoL + coatBrdf * coatNoL) * lc.rgb *
-              (attenuation * shape * visibility);
+              (attenuation * shape * ies * visibility) / float(sampleCount);
+    }
   }
   if (fr.rasterLightInfo.x == 0u) {
     vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)

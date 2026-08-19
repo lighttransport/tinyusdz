@@ -10,22 +10,28 @@
 #include <vector>
 
 #include "gpu_scene.hh"
+#include "lighting_ies.hh"
 #include "light3d/math.h"
 
 namespace tusdview {
 
 constexpr int kMaxRasterLights = 16;
 
-// Four vec4s per light. This layout is deliberately friendly to both GLSL
-// uniform arrays (OpenGL) and std140 Frame UBO arrays (Vulkan).
+// Thirteen vec4s per light. This layout is deliberately friendly to both GLSL
+// uniform arrays (OpenGL) and std140 Frame UBO arrays (Vulkan). The last six
+// rows are the canonical 6x4 IES LUT at horizontal angles 0..300 degrees.
 struct alignas(16) RasterLightGPU {
   float positionType[4]{};   // xyz position, w DrawLightCPU::Type
   float directionAngle[4]{}; // xyz direction, w shaping cone angle in degrees
   float colorDiffuse[4]{};   // rgb normalized radiance, w diffuse multiplier
   float specularShape[4]{};  // x specular, y cone softness, z focus, w hasShaping
+  float areaParams[4]{};     // radius, width, height, length
+  float iesAxisX[4]{};       // authored photometric +X axis, xyz
+  float iesAxisY[4]{};       // authored photometric +Y axis, xyz
+  float iesProfile[24]{};    // indexed vertical*6 + horizontal
 };
-static_assert(sizeof(RasterLightGPU) == 16 * sizeof(float),
-              "RasterLightGPU must be four tightly packed vec4s");
+static_assert(sizeof(RasterLightGPU) == 52 * sizeof(float),
+              "RasterLightGPU must be thirteen tightly packed vec4s");
 
 struct RasterLightSet {
   std::array<RasterLightGPU, kMaxRasterLights> lights{};
@@ -45,9 +51,11 @@ struct RasterLightSet {
 };
 
 inline bool IsRasterDirectLight(const DrawLightCPU& light) {
-  return light.type != DrawLightCPU::Type::Dome &&
-         light.type != DrawLightCPU::Type::Geometry &&
-         light.type != DrawLightCPU::Type::Portal;
+  // Raster has no emissive-mesh or environment-importance sampler. Keep
+  // GeometryLight/PortalLight remain in the common light list as bounded
+  // representative-position fallbacks; analytic finite lights use the shared
+  // raster area-sample payload below.
+  return light.type != DrawLightCPU::Type::Dome;
 }
 
 inline bool IsRasterFiniteShadowLight(const DrawLightCPU& light) {
@@ -97,6 +105,43 @@ inline RasterLightSet PackRasterLights(const std::vector<DrawLightCPU>& src,
     dst.specularShape[1] = light.shapingConeSoftness;
     dst.specularShape[2] = light.shapingFocus;
     dst.specularShape[3] = light.hasShaping ? 1.0f : 0.0f;
+    dst.areaParams[0] = std::max(light.radius, 0.0f);
+    dst.areaParams[1] = std::max(light.width, 0.0f);
+    dst.areaParams[2] = std::max(light.height, 0.0f);
+    dst.areaParams[3] = std::max(light.length, 0.0f);
+    dst.iesAxisX[0] = light.transform[0];
+    dst.iesAxisX[1] = light.transform[1];
+    dst.iesAxisX[2] = light.transform[2];
+    dst.iesAxisY[0] = light.transform[4];
+    dst.iesAxisY[1] = light.transform[5];
+    dst.iesAxisY[2] = light.transform[6];
+    const float axisXLen = std::sqrt(dst.iesAxisX[0] * dst.iesAxisX[0] +
+                                     dst.iesAxisX[1] * dst.iesAxisX[1] +
+                                     dst.iesAxisX[2] * dst.iesAxisX[2]);
+    const float axisYLen = std::sqrt(dst.iesAxisY[0] * dst.iesAxisY[0] +
+                                     dst.iesAxisY[1] * dst.iesAxisY[1] +
+                                     dst.iesAxisY[2] * dst.iesAxisY[2]);
+    if (axisXLen > 1.0e-6f && axisYLen > 1.0e-6f) {
+      for (int i = 0; i < 3; ++i) {
+        dst.iesAxisX[i] /= axisXLen;
+        dst.iesAxisY[i] /= axisYLen;
+      }
+    } else {
+      dst.iesAxisX[0] = 1.0f;
+      dst.iesAxisX[1] = dst.iesAxisX[2] = 0.0f;
+      dst.iesAxisY[0] = 0.0f;
+      dst.iesAxisY[1] = 1.0f;
+      dst.iesAxisY[2] = 0.0f;
+    }
+    if (light.iesValid) {
+      for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 6; ++x) {
+          dst.iesProfile[y * 6 + x] = EvaluateIesProfile(
+              light, 60.0f * static_cast<float>(y),
+              60.0f * static_cast<float>(x));
+        }
+      }
+    }
 
     const uint32_t bit = uint32_t{1} << static_cast<uint32_t>(slot);
     if (light.lightLinksAll) {
@@ -183,12 +228,16 @@ inline bool BuildRasterPointShadowCameras(const RasterLightSet& lights,
   const RasterLightGPU& light =
       lights.lights[static_cast<size_t>(lights.shadowLightSlot)];
   const int type = static_cast<int>(light.positionType[3] + 0.5f);
-  // UsdLux represents a point emitter as a zero-radius SphereLight. The
-  // current raster evaluator already treats finite spheres as their center,
-  // so use the same omnidirectional path for both records. Non-zero area
-  // sampling remains future work, but it must not fall back to a one-sided map.
+  // Raster direct lighting uses deterministic four-point area samples. Reuse
+  // the omnidirectional cube-shadow path for analytic area lights too; this
+  // gives them coverage while retaining a single center-based shadow map.
   if (type != static_cast<int>(DrawLightCPU::Type::Point) &&
-      type != static_cast<int>(DrawLightCPU::Type::Sphere)) {
+      type != static_cast<int>(DrawLightCPU::Type::Sphere) &&
+      type != static_cast<int>(DrawLightCPU::Type::Disk) &&
+      type != static_cast<int>(DrawLightCPU::Type::Rect) &&
+      type != static_cast<int>(DrawLightCPU::Type::Cylinder) &&
+      type != static_cast<int>(DrawLightCPU::Type::Geometry) &&
+      type != static_cast<int>(DrawLightCPU::Type::Portal)) {
     return false;
   }
   const light3d::Vec3 eye{light.positionType[0], light.positionType[1],

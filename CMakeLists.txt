@@ -2608,6 +2608,29 @@ if(TINYUSDZ_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300)
 
     add_test(
+      NAME tusdview-vk-swbvh-render
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-swbvh-render.sh"
+      )
+    set_tests_properties(tusdview-vk-swbvh-render PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180
+                         LABELS "tusdview;vulkan;rt")
+
+    add_test(
+      NAME tusdview-vk-texture-validation
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-texture-validation.sh"
+      )
+    set_tests_properties(tusdview-vk-texture-validation PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 150
+                         LABELS "tusdview;vulkan;validation")
+
+    add_test(
       NAME tusdview-raster-multilight
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-raster-multilight.sh"

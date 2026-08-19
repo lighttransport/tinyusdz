@@ -608,15 +608,9 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::Separator();
       // Runtime backend switch: GL raster / Vulkan raster / Vulkan RT live-
       // switchable in place; CUDA/HIP RT overlay onto whichever owner is
-      // active (CPU RT joins in a later phase). Vulkan RT availability
-      // mirrors the renderer's actual support; Vulkan Raster is shown enabled
-      // whenever Vulkan was compiled in even while GL currently owns the
-      // window (a cheap capability-only probe replaces this optimistic
-      // default in a later polish pass); CUDA/HIP gray out only after a
-      // switch attempt has proven the device unavailable (App::cudaProbe_/
-      // hipProbe_, fed via setTechniqueAvailability -- no startup probing,
-      // since init() there compiles NVRTC/hiprtc kernels). A failed switch
-      // degrades gracefully rather than crashing.
+      // active (CPU RT joins in a later phase). Vulkan Raster/RT availability
+      // comes from the startup capability probe and the active renderer;
+      // CUDA/HIP gray out after a switch attempt proves the device unavailable.
       if (ImGui::BeginMenu("Render Technique")) {
 #if defined(HAVE_VULKAN)
         const bool vulkanCompiled = true;
@@ -633,8 +627,9 @@ void Gui::drawDockspaceAndMenu() {
           }
         };
         item(RenderTechnique::GLRaster, true);
-        item(RenderTechnique::VulkanRaster, vulkanCompiled);
-        item(RenderTechnique::VulkanRT, vulkanCompiled && (vkOwner ? rtAvail : true));
+        item(RenderTechnique::VulkanRaster, vulkanCompiled && vulkanAvailable_);
+        item(RenderTechnique::VulkanRT,
+             vulkanCompiled && vulkanRtAvailable_ && (vkOwner ? rtAvail : true));
         item(RenderTechnique::CudaRT, cudaAvailable_);
         item(RenderTechnique::HipRT, hipAvailable_);
         item(RenderTechnique::CpuRT, true);  // always available, no device to probe

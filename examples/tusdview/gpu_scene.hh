@@ -403,6 +403,79 @@ struct DrawMaterialParamCPU {
   DrawTexSampleCPU sample;
 };
 
+enum class MaterialXGraphOpCPU : uint32_t {
+  Constant = 0,
+  Image,
+  TiledImage,
+  NormalMap,
+  Add,
+  Subtract,
+  Multiply,
+  Divide,
+  Mix,
+  Clamp,
+  Dot,
+  Normalized,
+  Power,
+  Minimum,
+  Maximum,
+  Absolute,
+  SquareRoot,
+  Sine,
+  Cosine,
+  Luminance,
+  Select,
+  Texcoord,
+  Floor,
+  Ceil,
+  Fract,
+  Step,
+  Smoothstep,
+  Cross,
+  Length,
+  Noise2D,
+  Tangent,
+  Exponential,
+  Logarithm,
+  Modulo,
+  Invert,
+  Remap,
+  GeometricNormal,
+  GeometricTangent,
+  Rotate3D,
+  Unknown,
+};
+
+// Canonical, backend-neutral MaterialX graph record. Input indices refer to
+// nodes in the same material graph; -1 means the corresponding constant lane
+// in `value` is used. `imagePath` remains the authored asset-relative path until
+// the Vulkan descriptor-indexed image table resolves it to a resident texture.
+struct MaterialXGraphNodeCPU {
+  MaterialXGraphOpCPU op{MaterialXGraphOpCPU::Unknown};
+  int input[3]{-1, -1, -1};
+  // Independent fallback values for the three possible inputs.  A single
+  // shared fallback loses vector-valued MaterialX constants (for example the
+  // two bounds of a clamp node), so the runtime record preserves all lanes.
+  float value[3][4]{{0.0f, 0.0f, 0.0f, 1.0f},
+                    {0.0f, 0.0f, 0.0f, 1.0f},
+                    {0.0f, 0.0f, 0.0f, 1.0f}};
+  int textureId{-1};  // resolved DrawScene texture slot, when resident
+  bool isUdim{false}; // textureId names a UDIM atlas, not a plain 2D image
+  float uvScale[2]{1.0f, 1.0f};
+  float uvOffset[2]{0.0f, 0.0f};
+  std::string imagePath;
+  std::string name;
+};
+
+struct MaterialXGraphRuntimeCPU {
+  std::vector<MaterialXGraphNodeCPU> nodes;
+  // OpenPBR output node indices: base, metalness, roughness, opacity,
+  // emission, normal. -1 means no graph connection for that lane.
+  int output[6]{-1, -1, -1, -1, -1, -1};
+  bool valid{false};
+  bool hasImages{false};
+};
+
 // Baked constant fallback for raster/RT backends. Texture-connected inputs keep
 // their texture ids in DrawMaterialParamCPU and the legacy material slots.
 
@@ -418,6 +491,7 @@ struct DrawMaterialCPU {
   std::string displacementShaderPath;
   std::string volumeShaderPath;
   std::string materialXNodeGraphJson;
+  MaterialXGraphRuntimeCPU materialXGraph;
   std::vector<DrawMaterialParamCPU> params;
   bool hasLightRtOpenPBR{false};
   DrawLightRtOpenPBRCPU lightRtOpenPBR;
@@ -752,6 +826,14 @@ struct DrawLightCPU {
   std::string shapingIesFile;
   float shapingIesAngleScale{0.0f};
   bool shapingIesNormalize{false};
+  // Parsed IES photometric profile. The profile is kept on the canonical light
+  // record so all backends can consume the same angular data; empty vectors
+  // mean that the authored profile was unavailable or invalid.
+  bool iesValid{false};
+  float iesMaxCandela{0.0f};
+  std::vector<float> iesVerticalAngles;
+  std::vector<float> iesHorizontalAngles;
+  std::vector<float> iesCandela;
   bool hasShaping{false};
   bool shadowEnable{true};
   float shadowColor[3]{0.0f, 0.0f, 0.0f};
@@ -759,6 +841,12 @@ struct DrawLightCPU {
   float shadowFalloff{-1.0f};
   float shadowFalloffGamma{1.0f};
   int geometryMesh{-1};
+  std::string geometryTargetPath;
+  // Resolved RT geometry-light payload. These are filled by BuildHostScene;
+  // geometryMesh remains the source DrawScene mesh id for diagnostics.
+  int geometryTriOffset{-1};
+  int geometryTriCount{0};
+  int geometryInstance{-1};
   std::string materialSyncMode;
   bool lightLinksAll{true};
   std::vector<int> lightLinkMeshIndices;
@@ -840,6 +928,11 @@ struct DrawCameraCPU {
 };
 
 struct DrawScene {
+  struct OptimizationStats {
+    size_t sourceMaterials{0};
+    size_t uniqueMaterials{0};
+    size_t deduplicatedMaterials{0};
+  } optimization;
   std::vector<DrawMeshCPU> meshes;
   std::vector<DrawPointsCPU> points;
   std::vector<DrawCurvesCPU> curves;

@@ -103,6 +103,11 @@ layout(set = 0, binding = 13, scalar) readonly buffer RtMatTexIds {
 layout(set = 0, binding = 14, scalar) readonly buffer RtMatTexParams {
   float matTexParams[];
 };
+// Canonical MaterialX graph blocks. The interpreter is deliberately kept
+// optional while the semantic texture path remains the compatibility fallback.
+layout(set = 0, binding = 20, scalar) readonly buffer RtMaterialGraphs {
+  float graphRows[];
+};
 // scalar layout keeps only the fields used by the analytic ellipse kernel:
 // center/major/normal (vec3), radii (vec2), and RGBA color. This is 60 bytes
 // instead of five padded vec4 fields (80 bytes) per Gaussian.
@@ -209,6 +214,34 @@ vec3 sampleLightPosition(uint li, int lightType, inout uint seed) {
   }
   return center;
 }
+
+float rtIesSample(uint li, int index) {
+  vec4 row = lightRows[li * RT_LIGHT_ROWS + 14u + uint(index / 4)];
+  return row[uint(index % 4)];
+}
+
+float rtIesFactor(uint li, vec3 lightToPoint) {
+  if (abs(light(li, 13u).x - 2.0) > 0.25) return 1.0;
+  vec3 d = normalize(lightToPoint);
+  vec3 emissionDir = normalize(light(li, 2u).xyz);
+  float v = degrees(acos(clamp(dot(d, emissionDir), -1.0, 1.0)));
+  float fy = clamp(v / 60.0, 0.0, 3.0);
+  int y0 = int(floor(fy));
+  int y1 = min(y0 + 1, 3);
+  vec3 axisX = normalize(light(li, 10u).xyz);
+  vec3 axisY = normalize(light(li, 11u).xyz);
+  float az = degrees(atan(dot(d, axisY), dot(d, axisX)));
+  if (az < 0.0) az += 360.0;
+  float fx = az / 60.0;
+  int x0 = int(floor(fx)) % 6;
+  int x1 = (x0 + 1) % 6;
+  float tx = fract(fx);
+  float a0 = mix(rtIesSample(li, y0 * 6 + x0),
+                 rtIesSample(li, y0 * 6 + x1), tx);
+  float a1 = mix(rtIesSample(li, y1 * 6 + x0),
+                 rtIesSample(li, y1 * 6 + x1), tx);
+  return mix(a0, a1, fy - float(y0));
+}
 // Cosine-weighted hemisphere direction around normal n.
 vec3 cosHemi(vec3 n, float u1, float u2) {
   float r = sqrt(u1); float phi = 6.2831853 * u2;
@@ -223,6 +256,32 @@ vec3 cosHemi(vec3 n, float u1, float u2) {
 float shCoef(uint li, uint i) {
   vec4 r = light(li, 13u + i / 4u);
   return r[i % 4u];
+}
+
+vec3 rtDomeRadiance(vec3 direction) {
+  uint count = uint(lightRows.length()) / RT_LIGHT_ROWS;
+  for (uint li = 0u; li < count; ++li) {
+    if (int(light(li, 0u).x + 0.5) != 6 ||
+        (int(light(li, 1u).y + 0.5) & (1 << 7)) == 0) continue;
+    vec3 d = normalize(direction);
+    float b[9];
+    b[0] = 0.282095;
+    b[1] = 0.488603 * d.y;
+    b[2] = 0.488603 * d.z;
+    b[3] = 0.488603 * d.x;
+    b[4] = 1.092548 * d.x * d.y;
+    b[5] = 1.092548 * d.y * d.z;
+    b[6] = 0.315392 * (3.0 * d.z * d.z - 1.0);
+    b[7] = 1.092548 * d.x * d.z;
+    b[8] = 0.546274 * (d.x * d.x - d.y * d.y);
+    vec3 e = vec3(0.0);
+    for (uint k = 0u; k < 9u; ++k)
+      e += b[k] * vec3(shCoef(li, k * 3u + 0u),
+                       shCoef(li, k * 3u + 1u),
+                       shCoef(li, k * 3u + 2u));
+    return max(e, vec3(0.0));
+  }
+  return vec3(0.0);
 }
 vec3 shIrradiance(uint li, vec3 n) {
   float b[9];
@@ -369,6 +428,87 @@ vec4 sampleRtMaterialTexture(int id, vec2 uv, uint face, float lod,
   return sampleRtTextureLod(id, uv, lod, missing);
 }
 
+// Evaluate the compact MaterialX IR. A bounded fixed-point pass makes forward
+// references deterministic without recursion (and keeps malformed graphs from
+// consuming unbounded shader time). Image nodes use the scene texture table;
+// unresolved images retain their authored constant/default value.
+vec4 evalMaterialXGraph(uint mid, int route, vec2 uv, uint face) {
+  const uint STRIDE = 1352u;
+  uint base = mid * STRIDE;
+  if (base + 7u >= uint(graphRows.length()) || route < 0) return vec4(0.0);
+  int count = int(clamp(graphRows[base], 0.0, 64.0));
+  int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
+  if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
+  vec4 v[64];
+  for (int i = 0; i < 64; ++i) v[i] = vec4(0.0);
+  for (int pass = 0; pass < 64; ++pass) {
+    for (int i = 0; i < 64; ++i) {
+      if (i >= count) continue;
+      uint p = base + 8u + uint(i) * 21u;
+      int op = int(graphRows[p] + 0.5);
+      int a = int(graphRows[p + 1u] + 0.5);
+      int b = int(graphRows[p + 2u] + 0.5);
+      int c = int(graphRows[p + 3u] + 0.5);
+      vec4 av = (a >= 0 && a < count) ? v[a] : vec4(graphRows[p + 4u], graphRows[p + 5u], graphRows[p + 6u], graphRows[p + 7u]);
+      vec4 bv = (b >= 0 && b < count) ? v[b] : vec4(graphRows[p + 8u], graphRows[p + 9u], graphRows[p + 10u], graphRows[p + 11u]);
+      vec4 cv = (c >= 0 && c < count) ? v[c] : vec4(graphRows[p + 12u], graphRows[p + 13u], graphRows[p + 14u], graphRows[p + 15u]);
+      vec4 value = av;
+      int tex = int(graphRows[p + 16u] + 0.5);
+      vec2 graphUv = uv * vec2(graphRows[p + 17u], graphRows[p + 18u]) +
+                     vec2(graphRows[p + 19u], graphRows[p + 20u]);
+      if (op == 0) v[i] = value;
+      else if (op == 1 || op == 2) v[i] = tex >= 0
+          ? sampleRtMaterialTexture(tex, graphUv, face, 0.0, value) : value;
+      else if (op == 3) v[i] = vec4(normalize(av.xyz * 2.0 - 1.0) * 0.5 + 0.5, av.w);
+      else if (op == 4) v[i] = av + bv;
+      else if (op == 5) v[i] = av - bv;
+      else if (op == 6) v[i] = av * bv;
+      else if (op == 7) v[i] = av / max(abs(bv), vec4(1e-6));
+      else if (op == 8) v[i] = mix(av, bv, cv);
+      else if (op == 9) v[i] = clamp(av, bv, cv);
+      else if (op == 10) v[i] = vec4(dot(av.xyz, bv.xyz));
+      else if (op == 11) v[i] = vec4(normalize(av.xyz), av.w);
+      else if (op == 12) v[i] = pow(max(av, vec4(0.0)), bv);
+      else if (op == 13) v[i] = min(av, bv);
+      else if (op == 14) v[i] = max(av, bv);
+      else if (op == 15) v[i] = abs(av);
+      else if (op == 16) v[i] = sqrt(max(av, vec4(0.0)));
+      else if (op == 17) v[i] = sin(av);
+      else if (op == 18) v[i] = cos(av);
+      else if (op == 19) {
+        float l = dot(av.xyz, vec3(0.2126, 0.7152, 0.0722));
+        v[i] = vec4(l, l, l, av.w);
+      } else if (op == 20) v[i] = av.x >= 0.5 ? bv : cv;
+      else if (op == 21) v[i] = vec4(uv, 0.0, 1.0);
+      else if (op == 22) v[i] = floor(av);
+      else if (op == 23) v[i] = ceil(av);
+      else if (op == 24) v[i] = fract(av);
+      else if (op == 25) v[i] = step(av, bv);
+      else if (op == 26) v[i] = smoothstep(bv, cv, av);
+      else if (op == 27) v[i] = vec4(cross(av.xyz, bv.xyz), av.w);
+      else if (op == 28) v[i] = vec4(length(av.xyz));
+      else if (op == 29) v[i] = vec4(fract(sin(dot(av.xy + uv, vec2(127.1, 311.7))) * 43758.5453));
+      else if (op == 30) v[i] = tan(av);
+      else if (op == 31) v[i] = exp(av);
+      else if (op == 32) v[i] = log(max(av, vec4(1e-6)));
+      else if (op == 33) v[i] = mod(av, max(abs(bv), vec4(1e-6)));
+      else if (op == 34) v[i] = vec4(1.0) - av;
+      else if (op == 35) v[i] = (av - bv) / max(cv - bv, vec4(1e-6));
+      else if (op == 36) v[i] = vec4(0.0, 0.0, 1.0, 1.0);
+      else if (op == 37) v[i] = vec4(1.0, 0.0, 0.0, 1.0);
+      else if (op == 38) {
+        vec3 axis = normalize(bv.xyz);
+        float ang = radians(av.x);
+        vec3 q = cv.xyz;
+        v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
+                    axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+      }
+      else v[i] = value;
+    }
+  }
+  return v[wanted];
+}
+
 float rtTextureLod(int id, vec2 uv, float uvFootprint) {
   if (id < 0 || id >= int(texDescs.length())) return 0.0;
   RtTexDesc td = texDescs[id];
@@ -467,6 +607,245 @@ bool materialAllowsHit(uint iid, int prim, vec2 bc, bool frontFace) {
              fetchCol(cbuff, i2).a * bc.y;
   }
   return alpha >= mat(mid, 1u).w;
+}
+
+// Return the resolved blend opacity for a hit. Alpha-mask candidates are
+// filtered separately by materialAllowsHit(); keeping this value available
+// lets shadow rays accumulate transmission through several blend surfaces.
+float materialOpacityAtHit(uint iid, int prim, vec2 bc, bool frontFace,
+                           out float alphaMode) {
+  InstInfo ii = insts[iid];
+  MeshDesc md = meshes[ii.meshId];
+  uint mid = selectedMaterial(md, prim, frontFace);
+  alphaMode = 0.0;
+  if (ii.useMaterial == 0u || mid == 0xffffffffu) {
+    alphaMode = ii.tint.a < 1.0 ? 2.0 : 0.0;
+    return clamp(ii.tint.a, 0.0, 1.0);
+  }
+  alphaMode = mat(mid, 1u).z;
+  Verts vb = Verts(md.vtxAddr);
+  Idx ib = Idx(md.idxAddr);
+  uint i0 = ib.i[uint(prim) * 3u + 0u];
+  uint i1 = ib.i[uint(prim) * 3u + 1u];
+  uint i2 = ib.i[uint(prim) * 3u + 2u];
+  float w0 = 1.0 - bc.x - bc.y;
+  vec2 uv0 = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
+             fetchUV(vb, i2) * bc.y;
+  vec2 uv1 = uv0;
+  if (md.uv1Addr != 0ul) {
+    UV1s ub = UV1s(md.uv1Addr);
+    uv1 = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x +
+          fetchUV1(ub, i2) * bc.y;
+  }
+  uint tb = mid * 12u;
+  uint pb = mid * 155u;
+  vec4 bt = sampleRtTexture(matTexIds[tb], materialUv(mid, 0, uv0, uv1),
+                            vec4(1.0));
+  bt = bt * vec4(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                 matTexParams[pb + 38u], matTexParams[pb + 39u]) +
+       vec4(matTexParams[pb + 40u], matTexParams[pb + 41u],
+            matTexParams[pb + 42u], matTexParams[pb + 43u]);
+  float alpha = mat(mid, 0u).a * bt.a * ii.tint.a;
+  int opacityTex = matTexIds[tb + 5u];
+  if (opacityTex >= 0) {
+    vec4 ot = sampleRtTexture(opacityTex, materialUv(mid, 5, uv0, uv1),
+                              vec4(1.0));
+    alpha *= texChannel(ot, int(matTexParams[pb + 66u] + 0.5)) *
+                 matTexParams[pb + 67u] + matTexParams[pb + 68u];
+  }
+  if (md.vtxColorAddr != 0ul) {
+    Cols cbuff = Cols(md.vtxColorAddr);
+    alpha *= fetchCol(cbuff, i0).a * w0 + fetchCol(cbuff, i1).a * bc.x +
+             fetchCol(cbuff, i2).a * bc.y;
+  }
+  alpha = clamp(alpha, 0.0, 1.0);
+  if (alphaMode > 0.5 && alphaMode < 1.5)
+    alpha = alpha >= mat(mid, 1u).w ? 1.0 : 0.0;
+  return alpha;
+}
+
+// Find the nearest accepted triangle in all TLAS chunks. Keeping this in one
+// helper lets primary rays advance past transparent layers without duplicating
+// the candidate-confirmation rules used by the first-hit path.
+bool traceAcceptedPrimary(vec3 o, vec3 d, float minT, float maxT,
+                          out uint outIid, out int outPrim, out vec2 outBc,
+                          out bool outFront, out mat4x3 outO2w,
+                          out float outT) {
+  bool found = false;
+  float best = maxT;
+  for (uint ti = 0u; ti < tlasChunkCount(); ++ti) {
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, TLAS[ti], 0u, 0xFF, o, minT, d, best);
+    while (rayQueryProceedEXT(rq)) {
+      if (rayQueryGetIntersectionTypeEXT(rq, false) !=
+          gl_RayQueryCandidateIntersectionTriangleEXT) continue;
+      uint iid = globalInstanceId(
+          ti, rayQueryGetIntersectionInstanceIdEXT(rq, false));
+      int prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
+      vec2 bc = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+      bool front = rayQueryGetIntersectionFrontFaceEXT(rq, false);
+      if (materialAllowsHit(iid, prim, bc, front))
+        rayQueryConfirmIntersectionEXT(rq);
+    }
+    if (rayQueryGetIntersectionTypeEXT(rq, true) !=
+        gl_RayQueryCommittedIntersectionTriangleEXT) continue;
+    float t = rayQueryGetIntersectionTEXT(rq, true);
+    if (t >= best) continue;
+    best = t;
+    found = true;
+    outIid = globalInstanceId(
+        ti, rayQueryGetIntersectionInstanceIdEXT(rq, true));
+    outPrim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
+    outBc = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+    outFront = rayQueryGetIntersectionFrontFaceEXT(rq, true);
+    outO2w = rayQueryGetIntersectionObjectToWorldEXT(rq, true);
+    outT = t;
+  }
+  return found;
+}
+
+vec3 approximatePrimaryLayerColor(uint iid, int prim, vec2 bc, bool front,
+                                  mat4x3 o2w) {
+  InstInfo ii = insts[iid];
+  MeshDesc md = meshes[ii.meshId];
+  uint mid = selectedMaterial(md, prim, front);
+  vec3 base = vec3(0.6);
+  vec3 emission = vec3(0.0);
+  if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+    Verts vb = Verts(md.vtxAddr);
+    Idx ib = Idx(md.idxAddr);
+    uint i0 = ib.i[uint(prim) * 3u + 0u];
+    uint i1 = ib.i[uint(prim) * 3u + 1u];
+    uint i2 = ib.i[uint(prim) * 3u + 2u];
+    float w0 = 1.0 - bc.x - bc.y;
+    vec2 uv0 = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
+               fetchUV(vb, i2) * bc.y;
+    vec2 uv1 = uv0;
+    if (md.uv1Addr != 0ul) {
+      UV1s ub = UV1s(md.uv1Addr);
+      uv1 = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x +
+            fetchUV1(ub, i2) * bc.y;
+    }
+    uint tb = mid * 12u;
+    uint pb = mid * 155u;
+    base = mat(mid, 0u).rgb;
+    vec2 buv = materialUv(mid, 0, uv0, uv1);
+    vec4 bt = sampleRtMaterialTexture(matTexIds[tb], buv, uint(max(prim, 0)),
+                                       rtTextureLod(matTexIds[tb], buv, 0.0),
+                                       vec4(1.0));
+    base *= bt.rgb * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                          matTexParams[pb + 38u]) +
+            vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
+                 matTexParams[pb + 42u]);
+    if (lrt(mid, 12u).w > 0.5) {
+      base *= lrt(mid, 0u).rgb;
+      emission = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
+    }
+    uint face = uint(max(prim, 0));
+    uint gb = mid * 1352u;
+    if (gb + 7u < uint(graphRows.length())) {
+      if (graphRows[gb + 1u] >= 0.0)
+        base = evalMaterialXGraph(mid, 0, uv0, face).rgb;
+      if (graphRows[gb + 5u] >= 0.0)
+        emission = max(evalMaterialXGraph(mid, 4, uv0, face).rgb, vec3(0.0));
+    }
+    vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+    vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+    vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+    vec3 hit = wp0 * w0 + wp1 * bc.x + wp2 * bc.y;
+    vec3 N = normalize(cross(wp1 - wp0, wp2 - wp0));
+    if (!front) N = -N;
+    vec3 V = normalize(pc.camPos.xyz - hit);
+    float metallic = mat(mid, 1u).x;
+    float roughness = clamp(mat(mid, 1u).y, 0.02, 1.0);
+    if (gb + 7u < uint(graphRows.length())) {
+      if (graphRows[gb + 2u] >= 0.0)
+        metallic = clamp(evalMaterialXGraph(mid, 1, uv0, face).x, 0.0, 1.0);
+      if (graphRows[gb + 3u] >= 0.0)
+        roughness = clamp(evalMaterialXGraph(mid, 2, uv0, face).x, 0.02, 1.0);
+    }
+    float ior = max(lrt(mid, 10u).w, 1.0);
+    float fd = (ior - 1.0) / (ior + 1.0);
+    vec3 f0 = mix(vec3(fd * fd), base, metallic);
+    vec3 shaded = emission + base * 0.05;
+    for (uint li = 0u; li < uint(lightRows.length()) / RT_LIGHT_ROWS; ++li) {
+      int lt = int(light(li, 0u).x + 0.5);
+      if (lt == 6 || light(li, 0u).y <= 0.5) continue;
+      vec3 L;
+      float attenuation = 1.0;
+      if (lt == 5) {
+        L = -normalize(light(li, 2u).xyz);
+      } else {
+        uint seed = hashU(uint(max(prim, 0)) * 17u + iid * 131u + li);
+        vec3 d = sampleLightPosition(li, lt, seed) - hit;
+        float d2 = max(dot(d, d), 1e-6);
+        L = d / sqrt(d2);
+        attenuation = 1.0 / d2;
+      }
+      float nl = max(dot(N, L), 0.0);
+      float nv = max(dot(N, V), 1e-4);
+      if (nl <= 0.0) continue;
+      vec3 H = normalize(L + V);
+      float nh = max(dot(N, H), 0.0), vh = max(dot(V, H), 0.0);
+      vec3 F = fresnelSchlick(vh, f0);
+      vec3 diff = (vec3(1.0) - F) * (1.0 - metallic) * base / 3.14159265;
+      vec3 spec = ggxD(nh, roughness) * ggxG1(nv, roughness) *
+                  ggxG1(nl, roughness) * F / max(4.0 * nv * nl, 1e-5);
+      shaded += (diff + spec) * light(li, 3u).rgb * attenuation * nl;
+    }
+    return shaded * ii.tint.rgb;
+  }
+  return base * ii.tint.rgb * 0.35 + emission;
+}
+
+vec3 primaryLayerTransmissionTint(uint iid, int prim, vec2 bc, bool front) {
+  InstInfo ii = insts[iid];
+  MeshDesc md = meshes[ii.meshId];
+  uint mid = selectedMaterial(md, prim, front);
+  if (ii.useMaterial == 0u || mid == 0xffffffffu) return vec3(1.0);
+  float weight = clamp(lrt(mid, 2u).w, 0.0, 1.0);
+  float depth = max(lrt(mid, 3u).w, 0.0);
+  vec3 absorption = max(vec3(0.0), vec3(1.0) -
+                        clamp(lrt(mid, 2u).rgb, vec3(0.0), vec3(1.0)));
+  absorption += max(lrt(mid, 3u).rgb, vec3(0.0)) * 0.25;
+  return exp(-weight * depth * absorption);
+}
+
+float primaryLayerTransmissionWeight(uint iid, int prim, bool front, vec2 bc) {
+  InstInfo ii = insts[iid];
+  MeshDesc md = meshes[ii.meshId];
+  uint mid = selectedMaterial(md, prim, front);
+  return (ii.useMaterial != 0u && mid != 0xffffffffu)
+             ? clamp(lrt(mid, 2u).w, 0.0, 1.0) : 0.0;
+}
+
+vec3 primaryLayerRefractedColor(uint iid, int prim, vec2 bc, bool front,
+                                mat4x3 o2w, vec3 rayOrigin, vec3 rayDir) {
+  InstInfo ii = insts[iid];
+  MeshDesc md = meshes[ii.meshId];
+  uint mid = selectedMaterial(md, prim, front);
+  if (ii.useMaterial == 0u || mid == 0xffffffffu) return vec3(0.0);
+  Verts vb = Verts(md.vtxAddr);
+  Idx ib = Idx(md.idxAddr);
+  uint i0 = ib.i[uint(prim) * 3u + 0u];
+  uint i1 = ib.i[uint(prim) * 3u + 1u];
+  uint i2 = ib.i[uint(prim) * 3u + 2u];
+  float w0 = 1.0 - bc.x - bc.y;
+  vec3 p0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+  vec3 p1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+  vec3 p2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+  vec3 hit = p0 * w0 + p1 * bc.x + p2 * bc.y;
+  vec3 N = normalize(cross(p1 - p0, p2 - p0));
+  if (!front) N = -N;
+  float ior = max(lrt(mid, 10u).w, 1.0);
+  vec3 refrDir = refract(rayDir, N, 1.0 / ior);
+  if (dot(refrDir, refrDir) < 1.0e-8) refrDir = reflect(rayDir, N);
+  vec3 refrOrigin = hit + refrDir * 1.0e-3;
+  uint riid; int rprim; vec2 rbc; bool rfront; mat4x3 ro2w; float rt;
+  if (traceAcceptedPrimary(refrOrigin, refrDir, 1.0e-3, 1.0e30,
+                           riid, rprim, rbc, rfront, ro2w, rt))
+    return approximatePrimaryLayerColor(riid, rprim, rbc, rfront, ro2w);
+  return textureLod(uEnvCube, refrDir, 0.0).rgb;
 }
 
 bool pointBoxHit(RtPointNode n, vec3 o, vec3 inv, float best) {
@@ -595,36 +974,23 @@ void main() {
   float pointWeight = 0.0;
   float pointT = tracePointEllipses(origin, dir, pointId, pointWeight);
   if (pointId >= 0) { primaryHit = true; primaryPoint = true; primaryT = pointT; }
-  for (uint ti = 0u; ti < tlasChunkCount(); ++ti) {
-    rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, TLAS[ti], 0u, 0xFF, origin, 1e-3, dir,
-                          primaryT);
-    while (rayQueryProceedEXT(rq)) {
-      if (rayQueryGetIntersectionTypeEXT(rq, false) ==
-          gl_RayQueryCandidateIntersectionTriangleEXT) {
-        uint ci = globalInstanceId(
-            ti, rayQueryGetIntersectionInstanceIdEXT(rq, false));
-        int cp = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
-        vec2 cb = rayQueryGetIntersectionBarycentricsEXT(rq, false);
-        bool cf = rayQueryGetIntersectionFrontFaceEXT(rq, false);
-        if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(rq);
-      }
-    }
-    if (rayQueryGetIntersectionTypeEXT(rq, true) ==
-        gl_RayQueryCommittedIntersectionTriangleEXT) {
-      float candidateT = rayQueryGetIntersectionTEXT(rq, true);
-      if (candidateT < primaryT) {
-        primaryHit = true;
-        primaryPoint = false;
-        primaryT = candidateT;
-        primaryIid = globalInstanceId(
-            ti, rayQueryGetIntersectionInstanceIdEXT(rq, true));
-        primaryPrim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
-        primaryBc = rayQueryGetIntersectionBarycentricsEXT(rq, true);
-        primaryFront = rayQueryGetIntersectionFrontFaceEXT(rq, true);
-        primaryO2w = rayQueryGetIntersectionObjectToWorldEXT(rq, true);
-      }
-    }
+  uint triangleIid = 0u;
+  int trianglePrim = 0;
+  vec2 triangleBc = vec2(0.0);
+  bool triangleFront = true;
+  mat4x3 triangleO2w;
+  float triangleT = primaryT;
+  if (traceAcceptedPrimary(origin, dir, 1e-3, primaryT,
+                           triangleIid, trianglePrim, triangleBc,
+                           triangleFront, triangleO2w, triangleT)) {
+    primaryHit = true;
+    primaryPoint = false;
+    primaryT = triangleT;
+    primaryIid = triangleIid;
+    primaryPrim = trianglePrim;
+    primaryBc = triangleBc;
+    primaryFront = triangleFront;
+    primaryO2w = triangleO2w;
   }
 
   // Dome env background on miss (shaded mode only): sample the baked env cube
@@ -1014,6 +1380,25 @@ void main() {
                               0.02, 1.0);
       }
     }
+    if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+      uint gb = mid * 1352u;
+      if (gb + 7u < uint(graphRows.length())) {
+        if (graphRows[gb + 1u] >= 0.0)
+          base = evalMaterialXGraph(uint(mid), 0, uv0h, sourceFace).rgb;
+        if (graphRows[gb + 2u] >= 0.0)
+          metallic = clamp(evalMaterialXGraph(uint(mid), 1, uv0h, sourceFace).x,
+                            0.0, 1.0);
+        if (graphRows[gb + 3u] >= 0.0)
+          roughness = clamp(evalMaterialXGraph(uint(mid), 2, uv0h, sourceFace).x,
+                             0.02, 1.0);
+        if (graphRows[gb + 4u] >= 0.0)
+          alpha = clamp(evalMaterialXGraph(uint(mid), 3, uv0h, sourceFace).x,
+                        0.0, 1.0);
+        if (graphRows[gb + 5u] >= 0.0)
+          emissive = max(evalMaterialXGraph(uint(mid), 4, uv0h, sourceFace).rgb,
+                          vec3(0.0));
+      }
+    }
     float fd = (max(specIor, 1.0) - 1.0) / (max(specIor, 1.0) + 1.0);
     vec3 materialF0 = mix(vec3(fd * fd), base, clamp(metallic, 0.0, 1.0));
     if (ii.useMaterial != 0u && mid != 0xffffffffu) {
@@ -1064,7 +1449,7 @@ void main() {
     uint directLightCount = uint(lightRows.length()) / RT_LIGHT_ROWS;
     for (uint li = 0u; li < directLightCount; ++li) {
       int lightType = int(light(li, 0u).x + 0.5);
-      if (lightType == 6 || lightType == 8) continue;  // dome / portal
+      if (lightType == 6) continue;  // dome is consumed as environment
       if (light(li, 0u).y <= 0.5) continue;
       hadDirectLight = true;
       int flags = int(light(li, 0u).y + 0.5);
@@ -1103,32 +1488,93 @@ void main() {
       if (nl <= 0.0 || shape <= 0.0) continue;
       float shadow = 1.0;
       if (rmode == 0 && (flags & 2) != 0) {
-        bool shadowHit = false;
-        for (uint ti = 0u; ti < tlasChunkCount() && !shadowHit; ++ti) {
-          rayQueryEXT sq;
-          rayQueryInitializeEXT(sq, TLAS[ti],
-                                gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
-                                hit + N * 1e-3, 1e-3, L,
-                                max(maxShadowT - 2e-3, 1e-3));
-          while (rayQueryProceedEXT(sq)) {
-            if (rayQueryGetIntersectionTypeEXT(sq, false) ==
-                gl_RayQueryCandidateIntersectionTriangleEXT) {
-              uint ci = globalInstanceId(
-                  ti, rayQueryGetIntersectionInstanceIdEXT(sq, false));
-              int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
-              vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
-              bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
-              bool linked = li < 32u
-                  ? (insts[ci].shadowLightMask & (1u << li)) != 0u
-                  : (flags & (1 << 6)) != 0;
-              if (linked && materialAllowsHit(ci, cp, cb, cf))
-                rayQueryConfirmIntersectionEXT(sq);
+        // Bounded transparent shadow traversal. Each pass asks every TLAS
+        // chunk for its next accepted hit and keeps the nearest one, so chunk
+        // partitioning cannot change the visibility result.
+        vec3 shadowOrigin = hit + N * 1e-3;
+        float shadowCursor = 1e-3;
+        for (int layer = 0; layer < 8 && shadow > 1e-3; ++layer) {
+          bool found = false;
+          float bestT = max(maxShadowT - 2e-3, 1e-3);
+          uint bestIid = 0u;
+          int bestPrim = -1;
+          vec2 bestBc = vec2(0.0);
+          bool bestFront = true;
+          for (uint ti = 0u; ti < tlasChunkCount(); ++ti) {
+            rayQueryEXT sq;
+            rayQueryInitializeEXT(sq, TLAS[ti],
+                                  gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
+                                  shadowOrigin, shadowCursor, L, bestT);
+            while (rayQueryProceedEXT(sq)) {
+              if (rayQueryGetIntersectionTypeEXT(sq, false) ==
+                  gl_RayQueryCandidateIntersectionTriangleEXT) {
+                uint ci = globalInstanceId(
+                    ti, rayQueryGetIntersectionInstanceIdEXT(sq, false));
+                int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
+                vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
+                bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
+                bool linked = li < 32u
+                    ? (insts[ci].shadowLightMask & (1u << li)) != 0u
+                    : (flags & (1 << 6)) != 0;
+                if (linked && materialAllowsHit(ci, cp, cb, cf))
+                  rayQueryConfirmIntersectionEXT(sq);
+              }
+            }
+            if (rayQueryGetIntersectionTypeEXT(sq, true) ==
+                gl_RayQueryCommittedIntersectionTriangleEXT) {
+              float candidateT = rayQueryGetIntersectionTEXT(sq, true);
+              if (candidateT < bestT) {
+                found = true;
+                bestT = candidateT;
+                bestIid = globalInstanceId(
+                    ti, rayQueryGetIntersectionInstanceIdEXT(sq, true));
+                bestPrim = rayQueryGetIntersectionPrimitiveIndexEXT(sq, true);
+                bestBc = rayQueryGetIntersectionBarycentricsEXT(sq, true);
+                bestFront = rayQueryGetIntersectionFrontFaceEXT(sq, true);
+              }
             }
           }
-          shadowHit = rayQueryGetIntersectionTypeEXT(sq, true) !=
-                      gl_RayQueryCommittedIntersectionNoneEXT;
+          if (!found) break;
+          float hitMode = 0.0;
+          float hitAlpha = materialOpacityAtHit(
+              bestIid, bestPrim, bestBc, bestFront, hitMode);
+          if (hitMode > 1.5 && hitAlpha < 1.0) {
+            shadow *= 1.0 - hitAlpha;
+            shadowCursor = bestT + 1e-3;
+          } else {
+            shadow = 0.0;
+          }
         }
-        if (shadowHit) shadow = 0.0;
+        // Conservative tail policy: a ninth accepted blocker is treated as
+        // opaque rather than allowing an unbounded ray-query loop.
+        if (shadow > 1e-3) {
+          bool tailHit = false;
+          for (uint ti = 0u; ti < tlasChunkCount() && !tailHit; ++ti) {
+            rayQueryEXT tq;
+            rayQueryInitializeEXT(tq, TLAS[ti],
+                                  gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
+                                  shadowOrigin, shadowCursor, L,
+                                  max(maxShadowT - 2e-3, 1e-3));
+            while (rayQueryProceedEXT(tq)) {
+              if (rayQueryGetIntersectionTypeEXT(tq, false) ==
+                  gl_RayQueryCandidateIntersectionTriangleEXT) {
+                uint ci = globalInstanceId(
+                    ti, rayQueryGetIntersectionInstanceIdEXT(tq, false));
+                int cp = rayQueryGetIntersectionPrimitiveIndexEXT(tq, false);
+                vec2 cb = rayQueryGetIntersectionBarycentricsEXT(tq, false);
+                bool cf = rayQueryGetIntersectionFrontFaceEXT(tq, false);
+                bool linked = li < 32u
+                    ? (insts[ci].shadowLightMask & (1u << li)) != 0u
+                    : (flags & (1 << 6)) != 0;
+                if (linked && materialAllowsHit(ci, cp, cb, cf))
+                  rayQueryConfirmIntersectionEXT(tq);
+              }
+            }
+            tailHit = rayQueryGetIntersectionTypeEXT(tq, true) !=
+                      gl_RayQueryCommittedIntersectionNoneEXT;
+          }
+          if (tailHit) shadow = 0.0;
+        }
       }
       vec3 H = normalize(L + V);
       float nh = max(dot(N, H), 0.0);
@@ -1150,7 +1596,14 @@ void main() {
                       ggxG1(coatNoL, coatRoughness) * coatF /
                       max(4.0 * coatNoV * coatNoL, 1e-5) * coatColor *
                       clamp(coatWeight, 0.0, 1.0);
-      vec3 radiance = light(li, 3u).rgb * (attenuation * shape);
+      float ies = rtIesFactor(li, normalize(-L));
+      vec3 lightColor = light(li, 3u).rgb;
+      if (lightType == 8) {
+        vec3 portalRadiance = rtDomeRadiance(L);
+        if (dot(portalRadiance, portalRadiance) > 1e-8)
+          lightColor = portalRadiance;
+      }
+      vec3 radiance = lightColor * (attenuation * shape * ies);
       vec3 baseBrdf = diffuseBrdf * light(li, 7u).y +
                       specularBrdf * light(li, 7u).z;
       vec3 coatOnlyBrdf = coatBrdf * light(li, 7u).z;
@@ -1216,7 +1669,65 @@ void main() {
       if (alphaMode > 0.5 && alphaMode < 1.5 && materialOpacity <= 0.0) {
         outc = bgc;
       } else if (alphaMode > 1.5 && materialOpacity < 1.0) {
-        outc = mix(bgc, outc, materialOpacity);
+        vec3 layerColor[8];
+        float layerAlpha[8];
+        vec3 layerTint[8];
+        vec3 layerRefract[8];
+        float layerTransmission[8];
+        int layerCount = 1;
+        layerColor[0] = outc;
+        float topMode = 0.0;
+        layerAlpha[0] = materialOpacityAtHit(primaryIid, primaryPrim,
+                                             primaryBc, primaryFront,
+                                             topMode);
+        layerTint[0] = primaryLayerTransmissionTint(primaryIid, primaryPrim,
+                                                     primaryBc, primaryFront);
+        layerTransmission[0] = primaryLayerTransmissionWeight(
+            primaryIid, primaryPrim, primaryFront, primaryBc);
+        layerRefract[0] = primaryLayerRefractedColor(
+            primaryIid, primaryPrim, primaryBc, primaryFront, primaryO2w,
+            origin, dir);
+        float cursor = primaryT + 1e-3;
+        bool opaqueTail = false;
+        vec3 tailColor = bgc;
+        for (int pass = 1; pass < 8; ++pass) {
+          uint liid; int lprim; vec2 lbc; bool lfront; mat4x3 lo2w; float lt;
+          if (!traceAcceptedPrimary(origin, dir, cursor, 1e30,
+                                    liid, lprim, lbc, lfront, lo2w, lt))
+            break;
+          cursor = lt + 1e-3;
+          float lm = 0.0;
+          float la = materialOpacityAtHit(liid, lprim, lbc, lfront, lm);
+          layerColor[layerCount] = approximatePrimaryLayerColor(
+              liid, lprim, lbc, lfront, lo2w);
+          layerAlpha[layerCount] = la;
+          layerTint[layerCount] = primaryLayerTransmissionTint(
+              liid, lprim, lbc, lfront);
+          layerTransmission[layerCount] = primaryLayerTransmissionWeight(
+              liid, lprim, lfront, lbc);
+          layerRefract[layerCount] = primaryLayerRefractedColor(
+              liid, lprim, lbc, lfront, lo2w, origin, dir);
+          ++layerCount;
+          if (lm <= 0.5 || (lm > 1.5 && la >= 1.0)) break;
+        }
+        if (layerCount == 8) {
+          uint tiid; int tprim; vec2 tbc; bool tfront; mat4x3 to2w; float tt;
+          if (traceAcceptedPrimary(origin, dir, cursor, 1e30,
+                                   tiid, tprim, tbc, tfront, to2w, tt)) {
+            opaqueTail = true;
+            tailColor = approximatePrimaryLayerColor(
+                tiid, tprim, tbc, tfront, to2w);
+          }
+        }
+        vec3 composite = opaqueTail ? tailColor : bgc;
+        for (int i = layerCount - 1; i >= 0; --i) {
+          float a = clamp(layerAlpha[i], 0.0, 1.0);
+          vec3 transmitted = composite * layerTint[i];
+          transmitted = mix(transmitted, layerRefract[i],
+                            clamp(layerTransmission[i], 0.0, 1.0));
+          composite = mix(transmitted, layerColor[i], a);
+        }
+        outc = composite;
       }
     }
     if (rmode == 1) {

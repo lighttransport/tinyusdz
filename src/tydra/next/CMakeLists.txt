@@ -13,6 +13,7 @@ set(TYDRA_NEXT_SOURCES
     render-converter.cc
     render-session.cc
     texture-cache.cc
+    materialx.cc
     urdf-to-usd.cc
     ../../external/mikktspace/mikktspace.c
 )
@@ -26,6 +27,7 @@ set(TYDRA_NEXT_HEADERS
     render-session.hh
     resource-budget.hh
     texture-cache.hh
+    materialx.hh
     urdf-to-usd.hh
     ../urdf-payload.hh
 )
@@ -106,4 +108,13 @@ if(TYDRA_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/tydra/next/test_tydra_next.cc
     )
     target_link_libraries(test_tydra_next PRIVATE tydra_next tinyusdz_next)
+endif()
+
+if(TINYUSDZ_NEXT_BUILD_FUZZERS)
+    target_compile_options(tydra_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
+    add_executable(fuzz_next_render
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/fuzzer/next_render_fuzzmain.cc)
+    target_link_libraries(fuzz_next_render PRIVATE tydra_next tinyusdz_next)
+    target_compile_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+    target_link_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
 endif()

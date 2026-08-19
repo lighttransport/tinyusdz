@@ -41,8 +41,12 @@
 #include "mesh_build.hh"
 #include "next_scene_loader.hh"
 #include "next/tinyusdz-next.hh"  // tnext::Stage (per-frame --next morph weights)
+#include "scene_validation.hh"
 #include "skinning.hh"
 #include "texture_residency_policy.hh"
+#if defined(HAVE_VULKAN)
+#include "vk/vk_renderer.hh"
+#endif
 
 #if defined(HAVE_NFD)
 #include "nfd.h"
@@ -582,6 +586,10 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"vertices", draw_.vertexCount},
       {"triangles", draw_.triangleCount},
       {"materials", draw_.materials.size()},
+      {"source_materials", draw_.optimization.sourceMaterials},
+      {"unique_materials", draw_.optimization.uniqueMaterials},
+      {"deduplicated_materials",
+       draw_.optimization.deduplicatedMaterials},
       {"textures", draw_.textures.size()},
       {"ptex_textures", ptexTextures},
       {"ptex_initial_faces", loadOpts_.ptexInitialFaces},
@@ -1831,7 +1839,12 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       if (preserveDeferredAux) deferredMeshAux_.resize(draw_.meshes.size());
       postGpu([this, freeCpu, preserveDeferredAux] {
         std::string uerr;
-        renderer_->uploadScene(draw_, &uerr);
+        const bool uploaded = renderer_->uploadScene(draw_, &uerr);
+        if (!uploaded) {
+          LOGE("scene GPU upload failed for '%s': %s", loaded_.filepath.c_str(),
+               uerr.empty() ? "unknown error" : uerr.c_str());
+          return;
+        }
         // Deformable meshes keep their CPU geometry: RT re-poses from it every
         // frame (and RT can be toggled on at any time).
         if (freeCpu) {
@@ -2154,6 +2167,25 @@ void App::drainProgressiveLoad() {
         .count();
   };
 
+  renderer_->clearSceneUploadError();
+  auto failProgressive = [this](const std::string& error) {
+    const std::string message = error.empty() ? "progressive scene upload failed"
+                                              : error;
+    LOGE("%s", message.c_str());
+    if (pendingLoaded_) {
+      pendingLoaded_->ok = false;
+      pendingLoaded_->err = message;
+    }
+    streamCompleteSeen_ = true;
+    progressiveActive_ = false;
+    gui_.setSceneMutating(false);
+  };
+  auto checkRendererUpload = [&]() {
+    if (renderer_->sceneUploadError().empty()) return true;
+    failProgressive(renderer_->sceneUploadError());
+    return false;
+  };
+
   // Diagnostic wire/source-face buffers are optional. Keep their compact CPU
   // source until a diagnostic mode is requested instead of consuming GPU memory
   // and upload bandwidth during an ordinary shaded load.
@@ -2161,6 +2193,12 @@ void App::drainProgressiveLoad() {
     while (nextAux_ < draw_.meshes.size() && elapsedMs() < budgetMs) {
       restoreDeferredMeshAux(nextAux_);
       renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
+      if (!renderer_->sceneUploadError().empty()) {
+        LOGE("progressive mesh auxiliary upload failed: %s",
+             renderer_->sceneUploadError().c_str());
+        progressiveActive_ = false;
+        return;
+      }
       if (useNextLoader_ && !needsMeshCpuGeometryForRT() &&
           !MeshIsDeformable(draw_.meshes[nextAux_])) {
         FreeMeshAuxCPU(draw_.meshes[nextAux_]);
@@ -2208,11 +2246,18 @@ void App::drainProgressiveLoad() {
   while (loadStream_->tryPop(&event)) {
     if (event.type == ProgressiveSceneEvent::Type::PreviewScene) {
       DrawScene preview = std::move(event.scene);
+      std::string validationError;
+      if (!ValidateDrawScene(preview, &validationError)) {
+        failProgressive("progressive preview rejected: " + validationError);
+        return;
+      }
+      renderer_->clearSceneUploadError();
       renderer_->beginScene(preview.materials,
                             static_cast<int>(preview.textures.size()));
       if (!conversionOnly) {
         for (const DrawMeshCPU& mesh : preview.meshes) {
           renderer_->appendMeshSurface(mesh);
+          if (!checkRendererUpload()) return;
         }
       }
       draw_ = std::move(preview);
@@ -2236,6 +2281,7 @@ void App::drainProgressiveLoad() {
       }
     } else if (event.type == ProgressiveSceneEvent::Type::Reset) {
       clearPtexDecode();
+      renderer_->clearSceneUploadError();
       renderer_->beginScene({}, 0);
       draw_ = DrawScene{};
       deferredMeshAux_.clear();
@@ -2265,6 +2311,11 @@ void App::drainProgressiveLoad() {
         streamRendererBegun_ = true;
       }
       DrawMeshCPU mesh = std::move(event.mesh);
+      std::string validationError;
+      if (!ValidateDrawMesh(mesh, draw_.materials.size(), &validationError)) {
+        failProgressive("progressive mesh rejected: " + validationError);
+        return;
+      }
       const size_t vertices = mesh.vertices.size();
       const size_t triangles = mesh.indices.size() / 3;
       const size_t effectiveTriangles =
@@ -2282,6 +2333,7 @@ void App::drainProgressiveLoad() {
           renderer_->appendMesh(mesh);
         else
           renderer_->appendMeshSurface(mesh);
+        if (!checkRendererUpload()) return;
       }
       streamUploadedVertices_ += vertices;
       streamUploadedTriangles_ += triangles;
@@ -2321,6 +2373,11 @@ void App::drainProgressiveLoad() {
         streamRendererBegun_ = true;
       }
       DrawPointsCPU points = std::move(event.points);
+      std::string validationError;
+      if (!ValidateDrawPoints(points, draw_.materials.size(), &validationError)) {
+        failProgressive("progressive points rejected: " + validationError);
+        return;
+      }
       const bool useful = !points.points.empty();
       for (int a = 0; a < 3; ++a) {
         streamBoundsMin_[a] = std::min(streamBoundsMin_[a], points.aabbMin[a]);
@@ -2334,6 +2391,7 @@ void App::drainProgressiveLoad() {
         const bool usefulPurpose = points.purpose != "guide";
         DrawPointsCPU metadata = retainPointMetadata(points);
         if (!conversionOnly) renderer_->appendPoints(std::move(points));
+        if (!conversionOnly && !checkRendererUpload()) return;
         draw_.points.push_back(std::move(metadata));
         if (usefulPurpose) streamHasUsefulGeometry_ = true;
       }
@@ -2344,6 +2402,11 @@ void App::drainProgressiveLoad() {
         streamRendererBegun_ = true;
       }
       DrawCurvesCPU curves = std::move(event.curves);
+      std::string validationError;
+      if (!ValidateDrawCurves(curves, draw_.materials.size(), &validationError)) {
+        failProgressive("progressive curves rejected: " + validationError);
+        return;
+      }
       const bool useful = !curves.points.empty();
       for (int a = 0; a < 3; ++a) {
         streamBoundsMin_[a] = std::min(streamBoundsMin_[a], curves.aabbMin[a]);
@@ -2357,6 +2420,7 @@ void App::drainProgressiveLoad() {
         const bool usefulPurpose = curves.purpose != "guide";
         DrawCurvesCPU metadata = retainCurveMetadata(curves);
         if (!conversionOnly) renderer_->appendCurves(std::move(curves));
+        if (!conversionOnly && !checkRendererUpload()) return;
         draw_.curves.push_back(std::move(metadata));
         if (usefulPurpose) streamHasUsefulGeometry_ = true;
       }
@@ -2367,6 +2431,11 @@ void App::drainProgressiveLoad() {
         streamRendererBegun_ = true;
       }
       DrawVolumeCPU volume = std::move(event.volume);
+      std::string validationError;
+      if (!ValidateDrawVolume(volume, &validationError)) {
+        failProgressive("progressive volume rejected: " + validationError);
+        return;
+      }
       const bool useful = !volume.density.empty();
       for (int a = 0; a < 3; ++a) {
         streamBoundsMin_[a] = std::min(streamBoundsMin_[a], volume.aabbMin[a]);
@@ -2391,6 +2460,7 @@ void App::drainProgressiveLoad() {
                     sizeof(metadata.emission));
         metadata.background = volume.background;
         if (!conversionOnly) renderer_->appendVolume(volume);
+        if (!conversionOnly && !checkRendererUpload()) return;
         draw_.volumes.push_back(std::move(metadata));
         streamHasUsefulGeometry_ = true;
       }
@@ -2450,16 +2520,30 @@ void App::drainProgressiveLoad() {
       std::vector<DrawTextureCPU> streamedTextures = std::move(draw_.textures);
       DrawScene finalScene = std::move(event.scene);
       if (!conversionOnly) {
+        DrawScene finalValidation;
+        finalValidation.materials = finalScene.materials;
+        finalValidation.textures.resize(finalScene.textures.size());
+        finalValidation.points = finalScene.points;
+        finalValidation.curves = finalScene.curves;
+        finalValidation.volumes = finalScene.volumes;
+        std::string validationError;
+        if (!ValidateDrawScene(finalValidation, &validationError)) {
+          failProgressive("progressive final scene rejected: " + validationError);
+          return;
+        }
+        renderer_->clearSceneUploadError();
         renderer_->syncSceneResources(
             finalScene.materials, static_cast<int>(finalScene.textures.size()));
         for (DrawPointsCPU& points : finalScene.points) {
           DrawPointsCPU metadata = retainPointMetadata(points);
           renderer_->appendPoints(std::move(points));
+          if (!checkRendererUpload()) return;
           points = std::move(metadata);
         }
         for (DrawCurvesCPU& curves : finalScene.curves) {
           DrawCurvesCPU metadata = retainCurveMetadata(curves);
           renderer_->appendCurves(std::move(curves));
+          if (!checkRendererUpload()) return;
           curves = std::move(metadata);
         }
       }
@@ -2582,6 +2666,12 @@ void App::stepProgressiveUpload() {
   // Geometry first so meshes appear, normally ~8ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
+    if (!renderer_->sceneUploadError().empty()) {
+      LOGE("progressive mesh upload failed: %s",
+           renderer_->sceneUploadError().c_str());
+      progressiveActive_ = false;
+      return;
+    }
     if (useNextLoader_ && !needsMeshCpuGeometryForRT() &&
         !MeshIsDeformable(draw_.meshes[nextMesh_])) {
       FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
@@ -2596,6 +2686,12 @@ void App::stepProgressiveUpload() {
     while (nextAux_ < draw_.meshes.size()) {
       restoreDeferredMeshAux(nextAux_);
       renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
+      if (!renderer_->sceneUploadError().empty()) {
+        LOGE("progressive mesh auxiliary upload failed: %s",
+             renderer_->sceneUploadError().c_str());
+        progressiveActive_ = false;
+        return;
+      }
       if (useNextLoader_ && !needsMeshCpuGeometryForRT() &&
           !MeshIsDeformable(draw_.meshes[nextAux_])) {
         FreeMeshAuxCPU(draw_.meshes[nextAux_]);
@@ -2634,6 +2730,12 @@ void App::stepProgressiveUpload() {
       nextTex_ >= draw_.textures.size() && ptexReady) {
     while (nextVolume_ < draw_.volumes.size()) {
       renderer_->appendVolume(draw_.volumes[nextVolume_]);
+      if (!renderer_->sceneUploadError().empty()) {
+        LOGE("progressive volume upload failed: %s",
+             renderer_->sceneUploadError().c_str());
+        progressiveActive_ = false;
+        return;
+      }
       ++nextVolume_;
       if (elapsedMs() > tailBudgetMs) break;
     }
@@ -3813,7 +3915,10 @@ void App::finishReconvertIfReady() {
     draw_.truncated = reconvDraw_->truncated;
     reconvApplied_ = reconvInFlight_;
     std::string uerr;
-    renderer_->uploadScene(draw_, &uerr);  // camera untouched (no refit)
+    if (!renderer_->uploadScene(draw_, &uerr)) {
+      LOGE("reconverted scene GPU upload failed: %s",
+           uerr.empty() ? "unknown error" : uerr.c_str());
+    }  // camera untouched (no refit)
   }
   reconvDraw_.reset();
 
@@ -4593,7 +4698,7 @@ bool App::renderCpuViewport() {
   std::vector<uint8_t> rgba;
   std::string cerr;
   if (cpuTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
-                       sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
+                       sceneExtent, w, h, &rgba, &cerr, rtSamples_,
                        &cameraLens_)) {
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
@@ -5070,6 +5175,19 @@ int App::run(const std::string& initialFile, int maxFrames,
     }
   }
 
+#if defined(HAVE_VULKAN)
+  if (backend_ == Backend::Vulkan) {
+    vulkanAvailable_ = true;
+    vulkanRtAvailable_ = renderer_ && renderer_->rayTracingAvailable();
+  } else if (!headless_) {
+    const VulkanProbeResult probe =
+        ProbeVulkanBackend(window_, devicePreference_);
+    vulkanAvailable_ = probe.rasterAvailable;
+    vulkanRtAvailable_ = probe.rtAvailable;
+    if (!probe.error.empty()) LOGI("Vulkan capability probe: %s", probe.error.c_str());
+  }
+#endif
+
   {
     const RendererCaps& rendererCaps = renderer_->caps();
     LOGI("renderer: %s, GPU: %s, API: %s",
@@ -5228,7 +5346,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     gui_.setSkinning(si);
     gui_.setActiveTechnique(activeTechnique_);
     gui_.setTechniqueAvailability(cudaProbe_ != ProbeState::Unavailable,
-                                  hipProbe_ != ProbeState::Unavailable);
+                                  hipProbe_ != ProbeState::Unavailable,
+                                  vulkanAvailable_, vulkanRtAvailable_);
 
     // Feed the GUI the current load status for the loading modal.
     Gui::LoadStatus ls;

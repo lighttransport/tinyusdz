@@ -32,6 +32,30 @@ GLint GLWrap(int w) {
   }
 }
 
+// Keep the legacy inline GL shader strings readable while sharing the same
+// eight-sample finite-light pattern as the Vulkan raster shaders.
+std::string UpgradeFiniteLightSamples(std::string source) {
+  auto replaceAll = [&source](const char* from, const char* to) {
+    const std::string needle(from);
+    const std::string replacement(to);
+    size_t pos = 0;
+    while ((pos = source.find(needle, pos)) != std::string::npos) {
+      source.replace(pos, needle.size(), replacement);
+      pos += replacement.size();
+    }
+  };
+  replaceAll(")?4:1", ")?8:1");
+  replaceAll("((si&1)==0?-0.25:0.25)",
+             "((float(si%4)+0.5)*0.25-0.5)");
+  replaceAll("((si&2)==0?-0.25:0.25)",
+             "((float(si/4)+0.5)*0.5-0.5)");
+  replaceAll("float k=0.3535533906;",
+             "float k=0.5,a=6.28318530718*(float(si)+0.5)/8.0;");
+  replaceAll("(((si&1)==0?-k:k)*", "(cos(a)*k*");
+  replaceAll("(((si&2)==0?-k:k)*", "(sin(a)*k*");
+  return source;
+}
+
 void SetUvUniform(GLint loc0, GLint loc1, const DrawUvXformCPU& uv) {
   glUniform3f(loc0, uv.m00, uv.m01, uv.tx);
   glUniform3f(loc1, uv.m10, uv.m11, uv.ty);
@@ -42,12 +66,20 @@ void UploadRasterLightArray(GLuint program, const RasterLightSet& lights) {
   float directionAngle[kMaxRasterLights * 4]{};
   float colorDiffuse[kMaxRasterLights * 4]{};
   float specularShape[kMaxRasterLights * 4]{};
+  float areaParams[kMaxRasterLights * 4]{};
+  float iesAxisX[kMaxRasterLights * 4]{};
+  float iesAxisY[kMaxRasterLights * 4]{};
+  float iesProfile[kMaxRasterLights * 24]{};
   for (int i = 0; i < lights.count; ++i) {
     const RasterLightGPU& src = lights.lights[static_cast<size_t>(i)];
     std::memcpy(positionType + i * 4, src.positionType, 4 * sizeof(float));
     std::memcpy(directionAngle + i * 4, src.directionAngle, 4 * sizeof(float));
     std::memcpy(colorDiffuse + i * 4, src.colorDiffuse, 4 * sizeof(float));
     std::memcpy(specularShape + i * 4, src.specularShape, 4 * sizeof(float));
+    std::memcpy(areaParams + i * 4, src.areaParams, 4 * sizeof(float));
+    std::memcpy(iesAxisX + i * 4, src.iesAxisX, 4 * sizeof(float));
+    std::memcpy(iesAxisY + i * 4, src.iesAxisY, 4 * sizeof(float));
+    std::memcpy(iesProfile + i * 24, src.iesProfile, 24 * sizeof(float));
   }
   glUniform1i(glGetUniformLocation(program, "uLightCount"), lights.count);
   glUniform4fv(glGetUniformLocation(program, "uLightPositionType"), lights.count,
@@ -58,6 +90,14 @@ void UploadRasterLightArray(GLuint program, const RasterLightSet& lights) {
                colorDiffuse);
   glUniform4fv(glGetUniformLocation(program, "uLightSpecularShape"), lights.count,
                specularShape);
+  glUniform4fv(glGetUniformLocation(program, "uLightAreaParams"), lights.count,
+               areaParams);
+  glUniform4fv(glGetUniformLocation(program, "uLightIesAxisX"), lights.count,
+               iesAxisX);
+  glUniform4fv(glGetUniformLocation(program, "uLightIesAxisY"), lights.count,
+               iesAxisY);
+  glUniform4fv(glGetUniformLocation(program, "uLightIesProfile"), lights.count * 6,
+               iesProfile);
 }
 
 void UploadRasterLightMask(GLuint program, const RasterLightSet& lights,
@@ -191,6 +231,12 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
     caps_.device_type = software ? "cpu" : "gpu";
   }
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize_);
+  if (GLAD_GL_ARB_texture_filter_anisotropic) {
+    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxTextureAnisotropy_);
+    if (!std::isfinite(maxTextureAnisotropy_) || maxTextureAnisotropy_ < 1.0f)
+      maxTextureAnisotropy_ = 1.0f;
+    maxTextureAnisotropy_ = std::min(maxTextureAnisotropy_, 16.0f);
+  }
 
   // Compressed-texture format support (extension strings + core versions).
   {
@@ -686,7 +732,9 @@ void main() {
       "uniform vec3 uLightColor;\n"
       "uniform int uLightCount; uniform uint uLightMask;\n"
       "uniform vec4 uLightPositionType[16],uLightDirectionAngle[16];\n"
-      "uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16];\n"
+      "uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16],uLightAreaParams[16];\n"
+      "uniform vec4 uLightIesAxisX[16],uLightIesAxisY[16],uLightIesProfile[96];\n"
+      "float sampleIes(int li,vec3 d,vec3 a,vec3 ax,vec3 ay){if(dot(uLightIesProfile[li*6],uLightIesProfile[li*6])+dot(uLightIesProfile[li*6+1],uLightIesProfile[li*6+1])<1e-8)return 1.;float fy=clamp(degrees(acos(clamp(dot(d,a),-1.,1.)))/60.,0.,3.);int y0=int(floor(fy)),y1=min(y0+1,3);float az=degrees(atan(dot(d,ay),dot(d,ax)));if(az<0.)az+=360.;float fx=az/60.;int x0=min(int(floor(fx)),5),x1=(x0+1)%6;float tx=fx-float(x0);float a0=mix(uLightIesProfile[y0*6+x0/4][x0%4],uLightIesProfile[y0*6+x1/4][x1%4],tx),a1=mix(uLightIesProfile[y1*6+x0/4][x0%4],uLightIesProfile[y1*6+x1/4][x1%4],tx);return mix(a0,a1,fy-float(y0));}\n"
       // DomeLight IBL (diffuse-only here: prototypes carry no material scalars).
       "uniform bool uHasIbl;\n"
       "uniform vec3 uIblColor;\n"
@@ -778,17 +826,16 @@ void main() {
       "  vec3 Nf = (dot(N, V) < 0.0) ? -N : N;\n"
       "  float nv=max(dot(Nf,V),1e-4),r=0.5; vec3 direct=vec3(0);\n"
       "  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;\n"
-      "    vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];\n"
-      "    int lt=int(pt.w+0.5);vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}\n"
-      "    float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}\n"
+      "    vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int sc=(int(pt.w+0.5)==2||int(pt.w+0.5)==3||int(pt.w+0.5)==4)?4:1;for(int si=0;si<sc;++si){vec3 samplePos=pt.xyz;vec3 ax=normalize(uLightIesAxisX[li].xyz),ay=normalize(uLightIesAxisY[li].xyz);if(int(pt.w+0.5)==3){samplePos+=ax*((si&1)==0?-0.25:0.25)*uLightAreaParams[li].y+ay*((si&2)==0?-0.25:0.25)*uLightAreaParams[li].z;}else if(int(pt.w+0.5)==2||int(pt.w+0.5)==4){float k=0.3535533906;samplePos+=ax*(((si&1)==0?-k:k)*uLightAreaParams[li].x)+ay*(((si&2)==0?-k:k)*uLightAreaParams[li].x);}int lt=int(pt.w+0.5);vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=samplePos-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}\n"
+      "    float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}float ies=sampleIes(li,normalize(-L),normalize(da.xyz),normalize(uLightIesAxisX[li].xyz),normalize(uLightIesAxisY[li].xyz));\n"
       "    float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));\n"
-      "    vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1.0)-F)*vColor*(1.0/3.14159265);float vis=li==uShadowLightSlot?shadowVis(vWorldPos,Nf,L):1;direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl*vis);}\n"
-      "  if(uLightCount==0){vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));vec3 lc=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1);float nl=max(dot(Nf,L),0.0);vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*vColor*(1.0/3.14159265);direct=(diff+spec)*lc*nl;}\n"
+      "    vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1.0)-F)*vColor*(1.0/3.14159265);float vis=li==uShadowLightSlot?shadowVis(vWorldPos,Nf,L):1;direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*ies*nl*vis)/float(sc);}}\n"
       "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.12);\n"
       "  vec3 col = vColor*amb + direct;\n"
       "  FragColor = vec4(linearToSrgb((col + uEmissive) * exp2(uExposure)), vOpacity);\n"
       "}\n";
-  instProgram_ = glutil::CompileProgram(kInstancedVS, kInstancedFS, err);
+  const std::string instancedFs = UpgradeFiniteLightSamples(kInstancedFS);
+  instProgram_ = glutil::CompileProgram(kInstancedVS, instancedFs.c_str(), err);
   if (!instProgram_) {
     if (err && err->empty()) *err = "Failed to build GL instanced program";
     return false;
@@ -1244,8 +1291,10 @@ void GLRenderer::buildTessProgram() {
       "uniform vec3 uLightDir; uniform vec3 uLightColor;\n"
       "uniform int uLightCount; uniform uint uLightMask;\n"
       "uniform vec4 uLightPositionType[16],uLightDirectionAngle[16];\n"
-      "uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16];\n"
+      "uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16],uLightAreaParams[16];\n"
+      "uniform vec4 uLightIesAxisX[16],uLightIesAxisY[16],uLightIesProfile[96];\n"
       "uniform bool uHasIbl; uniform vec3 uIblColor; uniform mat3 uEnvRotation;\n"
+      "float sampleIes(int li,vec3 d,vec3 a,vec3 ax,vec3 ay){if(dot(uLightIesProfile[li*6],uLightIesProfile[li*6])+dot(uLightIesProfile[li*6+1],uLightIesProfile[li*6+1])<1e-8)return 1.;float fy=clamp(degrees(acos(clamp(dot(d,a),-1.,1.)))/60.,0.,3.);int y0=int(floor(fy)),y1=min(y0+1,3);float az=degrees(atan(dot(d,ay),dot(d,ax)));if(az<0.)az+=360.;float fx=az/60.;int x0=min(int(floor(fx)),5),x1=(x0+1)%6;float tx=fx-float(x0);float a0=mix(uLightIesProfile[y0*6+x0/4][x0%4],uLightIesProfile[y0*6+x1/4][x1%4],tx),a1=mix(uLightIesProfile[y1*6+x0/4][x0%4],uLightIesProfile[y1*6+x1/4][x1%4],tx);return mix(a0,a1,fy-float(y0));}\n"
       "uniform float uExposure;\n"
       "uniform samplerCube uIrradianceMap;\n"
       "uniform sampler2D uBaseColorTex; uniform bool uHasBaseColorTex;\n"
@@ -1264,14 +1313,15 @@ void GLRenderer::buildTessProgram() {
       "  vec3 V=normalize(uCameraPos-vWorldPos);\n"
       "  vec3 Nf=(dot(N,V)<0.0)?-N:N;\n"
       "  float nv=max(dot(Nf,V),1e-4),r=0.5;vec3 direct=vec3(0);\n"
-      "  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int lt=int(pt.w+0.5);vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*base*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl);}\n"
+      "  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int lt=int(pt.w+0.5),sc=(lt==2||lt==3||lt==4)?4:1;for(int si=0;si<sc;++si){vec3 samplePos=pt.xyz,ax=normalize(uLightIesAxisX[li].xyz),ay=normalize(uLightIesAxisY[li].xyz);if(lt==3){samplePos+=ax*((si&1)==0?-0.25:0.25)*uLightAreaParams[li].y+ay*((si&2)==0?-0.25:0.25)*uLightAreaParams[li].z;}else if(lt==2||lt==4){float k=0.3535533906;samplePos+=ax*(((si&1)==0?-k:k)*uLightAreaParams[li].x)+ay*(((si&2)==0?-k:k)*uLightAreaParams[li].x);}vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=samplePos-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}float ies=sampleIes(li,normalize(-L),normalize(da.xyz),normalize(uLightIesAxisX[li].xyz),normalize(uLightIesAxisY[li].xyz));float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*base*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*ies*nl)/float(sc);}}\n"
       "  if(uLightCount==0){vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));vec3 lc=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1);float nl=max(dot(Nf,L),0.0);vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*base*(1.0/3.14159265);direct=(diff+spec)*lc*nl;}\n"
       "  vec3 amb=uHasIbl?texture(uIrradianceMap,normalize(uEnvRotation*Nf)).rgb*uIblColor:vec3(0.12);\n"
       "  vec3 col=base*amb+direct;\n"
       "  FragColor=vec4(linearToSrgb(col*exp2(uExposure)),1.0);\n"
       "}\n";
   std::string terr;
-  tessProgram_ = glutil::CompileProgramTess(kVS, kTCS, kTES, kFS, &terr);
+  const std::string tessFs = UpgradeFiniteLightSamples(kFS);
+  tessProgram_ = glutil::CompileProgramTess(kVS, kTCS, kTES, tessFs.c_str(), &terr);
   if (!tessProgram_) {
     // Best-effort: keep coarse displacement. (Logged, not fatal.)
     fprintf(stderr, "[tusdview] GL tessellation program unavailable: %s\n",
@@ -1360,7 +1410,9 @@ flat in int vInstanceId;
 uniform vec3 uCameraRight,uCameraUp,uLightDir,uLightColor;
 uniform int uLightCount; uniform uint uLightMask;
 uniform vec4 uLightPositionType[16],uLightDirectionAngle[16];
-uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16];
+uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16],uLightAreaParams[16];
+uniform vec4 uLightIesAxisX[16],uLightIesAxisY[16],uLightIesProfile[96];
+float sampleIes(int li,vec3 d,vec3 a,vec3 ax,vec3 ay){if(dot(uLightIesProfile[li*6],uLightIesProfile[li*6])+dot(uLightIesProfile[li*6+1],uLightIesProfile[li*6+1])<1e-8)return 1.;float fy=clamp(degrees(acos(clamp(dot(d,a),-1.,1.)))/60.,0.,3.);int y0=int(floor(fy)),y1=min(y0+1,3);float az=degrees(atan(dot(d,ay),dot(d,ax)));if(az<0.)az+=360.;float fx=az/60.;int x0=min(int(floor(fx)),5),x1=(x0+1)%6;float tx=fx-float(x0);float a0=mix(uLightIesProfile[y0*6+x0/4][x0%4],uLightIesProfile[y0*6+x1/4][x1%4],tx),a1=mix(uLightIesProfile[y1*6+x0/4][x0%4],uLightIesProfile[y1*6+x1/4][x1%4],tx);return mix(a0,a1,fy-float(y0));}
 uniform float uExposure;
 uniform int uKind,uMaterialId,uCarrierId,uPurpose,uRenderMode;
 out vec4 fragColor;
@@ -1382,14 +1434,15 @@ void main(){
   if(uRenderMode==12){fragColor=vec4(vec3(vColor.a),1);return;}
   if(uRenderMode!=0){fragColor=vec4(.18,.18,.18,1);return;}
   vec3 V=normalize(vView);float nv=max(dot(N,V),1e-4),r=.5;vec3 direct=vec3(0);
-  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int lt=int(pt.w+.5);vec3 L;float att=1;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorld;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1/d2;}float shape=1;if(ss.w>.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0,180))),inn=cos(radians(clamp(da.w*(1-clamp(ss.y,0,1)),0,180)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0),max(ss.z,0));}float nl=max(dot(N,L),0);if(nl<=0||shape<=0)continue;vec3 H=normalize(V+L);float nh=max(dot(N,H),0),vh=max(dot(V,H),0);vec3 ff=F(vh,vec3(.04)),spec=D(nh,r)*G(nv,r)*G(nl,r)*ff/max(4*nv*nl,1e-5),diff=(vec3(1)-ff)*vColor.rgb*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl);}
+  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int lt=int(pt.w+.5),sc=(lt==2||lt==3||lt==4)?4:1;for(int si=0;si<sc;++si){vec3 samplePos=pt.xyz,ax=normalize(uLightIesAxisX[li].xyz),ay=normalize(uLightIesAxisY[li].xyz);if(lt==3){samplePos+=ax*((si&1)==0?-0.25:0.25)*uLightAreaParams[li].y+ay*((si&2)==0?-0.25:0.25)*uLightAreaParams[li].z;}else if(lt==2||lt==4){float k=0.3535533906;samplePos+=ax*(((si&1)==0?-k:k)*uLightAreaParams[li].x)+ay*(((si&2)==0?-k:k)*uLightAreaParams[li].x);}vec3 L;float att=1;if(lt==5)L=normalize(da.xyz);else{vec3 q=samplePos-vWorld;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1/d2;}float shape=1;if(ss.w>.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0,180))),inn=cos(radians(clamp(da.w*(1-clamp(ss.y,0,1)),0,180)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0),max(ss.z,0));}float ies=sampleIes(li,normalize(-L),normalize(da.xyz),normalize(uLightIesAxisX[li].xyz),normalize(uLightIesAxisY[li].xyz));float nl=max(dot(N,L),0);if(nl<=0||shape<=0)continue;vec3 H=normalize(V+L);float nh=max(dot(N,H),0),vh=max(dot(V,H),0);vec3 ff=F(vh,vec3(.04)),spec=D(nh,r)*G(nv,r)*G(nl,r)*ff/max(4*nv*nl,1e-5),diff=(vec3(1)-ff)*vColor.rgb*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*ies*nl)/float(sc);}}
   if(uLightCount==0){vec3 L=normalize(uLightDir),H=normalize(V+L);float nl=max(dot(N,L),0),nh=max(dot(N,H),0),vh=max(dot(V,H),0);vec3 ff=F(vh,vec3(.04)),spec=D(nh,r)*G(nv,r)*G(nl,r)*ff/max(4*nv*nl,1e-5),diff=(vec3(1)-ff)*vColor.rgb*(1.0/3.14159265);direct=(diff+spec)*uLightColor*nl;}
   vec3 col=vColor.rgb*.12+direct;
   fragColor=vec4(linearToSrgb(col*exp2(uExposure)),vColor.a);
 }
 )GLSL";
   std::string err;
-  nonMeshProgram_ = glutil::CompileProgram(kVS, kFS, &err);
+  const std::string nonMeshFs = UpgradeFiniteLightSamples(kFS);
+  nonMeshProgram_ = glutil::CompileProgram(kVS, nonMeshFs.c_str(), &err);
   if (!nonMeshProgram_) {
     std::fprintf(stderr, "[tusdview] non-mesh GL program unavailable: %s\n",
                  err.c_str());
@@ -1720,6 +1773,9 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER,
                     GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    if (maxTextureAnisotropy_ > 1.0f)
+      glTexParameterf(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_ANISOTROPY,
+                      maxTextureAnisotropy_);
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 
     std::array<int16_t, 100> lut{};
@@ -1751,6 +1807,9 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    if (maxTextureAnisotropy_ > 1.0f)
+      glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
+                      maxTextureAnisotropy_);
     glBindTexture(GL_TEXTURE_2D, 0);
   } else {
     glGenTextures(1, &gpu.tex2d);
@@ -1813,6 +1872,9 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                         ? GL_LINEAR_MIPMAP_LINEAR
                         : GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    if (maxTextureAnisotropy_ > 1.0f)
+      glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
+                      maxTextureAnisotropy_);
     glBindTexture(GL_TEXTURE_2D, 0);
   }
   gpu.width = t.image.width;
@@ -2169,10 +2231,26 @@ void GLRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
 }
 
 void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
+  std::string validationError;
+  if (!ValidateDrawMesh(sm, materials_.size(), &validationError)) {
+    std::fprintf(stderr, "OpenGL rejected unsafe draw mesh: %s\n",
+                 validationError.c_str());
+    reportSceneUploadError(validationError);
+    meshes_.push_back(GLMesh{});
+    return;
+  }
   appendMeshImpl(sm, true);
 }
 
 void GLRenderer::appendMeshSurface(const DrawMeshCPU& sm) {
+  std::string validationError;
+  if (!ValidateDrawMesh(sm, materials_.size(), &validationError)) {
+    std::fprintf(stderr, "OpenGL rejected unsafe draw mesh: %s\n",
+                 validationError.c_str());
+    reportSceneUploadError(validationError);
+    meshes_.push_back(GLMesh{});
+    return;
+  }
   appendMeshImpl(sm, false);
 }
 

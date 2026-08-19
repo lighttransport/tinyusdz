@@ -14,7 +14,8 @@ layout(location = 6) in vec4 aColor1;
 
 // Frame UBO (set 2, binding 0) — same layout as mesh.vert
 struct RasterLight { vec4 positionType; vec4 directionAngle;
-                     vec4 colorDiffuse; vec4 specularShape; };
+                     vec4 colorDiffuse; vec4 specularShape; vec4 areaParams;
+                     vec4 iesAxisX; vec4 iesAxisY; vec4 iesProfile[6]; };
 layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;

@@ -16,6 +16,7 @@
 #include <unordered_set>
 
 #include "displacement_bake.hh"  // SampleTextureRed
+#include "lighting_ies.hh"
 #include "lightrt_mtlx_bridge.hh"
 #include "ptex_atlas.hh"
 #include "log.hh"
@@ -511,6 +512,31 @@ void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
     for (int i = 0; i < 27; ++i) {
       p[52 + i] = light.ibl.shIrradiance[static_cast<size_t>(i)];
     }
+  } else if (light.iesValid) {
+    // IES profiles use the same seven trailing vec4 rows as a compact 6x4
+    // angular LUT. Dome lights retain the order-2 SH payload above; ordinary
+    // lights never need that payload, so this avoids another descriptor.
+    constexpr int kIesVerticalSamples = 4;
+    constexpr int kIesHorizontalSamples = 6;
+    p[52] = 2.0f;  // payload tag: IES LUT (SH payloads have no tag)
+    p[53] = static_cast<float>(kIesVerticalSamples);
+    p[54] = static_cast<float>(kIesHorizontalSamples);
+    for (int y = 0; y < kIesVerticalSamples; ++y) {
+      const float vertical = 180.0f * static_cast<float>(y) /
+                             static_cast<float>(kIesVerticalSamples - 1);
+      for (int x = 0; x < kIesHorizontalSamples; ++x) {
+        const float horizontal = 360.0f * static_cast<float>(x) /
+                                 static_cast<float>(kIesHorizontalSamples);
+        p[56 + y * kIesHorizontalSamples + x] =
+            EvaluateIesProfile(light, vertical, horizontal);
+      }
+    }
+  } else if (light.geometryTriOffset >= 0 && light.geometryTriCount > 0 &&
+             light.geometryInstance >= 0) {
+    p[52] = 3.0f;  // payload tag: resolved GeometryLight triangle range
+    p[53] = static_cast<float>(light.geometryTriOffset);
+    p[54] = static_cast<float>(light.geometryTriCount);
+    p[55] = static_cast<float>(light.geometryInstance);
   }
 }
 
@@ -567,6 +593,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
     markTexture(dm.coatRoughnessTex);
     markTexture(dm.specularColorTex);
     markTexture(dm.coatNormalTex);
+    for (const MaterialXGraphNodeCPU& node : dm.materialXGraph.nodes)
+      markTexture(node.textureId);
   }
   if (lights) {
     for (const DrawLightCPU& light : *lights) markTexture(light.envmapTexture);
@@ -1500,6 +1528,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   };
   std::vector<InstSrc> isrc;
   std::vector<std::array<float, 6>> protoBox;  // {lo.xyz, hi.xyz} per accepted mesh
+  std::vector<size_t> sourceTriOffsets(sourceMeshes.size(), 0);
+  std::vector<size_t> sourceTriCounts(sourceMeshes.size(), 0);
   setPhase(1, sourceMeshes.size());  // assemble
   for (size_t first = 0; first < sourceMeshes.size() && !out->truncated;
        first += buildBatchMeshes) {
@@ -1517,6 +1547,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     if (out->tris.size() / 9 >= cap) { out->truncated = true; break; }
     if (isrc.size() >= instCap) { out->truncated = true; break; }
     const size_t triOff = out->tris.size() / 9;
+    sourceTriOffsets[mbi] = triOff;
     if (recordRefit && mbi < scene.meshes.size()) {
       RefitMeshMap rm;
       rm.sceneMesh = mbi;
@@ -1525,6 +1556,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       refitOut->meshes.push_back(std::move(rm));
     }
     const size_t mbTriCount = mb.mat.size();
+    sourceTriCounts[mbi] = mbTriCount;
     const size_t nodeOff = out->blas.size();
     const int blasRoot = static_cast<int>(nodeOff);
     AppendMove(out->tris, mb.tris);
@@ -1593,6 +1625,20 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     O2WAabb(s.o2w, box.data(), box.data() + 3, wlo, whi);
     for (int k = 0; k < 3; ++k) { instAabb[i * 6 + k] = wlo[k]; instAabb[i * 6 + 3 + k] = whi[k]; }
   });
+  std::vector<int> geometryOriginalInstances(scene.lights.size(), -1);
+  for (size_t li = 0; li < scene.lights.size(); ++li) {
+    if (scene.lights[li].type != DrawLightCPU::Type::Geometry ||
+        scene.lights[li].geometryMesh < 0 ||
+        static_cast<size_t>(scene.lights[li].geometryMesh) >= scene.meshes.size()) {
+      continue;
+    }
+    for (size_t ii = 0; ii < isrc.size(); ++ii) {
+      if (isrc[ii].meshIndex == scene.lights[li].geometryMesh) {
+        geometryOriginalInstances[li] = static_cast<int>(ii);
+        break;
+      }
+    }
+  }
   isrc.clear();
   isrc.shrink_to_fit();
 
@@ -1617,6 +1663,27 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   std::vector<Inst> ordered(out->instCount);
   for (size_t i = 0; i < out->instCount; ++i) ordered[i] = out->instances[tidx[i]];
   out->instances.swap(ordered);
+
+  std::vector<DrawLightCPU> packedLights = scene.lights;
+  for (size_t li = 0; li < packedLights.size(); ++li) {
+    DrawLightCPU& light = packedLights[li];
+    if (light.type != DrawLightCPU::Type::Geometry || light.geometryMesh < 0 ||
+        static_cast<size_t>(light.geometryMesh) >= sourceTriOffsets.size()) {
+      continue;
+    }
+    const size_t mesh = static_cast<size_t>(light.geometryMesh);
+    if (sourceTriCounts[mesh] == 0) continue;
+    const int original = geometryOriginalInstances[li];
+    if (original < 0) continue;
+    for (size_t orderedIndex = 0; orderedIndex < tidx.size(); ++orderedIndex) {
+      if (tidx[orderedIndex] == original) {
+        light.geometryTriOffset = static_cast<int>(sourceTriOffsets[mesh]);
+        light.geometryTriCount = static_cast<int>(sourceTriCounts[mesh]);
+        light.geometryInstance = static_cast<int>(orderedIndex);
+        break;
+      }
+    }
+  }
 
   // UsdVol volumes.
   for (const DrawVolumeCPU& dv : scene.volumes) {
@@ -1699,6 +1766,9 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   out->matLightRt.assign(std::max<size_t>(scene.materials.size(), 1) *
                              kLightRtOpenPBRFloats,
                          0.0f);
+  out->matGraph.assign(std::max<size_t>(scene.materials.size(), 1) *
+                           kRtMaterialGraphFloats,
+                       0.0f);
   HostTextureTable textureTable;
   BuildHostTextureTable(scene.textures, scene.materials, &textureTable,
                         &scene.lights, textureBudgetBytes);
@@ -1725,14 +1795,17 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     out->matBase[i * 3 + 1] = dm.baseColor[1];
     out->matBase[i * 3 + 2] = dm.baseColor[2];
     PackLightRtOpenPBR(dm, &out->matLightRt[i * kLightRtOpenPBRFloats]);
+    PackMaterialXGraphRuntime(
+        dm, &out->matGraph[i * kRtMaterialGraphFloats],
+        &textureTable.sourceToTable);
   }
 
-  out->numLights = static_cast<int>(scene.lights.size());
-  out->lightParams.assign(std::max<size_t>(scene.lights.size(), 1) *
+  out->numLights = static_cast<int>(packedLights.size());
+  out->lightParams.assign(std::max<size_t>(packedLights.size(), 1) *
                               kRtLightParamFloats,
                           0.0f);
-  for (size_t i = 0; i < scene.lights.size(); ++i) {
-    const DrawLightCPU& light = scene.lights[i];
+  for (size_t i = 0; i < packedLights.size(); ++i) {
+    const DrawLightCPU& light = packedLights[i];
     PackRtLightParams(light, mapTex(light.envmapTexture),
                       &out->lightParams[i * kRtLightParamFloats]);
   }

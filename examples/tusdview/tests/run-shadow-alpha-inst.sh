@@ -20,7 +20,9 @@ if ! echo "$LOG" | grep -q "render stats"; then
   echo "SKIP: no renderer"
   exit $SKIP
 fi
-if echo "$LOG" | grep -qi "error\|failed"; then
+real_errors="$(printf '%s\n' "$LOG" | grep -iE 'error|failed' |
+  grep -viE 'glfw error 65540: Vulkan: Window surface creation requires the window to have the client API set to GLFW_NO_API|Vulkan capability probe: glfwCreateWindowSurface' || true)"
+if [ -n "$real_errors" ]; then
   echo "$LOG"
   echo "FAIL: alpha-cutout + PointInstancer shadow fixture produced errors"
   exit 1

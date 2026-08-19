@@ -58,7 +58,9 @@ set(TUSDVIEW_SOURCES
     app.cc
     config.cc
     scene_loader.cc
+    scene_optimize.cc
     next_scene_loader.cc
+    lighting_ies.cc
     preview_cache.cc
     texture_residency_policy.cc
     ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
@@ -110,12 +112,11 @@ if(UNIX AND NOT APPLE)
                               PROPERTIES COMPILE_OPTIONS "-fvisibility=hidden")
 endif()
 
-# Compile-check the vendored LightRT MaterialX/OpenPBR evaluator core. The
-# objects are intentionally not linked into tusdview yet because texture loading
-# still needs a single owning stb implementation in tinyusdz. `third_party_impl.c`
-# is compiled here to keep the vendor import portable, but remains unlinked.
-# `material_bind.c` stays vendored but is excluded because it is glTF-specific
-# rather than USD-facing.
+# Compile the vendored LightRT MaterialX/OpenPBR evaluator core. The viewer uses
+# the same texture-cache implementation as LightRT now; the cache is populated
+# from the material's asset directory before evaluation and owns its decoded
+# image lifetime. `material_bind.c` stays vendored but is excluded because it is
+# glTF-specific rather than USD-facing.
 set(TUSDVIEW_LIGHTRT_MTLX_DIR ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
 add_library(tusdview_lightrt_mtlx OBJECT
     ${TUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
@@ -125,7 +126,7 @@ add_library(tusdview_lightrt_mtlx OBJECT
     ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
     ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
     ${TUSDVIEW_LIGHTRT_MTLX_DIR}/texture.c
-    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/third_party_impl.c)
+    lightrt_mtlx_image_impl.c)
 target_include_directories(tusdview_lightrt_mtlx PRIVATE
     ${TUSDVIEW_LIGHTRT_MTLX_DIR}
     ${PROJECT_SOURCE_DIR}/src/external
@@ -140,7 +141,8 @@ add_library(tusdview_lightrt_mtlx_const OBJECT
     ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
     ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
     ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
-    lightrt_mtlx_texture_stub.c)
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/texture.c
+    lightrt_mtlx_image_impl.c)
 target_include_directories(tusdview_lightrt_mtlx_const PRIVATE
     ${TUSDVIEW_LIGHTRT_MTLX_DIR}
     ${PROJECT_SOURCE_DIR}/src/external)
@@ -237,11 +239,13 @@ if(TINYUSDZ_BUILD_TESTS)
   add_executable(tusdview_lightrt_bridge_test
       tests/lightrt_bridge_test.cc
       lightrt_mtlx_bridge.cc
+      lighting_ies.cc
       rt_scene_build.cc
       rt_bvh.cc
       texture_tools.cc
       ptex_atlas.cc
       ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+      ${PROJECT_SOURCE_DIR}/src/image-loader.cc
       ${PROJECT_SOURCE_DIR}/src/io-util.cc
       ${PROJECT_SOURCE_DIR}/src/external/miniz.c
       displacement_bake.cc
@@ -263,6 +267,7 @@ if(TINYUSDZ_BUILD_TESTS)
       mesh_build.cc
       texture_tools.cc
       lightrt_mtlx_bridge.cc
+      lighting_ies.cc
       displacement_bake.cc
       skinning.cc
       ${TUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
@@ -283,6 +288,7 @@ if(TINYUSDZ_BUILD_TESTS)
 
   add_executable(tusdview_lighting_test
       tests/lighting_test.cc
+      lighting_ies.cc
       mesh_build.cc
       texture_tools.cc
       lightrt_mtlx_bridge.cc
@@ -311,6 +317,7 @@ if(TINYUSDZ_BUILD_TESTS)
       mesh_build.cc
       texture_tools.cc
       lightrt_mtlx_bridge.cc
+      lighting_ies.cc
       displacement_bake.cc
       skinning.cc
       ${COMMON_DIR}/light3d/math.cpp
@@ -333,6 +340,7 @@ if(TINYUSDZ_BUILD_TESTS)
       mesh_build.cc
       texture_tools.cc
       lightrt_mtlx_bridge.cc
+      lighting_ies.cc
       displacement_bake.cc
       skinning.cc
       ${COMMON_DIR}/light3d/math.cpp
@@ -406,6 +414,25 @@ if(TINYUSDZ_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${COMMON_DIR})
 
+  add_executable(tusdview_scene_safety_test
+      tests/scene_safety_test.cc
+      scene_optimize.cc
+      lightrt_mtlx_bridge.cc
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_scene_safety_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_scene_safety_test)
+  target_include_directories(tusdview_scene_safety_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_scene_safety_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_scene_safety_test PRIVATE Threads::Threads)
+  endif()
+
   # Register the tusdview unit tests with ctest. They were built here but never
   # registered (this file had no add_test at all), so a regression in any of
   # them went unnoticed. Works because the top-level CMakeLists.txt calls
@@ -422,7 +449,8 @@ if(TINYUSDZ_BUILD_TESTS)
       tusdview_camera_nav_test
       tusdview_preview_cache_test
       tusdview_texture_residency_policy_test
-      tusdview_rt_lod_test)
+      tusdview_rt_lod_test
+      tusdview_scene_safety_test)
     add_test(NAME ${tv_test} COMMAND ${tv_test})
     set_tests_properties(${tv_test} PROPERTIES LABELS "tusdview")
     if(COMMAND add_sanitizers)

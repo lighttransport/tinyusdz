@@ -3,6 +3,9 @@
 // PointInstancer extraction into GPU-instanced draws.
 
 #include "next_scene_loader.hh"
+#include "lighting_eval.hh"
+#include "lighting_ies.hh"
+#include "scene_optimize.hh"
 
 #include <algorithm>
 #include <atomic>
@@ -3769,6 +3772,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.occlusion = rm.preview_surface->occlusion.value.x;
   }
 
+  BakeMaterialXGraphTextures(&dm, draw);
   DiagnoseUnsupportedRealtimeLobes(dm, draw);
   draw->materials.push_back(std::move(dm));
   return static_cast<int>(draw->materials.size() - 1);
@@ -4641,6 +4645,14 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
       case tydn::LightType::Point: default: dst->type = DrawLightCPU::Type::Point; break;
     }
     if (p.GetTypeName() == "PortalLight") dst->type = DrawLightCPU::Type::Portal;
+    if (dst->type == DrawLightCPU::Type::Geometry) {
+      const std::vector<tnext::Path>* targets =
+          p.GetRelationship("inputs:geometry");
+      if (!targets) targets = p.GetRelationship("geometry");
+      if (targets && !targets->empty()) {
+        dst->geometryTargetPath = targets->front().str();
+      }
+    }
     dst->color[0] = src.color.x; dst->color[1] = src.color.y;
     dst->color[2] = src.color.z;
     dst->intensity = src.intensity; dst->exposure = src.exposure;
@@ -4744,46 +4756,14 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
   };
 
   auto bakeDerived = [](DrawLightCPU* light) {
-    float tint[3] = {1.0f, 1.0f, 1.0f};
-    if (light->enableColorTemperature) {
-      const float t = std::max(1000.0f, std::min(40000.0f,
-                                                 light->colorTemperature)) /
-                      100.0f;
-      tint[0] = t <= 66.0f ? 1.0f : std::max(0.0f, std::min(1.0f,
-          329.698727446f * std::pow(t - 60.0f, -0.1332047592f) / 255.0f));
-      tint[1] = std::max(0.0f, std::min(1.0f,
-          (t <= 66.0f ? 99.4708025861f * std::log(t) - 161.1195681661f
-                      : 288.1221695283f * std::pow(t - 60.0f, -0.0755148492f)) /
-              255.0f));
-      tint[2] = t >= 66.0f ? 1.0f : (t <= 19.0f ? 0.0f :
-          std::max(0.0f, std::min(1.0f,
-              (138.5177312231f * std::log(t - 10.0f) - 305.0447927307f) /
-                  255.0f)));
+    ApplyDerivedLightParams(light);
+    if (!light->shapingIesFile.empty()) {
+      std::string error;
+      if (!LoadIesProfile(light->shapingIesFile, light, &error)) {
+        std::fprintf(stderr, "[tusdview][warn] light '%s': IES profile unavailable (%s)\n",
+                     light->absPath.c_str(), error.c_str());
+      }
     }
-    light->effectiveIntensity = light->intensity * std::pow(2.0f, light->exposure);
-    constexpr float pi = 3.14159265358979323846f;
-    if (light->type == DrawLightCPU::Type::Sphere ||
-        light->type == DrawLightCPU::Type::Point)
-      light->area = 4.0f * pi * light->radius * light->radius;
-    else if (light->type == DrawLightCPU::Type::Disk)
-      light->area = pi * light->radius * light->radius;
-    else if (light->type == DrawLightCPU::Type::Rect ||
-             light->type == DrawLightCPU::Type::Portal)
-      light->area = light->width * light->height;
-    else if (light->type == DrawLightCPU::Type::Cylinder)
-      light->area = 2.0f * pi * light->radius * light->length;
-    light->invArea = light->area > 0.0f ? 1.0f / light->area : 0.0f;
-    for (int c = 0; c < 3; ++c) {
-      light->effectiveColor[c] = light->color[c] * tint[c] *
-                                 light->effectiveIntensity;
-      light->normalizedColor[c] = light->effectiveColor[c] *
-          (light->normalize && light->invArea > 0.0f ? light->invArea : 1.0f);
-    }
-    light->hasShaping = light->shapingConeAngle < 90.0f ||
-        !light->shapingIesFile.empty() || light->shapingFocus != 0.0f ||
-        light->shapingFocusTint[0] != 0.0f ||
-        light->shapingFocusTint[1] != 0.0f ||
-        light->shapingFocusTint[2] != 0.0f;
   };
 
   std::function<void(const tnext::UsdPrim&)> rec = [&](const tnext::UsdPrim& p) {
@@ -4998,19 +4978,21 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
         }
 
         bakeDerived(&light);
-        if (light.type == DrawLightCPU::Type::Geometry) {
-          draw->skipped.push_back(
-              "GeometryLight '" + light.absPath +
-              "': emissive-mesh light sampling is not implemented");
-        } else if (light.type == DrawLightCPU::Type::Portal) {
-          draw->skipped.push_back(
-              "PortalLight '" + light.absPath +
-              "': portal-guided environment sampling is not implemented");
+        if (light.type == DrawLightCPU::Type::Geometry &&
+            !light.geometryTargetPath.empty()) {
+          for (size_t meshIndex = 0; meshIndex < draw->meshes.size(); ++meshIndex) {
+            if (draw->meshes[meshIndex].absPath == light.geometryTargetPath) {
+              light.geometryMesh = static_cast<int>(meshIndex);
+              break;
+            }
+          }
         }
-        if (!light.shapingIesFile.empty()) {
-          draw->skipped.push_back(
-              "Light '" + light.absPath +
-              "': IES profile evaluation is not implemented");
+        if (light.type == DrawLightCPU::Type::Geometry) {
+          if (light.geometryMesh < 0) {
+            draw->skipped.push_back(
+                "GeometryLight '" + light.absPath +
+                "': emissive-mesh target could not be resolved");
+          }
         }
         draw->lights.push_back(std::move(light));
       }
@@ -5684,7 +5666,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
   // Resolve a material prim path to a DrawScene material index (cached by path).
   // Unbound / unconvertible -> 0 (default gray material).
+  draw->optimization.sourceMaterials = draw->materials.size();
+  draw->optimization.uniqueMaterials = draw->materials.size();
   std::unordered_map<std::string, int> matIndexByPath;
+  std::unordered_map<uint64_t, std::vector<int>> matIndexByContent;
   // A material is built ONCE and shared by every mesh that binds it, but the
   // UV-set names are the MESH's. Resolve the texture->UV-set routing at the first
   // mesh that binds the material, and warn if a later mesh would have resolved it
@@ -5711,6 +5696,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     int idx = matPrim.IsValid() ? BuildNextMaterial(stage, conv, matPrim, draw,
                                                     texCache, uv0Name, uv1Name)
                                 : -1;
+    if (idx > 0 && static_cast<size_t>(idx) + 1 == draw->materials.size()) {
+      ++draw->optimization.sourceMaterials;
+      const DrawMaterialCPU& built = draw->materials.back();
+      const uint64_t hash = DrawMaterialRenderHash(built);
+      auto& candidates = matIndexByContent[hash];
+      for (int candidate : candidates) {
+        if (candidate >= 0 && static_cast<size_t>(candidate) < draw->materials.size() &&
+            DrawMaterialsRenderEquivalent(
+                built, draw->materials[static_cast<size_t>(candidate)])) {
+          draw->materials.pop_back();
+          ++draw->optimization.deduplicatedMaterials;
+          idx = candidate;
+          break;
+        }
+      }
+      if (static_cast<size_t>(idx) == draw->materials.size() - 1) {
+        candidates.push_back(idx);
+      }
+    }
+    draw->optimization.uniqueMaterials = draw->materials.size();
     if (idx < 0) idx = 0;
     matIndexByPath[mpath] = idx;
     matUv1ByPath[mpath] = uv1Name;
@@ -8721,6 +8726,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 static_cast<long long>(draw->textures.size()));
   }
   BakeRTDisplacement(draw);
+  draw->optimization.uniqueMaterials = draw->materials.size();
+  draw->optimization.sourceMaterials =
+      draw->materials.size() + draw->optimization.deduplicatedMaterials;
   publishAvailableTextures();
   if (!streamOk) {
     if (err) *err = "next: progressive load cancelled";

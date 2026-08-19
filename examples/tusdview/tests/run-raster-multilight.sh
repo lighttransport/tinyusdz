@@ -16,7 +16,12 @@ trap cleanup EXIT
 printf '%s\n' '{"window_size":{"width":640,"height":480}}' >"$TMP/config.json"
 asset="$ROOT/tests/usda/tusdview-raster-multilight-links.usda"
 
-if command -v Xvfb >/dev/null 2>&1; then
+use_existing_display=0
+if [ -n "${DISPLAY:-}" ] && command -v xdpyinfo >/dev/null 2>&1 &&
+   xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+  use_existing_display=1
+fi
+if [ "$use_existing_display" -eq 0 ] && command -v Xvfb >/dev/null 2>&1; then
   # X11 display numbers are one byte in several client paths; stay below 256.
   display_num=$((200 + ($$ % 50)))
   Xvfb ":$display_num" -screen 0 800x600x24 >"$TMP/xvfb.log" 2>&1 &

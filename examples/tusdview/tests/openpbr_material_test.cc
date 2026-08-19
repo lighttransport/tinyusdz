@@ -463,6 +463,15 @@ int main() {
     std::fprintf(stderr, "MaterialX graph material was not baked as constants\n");
     return 1;
   }
+  if (!graphMat.materialXGraph.valid ||
+      graphMat.materialXGraph.nodes.size() != 1 ||
+      graphMat.materialXGraph.output[0] != 0 ||
+      graphMat.materialXGraph.nodes[0].op !=
+          tusdview::MaterialXGraphOpCPU::Multiply) {
+    std::fprintf(stderr,
+                 "MaterialX graph was not compiled into runtime IR\n");
+    return 1;
+  }
   if (!Near(graphMat.lightRtOpenPBR.baseColor[0], 0.4f) ||
       !Near(graphMat.lightRtOpenPBR.baseColor[1], 0.2f) ||
       !Near(graphMat.lightRtOpenPBR.baseColor[2], 0.15f) ||

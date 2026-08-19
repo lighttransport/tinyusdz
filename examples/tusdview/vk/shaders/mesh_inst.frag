@@ -12,7 +12,8 @@ layout(location = 3) in float vOpacity;
 layout(location = 4) flat in int vInstanceId;
 layout(location = 5) flat in int vDrawSlot;
 struct RasterLight { vec4 positionType; vec4 directionAngle;
-                     vec4 colorDiffuse; vec4 specularShape; };
+                     vec4 colorDiffuse; vec4 specularShape; vec4 areaParams;
+                     vec4 iesAxisX; vec4 iesAxisY; vec4 iesProfile[6]; };
 
 // Per-draw metadata (set 6), indexed by the vertex-resolved draw slot. Replaces
 // the old per-draw push constant so a whole multi-draw-indirect batch shares one
@@ -157,11 +158,28 @@ void main() {
     vec4 lc = fr.rasterLights[li].colorDiffuse;
     vec4 ss = fr.rasterLights[li].specularShape;
     int lightType = int(pt.w + 0.5);
+    int sampleCount = (lightType == 2 || lightType == 3 || lightType == 4) ? 8 : 1;
+    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+    vec3 samplePos = pt.xyz;
+    vec3 areaX = normalize(fr.rasterLights[li].iesAxisX.xyz);
+    vec3 areaY = normalize(fr.rasterLights[li].iesAxisY.xyz);
+    if (lightType == 3) {
+      float sx = (float(sampleIndex % 4) + 0.5) * 0.25 - 0.5;
+      float sy = (float(sampleIndex / 4) + 0.5) * 0.5 - 0.5;
+      samplePos += areaX * (sx * fr.rasterLights[li].areaParams.y) +
+                   areaY * (sy * fr.rasterLights[li].areaParams.z);
+    } else if (lightType == 2 || lightType == 4) {
+      const float k = 0.5;
+      float a = 6.28318530718 * (float(sampleIndex) + 0.5) / 8.0;
+      float sx = cos(a) * k * fr.rasterLights[li].areaParams.x;
+      float sy = sin(a) * k * fr.rasterLights[li].areaParams.x;
+      samplePos += areaX * sx + areaY * sy;
+    }
     vec3 L;
     float attenuation = 1.0;
     if (lightType == 5) L = normalize(da.xyz);
     else {
-      vec3 toLight = pt.xyz - vWorldPos;
+      vec3 toLight = samplePos - vWorldPos;
       float dist2 = max(dot(toLight, toLight), 1e-6);
       L = toLight * inversesqrt(dist2);
       attenuation = 1.0 / dist2;
@@ -175,6 +193,27 @@ void main() {
       shape = smoothstep(outer, max(inner, outer + 1e-5), coneCos) *
               pow(max(coneCos, 0.0), max(ss.z, 0.0));
     }
+    float ies = 1.0;
+    if (lightType != 5 && dot(fr.rasterLights[li].iesProfile[0],
+                              fr.rasterLights[li].iesProfile[0]) > 1e-8) {
+      vec3 iesDir = normalize(-L);
+      float v = degrees(acos(clamp(dot(iesDir, normalize(da.xyz)), -1.0, 1.0)));
+      float fy = clamp(v / 60.0, 0.0, 3.0);
+      int y0 = int(floor(fy));
+      int y1 = min(y0 + 1, 3);
+      float az = degrees(atan(dot(iesDir, fr.rasterLights[li].iesAxisY.xyz),
+                              dot(iesDir, fr.rasterLights[li].iesAxisX.xyz)));
+      if (az < 0.0) az += 360.0;
+      float fx = az / 60.0;
+      int x0 = min(int(floor(fx)), 5);
+      int x1 = (x0 + 1) % 6;
+      float tx = fx - float(x0);
+      float a0 = mix(fr.rasterLights[li].iesProfile[y0][x0],
+                     fr.rasterLights[li].iesProfile[y0][x1], tx);
+      float a1 = mix(fr.rasterLights[li].iesProfile[y1][x0],
+                     fr.rasterLights[li].iesProfile[y1][x1], tx);
+      ies = mix(a0, a1, fy - float(y0));
+    }
     float nl = max(dot(Nf, L), 0.0);
     if (nl <= 0.0 || shape <= 0.0) continue;
     vec3 H = normalize(L + V);
@@ -184,7 +223,8 @@ void main() {
                 max(4.0 * nv * nl, 1e-5);
     vec3 diff = (vec3(1.0) - F) * vColor * (1.0 / 3.14159265);
     direct += (diff * lc.w + spec * ss.x) * lc.rgb *
-              (attenuation * shape * nl);
+              (attenuation * shape * ies * nl) / float(sampleCount);
+    }
   }
   if (fr.rasterLightInfo.x == 0u) {
     vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
