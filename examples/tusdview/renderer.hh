@@ -18,6 +18,7 @@
 #include <string>
 
 #include "gpu_scene.hh"
+#include "scene_validation.hh"
 #include "rt_camera.hh"
 #include "rt_lod.hh"  // RtLodCamera (view-dependent RT LOD)
 
@@ -267,6 +268,10 @@ class Renderer {
  public:
   virtual ~Renderer() = default;
 
+  const std::string& sceneUploadError() const { return sceneUploadError_; }
+
+  void clearSceneUploadError() { sceneUploadError_.clear(); }
+
   // Create device resources. `window` is the GLFW window (Vulkan creates its
   // surface from it; GL assumes its context is already current). A null window
   // requests a windowless/offscreen backend (Vulkan only): no surface, no
@@ -436,7 +441,9 @@ class Renderer {
 
   // Convenience: upload an entire scene in one call (used by the headless /
   // synchronous path so screenshots are deterministic).
-  bool uploadScene(const DrawScene& scene, std::string* /*err*/) {
+  bool uploadScene(const DrawScene& scene, std::string* err) {
+    sceneUploadError_.clear();
+    if (!ValidateDrawScene(scene, err)) return false;
     beginScene(scene.materials, static_cast<int>(scene.textures.size()));
     setLights(scene.lights, scene.meshes.size());
     for (size_t i = 0; i < scene.textures.size(); ++i) {
@@ -467,6 +474,10 @@ class Renderer {
     for (const auto& p : scene.points) appendPoints(p);
     for (const auto& c : scene.curves) appendCurves(c);
     for (const auto& v : scene.volumes) appendVolume(v);
+    if (!sceneUploadError_.empty()) {
+      if (err) *err = sceneUploadError_;
+      return false;
+    }
     return true;
   }
 
@@ -579,6 +590,14 @@ class Renderer {
 
   // Tear down ImGui backend + device resources.
   virtual void shutdown() = 0;
+
+ protected:
+  void reportSceneUploadError(const std::string& message) {
+    if (sceneUploadError_.empty()) sceneUploadError_ = message;
+  }
+
+ private:
+  std::string sceneUploadError_;
 };
 
 std::unique_ptr<Renderer> CreateGLRenderer();

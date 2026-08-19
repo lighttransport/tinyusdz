@@ -255,7 +255,7 @@ void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
   F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dBackMat_);
   F(dMatPbr_); F(dMatBase_);
-  F(dMatLightRt_); F(dMatTex_);
+  F(dMatLightRt_); F(dMatGraph_); F(dMatTex_);
   F(dMatTexParam_); F(dLightParams_);
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_); F(dAccum_);
@@ -587,6 +587,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.matBase.data(), hs.matBase.size() * sizeof(float), &dMatBase_)) return false;
   if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
           &dMatLightRt_)) return false;
+  if (!up(hs.matGraph.data(), hs.matGraph.size() * sizeof(float),
+          &dMatGraph_)) return false;
   if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
           &dLightParams_)) return false;
   if (cuMemGetInfo) {
@@ -654,7 +656,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
               dN = triCount_ ? dNrms_ : 0, dC = triCount_ ? dCols_ : 0,
               dG = triCount_ ? dGeo_ : 0, dM = triCount_ ? dMat_ : 0,
               dBM = dBackMat_,
-              dMP = dMatPbr_, dMB = dMatBase_, dML = dMatLightRt_, dMT = dMatTex_,
+              dMP = dMatPbr_, dMB = dMatBase_, dML = dMatLightRt_, dMG = dMatGraph_, dMT = dMatTex_,
               dTx = dTexels_, dTD = dTextures_,
               dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
               dDw = dDomW_, dDj = dDomJoint_, dBl = dBlasNodes_, dTl = dTlasNodes_,
@@ -679,7 +681,7 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
   // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
   // volDens,volParams,numVols,emask,accum,sampleIdx,numSamples,hitDepth.
-  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dBM, &dMP, &dMB, &dML, &numMats, &dLP,
+  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dBM, &dMP, &dMB, &dML, &dMG, &numMats, &dLP,
                   &numLights, &dMT, &dMTP, &dTx, &dTD, &numTextures, &dU, &dU1,
                   &dIn, &dF,  &dDw,
                   &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,

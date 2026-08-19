@@ -214,7 +214,7 @@ class App
   }
   // --max-instances N: cap the CUDA/HIP 2-level-BVH instance count (0 = no cap).
   void setRtMaxInstances(size_t n) { rtMaxInstances_ = n; }
-  // --max-tris N also bounds the flattened CUDA/HIP RT scene.
+  // --max-tris N bounds unique prototype triangles in the CUDA/HIP 2-level RT scene.
   void setRtMaxTris(size_t n) { if (n > 0) cudaMaxTris_ = n; }
   // --lod-stream: view-dependent district LOD pre-pass (needs --next). Promotes
   // the camera-nearest districts to districtLod=full under the memory budgets.
@@ -506,7 +506,7 @@ class App
   std::string imguiIniPath_;                // storage backing ImGuiIO::IniFilename
   std::vector<std::string> recentScenes_;   // newest first; File > Open Recent
   CudaRayTracer cudaTracer_;
-  size_t cudaMaxTris_{32000000};  // flattened-triangle cap (instances expanded)
+  size_t cudaMaxTris_{32000000};  // unique prototype-triangle cap
   std::size_t gpuMemBudgetBytes_{0};  // --max-gpu-mem: raster full-mesh VRAM cap
   std::size_t maxFullMeshes_{0};      // --max-draw-meshes: raster full-mesh count cap
   bool robustFrame_{true};            // trim outlier meshes from fit-all bbox
@@ -652,8 +652,10 @@ class App
   // Mark the streamed view as changed (resets the idle refinement timer).
   void markStreamActivity();
   HipRayTracer hipTracer_;
-  int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
+  int rtSamples_{1};      // --rt-samples: AA samples for RT screenshot/CPU viewport
   RtCameraLens cameraLens_;
+  bool vulkanAvailable_{false};
+  bool vulkanRtAvailable_{false};
   size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)
   bool lodStream_{false}; // --lod-stream: view-dependent district LOD pre-pass
   double lodMaxMemGiB_{0.0};   // --max-mem: host budget for --lod-stream (0=auto)

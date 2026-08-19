@@ -250,9 +250,12 @@ class Gui {
   // Lazy CUDA/HIP capability cache (App::cudaProbe_/hipProbe_), fed each frame
   // so the menu can gray out an item once a switch attempt has proven the
   // device unavailable. Optimistic (true) until then -- no startup probing.
-  void setTechniqueAvailability(bool cudaOk, bool hipOk) {
+  void setTechniqueAvailability(bool cudaOk, bool hipOk, bool vulkanOk,
+                                bool vulkanRtOk) {
     cudaAvailable_ = cudaOk;
     hipAvailable_ = hipOk;
+    vulkanAvailable_ = vulkanOk;
+    vulkanRtAvailable_ = vulkanRtOk;
   }
   void clearActions() {
     wantOpen_ = wantReload_ = wantQuit_ = wantCancelLoad_ = false;
@@ -661,6 +664,8 @@ class Gui {
   RenderTechnique activeTechnique_{RenderTechnique::GLRaster};  // fed back by App each frame
   bool cudaAvailable_{true};
   bool hipAvailable_{true};
+  bool vulkanAvailable_{false};
+  bool vulkanRtAvailable_{false};
   bool drawIsPosed_{false};
   bool wantToggleCpuRt_{false};
   bool wantTogglePlay_{false};

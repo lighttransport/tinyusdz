@@ -15,7 +15,8 @@ layout(location = 0) out vec3 tcPos[];
 layout(location = 1) out vec3 tcNrm[];
 layout(location = 2) out vec2 tcUV[];
 struct RasterLight { vec4 positionType; vec4 directionAngle;
-                     vec4 colorDiffuse; vec4 specularShape; };
+                     vec4 colorDiffuse; vec4 specularShape; vec4 areaParams;
+                     vec4 iesAxisX; vec4 iesAxisY; vec4 iesProfile[6]; };
 
 // Must match PushC / mesh.vert exactly (shared push-constant range).
 layout(push_constant) uniform PushConstants {

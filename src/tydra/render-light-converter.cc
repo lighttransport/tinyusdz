@@ -673,6 +673,7 @@ bool RenderSceneConverter::ConvertGeometryLight(
       // Use the first target path
       const Path &target_path = targets[0];
       std::string geometry_path = target_path.full_path_name();
+      rlight.geometry_target_path = geometry_path;
 
       // The actual mesh_id will be resolved during scene building
       rlight.geometry_mesh_id = -1;

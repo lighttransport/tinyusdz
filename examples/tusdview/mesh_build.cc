@@ -6,6 +6,8 @@
 #include "mesh_build.hh"
 
 #include "displacement_bake.hh"
+#include "lighting_eval.hh"
+#include "lighting_ies.hh"
 #include "lightrt_mtlx_bridge.hh"
 #include "texture_tools.hh"
 #if defined(TUSDVIEW_TEXTURE_GPU)
@@ -2454,6 +2456,11 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
                          ? static_cast<int>(AlphaMode::Blend)
                          : static_cast<int>(AlphaMode::Opaque);
     }
+    // Fill semantic slots from arbitrary MaterialX graphs when Tydra did not
+    // extract a direct UVTexture connection. The bounded bake keeps existing
+    // raster/RT descriptor layouts usable while preserving the original graph.
+    BakeMaterialXGraphTextures(&dm, out);
+
     // Samples are the canonical per-slot texture descriptors. CopyTexSample
     // initially records the RenderScene texture id, but backends consume the
     // deduplicated DrawScene texture table; keep every descriptor self-contained
@@ -2534,82 +2541,6 @@ void Mat4fToColMajor(const tydra::mat4& M, float out[16]) {
       out[i * 4 + j] = M.m[i][j];
     }
   }
-}
-
-float ClampLightTemperature(float kelvin) {
-  return std::max(1000.0f, std::min(40000.0f, kelvin));
-}
-
-void TemperatureRgb(float kelvin, float out[3]) {
-  const float temp = ClampLightTemperature(kelvin) / 100.0f;
-  if (temp <= 66.0f) {
-    out[0] = 1.0f;
-  } else {
-    const float r = 329.698727446f * std::pow(temp - 60.0f, -0.1332047592f);
-    out[0] = std::max(0.0f, std::min(1.0f, r / 255.0f));
-  }
-  if (temp <= 66.0f) {
-    const float g = 99.4708025861f * std::log(temp) - 161.1195681661f;
-    out[1] = std::max(0.0f, std::min(1.0f, g / 255.0f));
-  } else {
-    const float g = 288.1221695283f * std::pow(temp - 60.0f, -0.0755148492f);
-    out[1] = std::max(0.0f, std::min(1.0f, g / 255.0f));
-  }
-  if (temp >= 66.0f) {
-    out[2] = 1.0f;
-  } else if (temp <= 19.0f) {
-    out[2] = 0.0f;
-  } else {
-    const float b = 138.5177312231f * std::log(temp - 10.0f) - 305.0447927307f;
-    out[2] = std::max(0.0f, std::min(1.0f, b / 255.0f));
-  }
-}
-
-float LightShapeArea(const DrawLightCPU& light) {
-  constexpr float kPi = 3.14159265358979323846f;
-  switch (light.type) {
-    case DrawLightCPU::Type::Sphere:
-    case DrawLightCPU::Type::Point:
-      return 4.0f * kPi * light.radius * light.radius;
-    case DrawLightCPU::Type::Disk:
-      return kPi * light.radius * light.radius;
-    case DrawLightCPU::Type::Rect:
-      return light.width * light.height;
-    case DrawLightCPU::Type::Cylinder:
-      return 2.0f * kPi * light.radius * light.length;
-    default:
-      return 0.0f;
-  }
-}
-
-void BakeLightDerivedParams(DrawLightCPU* light) {
-  if (!light) return;
-  float c[3]{light->color[0], light->color[1], light->color[2]};
-  if (light->enableColorTemperature) {
-    float tc[3];
-    TemperatureRgb(light->colorTemperature, tc);
-    c[0] *= tc[0];
-    c[1] *= tc[1];
-    c[2] *= tc[2];
-  }
-  light->effectiveIntensity = light->intensity * std::pow(2.0f, light->exposure);
-  for (int i = 0; i < 3; ++i) {
-    light->effectiveColor[i] = c[i] * light->effectiveIntensity;
-    light->normalizedColor[i] = light->effectiveColor[i];
-  }
-  light->area = std::max(0.0f, LightShapeArea(*light));
-  light->invArea = (light->area > 0.0f) ? 1.0f / light->area : 0.0f;
-  if (light->normalize && light->invArea > 0.0f) {
-    for (int i = 0; i < 3; ++i) {
-      light->normalizedColor[i] = light->effectiveColor[i] * light->invArea;
-    }
-  }
-  light->hasShaping = light->shapingConeAngle < 90.0f ||
-                      !light->shapingIesFile.empty() ||
-                      light->shapingFocus != 0.0f ||
-                      light->shapingFocusTint[0] != 0.0f ||
-                      light->shapingFocusTint[1] != 0.0f ||
-                      light->shapingFocusTint[2] != 0.0f;
 }
 
 void BuildDrawLights(const tydra::RenderScene& rs, DrawScene* out,
@@ -2722,26 +2653,37 @@ void BuildDrawLights(const tydra::RenderScene& rs, DrawScene* out,
     dst.shadowFalloff = src.shadowFalloff;
     dst.shadowFalloffGamma = src.shadowFalloffGamma;
     dst.geometryMesh = src.geometry_mesh_id;
+    dst.geometryTargetPath = src.geometry_target_path;
     dst.materialSyncMode = src.material_sync_mode;
     dst.lightLinksAll = src.light_links_all;
     dst.lightLinkMeshIndices = src.light_link_mesh_indices;
     dst.shadowLinksAll = src.shadow_links_all;
     dst.shadowLinkMeshIndices = src.shadow_link_mesh_indices;
     dst.hasSpectralEmission = src.hasSpectralEmission();
-    BakeLightDerivedParams(&dst);
+    ApplyDerivedLightParams(&dst);
+    if (dst.type == DrawLightCPU::Type::Geometry && dst.geometryMesh < 0 &&
+        !dst.geometryTargetPath.empty()) {
+      for (size_t meshIndex = 0; meshIndex < out->meshes.size(); ++meshIndex) {
+        if (out->meshes[meshIndex].absPath == dst.geometryTargetPath) {
+          dst.geometryMesh = static_cast<int>(meshIndex);
+          break;
+        }
+      }
+    }
     if (dst.type == DrawLightCPU::Type::Geometry) {
-      out->skipped.push_back(
-          "GeometryLight '" + dst.absPath +
-          "': emissive-mesh light sampling is not implemented");
-    } else if (dst.type == DrawLightCPU::Type::Portal) {
-      out->skipped.push_back(
-          "PortalLight '" + dst.absPath +
-          "': portal-guided environment sampling is not implemented");
+      if (dst.geometryMesh < 0) {
+        out->skipped.push_back(
+            "GeometryLight '" + dst.absPath +
+            "': emissive-mesh target could not be resolved");
+      }
     }
     if (!dst.shapingIesFile.empty()) {
-      out->skipped.push_back(
-          "Light '" + dst.absPath +
-          "': IES profile evaluation is not implemented");
+      std::string iesError;
+      if (!LoadIesProfile(dst.shapingIesFile, &dst, &iesError)) {
+        out->skipped.push_back(
+            "Light '" + dst.absPath + "': IES profile unavailable (" +
+            iesError + ")");
+      }
     }
     out->lights.push_back(std::move(dst));
   }

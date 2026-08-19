@@ -23,6 +23,17 @@ constexpr int kLightRtOpenPBRFloats =
 // 140-145 carry coat-normal UV transform, 146 its UV set, and 147-154 its
 // scale/bias vectors.
 constexpr int kRtMaterialTextureParamFloats = 155;
+// Fixed-size Vulkan RT graph block. The first eight floats are node count and
+// six output indices; each node then occupies op, three input indices, four
+// constants, and a resolved texture id.
+constexpr int kRtMaterialGraphMaxNodes = 64;
+constexpr int kRtMaterialGraphHeaderFloats = 8;
+// op + 3 input indices + 3 vec4 fallbacks + texture id + uv scale/offset.
+constexpr int kRtMaterialGraphNodeFloats = 21;
+constexpr int kRtMaterialGraphFloats =
+    kRtMaterialGraphHeaderFloats +
+    kRtMaterialGraphMaxNodes * kRtMaterialGraphNodeFloats;
+constexpr int kRasterMaterialGraphImageCount = 8;
 // Per-material texture-id slots in RtHostScene::matTex. 0-5 as above, then
 // 6 = occlusion, 7 = coat weight, 8 = coat color, 9 = coat roughness,
 // 10 = specular-workflow color.
@@ -47,14 +58,34 @@ constexpr int kRasterMaterialTextureParamFloats =
 // DrawMaterialCPU semantic texture slots.
 void BakeRealtimePbrMaterial(DrawMaterialCPU* mat);
 
+// Bake texture/procedural MaterialX graph outputs into the existing semantic
+// texture table when Tydra did not extract a direct slot. The retained graph
+// IR is also packed separately for descriptor-indexed runtime evaluation; this
+// bake remains the raster/legacy compatibility path.
+void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene);
+
+// Parse the retained JSON graph into the canonical runtime IR. Returns false
+// for malformed graphs; callers retain the semantic/bake fallback in that case.
+bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err);
+
 // Compatibility entry point retained for out-of-tree callers.
 void BakeLightRtOpenPBR(DrawMaterialCPU* mat);
 
 // Evaluate a MaterialX XML document through LightRT's MaterialX graph evaluator
-// into tusdview's LightRT/OpenPBR constant block. Texture image nodes currently
-// use their MaterialX `default` input through a no-image texture cache; this is
-// still useful for constants and procedural/color graph nodes without adding a
-// second image-loader owner.
+// into tusdview's LightRT/OpenPBR constant block. Image nodes are resolved from
+// baseDir and use the vendored texture cache; this overload is useful when a
+// caller owns an asset-relative MaterialX document.
+bool EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
+    const char* xml, const char* materialName, const char* baseDir,
+    tydra::LightRtOpenPBRParams* out, std::string* err);
+
+// UV-aware variant used by graph baking/runtime probes. `u` and `v` are
+// normalized texture coordinates; the legacy overload samples the center.
+bool EvaluateMaterialXStringToLightRtOpenPBRAtUv(
+    const char* xml, const char* materialName, const char* baseDir, float u,
+    float v, tydra::LightRtOpenPBRParams* out, std::string* err);
+
+// Convenience wrapper for callers without an asset directory.
 bool EvaluateMaterialXStringToLightRtOpenPBR(const char* xml,
                                              const char* materialName,
                                              tydra::LightRtOpenPBRParams* out,
@@ -69,6 +100,15 @@ void PackLightRtOpenPBR(const DrawMaterialCPU& mat, float* dst);
 // into the RT kernel layout. `dst` must hold kRtMaterialTextureParamFloats
 // floats. The order must match raytracer_kernel_src.txt.
 void PackRtMaterialTextureParams(const DrawMaterialCPU& mat, float* dst);
+
+void PackMaterialXGraphRuntime(
+    const DrawMaterialCPU& mat, float* dst,
+    const std::vector<int>* sourceToTable = nullptr);
+
+// Raster uses a bounded per-material image table rather than the RT scene-wide
+// texture table. Image-node texture ids are rewritten to local slots [0, 7].
+// UDIM nodes use a negative slot and carry their source atlas row in value.w.
+void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst);
 
 // Pack the Vulkan raster/tessellation material texture SSBO layout. `dst` must
 // hold kRasterMaterialTextureParamFloats floats. The order must match

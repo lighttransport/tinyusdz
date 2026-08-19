@@ -12,7 +12,8 @@ layout(location = 0) in vec3 tcPos[];
 layout(location = 1) in vec3 tcNrm[];
 layout(location = 2) in vec2 tcUV[];
 struct RasterLight { vec4 positionType; vec4 directionAngle;
-                     vec4 colorDiffuse; vec4 specularShape; };
+                     vec4 colorDiffuse; vec4 specularShape; vec4 areaParams;
+                     vec4 iesAxisX; vec4 iesAxisY; vec4 iesProfile[6]; };
 
 layout(set = 0, binding = 16) uniform sampler2D uDisplacementTex;
 layout(set = 0, binding = 5) uniform sampler2D uUdimLutAtlas;

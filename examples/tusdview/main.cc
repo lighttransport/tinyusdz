@@ -277,7 +277,7 @@ int main(int argc, char** argv) {
   std::string cudaCacheDir;   // --cuda-cache-dir: override compiled PTX cache
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   bool wantCpuRt = false;     // --cpu-rt: CPU (lightrt_c) ray tracer
-  int rtSamples = 1;          // --rt-samples: AA supersamples for the CUDA/HIP path
+  int rtSamples = 1;          // --rt-samples: AA supersamples for RT paths
   long long rtMaxInstances = 16000000;  // --max-instances: CUDA/HIP instance cap (0=off)
   bool lodStream = false;     // --lod-stream: view-dependent district LOD (needs --next)
   double lodMaxMem = 0.0;     // --max-mem GiB: host budget for --lod-stream (0=auto)
@@ -948,7 +948,7 @@ int main(int argc, char** argv) {
           "platform cache directory under tusdview/cuda).\n"
           "  --hip         Ray-trace the screenshot on HIP/ROCm (loaded at runtime "
           "via hipew + hiprtc; falls back if no AMD/ROCm device).\n"
-          "  --rt-samples N  Supersampled AA for the --cuda/--hip screenshot "
+          "  --rt-samples N  Supersampled AA for RT screenshots/CPU viewport "
           "(Halton sub-pixel jitter; default 1 = off).\n"
           "  --max-instances N  Cap the --cuda/--hip 2-level-BVH instance count "
           "(default 16M; 0 = unlimited). Bounds the host BVH build for massively "

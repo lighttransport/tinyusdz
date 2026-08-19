@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "scene_loader.hh"
+#include "scene_optimize.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -370,6 +371,10 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   env.timecode = timecode;
   env.scene_config.load_texture_assets = loadTextures;
   env.scene_config.keep_compressed_textures = textureOptions.keepCompressed;
+  // Collapse materials that differ only by authored path/name before they are
+  // converted into DrawMaterialCPU records. Mesh merging remains disabled here:
+  // it bakes away the per-prim identity used by picking and hide/isolate.
+  env.scene_config.dedup_materials_by_texture_identity = true;
 
   // USDZ assets (textures, audio, ...) live *inside* the .usdz archive. Register
   // the archive's internal asset map with the resolver so embedded textures
@@ -538,6 +543,7 @@ bool ConvertStageToScene(const std::string& path, double timecode,
     DeformSkinnedMeshes(out->stage, out->render, timecode);
     BuildDrawScene(out->render, draw, ctrl, &out->stage, textureOptions);
     ApplyMeshPurposes(out->stage, draw);
+    if (draw) DeduplicateDrawMaterials(draw);
     out->ok = true;
     return true;
   }
@@ -550,7 +556,10 @@ bool ConvertStageToScene(const std::string& path, double timecode,
                                &out->warn, &out->err, ctrl)) {
     return false;
   }
-  if (draw) ApplyMeshPurposes(out->stage, draw);
+  if (draw) {
+    ApplyMeshPurposes(out->stage, draw);
+    DeduplicateDrawMaterials(draw);
+  }
   out->ok = true;
   return true;
 }
@@ -668,6 +677,7 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
   DeformSkinnedMeshes(src.stage, scratch, timecode, blendOverride);
   BuildDrawScene(scratch, draw, ctrl, &src.stage);
   ApplyMeshPurposes(src.stage, draw);
+  DeduplicateDrawMaterials(draw);
   return true;
 }
 

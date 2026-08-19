@@ -574,80 +574,11 @@ if(TINYUSDZ_NEXT_BUILD_FUZZERS)
     endforeach()
 endif()
 
-# Tydra Next (render data conversion)
-# Define tydra/next source files
-set(TYDRA_NEXT_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-session.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/texture-cache.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../external/mikktspace/mikktspace.c
-)
-
-set(TYDRA_NEXT_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/chunked-array.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-session.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/urdf-payload.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.hh
-)
-
-add_library(tydra_next STATIC
-    ${TYDRA_NEXT_SOURCES}
-    ${TYDRA_NEXT_HEADERS}
-)
-
-target_link_libraries(tydra_next PUBLIC tinyusdz_next)
-target_compile_features(tydra_next PUBLIC cxx_std_14)
-
-target_include_directories(tydra_next PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
-    $<INSTALL_INTERFACE:include>
-)
-
-if(MSVC)
-    target_compile_options(tydra_next PRIVATE /W4)
-    target_compile_definitions(tydra_next PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
-else()
-    target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
-endif()
-
-# tydra_next uses no C++ RTTI and no C++ exceptions; disable both (this is the
-# tydra_next definition actually used when src/next is built; the standalone
-# src/tydra/next/CMakeLists.txt carries the same flags).
-if(NOT TINYUSDZ_CXX_RTTI)
-    if(MSVC)
-        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
-    else()
-        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
-    endif()
-endif()
-if(NOT TINYUSDZ_CXX_EXCEPTIONS)
-    if(MSVC)
-        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
-    else()
-        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
-    endif()
-endif()
-
-if(TINYUSDZ_NEXT_BUILD_FUZZERS)
-    target_compile_options(tydra_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
-    add_executable(fuzz_next_render
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/next_render_fuzzmain.cc)
-    target_link_libraries(fuzz_next_render PRIVATE tydra_next tinyusdz_next)
-    target_compile_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
-    target_link_options(fuzz_next_render PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+# Tydra Next (render data conversion). Keep its target definition in its own
+# directory so standalone next-core and top-level consumers cannot drift.
+if(NOT TARGET tydra_next)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next
+                     ${CMAKE_CURRENT_BINARY_DIR}/tydra_next_build)
 endif()
 
 # ============================================================

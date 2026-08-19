@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
+#include "image-loader.hh"
 
 extern "C" {
 #include "external/lightrt/mtlxrender/mtlx_doc.h"
@@ -634,6 +635,16 @@ std::string InferTypeFromJsonValue(const nlohmann::json& v) {
 }
 
 std::string OpenPBREvalInputName(const std::string& name) {
+  // Standard Surface and common interchange graphs use shorter parameter
+  // names. The runtime bake target is OpenPBR, so normalize these aliases at
+  // the graph boundary instead of silently dropping connected inputs.
+  if (name == "roughness") return "base_roughness";
+  if (name == "metalness") return "base_metalness";
+  if (name == "specular") return "specular_weight";
+  if (name == "transmission") return "transmission_weight";
+  if (name == "subsurface") return "subsurface_weight";
+  if (name == "coat") return "coat_weight";
+  if (name == "emission") return "emission_luminance";
   if (name == "base_roughness") return "specular_roughness";
   if (name == "opacity") return "geometry_opacity";
   if (name == "normal") return "geometry_normal";
@@ -852,8 +863,18 @@ bool EvaluateMaterialXJsonGraphForMaterial(const DrawMaterialCPU& mat,
                                            std::string* err) {
   std::string xml;
   if (!BuildMaterialXXmlFromJsonGraph(mat, &xml, err)) return false;
-  return EvaluateMaterialXStringToLightRtOpenPBR(
-      xml.c_str(), "tusdview_material", out, err);
+  // MaterialX image filenames are relative to the owning asset. Keep the
+  // evaluator's cache rooted at that asset instead of silently evaluating
+  // every image through its default input.
+  std::string baseDir = ".";
+  const size_t slash = mat.absPath.find_last_of("/\\");
+  if (slash != std::string::npos) {
+    baseDir = mat.absPath.substr(0, slash);
+    if (baseDir.empty()) baseDir = ".";
+  }
+
+  return EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
+      xml.c_str(), "tusdview_material", baseDir.c_str(), out, err);
 }
 
 int FindSurfaceNode(const MtlxDoc* doc, const char* materialName,
@@ -890,12 +911,44 @@ int FindSurfaceNode(const MtlxDoc* doc, const char* materialName,
   return -1;
 }
 
+bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
+                         TextureCache* tex, float u, float v,
+                         std::vector<MtlxValue>* memo,
+                         std::vector<char>* memoDone,
+                         DrawLightRtOpenPBRCPU* out) {
+  if (!doc || surfaceNode < 0 || !tex || !memo || !memoDone || !out ||
+      memo->size() < static_cast<size_t>(doc->nnode) ||
+      memoDone->size() < static_cast<size_t>(doc->nnode)) {
+    return false;
+  }
+  ShadeContext ctx{};
+  ctx.doc = doc;
+  ctx.tex = tex;
+  ctx.uv[0] = u;
+  ctx.uv[1] = v;
+  ctx.P = v3_make(0.0f, 0.0f, 0.0f);
+  ctx.Ns = v3_make(0.0f, 0.0f, 1.0f);
+  ctx.Ng = v3_make(0.0f, 0.0f, 1.0f);
+  ctx.dpdu = v3_make(1.0f, 0.0f, 0.0f);
+  ctx.dpdv = v3_make(0.0f, 1.0f, 0.0f);
+  ctx.memo = memo->data();
+  ctx.memo_done = memoDone->data();
+  OpenPBRParams params;
+  if (mtlx_eval_surface(&ctx, surfaceNode, &params) != 0) return false;
+  CopyLightRtEval(params, out);
+  out->hasTextureInputs = false;
+  out->hasNormalInput = (std::fabs(out->normal[0]) > 0.0f ||
+                         std::fabs(out->normal[1]) > 0.0f ||
+                         std::fabs(out->normal[2] - 1.0f) > 1.0e-6f);
+  ClampLightRtParams(out);
+  return true;
+}
+
 }  // namespace
 
-bool EvaluateMaterialXStringToLightRtOpenPBR(const char* xml,
-                                             const char* materialName,
-                                             DrawLightRtOpenPBRCPU* out,
-                                             std::string* err) {
+bool EvaluateMaterialXStringToLightRtOpenPBRAtUv(
+    const char* xml, const char* materialName, const char* baseDir, float u,
+    float v, DrawLightRtOpenPBRCPU* out, std::string* err) {
   if (err) err->clear();
   if (!xml || !xml[0]) {
     if (err) *err = "MaterialX XML string is empty";
@@ -918,40 +971,406 @@ bool EvaluateMaterialXStringToLightRtOpenPBR(const char* xml,
     return false;
   }
 
+  TextureCache* tex = texcache_create(baseDir);
   std::vector<MtlxValue> memo(static_cast<size_t>(doc->nnode));
   std::vector<char> memoDone(static_cast<size_t>(doc->nnode), 0);
-  TextureCache* tex = texcache_create(nullptr);
-  ShadeContext ctx{};
-  ctx.doc = doc;
-  ctx.tex = tex;
-  ctx.uv[0] = 0.5f;
-  ctx.uv[1] = 0.5f;
-  ctx.P = v3_make(0.0f, 0.0f, 0.0f);
-  ctx.Ns = v3_make(0.0f, 0.0f, 1.0f);
-  ctx.Ng = v3_make(0.0f, 0.0f, 1.0f);
-  ctx.dpdu = v3_make(1.0f, 0.0f, 0.0f);
-  ctx.dpdv = v3_make(0.0f, 1.0f, 0.0f);
-  ctx.memo = memo.data();
-  ctx.memo_done = memoDone.data();
-
-  OpenPBRParams params;
-  const int rc = mtlx_eval_surface(&ctx, surfaceNode, &params);
+  DrawLightRtOpenPBRCPU baked;
+  const bool ok = EvaluateMtlxDocAtUv(doc, surfaceNode, tex, u, v, &memo,
+                                      &memoDone, &baked);
   texcache_free(tex);
   mtlx_free(doc);
-  if (rc != 0) {
+  if (!ok) {
     if (err) *err = "mtlx_eval_surface failed";
     return false;
   }
-
-  DrawLightRtOpenPBRCPU baked;
-  CopyLightRtEval(params, &baked);
-  baked.hasTextureInputs = false;
-  baked.hasNormalInput = (std::fabs(baked.normal[0]) > 0.0f ||
-                          std::fabs(baked.normal[1]) > 0.0f ||
-                          std::fabs(baked.normal[2] - 1.0f) > 1.0e-6f);
-  ClampLightRtParams(&baked);
   *out = baked;
   return true;
+}
+
+bool EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
+    const char* xml, const char* materialName, const char* baseDir,
+    DrawLightRtOpenPBRCPU* out, std::string* err) {
+  return EvaluateMaterialXStringToLightRtOpenPBRAtUv(
+      xml, materialName, baseDir, 0.5f, 0.5f, out, err);
+}
+
+bool EvaluateMaterialXStringToLightRtOpenPBR(const char* xml,
+                                             const char* materialName,
+                                             DrawLightRtOpenPBRCPU* out,
+                                             std::string* err) {
+  return EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
+      xml, materialName, nullptr, out, err);
+}
+
+bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
+  if (err) err->clear();
+  if (!mat || mat->materialXNodeGraphJson.empty()) {
+    if (err) *err = "MaterialX graph JSON is empty";
+    return false;
+  }
+  MaterialXGraphRuntimeCPU graph;
+  nlohmann::json j = nlohmann::json::parse(
+      mat->materialXNodeGraphJson.begin(), mat->materialXNodeGraphJson.end(),
+      nullptr, false);
+  if (j.is_discarded() || !j.is_object()) {
+    if (err) *err = "MaterialX graph JSON is invalid";
+    return false;
+  }
+  const auto ngIt = j.find("nodegraph");
+  if (ngIt == j.end() || !ngIt->is_object()) {
+    if (err) *err = "MaterialX graph has no nodegraph";
+    return false;
+  }
+  const nlohmann::json& ng = *ngIt;
+  const auto nodesIt = ng.find("nodes");
+  if (nodesIt == ng.end() || !nodesIt->is_array()) {
+    if (err) *err = "MaterialX graph has no nodes";
+    return false;
+  }
+  std::map<std::string, int> nodeIds;
+  for (const nlohmann::json& node : *nodesIt) {
+    const std::string name = JsonString(node, "name");
+    if (!name.empty() && !nodeIds.count(name))
+      nodeIds[name] = static_cast<int>(nodeIds.size());
+  }
+  std::set<std::string> emittedNodes;
+  for (const nlohmann::json& node : *nodesIt) {
+    const std::string name = JsonString(node, "name");
+    if (name.empty() || !emittedNodes.insert(name).second) continue;
+    MaterialXGraphNodeCPU out;
+    out.name = name;
+    const std::string type = JsonString(node, "type");
+    const std::string cat = NormalizeMtlxCategory(JsonString(node, "category"), type);
+    if (cat == "constant") out.op = MaterialXGraphOpCPU::Constant;
+    else if (cat == "image" || cat == "gltf_image" || cat == "gltf_colorimage") {
+      out.op = MaterialXGraphOpCPU::Image;
+      graph.hasImages = true;
+    } else if (cat == "tiledimage" || cat == "hextiledimage") {
+      out.op = MaterialXGraphOpCPU::TiledImage;
+      graph.hasImages = true;
+    } else if (cat == "normalmap" || cat == "gltf_normalmap") {
+      out.op = MaterialXGraphOpCPU::NormalMap;
+      graph.hasImages = true;
+    } else if (cat == "add") out.op = MaterialXGraphOpCPU::Add;
+    else if (cat == "subtract") out.op = MaterialXGraphOpCPU::Subtract;
+    else if (cat == "multiply") out.op = MaterialXGraphOpCPU::Multiply;
+    else if (cat == "divide") out.op = MaterialXGraphOpCPU::Divide;
+    else if (cat == "mix") out.op = MaterialXGraphOpCPU::Mix;
+    else if (cat == "clamp") out.op = MaterialXGraphOpCPU::Clamp;
+    else if (cat == "dot" || cat == "dotproduct") out.op = MaterialXGraphOpCPU::Dot;
+    else if (cat == "normalize") out.op = MaterialXGraphOpCPU::Normalized;
+    else if (cat == "power" || cat == "pow")
+      out.op = MaterialXGraphOpCPU::Power;
+    else if (cat == "min" || cat == "minimum")
+      out.op = MaterialXGraphOpCPU::Minimum;
+    else if (cat == "max" || cat == "maximum")
+      out.op = MaterialXGraphOpCPU::Maximum;
+    else if (cat == "abs") out.op = MaterialXGraphOpCPU::Absolute;
+    else if (cat == "sqrt") out.op = MaterialXGraphOpCPU::SquareRoot;
+    else if (cat == "sin") out.op = MaterialXGraphOpCPU::Sine;
+    else if (cat == "cos") out.op = MaterialXGraphOpCPU::Cosine;
+    else if (cat == "luminance") out.op = MaterialXGraphOpCPU::Luminance;
+    else if (cat == "ifgreaterequal" || cat == "ifequal" ||
+             cat == "select") out.op = MaterialXGraphOpCPU::Select;
+    else if (cat == "texcoord" || cat == "texcoord0" || cat == "texcoord1")
+      out.op = MaterialXGraphOpCPU::Texcoord;
+    else if (cat == "floor") out.op = MaterialXGraphOpCPU::Floor;
+    else if (cat == "ceil" || cat == "ceiling") out.op = MaterialXGraphOpCPU::Ceil;
+    else if (cat == "fract" || cat == "fraction") out.op = MaterialXGraphOpCPU::Fract;
+    else if (cat == "step") out.op = MaterialXGraphOpCPU::Step;
+    else if (cat == "smoothstep") out.op = MaterialXGraphOpCPU::Smoothstep;
+    else if (cat == "cross") out.op = MaterialXGraphOpCPU::Cross;
+    else if (cat == "length") out.op = MaterialXGraphOpCPU::Length;
+    else if (cat == "noise2d" || cat == "noise")
+      out.op = MaterialXGraphOpCPU::Noise2D;
+    else if (cat == "tan") out.op = MaterialXGraphOpCPU::Tangent;
+    else if (cat == "tangent") out.op = MaterialXGraphOpCPU::GeometricTangent;
+    else if (cat == "normal") out.op = MaterialXGraphOpCPU::GeometricNormal;
+    else if (cat == "rotate3d" || cat == "rotate")
+      out.op = MaterialXGraphOpCPU::Rotate3D;
+    else if (cat == "exp" || cat == "exponential")
+      out.op = MaterialXGraphOpCPU::Exponential;
+    else if (cat == "log" || cat == "logarithm")
+      out.op = MaterialXGraphOpCPU::Logarithm;
+    else if (cat == "modulo" || cat == "mod") out.op = MaterialXGraphOpCPU::Modulo;
+    else if (cat == "invert") out.op = MaterialXGraphOpCPU::Invert;
+    else if (cat == "remap" || cat == "range") out.op = MaterialXGraphOpCPU::Remap;
+    const auto inputsIt = node.find("inputs");
+    int nextInput = 0;
+    if (inputsIt != node.end() && inputsIt->is_array()) {
+      for (const nlohmann::json& input : *inputsIt) {
+        const std::string inputName = JsonString(input, "name");
+        const auto valueIt = input.find("value");
+        // Tiled-image graphs commonly author a local UV scale/offset on the
+        // image node. Keep these controls out of the value-input arity so the
+        // graph's arithmetic inputs retain their canonical indices.
+        if (valueIt != input.end() && valueIt->is_array() &&
+            (inputName == "scale" || inputName == "uv_scale" ||
+             inputName == "offset" || inputName == "uv_offset")) {
+          float* dst = (inputName == "offset" || inputName == "uv_offset")
+                           ? out.uvOffset : out.uvScale;
+          for (size_t c = 0; c < valueIt->size() && c < 2; ++c)
+            if ((*valueIt)[c].is_number()) dst[c] = (*valueIt)[c].get<float>();
+          continue;
+        }
+        if (nextInput >= 3) continue;
+        const std::string source = JsonString(input, "nodename");
+        if (!source.empty()) {
+          const auto found = nodeIds.find(source);
+          if (found != nodeIds.end()) out.input[nextInput] = found->second;
+        }
+        if (valueIt != input.end()) {
+          if (valueIt->is_number()) out.value[nextInput][0] = valueIt->get<float>();
+          else if (valueIt->is_array()) {
+            for (size_t c = 0; c < valueIt->size() && c < 4; ++c)
+              if ((*valueIt)[c].is_number())
+                out.value[nextInput][c] = (*valueIt)[c].get<float>();
+          }
+        }
+        const std::string inputType = NormalizeMtlxType(JsonString(input, "type"));
+        if (inputName == "file" || inputType == "filename") {
+          out.imagePath = JsonString(input, "value");
+          if (!out.imagePath.empty()) graph.hasImages = true;
+        }
+        ++nextInput;
+      }
+    }
+    graph.nodes.push_back(std::move(out));
+  }
+  if (graph.nodes.empty()) {
+    if (err) *err = "MaterialX graph node list is empty";
+    return false;
+  }
+  std::map<std::string, std::string> outputs;
+  const auto outputsIt = ng.find("outputs");
+  if (outputsIt != ng.end() && outputsIt->is_array()) {
+    for (const nlohmann::json& output : *outputsIt) {
+      const std::string name = JsonString(output, "name");
+      const std::string node = JsonString(output, "nodename");
+      if (!name.empty() && !node.empty()) outputs[name] = node;
+    }
+  }
+  const auto connIt = j.find("connections");
+  if (connIt != j.end() && connIt->is_array()) {
+    for (const nlohmann::json& connection : *connIt) {
+      const std::string input = OpenPBREvalInputName(
+          JsonString(connection, "input"));
+      const auto outputIt = outputs.find(JsonString(connection, "output"));
+      if (outputIt == outputs.end()) continue;
+      const auto nodeIt = nodeIds.find(outputIt->second);
+      if (nodeIt == nodeIds.end()) continue;
+      int* destination = nullptr;
+      if (input == "base_color") destination = &graph.output[0];
+      else if (input == "base_metalness") destination = &graph.output[1];
+      else if (input == "specular_roughness") destination = &graph.output[2];
+      else if (input == "geometry_opacity") destination = &graph.output[3];
+      else if (input == "emission_color") destination = &graph.output[4];
+      else if (input == "geometry_normal") destination = &graph.output[5];
+      if (destination) *destination = nodeIt->second;
+    }
+  }
+  graph.valid = true;
+  mat->materialXGraph = std::move(graph);
+  return true;
+}
+
+void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
+  if (!mat || !scene || mat->materialXNodeGraphJson.empty()) return;
+  if (!mat->materialXGraph.valid) {
+    std::string compileError;
+    CompileMaterialXGraphRuntime(mat, &compileError);
+  }
+  // Bind graph image nodes to the already-resolved DrawScene texture slots.
+  // MaterialX JSON stores the authored filename while the scene loader may
+  // store an absolute or normalized asset identifier, so accept exact,
+  // normalized, and basename matches. This keeps the runtime IR independent
+  // of the loader that populated the texture array.
+  auto normalizePath = [](std::string value) {
+    for (char& c : value) if (c == '\\') c = '/';
+    while (value.size() > 1 && value.back() == '/') value.pop_back();
+    return value;
+  };
+  std::string baseDir = ".";
+  const size_t materialSlash = mat->absPath.find_last_of("/\\");
+  if (materialSlash != std::string::npos) {
+    baseDir = mat->absPath.substr(0, materialSlash);
+    if (baseDir.empty()) baseDir = ".";
+  }
+  auto isAbsolutePath = [](const std::string& value) {
+    return (!value.empty() && (value[0] == '/' || value[0] == '\\')) ||
+           (value.size() > 1 && value[1] == ':');
+  };
+  for (MaterialXGraphNodeCPU& node : mat->materialXGraph.nodes) {
+    if (node.textureId >= 0 || node.imagePath.empty()) continue;
+    const std::string wanted = normalizePath(node.imagePath);
+    const size_t slash = wanted.find_last_of('/');
+    const std::string basename = slash == std::string::npos
+                                     ? wanted
+                                     : wanted.substr(slash + 1);
+    for (size_t textureId = 0; textureId < scene->textures.size(); ++textureId) {
+      const std::string asset = normalizePath(scene->textures[textureId].assetIdentifier);
+      const size_t assetSlash = asset.find_last_of('/');
+      const std::string assetBase = assetSlash == std::string::npos
+                                        ? asset
+                                        : asset.substr(assetSlash + 1);
+      if (asset == wanted || assetBase == basename ||
+          (!mat->absPath.empty() &&
+           normalizePath(mat->absPath.substr(0, mat->absPath.find_last_of("/\\")) +
+                         "/" + wanted) == asset)) {
+        node.textureId = static_cast<int>(textureId);
+        break;
+      }
+    }
+    if (node.textureId < 0) {
+      const std::string assetPath = normalizePath(
+          isAbsolutePath(wanted) ? wanted : baseDir + "/" + wanted);
+      auto loaded = tinyusdz::image::LoadImageFromFile(assetPath);
+      if (loaded) {
+        const tinyusdz::Image& image = loaded.value().image;
+        if (image.width > 0 && image.height > 0 && image.bpp == 8 &&
+            (image.channels == 1 || image.channels == 2 ||
+             image.channels == 3 || image.channels == 4) &&
+            image.data.size() >= static_cast<size_t>(image.width) *
+                                      static_cast<size_t>(image.height) *
+                                      static_cast<size_t>(image.channels)) {
+          DrawTextureCPU texture;
+          texture.assetIdentifier = assetPath;
+          texture.srgb = true;
+          texture.image.width = image.width;
+          texture.image.height = image.height;
+          texture.image.channels = 4;
+          texture.image.data.resize(static_cast<size_t>(image.width) *
+                                    static_cast<size_t>(image.height) * 4u);
+          for (size_t p = 0, n = static_cast<size_t>(image.width) *
+                                       static_cast<size_t>(image.height);
+               p < n; ++p) {
+            const uint8_t* src = image.data.data() + p * image.channels;
+            uint8_t* dst = texture.image.data.data() + p * 4u;
+            dst[0] = src[0];
+            dst[1] = image.channels > 1 ? src[1] : src[0];
+            dst[2] = image.channels > 2 ? src[2] : src[0];
+            dst[3] = image.channels > 3 ? src[3] : 255u;
+          }
+          node.textureId = static_cast<int>(scene->textures.size());
+          scene->textures.push_back(std::move(texture));
+        }
+      }
+    }
+    if (node.textureId >= 0 &&
+        static_cast<size_t>(node.textureId) < scene->textures.size()) {
+      node.isUdim = scene->textures[static_cast<size_t>(node.textureId)].isUdim;
+    }
+  }
+  const GraphTextureDeps deps =
+      AnalyzeMaterialXJsonTextureDeps(mat->materialXNodeGraphJson);
+  if (!deps.parsed || !deps.hasTextureNodes) return;
+
+  const auto& outputs = mat->materialXGraph.output;
+  std::string xml;
+  std::string error;
+  if (!BuildMaterialXXmlFromJsonGraph(*mat, &xml, &error)) return;
+  MtlxDoc* graphDoc = mtlx_load_string(xml.c_str());
+  if (!graphDoc) return;
+  std::string surfaceError;
+  const int surfaceNode = FindSurfaceNode(
+      graphDoc, "tusdview_material", &surfaceError);
+  if (surfaceNode < 0) {
+    mtlx_free(graphDoc);
+    return;
+  }
+  TextureCache* graphTex = texcache_create(baseDir.c_str());
+  if (!graphTex) {
+    mtlx_free(graphDoc);
+    return;
+  }
+  texcache_preload(graphTex, graphDoc);
+  std::vector<MtlxValue> graphMemo(static_cast<size_t>(graphDoc->nnode));
+  std::vector<char> graphMemoDone(static_cast<size_t>(graphDoc->nnode), 0);
+
+  // Bounded compatibility bake: arbitrary image/procedural networks become
+  // ordinary semantic maps until descriptor-indexed graph evaluation lands.
+  constexpr int kSize = 16;
+  struct Lane { const char* name; int* slot; };
+  Lane lanes[] = {{"base_color", &mat->baseColorTex},
+                  {"base_metalness", &mat->metallicTex},
+                  {"specular_roughness", &mat->roughnessTex},
+                  {"geometry_opacity", &mat->opacityTex},
+                  {"emission_color", &mat->emissiveTex},
+                  {"geometry_normal", &mat->normalTex}};
+  for (int laneIndex = 0; laneIndex < 6; ++laneIndex) {
+    const Lane& lane = lanes[laneIndex];
+    if (outputs[laneIndex] < 0 || *lane.slot >= 0) continue;
+    DrawTextureCPU tex;
+    tex.image.width = kSize;
+    tex.image.height = kSize;
+    tex.image.channels = 4;
+    tex.image.data.resize(static_cast<size_t>(kSize * kSize * 4));
+    tex.assetIdentifier = "mtlx-bake:" + mat->name + ":" + lane.name;
+    bool ok = true;
+    for (int y = 0; y < kSize && ok; ++y) {
+      for (int x = 0; x < kSize; ++x) {
+        DrawLightRtOpenPBRCPU p;
+        if (!EvaluateMtlxDocAtUv(
+                graphDoc, surfaceNode, graphTex,
+                (static_cast<float>(x) + 0.5f) / kSize,
+                (static_cast<float>(y) + 0.5f) / kSize, &graphMemo,
+                &graphMemoDone, &p)) {
+          ok = false;
+          break;
+        }
+        float value[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        if (std::strcmp(lane.name, "base_color") == 0) {
+          value[0] = p.baseColor[0]; value[1] = p.baseColor[1]; value[2] = p.baseColor[2];
+        } else if (std::strcmp(lane.name, "base_metalness") == 0) {
+          value[0] = value[1] = value[2] = p.metalness;
+        } else if (std::strcmp(lane.name, "specular_roughness") == 0) {
+          value[0] = value[1] = value[2] = p.specularRoughness;
+        } else if (std::strcmp(lane.name, "geometry_opacity") == 0) {
+          value[0] = value[1] = value[2] = p.opacity;
+        } else if (std::strcmp(lane.name, "emission_color") == 0) {
+          value[0] = p.emissionColor[0] * p.emission;
+          value[1] = p.emissionColor[1] * p.emission;
+          value[2] = p.emissionColor[2] * p.emission;
+        } else {
+          value[0] = p.normal[0] * 0.5f + 0.5f;
+          value[1] = p.normal[1] * 0.5f + 0.5f;
+          value[2] = p.normal[2] * 0.5f + 0.5f;
+        }
+        const size_t base = static_cast<size_t>((y * kSize + x) * 4);
+        for (int c = 0; c < 4; ++c) {
+          const float v = std::max(0.0f, std::min(1.0f, value[c]));
+          tex.image.data[base + static_cast<size_t>(c)] =
+              static_cast<uint8_t>(v * 255.0f + 0.5f);
+        }
+      }
+    }
+    if (!ok) continue;
+    *lane.slot = static_cast<int>(scene->textures.size());
+    scene->textures.push_back(std::move(tex));
+    for (size_t nodeIndex = 0; nodeIndex < mat->materialXGraph.nodes.size();
+         ++nodeIndex) {
+      if (outputs[laneIndex] == static_cast<int>(nodeIndex))
+        mat->materialXGraph.nodes[nodeIndex].textureId = *lane.slot;
+    }
+    if (std::strcmp(lane.name, "base_color") == 0) {
+      mat->baseColor[0] = mat->baseColor[1] = mat->baseColor[2] = 1.0f;
+    } else if (std::strcmp(lane.name, "base_metalness") == 0) {
+      mat->metallic = 1.0f;
+    } else if (std::strcmp(lane.name, "specular_roughness") == 0) {
+      mat->roughness = 1.0f;
+    } else if (std::strcmp(lane.name, "geometry_opacity") == 0) {
+      mat->alpha = 1.0f;
+    } else if (std::strcmp(lane.name, "emission_color") == 0) {
+      mat->emissive[0] = mat->emissive[1] = mat->emissive[2] = 1.0f;
+    } else {
+      for (int c = 0; c < 3; ++c) {
+        mat->normalSample.scale[c] = 2.0f;
+        mat->normalSample.bias[c] = -1.0f;
+      }
+    }
+  }
+  texcache_free(graphTex);
+  mtlx_free(graphDoc);
 }
 
 void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
@@ -1126,6 +1545,107 @@ void PackRtMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[146] = static_cast<float>(mat.coatNormalSample.uvSet);
   Store4(mat.coatNormalSample.scale, dst + 147);
   Store4(mat.coatNormalSample.bias, dst + 151);
+}
+
+void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
+                               const std::vector<int>* sourceToTable) {
+  if (!dst) return;
+  std::fill(dst, dst + kRtMaterialGraphFloats, 0.0f);
+  for (int i = 0; i < 6; ++i) dst[1 + i] = -1.0f;
+  const MaterialXGraphRuntimeCPU& graph = mat.materialXGraph;
+  if (!graph.valid) return;
+  const size_t count = std::min<size_t>(graph.nodes.size(),
+                                        kRtMaterialGraphMaxNodes);
+  dst[0] = static_cast<float>(count);
+  for (int i = 0; i < 6; ++i) dst[1 + i] = static_cast<float>(graph.output[i]);
+  for (size_t i = 0; i < count; ++i) {
+    const MaterialXGraphNodeCPU& node = graph.nodes[i];
+    const size_t base = kRtMaterialGraphHeaderFloats +
+                        i * kRtMaterialGraphNodeFloats;
+    dst[base + 0] = static_cast<float>(node.op);
+    dst[base + 1] = static_cast<float>(node.input[0]);
+    dst[base + 2] = static_cast<float>(node.input[1]);
+    dst[base + 3] = static_cast<float>(node.input[2]);
+    for (int input = 0; input < 3; ++input)
+      for (int lane = 0; lane < 4; ++lane)
+        dst[base + 4 + input * 4 + lane] = node.value[input][lane];
+    int textureId = node.textureId;
+    if (sourceToTable && textureId >= 0 &&
+        static_cast<size_t>(textureId) < sourceToTable->size()) {
+      textureId = (*sourceToTable)[static_cast<size_t>(textureId)];
+    }
+    dst[base + 16] = static_cast<float>(textureId);
+    dst[base + 17] = node.uvScale[0];
+    dst[base + 18] = node.uvScale[1];
+    dst[base + 19] = node.uvOffset[0];
+    dst[base + 20] = node.uvOffset[1];
+  }
+}
+
+void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
+  if (!dst) return;
+  std::fill(dst, dst + kRtMaterialGraphFloats, 0.0f);
+  for (int i = 0; i < 6; ++i) dst[1 + i] = -1.0f;
+  const MaterialXGraphRuntimeCPU& graph = mat.materialXGraph;
+  if (!graph.valid) return;
+  const size_t count = std::min<size_t>(graph.nodes.size(),
+                                        kRtMaterialGraphMaxNodes);
+  dst[0] = static_cast<float>(count);
+  for (int i = 0; i < 6; ++i) dst[1 + i] = static_cast<float>(graph.output[i]);
+  std::vector<int> textureIds;
+  textureIds.reserve(kRasterMaterialGraphImageCount);
+  auto isUdim = [&](const MaterialXGraphNodeCPU& node) {
+    if (node.isUdim) return true;
+    const int id = node.textureId;
+    return (id >= 0 && id == mat.baseColorTex && mat.baseColorSample.isUdim) ||
+           (id >= 0 && id == mat.metallicTex && mat.metallicSample.isUdim) ||
+           (id >= 0 && id == mat.roughnessTex && mat.roughnessSample.isUdim) ||
+           (id >= 0 && id == mat.normalTex && mat.normalSample.isUdim) ||
+           (id >= 0 && id == mat.emissiveTex && mat.emissiveSample.isUdim) ||
+           (id >= 0 && id == mat.opacityTex && mat.opacitySample.isUdim) ||
+           (id >= 0 && id == mat.occlusionTex && mat.occlusionSample.isUdim) ||
+           (id >= 0 && id == mat.specularColorTex && mat.specularColorSample.isUdim) ||
+           (id >= 0 && id == mat.coatWeightTex && mat.coatWeightSample.isUdim) ||
+           (id >= 0 && id == mat.coatColorTex && mat.coatColorSample.isUdim) ||
+           (id >= 0 && id == mat.coatRoughnessTex && mat.coatRoughnessSample.isUdim) ||
+           (id >= 0 && id == mat.coatNormalTex && mat.coatNormalSample.isUdim);
+  };
+  for (size_t i = 0; i < count; ++i) {
+    const MaterialXGraphNodeCPU& node = graph.nodes[i];
+    const size_t base = kRtMaterialGraphHeaderFloats +
+                        i * kRtMaterialGraphNodeFloats;
+    dst[base + 0] = static_cast<float>(node.op);
+    dst[base + 1] = static_cast<float>(node.input[0]);
+    dst[base + 2] = static_cast<float>(node.input[1]);
+    dst[base + 3] = static_cast<float>(node.input[2]);
+    for (int input = 0; input < 3; ++input)
+      for (int lane = 0; lane < 4; ++lane)
+        dst[base + 4 + input * 4 + lane] = node.value[input][lane];
+    if (node.textureId < 0) {
+      dst[base + 16] = -1.0f;
+      continue;
+    }
+    auto found = std::find(textureIds.begin(), textureIds.end(), node.textureId);
+    if (found == textureIds.end()) {
+      if (textureIds.size() >= kRasterMaterialGraphImageCount) {
+        dst[base + 16] = -1.0f;
+        continue;
+      }
+      textureIds.push_back(node.textureId);
+      found = textureIds.end() - 1;
+    }
+    const int local = static_cast<int>(found - textureIds.begin());
+    dst[base + 16] = isUdim(node) ? -static_cast<float>(local + 1)
+                                  : static_cast<float>(local);
+    // The existing fixed record has no spare lane. For UDIM image nodes the
+    // fallback alpha is not observable, so value.w carries the source texture
+    // row used by the shared raster UDIM LUT.
+    if (isUdim(node)) dst[base + 7] = static_cast<float>(node.textureId);
+    dst[base + 17] = node.uvScale[0];
+    dst[base + 18] = node.uvScale[1];
+    dst[base + 19] = node.uvOffset[0];
+    dst[base + 20] = node.uvOffset[1];
+  }
 }
 
 void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {

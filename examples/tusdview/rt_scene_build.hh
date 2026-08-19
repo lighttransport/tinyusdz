@@ -160,6 +160,8 @@ struct HostScene {
   // 56 floats/material: vec4-friendly LightRT/OpenPBR constant fallback.
   // See lightrt_mtlx_bridge.hh PackLightRtOpenPBR.
   std::vector<float> matLightRt;
+  // Packed MaterialX graph IR, kRtMaterialGraphFloats per material.
+  std::vector<float> matGraph;
   // kRtMaterialTexSlots semantic slots/material. Packed inputs may map several
   // semantics to one texture; see lightrt_mtlx_bridge.hh for the stable order.
   std::vector<int> matTex;
@@ -170,9 +172,9 @@ struct HostScene {
   std::vector<uint8_t> texels;
   std::vector<HostTextureDesc> textures;
   int numTextures = 0;
-  // kRtLightParamFloats/light: type/flags/texture ids, transform basis, derived radiance,
-  // shape size, shaping, shadow, and dome metadata. This is uploaded by RT
-  // backends when full USD light evaluation lands.
+  // kRtLightParamFloats/light: type/flags/texture ids, transform basis,
+  // derived radiance, shape size, shaping, shadow, dome metadata, IES LUTs,
+  // and resolved GeometryLight triangle ranges.
   std::vector<float> lightParams;
   int numLights = 0;
   std::vector<float> volDens;

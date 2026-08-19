@@ -22,7 +22,8 @@ layout(set = 0, binding = 16) uniform sampler2D uDisplacementTex;
 layout(set = 0, binding = 5) uniform sampler2D uUdimLutAtlas;
 layout(set = 0, binding = 31) uniform sampler2DArray uDisplacementUdimTex;
 struct RasterLight { vec4 positionType; vec4 directionAngle;
-                     vec4 colorDiffuse; vec4 specularShape; };
+                     vec4 colorDiffuse; vec4 specularShape; vec4 areaParams;
+                     vec4 iesAxisX; vec4 iesAxisY; vec4 iesProfile[6]; };
 // Frame-constant UBO (set 5): disp sliders + camera. The vertex stage derives
 // mvp = viewProj*model and the normal matrix from pc.model, so neither needs a
 // push-constant lane (keeps the push block <= 128 B, the Vulkan minimum).

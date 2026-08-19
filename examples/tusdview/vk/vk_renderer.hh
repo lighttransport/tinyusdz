@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gpu_scene.hh"
@@ -22,6 +23,15 @@
 #include "renderer.hh"
 
 namespace tusdview {
+
+struct VulkanProbeResult {
+  bool rasterAvailable{false};
+  bool rtAvailable{false};
+  std::string error;
+};
+
+VulkanProbeResult ProbeVulkanBackend(GLFWwindow* window,
+                                     const RendererDevicePreference& preference);
 
 class VulkanRenderer final : public Renderer {
  public:
@@ -412,6 +422,7 @@ class VulkanRenderer final : public Renderer {
   // Shared by beginScene and syncSceneResources: (re)pack the per-material CPU
   // tables and (re)allocate + refresh the material descriptor sets.
   void updateMaterialTables(const std::vector<DrawMaterialCPU>& materials);
+  bool ensureRasterMaterialCapacity(size_t materialCount);
   // Grow the per-texture-slot arrays to `textureCount`, leaving already
   // populated slots untouched (std::vector::resize only fills NEW entries).
   void growTextureSlots(int textureCount);
@@ -593,6 +604,8 @@ class VulkanRenderer final : public Renderer {
   // topology + tesc/tese). Created only when the device supports the
   // tessellationShader feature; otherwise displaced meshes stay coarse.
   bool tessSupported_{false};
+  bool samplerAnisotropySupported_{false};
+  float maxSamplerAnisotropy_{1.0f};
   // VK_EXT_extended_dynamic_state: per-draw cull mode, so single-sided meshes
   // back-face-cull like the GL backend. Optional; false = no culling (legacy).
   bool dynCullSupported_{false};
@@ -713,6 +726,7 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSetLayout materialSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool materialPool_{VK_NULL_HANDLE};
   std::vector<VkDescriptorSet> materialSets_;
+  std::unordered_map<std::string, VkDescriptorSet> materialSetCache_;
   VkDescriptorSetLayout deformSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool deformPool_{VK_NULL_HANDLE};
   VkDescriptorSet dummyDeformDesc_{VK_NULL_HANDLE};
@@ -730,16 +744,15 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory dispParamsUboMem_{VK_NULL_HANDLE};
   void* dispParamsMapped_{nullptr};
   // Raster set 3: per-material texture scale/bias (indexed
-  // by pc.matId in the vertex + tess-eval stages). Fixed-capacity host SSBO written
-  // per scene; lets the VK viewer center height maps like GL/tusdrender. Push
-  // constants are full, so this per-material data needs its own buffer.
-  static constexpr uint32_t kMaxDispMaterials = 4096;
+  // by pc.matId in the vertex + tess-eval stages). This grows to the validated
+  // scene material count; a fixed cap used to let ids >= 4096 read past the SSBO.
   VkDescriptorSetLayout dispMatSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool dispMatPool_{VK_NULL_HANDLE};
   VkDescriptorSet dispMatSet_{VK_NULL_HANDLE};
   VkBuffer dispMatSsbo_{VK_NULL_HANDLE};
   VkDeviceMemory dispMatSsboMem_{VK_NULL_HANDLE};
   void* dispMatMapped_{nullptr};
+  size_t dispMatCapacity_{0};
   // Set 3 of the instanced pipeline: per-draw metadata (meshId + flag bits), one
   // entry per mesh plus a trailing slot for the shared box proxy. The fragment
   // shader indexes it by (baseDraw + gl_DrawIDARB), so a multi-draw-indirect batch
@@ -958,6 +971,8 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkMeshGPU> meshes_;
   std::vector<float> matColor_;    // 3 vec4 per material: preview subset
   std::vector<float> matLightRt_;  // 14 vec4 per material: LightRT/OpenPBR block
+  std::vector<float> matGraph_;    // fixed-size MaterialX graph runtime blocks
+  std::vector<float> rasterMatGraph_; // local image slots for raster graph evaluation
   std::vector<float> lightParams_;  // packed DrawLightCPU params
   std::vector<uint32_t> rtDirectLightMasks_;
   std::vector<uint32_t> rtShadowLightMasks_;
@@ -991,6 +1006,10 @@ class VulkanRenderer final : public Renderer {
   // `rtSupported_`, since the latter is now true for either technique.
   enum class RtTechnique { kNone, kHardware, kComputeBvh };
   RtTechnique rtTechnique_{RtTechnique::kNone};
+  // Hardware ray-query shader variants are embedded and may be older than the
+  // canonical light payload. Scenes containing features not representable by
+  // that variant are routed to the verified compute-BVH implementation.
+  bool rtHardwareCapable_{false};
   bool rtSupported_{false};   // device + shader available (either technique)
   // Buffer device address is also used by the raster instanced skinning shader.
   // It is a separate capability from ray queries: older GPUs may support the
@@ -1079,6 +1098,10 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory rtMatTexMem_{VK_NULL_HANDLE};
   VkBuffer rtMatTexParamBuf_{VK_NULL_HANDLE};   // 72 floats/material
   VkDeviceMemory rtMatTexParamMem_{VK_NULL_HANDLE};
+  VkBuffer rtMatGraphBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory rtMatGraphMem_{VK_NULL_HANDLE};
+  VkBuffer rasterMatGraphBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory rasterMatGraphMem_{VK_NULL_HANDLE};
   VkDeviceSize rtMatCap_{0};
   VkBuffer instInfoBuf_{VK_NULL_HANDLE};    // per-TLAS-instance {meshId, tint} (binding 4)
   VkDeviceMemory instInfoMem_{VK_NULL_HANDLE};

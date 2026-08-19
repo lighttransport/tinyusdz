@@ -11,7 +11,8 @@ layout(location = 4) flat in int vInstanceId;
 
 // Frame UBO (set 2, binding 0) — same layout as mesh.frag
 struct RasterLight { vec4 positionType; vec4 directionAngle;
-                     vec4 colorDiffuse; vec4 specularShape; };
+                     vec4 colorDiffuse; vec4 specularShape; vec4 areaParams;
+                     vec4 iesAxisX; vec4 iesAxisY; vec4 iesProfile[6]; };
 layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;
@@ -140,6 +141,27 @@ void main() {
       shape = smoothstep(o, max(inn, o + 1e-5), cc) *
               pow(max(cc, 0), max(ss.z, 0));
     }
+    float ies = 1.0;
+    if (lt != 5 && dot(fr.rasterLights[li].iesProfile[0],
+                       fr.rasterLights[li].iesProfile[0]) > 1e-8) {
+      vec3 iesDir = normalize(-L);
+      float v = degrees(acos(clamp(dot(iesDir, normalize(da.xyz)), -1.0, 1.0)));
+      float fy = clamp(v / 60.0, 0.0, 3.0);
+      int y0 = int(floor(fy));
+      int y1 = min(y0 + 1, 3);
+      float az = degrees(atan(dot(iesDir, fr.rasterLights[li].iesAxisY.xyz),
+                              dot(iesDir, fr.rasterLights[li].iesAxisX.xyz)));
+      if (az < 0.0) az += 360.0;
+      float fx = az / 60.0;
+      int x0 = min(int(floor(fx)), 5);
+      int x1 = (x0 + 1) % 6;
+      float tx = fx - float(x0);
+      float a0 = mix(fr.rasterLights[li].iesProfile[y0][x0],
+                     fr.rasterLights[li].iesProfile[y0][x1], tx);
+      float a1 = mix(fr.rasterLights[li].iesProfile[y1][x0],
+                     fr.rasterLights[li].iesProfile[y1][x1], tx);
+      ies = mix(a0, a1, fy - float(y0));
+    }
 
     float nl = max(dot(N, L), 0);
     if (nl <= 0 || shape <= 0) continue;
@@ -153,7 +175,8 @@ void main() {
                  ff.x / max(4.0 * nv * nl, 1e-5);
     vec3 diff = (vec3(1.0) - ff) * vColor.rgb * (1.0 / 3.14159265);
 
-    direct += (diff * lc.w + spec * ss.x) * lc.rgb * (att * shape * nl);
+    direct += (diff * lc.w + spec * ss.x) * lc.rgb *
+              (att * shape * ies * nl);
   }
 
   // Fallback to single key light when no multi-light data

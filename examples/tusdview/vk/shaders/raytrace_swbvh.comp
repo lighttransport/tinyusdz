@@ -15,11 +15,11 @@
 // self-contained PBR shading pass: base color/metallic/roughness (+ the
 // OpenPBR transmission/subsurface rows already packed into the same
 // LrtMats SSBO the hardware shader reads, of which only the cheap
-// subsurface-tint approximation is applied so far -- no real refraction or
-// multi-bounce path tracing yet, that is follow-up work), one camera-
-// following key light + dome-cube ambient (NOT the full per-scene RtLights
-// loop raytrace.comp's hardware path evaluates -- a deliberate scope cut
-// for this pass). No shadow rays yet either.
+// subsurface-tint approximation and one-bounce transmission/refraction are
+// applied so far -- no multi-bounce path tracing yet, that is follow-up work),
+// the packed analytic
+// scene lights, and dome-cube ambient. Geometry lights and IES profiles use
+// packed sampling data; portal lights use the rectangular sampling path.
 //
 // This is NOT literally the same GLSL source as raytrace.comp (an earlier
 // single-source #ifdef design was planned, but the hardware shader's
@@ -80,6 +80,7 @@ layout(set = 0, binding = 11, scalar) readonly buffer RtTexels { uint texelWords
 layout(set = 0, binding = 12, scalar) readonly buffer RtTexDescs { RtTexDesc texDescs[]; };
 layout(set = 0, binding = 13, scalar) readonly buffer RtMatTexIds { int matTexIds[]; };
 layout(set = 0, binding = 14, scalar) readonly buffer RtMatTexParams { float matTexParams[]; };
+layout(set = 0, binding = 22, scalar) readonly buffer RtMaterialGraphs { float graphRows[]; };
 layout(set = 0, binding = 20, scalar) readonly buffer FaceId { int faceIds[]; };
 layout(set = 0, binding = 21) uniform sampler2D swPtexImages[TUSDVIEW_RT_PTEXTURE_IMAGE_CAP];
 
@@ -96,7 +97,9 @@ layout(push_constant) uniform PC {
   vec4 lightDir;      // xyz = unit direction *towards* the key light
   vec4 clearColor;    // rgb background for ray misses
   uint tlasNodeCount;
-  uint pad0, pad1, pad2;
+  uint sampleIndex;
+  uint accumEnabled;
+  uint pad0;
 } pc;
 
 vec3 srgbToLinear(vec3 c) {
@@ -130,6 +133,153 @@ vec3 xformPoint(mat3x4 m, vec3 p) {
 }
 vec3 xformDir(mat3x4 m, vec3 d) {
   return vec3(dot(m[0].xyz, d), dot(m[1].xyz, d), dot(m[2].xyz, d));
+}
+
+uint swHash(uint x) {
+  x ^= x >> 16u;
+  x *= 0x7feb352du;
+  x ^= x >> 15u;
+  x *= 0x846ca68bu;
+  return x ^ (x >> 16u);
+}
+
+float swRandom(inout uint state) {
+  state = state * 747796405u + 2891336453u;
+  uint r = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return float((r >> 22u) ^ r) / 4294967296.0;
+}
+
+vec3 swSampleLightPosition(uint li, int lightType, inout uint state) {
+  vec3 center = lightRows[li * 20u + 1u].xyz;
+  float radius = max(lightRows[li * 20u + 1u].w, 0.0);
+  vec4 dimensions = lightRows[li * 20u + 5u];
+  vec3 axisX = normalize(lightRows[li * 20u + 10u].xyz);
+  vec3 axisY = normalize(lightRows[li * 20u + 11u].xyz);
+  vec3 axisZ = normalize(lightRows[li * 20u + 12u].xyz);
+  if (lightType == 1 && radius > 1e-7) {
+    float z = 1.0 - 2.0 * swRandom(state);
+    float a = 6.28318530718 * swRandom(state);
+    float r = sqrt(max(0.0, 1.0 - z * z));
+    return center + radius * vec3(r * cos(a), r * sin(a), z);
+  }
+  if (lightType == 2 && radius > 1e-7) {
+    float a = 6.28318530718 * swRandom(state);
+    float r = radius * sqrt(swRandom(state));
+    return center + axisX * (r * cos(a)) + axisY * (r * sin(a));
+  }
+  if (lightType == 3 && dimensions.x > 1e-7 && dimensions.y > 1e-7) {
+    return center + axisX * ((swRandom(state) - 0.5) * dimensions.x) +
+           axisY * ((swRandom(state) - 0.5) * dimensions.y);
+  }
+  if (lightType == 4 && radius > 1e-7 && dimensions.z > 1e-7) {
+    float a = 6.28318530718 * swRandom(state);
+    return center + axisX * (radius * cos(a)) +
+           axisY * (radius * sin(a)) +
+           axisZ * ((swRandom(state) - 0.5) * dimensions.z);
+  }
+  return center;
+}
+
+float swIesSample(uint li, int index) {
+  vec4 row = lightRows[li * 20u + 14u + uint(index / 4)];
+  return row[uint(index % 4)];
+}
+
+float swIesFactor(uint li, vec3 lightToPoint) {
+  vec4 meta = lightRows[li * 20u + 13u];
+  if (abs(meta.x - 2.0) > 0.25) return 1.0;
+  vec3 emissionDir = normalize(lightRows[li * 20u + 2u].xyz);
+  float v = degrees(acos(clamp(dot(normalize(lightToPoint), emissionDir),
+                               -1.0, 1.0)));
+  float fy = clamp(v / 60.0, 0.0, 3.0);
+  int y0 = int(floor(fy));
+  int y1 = min(y0 + 1, 3);
+  float ty = fy - float(y0);
+  vec3 axisX = normalize(lightRows[li * 20u + 10u].xyz);
+  vec3 axisY = normalize(lightRows[li * 20u + 11u].xyz);
+  float az = degrees(atan(dot(normalize(lightToPoint), axisY),
+                          dot(normalize(lightToPoint), axisX)));
+  if (az < 0.0) az += 360.0;
+  float fx = az / 60.0;
+  int x0 = int(floor(fx)) % 6;
+  int x1 = (x0 + 1) % 6;
+  float tx = fract(fx);
+  float a0 = mix(swIesSample(li, y0 * 6 + x0),
+                 swIesSample(li, y0 * 6 + x1), tx);
+  float a1 = mix(swIesSample(li, y1 * 6 + x0),
+                 swIesSample(li, y1 * 6 + x1), tx);
+  return mix(a0, a1, ty);
+}
+
+vec3 swDomeRadiance(vec3 direction) {
+  uint count = uint(lightRows.length()) / 20u;
+  for (uint i = 0u; i < count; ++i) {
+    vec4 lp0 = lightRows[i * 20u + 0u];
+    vec4 lp1 = lightRows[i * 20u + 1u];
+    if (int(lp0.x + 0.5) != 6 || (int(lp1.x + 0.5) & (1 << 7)) == 0)
+      continue;
+    vec3 d = vec3(dot(lightRows[i * 20u + 10u].xyz, direction),
+                  dot(lightRows[i * 20u + 11u].xyz, direction),
+                  dot(lightRows[i * 20u + 12u].xyz, direction));
+    float b[9];
+    b[0] = 0.282095;
+    b[1] = 0.488603 * d.y; b[2] = 0.488603 * d.z;
+    b[3] = 0.488603 * d.x; b[4] = 1.092548 * d.x * d.y;
+    b[5] = 1.092548 * d.y * d.z;
+    b[6] = 0.315392 * (3.0 * d.z * d.z - 1.0);
+    b[7] = 1.092548 * d.x * d.z;
+    b[8] = 0.546274 * (d.x * d.x - d.y * d.y);
+    vec3 e = vec3(0.0);
+    for (int k = 0; k < 9; ++k) {
+      for (int c = 0; c < 3; ++c) {
+        uint coeff = uint(k * 3 + c);
+        vec4 row = lightRows[i * 20u + 13u + coeff / 4u];
+        e[c] += b[k] * row[coeff % 4u];
+      }
+    }
+    return max(e, vec3(0.0)) * lightRows[i * 20u + 4u].rgb;
+  }
+  return vec3(0.0);
+}
+
+bool swSampleGeometryLight(uint li, inout uint state, out vec3 position,
+                           out vec3 normal, out vec3 emission) {
+  vec4 meta = lightRows[li * 20u + 13u];
+  if (abs(meta.x - 3.0) > 0.25 || meta.z < 1.0 || meta.w < 0.0)
+    return false;
+  int triOffset = int(meta.y + 0.5);
+  int triCount = int(meta.z + 0.5);
+  int instId = int(meta.w + 0.5);
+  if (triOffset < 0 || triCount <= 0 || instId < 0 ||
+      instId >= int(insts.length())) return false;
+  int tri = triOffset + min(int(swRandom(state) * float(triCount)), triCount - 1);
+  if (tri < 0 || tri >= int(triMat.length())) return false;
+  float su = sqrt(swRandom(state));
+  float bu = 1.0 - su;
+  float bv = swRandom(state) * su;
+  float bw = 1.0 - bu - bv;
+  vec3 v0 = vec3(tris[tri * 9 + 0], tris[tri * 9 + 1], tris[tri * 9 + 2]);
+  vec3 v1 = vec3(tris[tri * 9 + 3], tris[tri * 9 + 4], tris[tri * 9 + 5]);
+  vec3 v2 = vec3(tris[tri * 9 + 6], tris[tri * 9 + 7], tris[tri * 9 + 8]);
+  Inst lightInst = insts[instId];
+  position = xformPoint(lightInst.o2w, v0 * bu + v1 * bv + v2 * bw);
+  vec3 e1 = v1 - v0;
+  vec3 e2 = v2 - v0;
+  vec3 nObj = normalize(cross(e1, e2));
+  normal = normalize(vec3(dot(vec3(lightInst.w2o[0].x, lightInst.w2o[1].x,
+                                    lightInst.w2o[2].x), nObj),
+                             dot(vec3(lightInst.w2o[0].y, lightInst.w2o[1].y,
+                                    lightInst.w2o[2].y), nObj),
+                             dot(vec3(lightInst.w2o[0].z, lightInst.w2o[1].z,
+                                    lightInst.w2o[2].z), nObj)));
+  emission = lightRows[li * 20u + 3u].rgb;
+  int mid = triMat[tri];
+  if (mid >= 0 && mid < int(matRows.length() / 3u)) {
+    emission = mat(mid, 2u).rgb;
+    if (lrt(mid, 12u).w > 0.5) emission = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
+  }
+  if (dot(emission, emission) < 1e-10) emission = lightRows[li * 20u + 3u].rgb;
+  return true;
 }
 
 float swWrap(float x, int mode) {
@@ -199,8 +349,259 @@ vec4 swSampleTexture(int id, vec2 uv, vec2 duvdx, vec2 duvdy,
              mix(swTexel(td, p0.x, p1.y), swTexel(td, p1.x, p1.y), f.x), f.y);
 }
 
+// Bounded interpreter for the same compact MaterialX IR used by the
+// ray-query path. Fixed-point passes resolve forward references while keeping
+// malformed graphs bounded and deterministic.
+vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv, uint face) {
+  const uint STRIDE = 1352u;
+  uint base = mid * STRIDE;
+  if (base + 7u >= uint(graphRows.length()) || route < 0) return vec4(0.0);
+  int count = int(clamp(graphRows[base], 0.0, 64.0));
+  int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
+  if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
+  vec4 v[64];
+  for (int i = 0; i < 64; ++i) v[i] = vec4(0.0);
+  for (int pass = 0; pass < 64; ++pass) {
+    for (int i = 0; i < 64; ++i) {
+      if (i >= count) continue;
+      uint p = base + 8u + uint(i) * 21u;
+      int op = int(graphRows[p] + 0.5);
+      int a = int(graphRows[p + 1u] + 0.5);
+      int b = int(graphRows[p + 2u] + 0.5);
+      int c = int(graphRows[p + 3u] + 0.5);
+      vec4 av = (a >= 0 && a < count) ? v[a] : vec4(graphRows[p + 4u], graphRows[p + 5u], graphRows[p + 6u], graphRows[p + 7u]);
+      vec4 bv = (b >= 0 && b < count) ? v[b] : vec4(graphRows[p + 8u], graphRows[p + 9u], graphRows[p + 10u], graphRows[p + 11u]);
+      vec4 cv = (c >= 0 && c < count) ? v[c] : vec4(graphRows[p + 12u], graphRows[p + 13u], graphRows[p + 14u], graphRows[p + 15u]);
+      vec4 value = av;
+      int tex = int(graphRows[p + 16u] + 0.5);
+      vec2 graphUv = uv * vec2(graphRows[p + 17u], graphRows[p + 18u]) +
+                     vec2(graphRows[p + 19u], graphRows[p + 20u]);
+      if (op == 0) v[i] = value;
+      else if (op == 1 || op == 2) v[i] = tex >= 0
+          ? swSampleTexture(tex, graphUv, vec2(0.0), vec2(0.0), face, value) : value;
+      else if (op == 3) v[i] = vec4(normalize(av.xyz * 2.0 - 1.0) * 0.5 + 0.5, av.w);
+      else if (op == 4) v[i] = av + bv;
+      else if (op == 5) v[i] = av - bv;
+      else if (op == 6) v[i] = av * bv;
+      else if (op == 7) v[i] = av / max(abs(bv), vec4(1e-6));
+      else if (op == 8) v[i] = mix(av, bv, cv);
+      else if (op == 9) v[i] = clamp(av, bv, cv);
+      else if (op == 10) v[i] = vec4(dot(av.xyz, bv.xyz));
+      else if (op == 11) v[i] = vec4(normalize(av.xyz), av.w);
+      else if (op == 12) v[i] = pow(max(av, vec4(0.0)), bv);
+      else if (op == 13) v[i] = min(av, bv);
+      else if (op == 14) v[i] = max(av, bv);
+      else if (op == 15) v[i] = abs(av);
+      else if (op == 16) v[i] = sqrt(max(av, vec4(0.0)));
+      else if (op == 17) v[i] = sin(av);
+      else if (op == 18) v[i] = cos(av);
+      else if (op == 19) {
+        float l = dot(av.xyz, vec3(0.2126, 0.7152, 0.0722));
+        v[i] = vec4(l, l, l, av.w);
+      } else if (op == 20) v[i] = av.x >= 0.5 ? bv : cv;
+      else if (op == 21) v[i] = vec4(uv, 0.0, 1.0);
+      else if (op == 22) v[i] = floor(av);
+      else if (op == 23) v[i] = ceil(av);
+      else if (op == 24) v[i] = fract(av);
+      else if (op == 25) v[i] = step(av, bv);
+      else if (op == 26) v[i] = smoothstep(bv, cv, av);
+      else if (op == 27) v[i] = vec4(cross(av.xyz, bv.xyz), av.w);
+      else if (op == 28) v[i] = vec4(length(av.xyz));
+      else if (op == 29) v[i] = vec4(fract(sin(dot(av.xy + uv, vec2(127.1, 311.7))) * 43758.5453));
+      else if (op == 30) v[i] = tan(av);
+      else if (op == 31) v[i] = exp(av);
+      else if (op == 32) v[i] = log(max(av, vec4(1e-6)));
+      else if (op == 33) v[i] = mod(av, max(abs(bv), vec4(1e-6)));
+      else if (op == 34) v[i] = vec4(1.0) - av;
+      else if (op == 35) v[i] = (av - bv) / max(cv - bv, vec4(1e-6));
+      else if (op == 36) v[i] = vec4(0.0, 0.0, 1.0, 1.0);
+      else if (op == 37) v[i] = vec4(1.0, 0.0, 0.0, 1.0);
+      else if (op == 38) {
+        vec3 axis = normalize(bv.xyz);
+        float ang = radians(av.x);
+        vec3 q = cv.xyz;
+        v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
+                    axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+      }
+      else v[i] = value;
+    }
+  }
+  return v[wanted];
+}
+
+vec2 swMaterialUv(int mid, int slot, vec2 uv) {
+  uint b = uint(mid * 155 + slot * 6);
+  return vec2(matTexParams[b + 0u] * uv.x + matTexParams[b + 1u] * uv.y +
+                  matTexParams[b + 2u],
+              matTexParams[b + 3u] * uv.x + matTexParams[b + 4u] * uv.y +
+                  matTexParams[b + 5u]);
+}
+
+float swOpacityAtHit(int iid, int tri, vec2 bc, out float alphaMode) {
+  int mid = triMat[tri];
+  alphaMode = 0.0;
+  if (mid < 0 || mid >= int(matRows.length() / 3u)) {
+    alphaMode = insts[iid].tint.a < 1.0 ? 2.0 : 0.0;
+    return clamp(insts[iid].tint.a, 0.0, 1.0);
+  }
+  alphaMode = mat(mid, 1u).z;
+  float alpha = mat(mid, 0u).a;
+  if (lrt(mid, 12u).w > 0.5) {
+    alpha = lrt(mid, 9u).w;
+  }
+  float w0 = 1.0 - bc.x - bc.y;
+  vec2 uv = vec2(uvs[tri * 6 + 0], uvs[tri * 6 + 1]) * w0 +
+            vec2(uvs[tri * 6 + 2], uvs[tri * 6 + 3]) * bc.x +
+            vec2(uvs[tri * 6 + 4], uvs[tri * 6 + 5]) * bc.y;
+  uint tb = uint(mid * 12);
+  uint pb = uint(mid * 155);
+  vec4 base = swSampleTexture(matTexIds[tb], swMaterialUv(mid, 0, uv),
+                              vec2(0.0), vec2(0.0), 0u, vec4(1.0));
+  base = base * vec4(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                     matTexParams[pb + 38u], matTexParams[pb + 39u]) +
+         vec4(matTexParams[pb + 40u], matTexParams[pb + 41u],
+              matTexParams[pb + 42u], matTexParams[pb + 43u]);
+  alpha *= base.a;
+  int opacityTex = matTexIds[tb + 5u];
+  if (opacityTex >= 0) {
+    vec4 ot = swSampleTexture(opacityTex, swMaterialUv(mid, 5, uv),
+                              vec2(0.0), vec2(0.0), 0u, vec4(1.0));
+    int ch = int(matTexParams[pb + 66u] + 0.5);
+    float channel = ch == 1 ? ot.g : (ch == 2 ? ot.b : (ch == 3 ? ot.a : ot.r));
+    alpha *= channel * matTexParams[pb + 67u] + matTexParams[pb + 68u];
+  }
+  uint graphBase = uint(mid) * 1352u;
+  if (graphBase + 4u < uint(graphRows.length()) &&
+      graphRows[graphBase + 4u] >= 0.0) {
+    alpha = clamp(swEvalMaterialXGraph(uint(mid), 3,
+                                       uv, uint(max(tri, 0))).x, 0.0, 1.0);
+  }
+  alpha *= (cols[tri * 12 + 3] * w0 + cols[tri * 12 + 7] * bc.x +
+            cols[tri * 12 + 11] * bc.y) * insts[iid].tint.a;
+  alpha = clamp(alpha, 0.0, 1.0);
+  if (alphaMode > 0.5 && alphaMode < 1.5)
+    alpha = alpha >= mat(mid, 1u).w ? 1.0 : 0.0;
+  return alpha;
+}
+
+// Secondary primary layers are intentionally cheap in the software-BVH
+// fallback. The nearest layer receives the full PBR path below; deeper layers
+// use their resolved albedo/emission as a stable underlay. This still gives
+// correct front-to-back coverage and makes stacked cutouts/blends visible
+// without duplicating the large direct-lighting block in a second function.
+vec3 swApproxLayerColor(int iid, int tri, vec2 bc) {
+  int mid = triMat[tri];
+  vec3 base = vec3(0.6);
+  vec3 tint = insts[iid].tint.rgb;
+  vec3 emission = vec3(0.0);
+  if (mid >= 0 && mid < int(matRows.length() / 3u)) {
+    base = mat(mid, 0u).rgb;
+    uint tb = uint(mid * 12);
+    uint pb = uint(mid * 155);
+    float w0 = 1.0 - bc.x - bc.y;
+    vec2 uv = vec2(uvs[tri * 6 + 0], uvs[tri * 6 + 1]) * w0 +
+              vec2(uvs[tri * 6 + 2], uvs[tri * 6 + 3]) * bc.x +
+              vec2(uvs[tri * 6 + 4], uvs[tri * 6 + 5]) * bc.y;
+    vec4 tex = swSampleTexture(matTexIds[tb], swMaterialUv(mid, 0, uv),
+                               vec2(0.0), vec2(0.0), 0u, vec4(1.0));
+    base *= tex.rgb * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                           matTexParams[pb + 38u]) +
+            vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
+                 matTexParams[pb + 42u]);
+    if (lrt(mid, 12u).w > 0.5)
+      base *= lrt(mid, 0u).rgb;
+    tint *= vec3(1.0);
+  uint gb = uint(mid) * 1352u;
+    if (gb + 7u < uint(graphRows.length())) {
+      if (graphRows[gb + 1u] >= 0.0)
+        base = swEvalMaterialXGraph(uint(mid), 0, uv, uint(max(tri, 0))).rgb;
+    }
+    vec3 v0 = xformPoint(insts[iid].o2w,
+                         vec3(tris[tri * 9 + 0], tris[tri * 9 + 1], tris[tri * 9 + 2]));
+    vec3 v1 = xformPoint(insts[iid].o2w,
+                         vec3(tris[tri * 9 + 3], tris[tri * 9 + 4], tris[tri * 9 + 5]));
+    vec3 v2 = xformPoint(insts[iid].o2w,
+                         vec3(tris[tri * 9 + 6], tris[tri * 9 + 7], tris[tri * 9 + 8]));
+    vec3 hit = v0 * w0 + v1 * bc.x + v2 * bc.y;
+    vec3 N = normalize(cross(v1 - v0, v2 - v0));
+    vec3 V = normalize(pc.camPos.xyz - hit);
+    float metallic = mat(mid, 1u).x;
+    float roughness = clamp(mat(mid, 1u).y, 0.03, 1.0);
+    if (gb + 7u < uint(graphRows.length())) {
+      if (graphRows[gb + 2u] >= 0.0)
+        metallic = clamp(swEvalMaterialXGraph(uint(mid), 1, uv, uint(max(tri, 0))).x, 0.0, 1.0);
+      if (graphRows[gb + 3u] >= 0.0)
+        roughness = clamp(swEvalMaterialXGraph(uint(mid), 2, uv, uint(max(tri, 0))).x, 0.03, 1.0);
+      if (graphRows[gb + 5u] >= 0.0)
+        emission = max(swEvalMaterialXGraph(uint(mid), 4, uv, uint(max(tri, 0))).rgb,
+                       vec3(0.0));
+    }
+    float fd = 0.04;
+    vec3 f0 = mix(vec3(fd), base, metallic);
+    vec3 shaded = emission + base * 0.05;
+    for (uint li = 0u; li < uint(lightRows.length()) / 20u; ++li) {
+      vec4 l0 = lightRows[li * 20u];
+      int lt = int(l0.x + 0.5);
+      int flags = int(l0.y + 0.5);
+      if (lt == 6 || l0.y <= 0.5 ||
+          (li < 32u && (insts[iid].directLightMask & (1u << li)) == 0u) ||
+          (li >= 32u && (flags & (1 << 5)) == 0)) continue;
+      vec3 L;
+      float attenuation = 1.0;
+      if (lt == 5) {
+        L = -normalize(lightRows[li * 20u + 2u].xyz);
+      } else {
+        uint seed = swHash(uint(max(tri, 0)) * 17u + uint(iid) * 131u + li);
+        vec3 d = swSampleLightPosition(li, lt, seed) - hit;
+        float d2 = max(dot(d, d), 1e-6);
+        L = d / sqrt(d2);
+        attenuation = 1.0 / d2;
+      }
+      float nl = max(dot(N, L), 0.0);
+      if (nl <= 0.0) continue;
+      vec3 H = normalize(L + V);
+      float nv = max(dot(N, V), 1e-4);
+      float nh = max(dot(N, H), 0.0), vh = max(dot(V, H), 0.0);
+      vec3 F = f0 + (vec3(1.0) - f0) * pow(1.0 - vh, 5.0);
+      float a2 = roughness * roughness * roughness * roughness;
+      float den = nh * nh * (a2 - 1.0) + 1.0;
+      float D = a2 / max(3.14159265 * den * den, 1e-6);
+      float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+      float G = (nv / max(nv * (1.0 - k) + k, 1e-6)) *
+                (nl / max(nl * (1.0 - k) + k, 1e-6));
+      vec3 spec = D * G * F / max(4.0 * nv * nl, 1e-5);
+      vec3 diff = (vec3(1.0) - F) * (1.0 - metallic) * base / 3.14159265;
+      shaded += (diff + spec) * lightRows[li * 20u + 3u].rgb *
+                attenuation * nl;
+    }
+  return shaded * tint;
+}
+
+  if (mid >= 0 && mid < int(matRows.length() / 3u) &&
+      lrt(mid, 12u).w > 0.5)
+    emission = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
+  return base * tint * 0.35 + emission;
+}
+
+vec3 swLayerTransmissionTint(int iid, int tri) {
+  int mid = triMat[tri];
+  if (mid < 0 || mid >= int(lrtRows.length() / 14u)) return vec3(1.0);
+  float weight = clamp(lrt(mid, 2u).w, 0.0, 1.0);
+  float depth = max(lrt(mid, 3u).w, 0.0);
+  vec3 absorption = max(vec3(0.0), vec3(1.0) -
+                        clamp(lrt(mid, 2u).rgb, vec3(0.0), vec3(1.0)));
+  absorption += max(lrt(mid, 3u).rgb, vec3(0.0)) * 0.25;
+  return exp(-weight * depth * absorption);
+}
+
 void swRayForPixel(ivec2 px, ivec2 size, out vec3 origin, out vec3 dir) {
-  vec2 uv = (vec2(px) + 0.5) / vec2(size);
+  float seed = float(px.x * 1973 + px.y * 9277) +
+               float(pc.sampleIndex) * 26699.0;
+  vec2 jitter = pc.accumEnabled != 0u
+                    ? vec2(fract(sin(seed) * 43758.5453),
+                           fract(sin(seed * 1.37) * 22578.1459)) - 0.5
+                    : vec2(0.0);
+  vec2 uv = (vec2(px) + 0.5 + jitter) / vec2(size);
   vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
   vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
   vec4 farH = pc.invViewProj * vec4(ndc, 1.0, 1.0);
@@ -238,9 +639,10 @@ vec3 swBarycentric(vec3 p, vec3 v0, vec3 e1, vec3 e2) {
 // instancing (unlike points) needs an object-space descent. No near/far
 // child ordering (same as the point-BVH precedent): correctness over
 // traversal speed for this first pass.
-bool traceClosestSW(vec3 o, vec3 d, out int hitInst, out int hitTri,
-                    out vec2 hitBc, out bool hitFront, out float hitT) {
-  hitInst = -1; hitTri = -1; hitBc = vec2(0.0); hitFront = true; hitT = 1e30;
+bool traceClosestSWRange(vec3 o, vec3 d, float minT, float maxT,
+                         out int hitInst, out int hitTri, out vec2 hitBc,
+                         out bool hitFront, out float hitT) {
+  hitInst = -1; hitTri = -1; hitBc = vec2(0.0); hitFront = true; hitT = maxT;
   if (pc.tlasNodeCount == 0u) return false;
   vec3 invD = 1.0 / d;
 
@@ -305,7 +707,7 @@ bool traceClosestSW(vec3 o, vec3 d, out int hitInst, out int hitTri,
           float v = dot(od, qvec) * invDet;
           if (v < 0.0 || u + v > 1.0) continue;
           float tObj = dot(e2, qvec) * invDet;
-          if (tObj < 1e-4 || tObj >= bestObj) continue;
+          if (tObj < minT * odLen || tObj >= bestObj) continue;
           bestObj = tObj;
           hitT = tObj / max(odLen, 1e-12);
           hitInst = instIdx;
@@ -324,6 +726,41 @@ bool traceClosestSW(vec3 o, vec3 d, out int hitInst, out int hitTri,
   return hitInst >= 0;
 }
 
+bool traceClosestSW(vec3 o, vec3 d, out int hitInst, out int hitTri,
+                    out vec2 hitBc, out bool hitFront, out float hitT) {
+  return traceClosestSWRange(o, d, 1e-4, 1e30, hitInst, hitTri, hitBc,
+                             hitFront, hitT);
+}
+
+float swLayerTransmissionWeight(int tri) {
+  int mid = triMat[tri];
+  if (mid < 0 || mid >= int(lrtRows.length() / 14u)) return 0.0;
+  return clamp(lrt(mid, 2u).w, 0.0, 1.0);
+}
+
+vec3 swLayerRefractedColor(int iid, int tri, vec2 bc, bool front,
+                           vec3 rayOrigin, vec3 rayDir) {
+  int mid = triMat[tri];
+  if (mid < 0 || mid >= int(lrtRows.length() / 14u)) return vec3(0.0);
+  float w0 = 1.0 - bc.x - bc.y;
+  vec3 p0 = xformPoint(insts[iid].o2w,
+                       vec3(tris[tri * 9 + 0], tris[tri * 9 + 1], tris[tri * 9 + 2]));
+  vec3 p1 = xformPoint(insts[iid].o2w,
+                       vec3(tris[tri * 9 + 3], tris[tri * 9 + 4], tris[tri * 9 + 5]));
+  vec3 p2 = xformPoint(insts[iid].o2w,
+                       vec3(tris[tri * 9 + 6], tris[tri * 9 + 7], tris[tri * 9 + 8]));
+  vec3 hit = p0 * w0 + p1 * bc.x + p2 * bc.y;
+  vec3 N = normalize(cross(p1 - p0, p2 - p0));
+  if (!front) N = -N;
+  vec3 refrDir = refract(rayDir, N, 1.0 / max(lrt(mid, 10u).w, 1.0));
+  if (dot(refrDir, refrDir) < 1.0e-8) refrDir = reflect(rayDir, N);
+  int ri, rt; vec2 rb; bool rf; float rdist;
+  if (traceClosestSWRange(hit + refrDir * 1.0e-3, refrDir, 1.0e-3,
+                          1.0e30, ri, rt, rb, rf, rdist))
+    return swApproxLayerColor(ri, rt, rb);
+  return swDomeRadiance(refrDir);
+}
+
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy);
   ivec2 size = imageSize(outImg);
@@ -335,8 +772,33 @@ void main() {
   vec3 bgc = srgbToLinear(pc.clearColor.rgb);
   vec3 outc = bgc;
 
-  int hitInst, hitTri; vec2 hitBc; bool hitFront; float hitT;
-  if (traceClosestSW(origin, dir, hitInst, hitTri, hitBc, hitFront, hitT)) {
+  int hitInst = -1, hitTri = -1; vec2 hitBc = vec2(0.0); bool hitFront = true;
+  float hitT = 0.0;
+  bool haveHit = false;
+  float primaryCursor = 1e-4;
+  // Reject alpha-mask texels before entering the full shading path, then keep
+  // the first accepted layer for the bounded front-to-back compositor below.
+  for (int pass = 0; pass < 32; ++pass) {
+    int candidateInst, candidateTri; vec2 candidateBc; bool candidateFront;
+    float candidateT;
+    if (!traceClosestSWRange(origin, dir, primaryCursor, 1e30,
+                             candidateInst, candidateTri, candidateBc,
+                             candidateFront, candidateT)) break;
+    float candidateMode = 0.0;
+    float candidateAlpha = swOpacityAtHit(candidateInst, candidateTri,
+                                          candidateBc, candidateMode);
+    primaryCursor = candidateT + 1e-3;
+    if (candidateMode > 0.5 && candidateMode < 1.5 && candidateAlpha <= 0.0)
+      continue;
+    hitInst = candidateInst;
+    hitTri = candidateTri;
+    hitBc = candidateBc;
+    hitFront = candidateFront;
+    hitT = candidateT;
+    haveHit = true;
+    break;
+  }
+  if (haveHit) {
     Inst inst = insts[hitInst];
     float w0 = 1.0 - hitBc.x - hitBc.y;
 
@@ -365,12 +827,16 @@ void main() {
     int mid = triMat[hitTri];
     vec3 base = vec3(0.6);
     float alpha = 1.0;
+    float alphaMode = 0.0;
+    float alphaCutoff = 0.5;
     float metallic = 0.0;
     float roughness = 0.5;
     vec3 emissive = vec3(0.0);
     if (mid >= 0) {
       base = mat(mid, 0u).rgb;
       alpha = mat(mid, 0u).a;
+      alphaMode = mat(mid, 1u).z;
+      alphaCutoff = mat(mid, 1u).w;
       metallic = mat(mid, 1u).x;
       roughness = mat(mid, 1u).y;
       emissive = mat(mid, 2u).rgb;
@@ -430,34 +896,176 @@ void main() {
                                 sourceFace, vec4(1.0)).rgb;
       }
     }
+    uint graphBase = uint(mid) * 1352u;
+    if (graphBase + 7u < uint(graphRows.length())) {
+      if (graphRows[graphBase + 1u] >= 0.0)
+        base = swEvalMaterialXGraph(uint(mid), 0, uv0,
+                                    uint(max(hitTri, 0))).rgb;
+      if (graphRows[graphBase + 2u] >= 0.0)
+        metallic = clamp(swEvalMaterialXGraph(uint(mid), 1, uv0,
+                                               uint(max(hitTri, 0))).x,
+                         0.0, 1.0);
+      if (graphRows[graphBase + 3u] >= 0.0)
+        roughness = clamp(swEvalMaterialXGraph(uint(mid), 2, uv0,
+                                                uint(max(hitTri, 0))).x,
+                          0.03, 1.0);
+      if (graphRows[graphBase + 4u] >= 0.0)
+        alpha = clamp(swEvalMaterialXGraph(uint(mid), 3, uv0,
+                                           uint(max(hitTri, 0))).x,
+                      0.0, 1.0);
+      if (graphRows[graphBase + 5u] >= 0.0)
+        emissive = max(swEvalMaterialXGraph(uint(mid), 4, uv0,
+                                            uint(max(hitTri, 0))).rgb,
+                       vec3(0.0));
+    }
     base *= vertColor.rgb;
     alpha *= vertColor.a * inst.tint.a;
     base *= inst.tint.rgb;
     roughness = clamp(roughness, 0.03, 1.0);
 
-    // Direct term: one camera-following key light (NOT the full per-scene
-    // RtLights loop yet -- scope cut for this pass) plus a simple GGX
-    // specular lobe, matching the shape (not literal formulas) of
-    // raytrace.comp's BRDF.
-    vec3 L = normalize(pc.lightDir.xyz);
+    // Direct term: evaluate the same packed analytic lights used by the
+    // hardware ray-query path. Geometry lights sample one emissive triangle
+    // from their resolved target range per shading sample.
+    vec3 hit = origin + dir * hitT;
     vec3 V = normalize(-dir);
-    vec3 Hh = normalize(L + V);
-    float NdotL = max(dot(N, L), 0.0);
     float NdotV = max(dot(N, V), 1e-4);
-    float NdotH = max(dot(N, Hh), 0.0);
-    float VdotH = max(dot(V, Hh), 0.0);
     vec3 F0 = mix(vec3(0.04), base, metallic);
-    vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - VdotH, 5.0);
-    float a2 = roughness * roughness * roughness * roughness;
-    float dDen = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
-    float D = a2 / max(3.14159265 * dDen * dDen, 1e-6);
-    float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-    float gV = NdotV / (NdotV * (1.0 - k) + k);
-    float gL = NdotL / (NdotL * (1.0 - k) + k);
-    float G = gV * gL;
-    vec3 spec = (D * G * F) / max(4.0 * NdotV * NdotL, 1e-6);
-    vec3 kd = (vec3(1.0) - F) * (1.0 - metallic);
-    vec3 direct = (kd * base / 3.14159265 + spec) * NdotL;
+    vec3 direct = vec3(0.0);
+    bool hadDirectLight = false;
+    uint directLightCount = uint(lightRows.length()) / 20u;
+    int renderMode = int(pc.camPos.w + 0.5);
+    for (uint li = 0u; li < directLightCount; ++li) {
+      vec4 l0 = lightRows[li * 20u + 0u];
+      int lightType = int(l0.x + 0.5);
+      int flags = int(l0.y + 0.5);
+      if (lightType == 6 || l0.y <= 0.5) continue;
+      hadDirectLight = true;
+      bool linked = li < 32u
+          ? (inst.directLightMask & (1u << li)) != 0u
+          : (flags & (1 << 5)) != 0;
+      if (!linked) continue;
+
+      vec3 L;
+      float maxShadowT = 1e30;
+      float attenuation = 1.0;
+      vec3 geometryNormal = vec3(0.0);
+      vec3 geometryEmission = lightRows[li * 20u + 3u].rgb;
+      if (lightType == 5) {
+        vec3 lightDirection = lightRows[li * 20u + 2u].xyz;
+        L = -normalize(dot(lightDirection, lightDirection) > 1e-12
+                           ? lightDirection : pc.lightDir.xyz);
+      } else {
+        uint seed = swHash(uint(px.x) * 1973u + uint(px.y) * 9277u +
+                            pc.sampleIndex * 26699u + li * 104729u + 31u);
+        vec3 lightPosition;
+        if (lightType == 7) {
+          if (!swSampleGeometryLight(li, seed, lightPosition, geometryNormal,
+                                      geometryEmission)) continue;
+        } else {
+          // PortalLight is a rectangle-shaped environment opening. The
+          // rectangle sample provides the visibility/solid-angle guide while
+          // the authored portal color carries the environment tint.
+          lightPosition = swSampleLightPosition(
+              li, lightType == 8 ? 3 : lightType, seed);
+        }
+        vec3 toLight = lightPosition - hit;
+        float dist2 = max(dot(toLight, toLight), 1e-6);
+        maxShadowT = sqrt(dist2);
+        L = toLight / maxShadowT;
+        attenuation = 1.0 / dist2;
+        if (lightType == 8) {
+          vec3 env = swDomeRadiance(-L);
+          if (dot(env, env) > 1e-10) geometryEmission = env;
+        }
+      }
+
+      float shape = 1.0;
+      if ((flags & 4) != 0 && lightType != 5) {
+        vec3 lightDir = normalize(lightRows[li * 20u + 2u].xyz);
+        float coneCos = dot(lightDir, -L);
+        vec4 shaping = lightRows[li * 20u + 6u];
+        float outer = cos(radians(clamp(shaping.x, 0.0, 180.0)));
+        float inner = cos(radians(clamp(shaping.x * (1.0 - shaping.y),
+                                         0.0, 180.0)));
+        shape = smoothstep(outer, max(inner, outer + 1e-5), coneCos) *
+                pow(max(coneCos, 0.0), max(shaping.z, 0.0));
+      }
+      if (lightType == 7) {
+        shape *= max(dot(geometryNormal, -L), 0.0);
+      }
+      float nDotL = max(dot(N, L), 0.0);
+      if (nDotL <= 0.0 || shape <= 0.0) continue;
+
+      float visibility = 1.0;
+      if (renderMode == 0 && (flags & 2) != 0) {
+        vec3 shadowOrigin = hit + N * 1e-3;
+        float cursor = 1e-3;
+        int blendLayers = 0;
+        for (int pass = 0; pass < 32 && visibility > 1e-3; ++pass) {
+          int shadowInst, shadowTri; vec2 shadowBc; bool shadowFront;
+          float shadowT;
+          bool blocked = traceClosestSWRange(
+              shadowOrigin, L, cursor, max(maxShadowT - 2e-3, cursor),
+              shadowInst, shadowTri, shadowBc, shadowFront, shadowT);
+          if (!blocked || shadowT >= maxShadowT - 2e-3) break;
+          bool shadowLinked = li < 32u
+              ? (insts[shadowInst].shadowLightMask & (1u << li)) != 0u
+              : (flags & (1 << 6)) != 0;
+          cursor = shadowT + 1e-3;
+          if (!shadowLinked) continue;
+          float shadowMode = 0.0;
+          float opacity = swOpacityAtHit(shadowInst, shadowTri, shadowBc,
+                                         shadowMode);
+          if (shadowMode > 1.5 && opacity < 1.0 && blendLayers < 8) {
+            visibility *= 1.0 - opacity;
+            ++blendLayers;
+          } else if (shadowMode > 0.5 && shadowMode < 1.5 && opacity <= 0.0) {
+            // Rejected alpha-mask texel exposes the next surface.
+            continue;
+          } else {
+            visibility = 0.0;
+            break;
+          }
+        }
+      }
+
+      vec3 H = normalize(L + V);
+      float nDotH = max(dot(N, H), 0.0);
+      float vDotH = max(dot(V, H), 0.0);
+      vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - vDotH, 5.0);
+      float a2 = roughness * roughness * roughness * roughness;
+      float dDen = (nDotH * nDotH) * (a2 - 1.0) + 1.0;
+      float D = a2 / max(3.14159265 * dDen * dDen, 1e-6);
+      float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+      float gV = NdotV / (NdotV * (1.0 - k) + k);
+      float gL = nDotL / (nDotL * (1.0 - k) + k);
+      vec3 spec = (D * gV * gL * F) /
+                  max(4.0 * NdotV * nDotL, 1e-6);
+      vec3 kd = (vec3(1.0) - F) * (1.0 - metallic);
+      vec3 radiance = geometryEmission *
+                      (attenuation * shape * swIesFactor(li, -L));
+      vec4 weights = lightRows[li * 20u + 7u];
+      direct += (kd * base / 3.14159265 * weights.y + spec * weights.z) *
+                nDotL * radiance * visibility;
+    }
+    if (!hadDirectLight) {
+      vec3 L = normalize(pc.lightDir.xyz);
+      float nDotL = max(dot(N, L), 0.0);
+      vec3 H = normalize(L + V);
+      float nDotH = max(dot(N, H), 0.0);
+      float vDotH = max(dot(V, H), 0.0);
+      vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - vDotH, 5.0);
+      float a2 = roughness * roughness * roughness * roughness;
+      float dDen = (nDotH * nDotH) * (a2 - 1.0) + 1.0;
+      float D = a2 / max(3.14159265 * dDen * dDen, 1e-6);
+      float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+      float gV = NdotV / (NdotV * (1.0 - k) + k);
+      float gL = nDotL / (nDotL * (1.0 - k) + k);
+      vec3 spec = (D * gV * gL * F) /
+                  max(4.0 * NdotV * nDotL, 1e-6);
+      direct = ((vec3(1.0) - F) * (1.0 - metallic) * base /
+                3.14159265 + spec) * nDotL;
+    }
 
     // Ambient: dome-cube diffuse (mip'd roughly by material roughness via
     // the prefiltered cube) -- much simpler than raytrace.comp's split-sum
@@ -470,7 +1078,83 @@ void main() {
                    prefiltered * (F0 * brdf.x + brdf.y);
 
     outc = direct + ambient + emissive;
+    if (renderMode == 0) {
+      float resolvedHitMode = 0.0;
+      float resolvedHitAlpha = swOpacityAtHit(hitInst, hitTri, hitBc,
+                                              resolvedHitMode);
+      if (resolvedHitMode > 0.5 && resolvedHitMode < 1.5) {
+        outc = resolvedHitAlpha > 0.0 ? outc : bgc;
+      } else if (resolvedHitMode > 1.5) {
+        // Composite the full-shaded nearest layer over a bounded set of
+        // resolved underlays. The conservative tail is treated as opaque by
+        // the loop once the layer budget is exhausted.
+        vec3 layerColor[8];
+        float layerAlpha[8];
+        vec3 layerTint[8];
+        vec3 layerRefract[8];
+        float layerTransmission[8];
+        int layerCount = 1;
+        float topMode = 0.0;
+        layerColor[0] = outc;
+        layerAlpha[0] = swOpacityAtHit(hitInst, hitTri, hitBc, topMode);
+        layerTint[0] = swLayerTransmissionTint(hitInst, hitTri);
+        layerTransmission[0] = swLayerTransmissionWeight(hitTri);
+        layerRefract[0] = swLayerRefractedColor(hitInst, hitTri, hitBc,
+                                                hitFront, origin, dir);
+        float cursor = hitT + 1e-3;
+        bool opaqueTail = false;
+        vec3 tailColor = bgc;
+        for (int pass = 1; pass < 8; ++pass) {
+          int li, lt; vec2 lb; bool lf; float ldist;
+          if (!traceClosestSWRange(origin, dir, cursor, 1e30,
+                                   li, lt, lb, lf, ldist)) break;
+          cursor = ldist + 1e-3;
+          float lm = 0.0;
+          float la = swOpacityAtHit(li, lt, lb, lm);
+          if (lm > 0.5 && lm < 1.5 && la <= 0.0) continue;
+          layerColor[layerCount] = swApproxLayerColor(li, lt, lb);
+          layerAlpha[layerCount] = la;
+          layerTint[layerCount] = swLayerTransmissionTint(li, lt);
+          layerTransmission[layerCount] = swLayerTransmissionWeight(lt);
+          layerRefract[layerCount] = swLayerRefractedColor(
+              li, lt, lb, lf, origin, dir);
+          ++layerCount;
+          if (lm <= 0.5 || (lm > 1.5 && la >= 1.0)) break;
+        }
+        // If the bounded layer budget is exhausted, conservatively treat the
+        // next accepted surface as an opaque tail rather than leaking the
+        // clear color through an arbitrarily deep transparent stack.
+        if (layerCount == 8) {
+          int ti, tt; vec2 tb; bool tf; float td;
+          if (traceClosestSWRange(origin, dir, cursor, 1e30,
+                                  ti, tt, tb, tf, td)) {
+            float tm = 0.0;
+            float ta = swOpacityAtHit(ti, tt, tb, tm);
+            if (!(tm > 0.5 && tm < 1.5 && ta <= 0.0)) {
+              opaqueTail = true;
+              tailColor = swApproxLayerColor(ti, tt, tb);
+            }
+          }
+        }
+        vec3 composite = opaqueTail ? tailColor : bgc;
+        for (int i = layerCount - 1; i >= 0; --i) {
+          float a = clamp(layerAlpha[i], 0.0, 1.0);
+          vec3 transmitted = composite * layerTint[i];
+          transmitted = mix(transmitted, layerRefract[i],
+                            clamp(layerTransmission[i], 0.0, 1.0));
+          composite = mix(transmitted, layerColor[i], a);
+        }
+        outc = composite;
+      }
+    }
   }
 
+  if (pc.accumEnabled != 0u) {
+    vec4 sum = imageLoad(accumImg, px);
+    sum.rgb = pc.sampleIndex == 0u ? outc : sum.rgb + outc;
+    sum.a = 1.0;
+    imageStore(accumImg, px, sum);
+    outc = sum.rgb / float(pc.sampleIndex + 1u);
+  }
   imageStore(outImg, px, vec4(linearToSrgb(outc), 1.0));
 }

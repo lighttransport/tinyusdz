@@ -1702,6 +1702,7 @@ struct RenderLight
 
   // GeometryLight (mesh lights with MeshLightAPI)
   int32_t geometry_mesh_id{-1};       ///< Index to meshes array for geometry lights
+  std::string geometry_target_path;   ///< Authored GeometryLight relationship target
   std::string material_sync_mode;     ///< MeshLightAPI materialSyncMode
 
   // LTE SpectralAPI: Spectral emission support

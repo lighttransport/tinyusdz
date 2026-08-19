@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // tusdview - CPU ray tracing backend.
 //
-// Reuses BuildHostScene() (rt_scene_build.hh), the same DrawScene -> flat
-// world-space triangle-soup flattener the CUDA/HIP tracers already use (which
-// expands instances into unique world-space triangles -- "simple and
-// correct", per CudaRayTracer's header comment), then builds a single BVH
-// over that soup with the vendored lightrt_c library (src/external/lightrt,
-// shared with tools/tusdrender via the lightrt_c CMake target) instead of
-// uploading to a device. No refit: unlike HipRayTracer, a re-pose always
-// re-flattens + rebuilds (lightrt_c_tri has no per-vertex BVH refit API,
-// only lrt_tlas_refit for instance-transform-only TLASs, which this single-
-// BLAS design does not use) -- the same simplification CudaRayTracer already
-// accepts.
+// Reuses BuildHostScene() (rt_scene_build.hh). CUDA/HIP consume its prototype
+// BLAS/TLAS representation directly. The CPU backend expands those instances
+// into a world-space triangle stream because lightrt_c exposes a single-BVH
+// triangle API; this preserves instance transforms and collection masks while
+// retaining the deliberately simple CPU fallback.
 #pragma once
 
 #include <cstdint>
@@ -49,12 +43,8 @@ class CpuRayTracer {
   size_t triangleCount() const { return triCount_; }
   bool truncated() const { return truncated_; }
 
-  // Trace one frame on CPU worker threads (std::thread::hardware_concurrency(),
-  // one sample/pixel -- no accumulation/progressive refinement in this first
-  // cut). Same signature/contract as CudaRayTracer::trace: writes a top-down
-  // RGBA8 image into *rgba. renderMode: 0=shaded, 2=normals, 3=material id,
-  // 6=depth (others fall back to shaded). `lens` (depth of field) and
-  // `spp` > 1 (supersampling) are accepted but not yet implemented.
+  // Trace one frame on CPU worker threads. `spp` controls deterministic
+  // supersampling and `lens` enables depth of field.
   bool trace(const float invViewProj[16], const float viewProj[16],
              const float camPos[3], const float lightDir[3],
              const float clearColor[3], float exposure, int renderMode,
@@ -65,9 +55,19 @@ class CpuRayTracer {
   const char* deviceName() const { return "CPU"; }
 
  private:
+  bool traceSingle(const float invViewProj[16], const float camPos[3],
+                   const float lightDir[3], const float clearColor[3],
+                   float exposure, int renderMode, float depthScale, int w,
+                   int h, float sampleX, float sampleY,
+                   const RtCameraLens* lens, std::vector<uint8_t>* rgba,
+                   std::string* err);
   void freeScene();
 
   HostScene hs_;             // retained (unlike CUDA/HIP, which discard it after device upload)
+  // lightrt_c has no instance/TLAS traversal API. These are the expanded
+  // world-space hit attributes corresponding one-to-one with scene_ triangles.
+  std::vector<float> cpuTris_, cpuNrms_, cpuUv_;
+  std::vector<int> cpuMat_, cpuInstance_;
   lrt_tri_scene* scene_{nullptr};
   size_t triCount_{0};
   bool truncated_{false};
