@@ -462,6 +462,7 @@ class Gui {
   float gizmoStartPos_[3];    // world position at drag start
   bool showRenderNodes_{false};
   bool dockBuilt_{false};
+  bool resetLayoutRequested_{false};
 
   ImGuiTextFilter hierFilter_;
   ImGuiTextFilter propFilter_;

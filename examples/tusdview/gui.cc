@@ -462,20 +462,23 @@ void Gui::buildDefaultLayout(unsigned int dockId) {
   ImGui::DockBuilderSetNodeSize(dockId, ImGui::GetMainViewport()->WorkSize);
 
   ImGuiID center = dockId;
-  ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
-  ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.28f, nullptr, &center);
+  ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.22f, nullptr, &center);
+  ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, nullptr, &center);
+  ImGuiID leftBottom =
+      ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.28f, nullptr, &left);
   ImGuiID rightBottom =
-      ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.40f, nullptr, &right);
+      ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.44f, nullptr, &right);
   // Timeline spans the bottom of the viewport column.
   ImGuiID centerBottom =
       ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.14f, nullptr, &center);
 
   ImGui::DockBuilderDockWindow("Hierarchy", left);
-  ImGui::DockBuilderDockWindow("Stats", left);
+  ImGui::DockBuilderDockWindow("Stats", leftBottom);
   ImGui::DockBuilderDockWindow("Inspector", right);
   ImGui::DockBuilderDockWindow("Selection", right);
   ImGui::DockBuilderDockWindow("Camera", right);
   ImGui::DockBuilderDockWindow("Stage", rightBottom);
+  ImGui::DockBuilderDockWindow("Composition Graph", rightBottom);
   ImGui::DockBuilderDockWindow("Materials", rightBottom);
   ImGui::DockBuilderDockWindow("Payloads", rightBottom);
   ImGui::DockBuilderDockWindow("Viewport", center);
@@ -503,13 +506,20 @@ void Gui::drawDockspaceAndMenu() {
 
   const ImGuiID dockId = ImGui::GetID("TusdviewDockspace");
   ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
-  if (!dockBuilt_) {
+  if (resetLayoutRequested_) {
+    ImGui::ClearIniSettings();
+    buildDefaultLayout(dockId);
+    ImGui::MarkIniSettingsDirty();
+    resetLayoutRequested_ = false;
+    dockBuilt_ = true;
+    imguiLayoutStatus_ = "UI layout reset to initial layout";
+  } else if (!dockBuilt_) {
     bool hasSavedIni = false;
     if (const char* ini = ImGui::GetIO().IniFilename) {
       std::error_code ec;
       hasSavedIni = std::filesystem::is_regular_file(std::filesystem::path(ini), ec);
     }
-    if (!hasSavedIni) {
+    if (!hasSavedIni || ImGui::DockBuilderGetNode(dockId) == nullptr) {
       buildDefaultLayout(dockId);
     }
     dockBuilt_ = true;
@@ -539,6 +549,12 @@ void Gui::drawDockspaceAndMenu() {
         } else {
           imguiLayoutStatus_ = "Layout save failed: " + err;
         }
+      }
+      if (ImGui::BeginMenu("UI Layout")) {
+        if (ImGui::MenuItem("Reset to initial layout")) {
+          resetLayoutRequested_ = true;
+        }
+        ImGui::EndMenu();
       }
       if (!imguiLayoutStatus_.empty()) {
         ImGui::TextDisabled("%s", imguiLayoutStatus_.c_str());
