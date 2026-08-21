@@ -118,12 +118,11 @@ displays it with an ImGui docking UI.
   displacement is baked once into the traced/raster geometry. Atlas residency
   is capped by the configured GPU budget, with representative-face fallback
   and render-report counters for downsampling, truncation, and degradation.
-- Advanced OpenPBR/MaterialX lobes that are not yet evaluated in real time
-  remain preserved in the neutral material record and produce one
-  path-qualified load diagnostic per material. The structured load summary
-  reports `unsupported_lobes=N` for transmission, subsurface, sheen/fuzz,
-  anisotropy, thin-film, dispersion, and volume instead of silently treating
-  them as supported.
+- OpenPBR surface lobes (transmission, subsurface, sheen/fuzz, anisotropy,
+  thin-film and dispersion) are preserved in the canonical material record and
+  evaluated by the real-time preview backends. Volume output is preserved and
+  evaluated through a homogeneous realtime fallback, with the same packed
+  material values available to raster and ray-tracing paths.
 - **Authored USD lighting** on both raster backends: up to 16 supported direct
   lights are evaluated in stage order with diffuse/specular multipliers,
   shaping cones, and per-mesh `collection:lightLink` masks, alongside
@@ -211,10 +210,9 @@ displays it with an ImGui docking UI.
   - **CPU RT** (`--cpu-rt`) flattens the scene the same way (reusing the CUDA/HIP
     tracers' `BuildHostScene` flattener) and traces it on CPU worker threads with
     the vendored `lightrt_c` BVH library (also used by `tools/tusdrender`), one
-    sample per pixel with flat Lambertian + hard-shadow shading (no textures/
-    materials yet — a first cut, not a full path tracer). No headless one-shot
-    path yet; a headless `--cpu-rt` run falls back to the normal raster
-    screenshot.
+    sample per pixel with flat Lambertian + hard-shadow shading. Headless
+    `--cpu-rt --screenshot` renders a one-shot CPU image, matching the CUDA/HIP
+    capture workflow and making the CPU path usable in display-free tests.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive
@@ -602,21 +600,33 @@ quality** (8/16/32/64), or choose full tessellation for comparison. Set
   without raster anisotropy.
 - Vulkan raster uses four bound descriptor sets and runs on low-limit software
   devices as well as desktop GPUs.
+- Native point and curve carriers honor authored direct-light and shadow-light
+  masks on both raster backends. Their carrier geometry participates in the
+  corresponding planar or point shadow-map pass, subject to the same path and
+  visibility filters as mesh geometry.
 - Hardware and compute-BVH Vulkan rays traverse a bounded stack of
   alpha-blended layers (eight layers, with a conservative opaque tail).
   The nearest primary layer receives full shading; deeper primary layers use
-  a resolved albedo/emission underlay, so complex lighting/refraction through
-  those layers remains an approximation.
+  a bounded material/light response and inherit the nearest layer's refracted
+  walk, so very deep stacks and multi-bounce lighting remain an approximation.
 - CUDA/HIP primary rays use the same bounded front-to-back layer policy: the
   nearest layer is fully shaded and up to seven deeper accepted layers receive
-  resolved albedo/emission underlay shading. Mask layers are rejected during
-  traversal and do not occlude later layers.
+  bounded material/light underlay shading along the carried refracted ray.
+  Mask layers are rejected during traversal and do not occlude later layers.
 - MaterialX image/procedural graphs are evaluated at asset-relative UV samples
   and baked into bounded 16x16 semantic maps when no extracted slot exists.
   Vulkan hardware ray-query and compute-BVH paths additionally evaluate the
   packed graph IR per hit for constants, resident image/tiled-image nodes,
   arithmetic, mix, clamp, dot, and normalize operations. CUDA/HIP consume the
   same packed IR, including resident UDIM/Ptex image sampling; the CPU fallback
-  evaluates the same graph lanes needed by its preview path. Vulkan raster still
-  uses semantic/bake bindings. Refraction, true MaterialX tile-placement
-  semantics, and full procedural-node parity remain open.
+  evaluates the same graph lanes needed by its preview path. Vulkan and OpenGL
+  raster evaluate the resident graph lanes as well, including tangent-space
+  normal maps and OpenPBR subsurface weight/color, with bounded preview lobes.
+  Vulkan raster also carries OpenPBR transmission weight/color into a bounded
+  colored back-light approximation; full secondary-ray refraction remains an RT
+  feature. Transparent intermediate layers now carry bounded refraction in the
+  CPU, hardware ray-query, and compute-BVH walks; very deep stacks still use a
+  conservative layer budget. True MaterialX tile-placement semantics and full
+  procedural-node parity remain open. Simple untextured Preview materials use
+  a compact graph-free Vulkan RT shader; textured/OpenPBR materials retain the
+  full-fidelity shader variant.

@@ -684,6 +684,24 @@ xvfb-run -a env \
   --frames 1 --size 64x64 tests/usda/anytype-001.usda
 ```
 
+The first RT launch on a new NVIDIA driver/shader-cache combination compiles
+the embedded graph-free ray-query variant (currently about 100 KiB for simple
+untextured materials without MaterialX/OpenPBR graphs). Textured or OpenPBR
+materials continue to use the full-fidelity module. Keep `TUSDVIEW_RT_TIMING=1` enabled when
+diagnosing startup. The cache is shared by the graph-free and full MaterialX
+variants and keyed by the Vulkan device/driver UUID, so subsequent launches
+and a later MaterialX upgrade can reuse driver-internal compilation state.
+For isolated cold-cache measurements, set `TUSDVIEW_VK_PIPELINE_CACHE_DIR` to
+an explicit writable directory; this changes only the cache location and does
+not affect physical-device selection.
+The exact cold time is driver-dependent; measure it on the target GPU rather
+than assuming the llvmpipe timing applies.
+
+Before forcing `--vk-device nvidia`, confirm that the same Xvfb/GLVND
+environment enumerates an NVIDIA Vulkan physical device. GLVND variables do
+not select a Vulkan device; if the probe reports only llvmpipe, omit the
+selector and treat the run as software-device validation.
+
 Startup logs print `renderer`, `GPU`, and `API` for both OpenGL and Vulkan, so a
 headless run can reject llvmpipe without requiring `glxinfo`.
 
