@@ -192,6 +192,39 @@ documented `xvfb-run` + `TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON` procedure in
 not force `TUSDVIEW_VK_DEVICE=nvidia` unless the configure-time Vulkan probe
 confirms an NVIDIA physical device.
 
+#### Verified NVIDIA hardware run recipe
+
+Use the procedure in [doc/tusdview.md](doc/tusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb)
+for GPU-backed verification. Configure with NVIDIA offload enabled, then run
+the viewer tests under a real Xvfb screen:
+
+```sh
+cmake -S . -B build_ninja -G Ninja \
+  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_GUI_VIEWER=ON \
+  -DTINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON
+cmake --build build_ninja -j16
+xvfb-run -a -s "-screen 0 1280x800x24" \
+  ctest --test-dir build_ninja -R '^tusdview' --output-on-failure
+```
+
+For a direct Vulkan ray-query run on PRIME/offload systems, use the NVIDIA
+GLVND variables and `--vk-device nvidia`:
+
+```sh
+xvfb-run -a env \
+  __NV_PRIME_RENDER_OFFLOAD=1 \
+  __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+  ./build_ninja/tusdview --headless --backend vk --vk-device nvidia --rt \
+  --frames 1 --screenshot /tmp/tusdview-vk.ppm tests/usda/anytype-001.usda
+```
+
+Verify the startup capability line reports `device=discrete rt=hardware` and
+an NVIDIA GPU. If the configure-time probe does not confirm an NVIDIA Vulkan
+physical device, do not force `--vk-device nvidia`; diagnose the ICD/offload
+environment or allow the test to skip. Vulkan headless, CUDA, and HIP runs do
+not require X11; Xvfb is needed for OpenGL and the full mixed viewer suite.
+
 ## Testing
 
 See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and use [the Regression Test Procedure](doc/testing-cpp.md#regression-test-procedure) before merging/refactoring.
