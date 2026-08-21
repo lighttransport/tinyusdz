@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "mesh_build.hh"
+#include "lightrt_mtlx_bridge.hh"
 
 #include <cmath>
 #include <cstdio>
@@ -60,6 +61,62 @@ int AddTexture(tydra::RenderScene* scene, int imageId,
 }  // namespace
 
 int main() {
+  // MaterialX's compatibility normalizer emits `noise3d` for MaterialXNoise
+  // nodes. Preserve the authored z coordinate in the retained runtime IR
+  // instead of silently degrading the graph to a 2D hash.
+  {
+    tusdview::DrawMaterialCPU noiseMaterial;
+    noiseMaterial.materialXNodeGraphJson = R"json({
+      "nodegraph": {"nodes": [
+        {"name": "n", "category": "MaterialXNoise", "type": "float"}
+      ]},
+      "connections": []
+    })json";
+    std::string noiseError;
+    if (!tusdview::CompileMaterialXGraphRuntime(&noiseMaterial, &noiseError) ||
+        !noiseMaterial.materialXGraph.valid ||
+        noiseMaterial.materialXGraph.nodes.empty() ||
+        noiseMaterial.materialXGraph.nodes[0].op !=
+            tusdview::MaterialXGraphOpCPU::Noise3D) {
+      std::fprintf(stderr, "MaterialXNoise was not retained in runtime IR: %s\n",
+                   noiseError.c_str());
+      return 1;
+    }
+  }
+
+  // Standard Surface graphs used by OpenChessSet expose subsurface weight and
+  // color as named graph outputs. Both routes must survive into the fixed-size
+  // runtime block for per-hit texture evaluation.
+  {
+    tusdview::DrawMaterialCPU subsurfaceMaterial;
+    subsurfaceMaterial.materialXNodeGraphJson = R"json({
+      "nodegraph": {
+        "nodes": [{"name": "sss", "category": "constant", "type": "float", "inputs": [{"name": "value", "value": 0.5}]}],
+        "outputs": [
+          {"name": "subsurface_output", "nodename": "sss"},
+          {"name": "base_color_output", "nodename": "sss"},
+          {"name": "radius_output", "nodename": "sss"}
+        ]
+      },
+      "connections": [
+        {"input": "subsurface", "output": "subsurface_output"},
+        {"input": "subsurface_color", "output": "base_color_output"},
+        {"input": "subsurface_radius", "output": "radius_output"}
+      ]
+    })json";
+    std::string subsurfaceError;
+    if (!tusdview::CompileMaterialXGraphRuntime(&subsurfaceMaterial,
+                                                &subsurfaceError) ||
+        subsurfaceMaterial.materialXGraph.output[6] != 0 ||
+        subsurfaceMaterial.materialXGraph.output[7] != 0 ||
+        subsurfaceMaterial.materialXGraph.output[8] != 0) {
+      std::fprintf(stderr,
+                   "MaterialX subsurface routes were not retained: %s\n",
+                   subsurfaceError.c_str());
+      return 1;
+    }
+  }
+
   // Subsurface is a normalized-diffusion response, not merely a color tint:
   // zero radius stays Lambertian while a finite radius broadens grazing light.
   {
@@ -438,23 +495,21 @@ int main() {
     std::fprintf(stderr, "LightRT/OpenPBR texture neutral factors are wrong\n");
     return 1;
   }
-  if (draw.skipped.size() != 1 ||
-      draw.skipped[0].find("material '/World/Looks/OpenPBR'") ==
-          std::string::npos ||
-      draw.skipped[0].find("transmission") == std::string::npos ||
-      draw.skipped[0].find("subsurface") == std::string::npos ||
-      draw.skipped[0].find("sheen/fuzz") == std::string::npos ||
-      draw.skipped[0].find("thin-film") == std::string::npos ||
-      draw.skipped[0].find("anisotropy") == std::string::npos ||
-      draw.skipped[0].find("dispersion") == std::string::npos) {
-    std::fprintf(stderr, "unsupported real-time lobe diagnostic is incomplete\n");
+  if (!Near(mat.lightRtOpenPBR.specularAnisotropy, 0.6f) ||
+      !Near(mat.lightRtOpenPBR.transmissionDispersion, 0.7f)) {
+    std::fprintf(stderr,
+                 "OpenPBR anisotropy/dispersion controls were not retained\n");
+    return 1;
+  }
+  if (!draw.skipped.empty()) {
+    std::fprintf(stderr, "supported OpenPBR surface lobes were diagnosed\n");
     return 1;
   }
   const tusdview::LoadDiagnostics diagnostics =
       tusdview::CategorizeLoadWarnings("", draw.skipped);
-  if (diagnostics.unsupported_lobes != 1 || diagnostics.skipped != 0 ||
-      diagnostics.actionable() != 1) {
-    std::fprintf(stderr, "unsupported lobe summary was not categorized\n");
+  if (diagnostics.unsupported_lobes != 0 || diagnostics.skipped != 0 ||
+      diagnostics.actionable() != 0) {
+    std::fprintf(stderr, "supported OpenPBR summary was not categorized\n");
     return 1;
   }
 
