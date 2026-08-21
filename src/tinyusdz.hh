@@ -44,6 +44,7 @@
 // directly.
 #include "stage.hh"
 #include "asset-resolution.hh"
+#include "security-policy.hh"
 
 
 namespace tinyusdz {
@@ -63,7 +64,8 @@ struct USDLoadOptions {
   // Set the maximum memory limit advisorily(including image data).
   // This feature would be helpful if you want to load USDZ model in mobile
   // device.
-  int32_t max_memory_limit_in_mb{16384};  // in [mb] Default 16GB
+  int32_t max_memory_limit_in_mb{static_cast<int32_t>(
+      security_policy::kDefaultInputLimitBytes / (1024ull * 1024ull))};
 
   ///
   /// TODO: Deprecate
@@ -91,7 +93,8 @@ struct USDLoadOptions {
   ///
   /// Max MBs allowed for each asset file(e.g. jpeg)
   ///
-  uint32_t max_allowed_asset_size_in_mb{1024};  // [mb] default 1GB.
+  uint32_t max_allowed_asset_size_in_mb{static_cast<uint32_t>(
+      security_policy::kDefaultAssetLimitBytes / (1024ull * 1024ull))};
 
   ///
   /// For texture size

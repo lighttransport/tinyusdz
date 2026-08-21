@@ -12,6 +12,7 @@
 #include "../layer/layer.hh"
 #include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
+#include "../../security-policy.hh"
 
 #include <cstddef>
 #include <memory>
@@ -34,7 +35,7 @@ struct LayerLoadOptions {
   /// ownership of each source through composition and Stage reconstruction.
   bool usdc_use_mmap = true;
   /// Maximum file/input bytes for each loaded external layer (0 = no limit).
-  size_t max_memory = 0;
+  size_t max_memory = security_policy::kDefaultInputLimitBytes;
 
   /// USDA parser options applied to each external USDA layer.
   ParseOptions usda_parse_options = {};

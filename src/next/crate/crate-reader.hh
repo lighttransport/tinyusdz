@@ -13,6 +13,8 @@
 #include <vector>
 #include <memory>
 
+#include "../../security-policy.hh"
+
 namespace tinyusdz {
 namespace next {
 
@@ -45,13 +47,13 @@ struct CrateReadOptions {
   /// Maximum number of elements in a single value array
   /// (mirrors pxrUSD/legacy core's 1<<30 cap; guards against a malformed
   /// count triggering an enormous allocation).
-  size_t max_array_elements = 1024 * 1024 * 1024;
+  size_t max_array_elements = 16 * 1024 * 1024;
 
   /// Maximum recursion depth for path decoding
   size_t max_path_depth = 256;
 
   /// Maximum memory budget (bytes, 0 = unlimited)
-  size_t max_memory = 0;
+  size_t max_memory = security_policy::kDefaultInputLimitBytes;
 
   /// Keep numeric POD arrays as lazy references into the retained source buffer
   /// instead of eagerly decoding them (low-memory load/compose/write path).

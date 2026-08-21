@@ -107,7 +107,8 @@ MMap zero-copy still validates bounds before returning typed pointers:
 - requested byte ranges must lie inside the backing source,
 - element size and pointer alignment must match the requested C++ type.
 
-Use `USDLoadOptions::max_memory_limit_in_mb` for untrusted input. The memory
-limit still applies during parsing and to materialized data; deferred array bytes
+Use `USDLoadOptions::max_memory_limit_in_mb` for untrusted input. The legacy
+loader defaults to a fail-closed 512 MiB limit; raise it explicitly only for
+trusted large scenes. The memory limit still applies during parsing and to materialized data; deferred array bytes
 remain in the mapped file or Stage-owned backing buffer instead of being copied
 into Stage arrays.

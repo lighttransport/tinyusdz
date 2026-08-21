@@ -30,6 +30,7 @@
 #include "nonstd/expected.hpp"
 
 #include "asset-resolution.hh"
+#include "security-policy.hh"
 #include "core/composition-types.hh"
 #include "core/prim-spec.hh"
 #include "layer.hh"
@@ -435,7 +436,8 @@ struct CompositionGraphOptions {
   ///
   /// NOTE: currently advisory only — composition does not enforce it. Use the
   /// `payload_policy` (e.g. a byte-budget closure) for actual memory bounding.
-  size_t max_memory_mb{16384};
+  size_t max_memory_mb{security_policy::kDefaultInputLimitBytes /
+                       (1024ull * 1024ull)};
 
   /// Allow parent-directory ('..') segments in reference/payload asset paths
   /// (resolution delegated to the asset resolver). Required for scenes that use

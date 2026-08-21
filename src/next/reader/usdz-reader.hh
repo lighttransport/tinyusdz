@@ -4,16 +4,21 @@
 #include <cstdint>
 #include <memory>
 
+#include "../../security-policy.hh"
+
 namespace tinyusdz {
 namespace next {
 
 /// Options for reading USDZ/ZIP archives.
 struct USDZReadOptions {
   /// Maximum archive byte size accepted by Open/OpenFile (0 = no limit).
-  size_t max_archive_size = 0;
+  size_t max_archive_size = security_policy::kDefaultInputLimitBytes;
 
   /// Maximum uncompressed byte size for any single entry (0 = no limit).
-  size_t max_entry_size = 0;
+  size_t max_entry_size = security_policy::kDefaultInputLimitBytes;
+
+  /// Maximum number of entries in an archive (0 = no limit).
+  size_t max_entries = security_policy::kDefaultArchiveEntryCount;
 };
 
 /// Minimal USDZ/ZIP reader for the next library.
