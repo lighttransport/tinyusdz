@@ -543,6 +543,47 @@ void test_path_authoring() {
   std::cout << "  Path-addressed authoring: PASSED" << std::endl;
 }
 
+void test_define_prim_name_validation() {
+  std::cout << "Testing define_prim name validation..." << std::endl;
+
+  // Valid names delegate to begin_prim (a prim is created).
+  {
+    Layer layer;
+    LayerBuilder builder(layer);
+    assert(builder.define_prim("World", "Xform") != UINT32_MAX);
+    builder.end_prim();
+    // "__self__" (the parser placeholder) is a valid identifier.
+    assert(builder.define_prim("__self__", "") != UINT32_MAX);
+    builder.end_prim();
+    builder.finalize();
+    assert(layer.prim_at_path("/World") && "valid prim created");
+  }
+
+  // Invalid names are rejected (UINT32_MAX + err); the layer is unchanged.
+  {
+    Layer layer;
+    LayerBuilder builder(layer);
+    std::string err;
+    assert(builder.define_prim("0abc", "Mesh", PrimSpecifier::Def, &err) ==
+           UINT32_MAX);
+    assert(!err.empty() && "err set on rejection");
+    assert(builder.define_prim("bad name", "Mesh", PrimSpecifier::Def, &err) ==
+           UINT32_MAX);
+    assert(builder.define_prim("{geo=hi}", "Mesh", PrimSpecifier::Def, &err) ==
+           UINT32_MAX);
+    assert(layer.prim_count() == 0 && "rejected prims are not created");
+    // begin_prim (the permissive reconstruction primitive) still accepts
+    // them; the crate reader relies on that (variant last-components like
+    // "{geo=hi}" are valid USD path elements but not identifiers).
+    assert(builder.begin_prim("0abc", "") != UINT32_MAX);
+    builder.end_prim();
+    builder.finalize();
+    assert(layer.prim_count() == 1 && "begin_prim (permissive) created it");
+  }
+
+  std::cout << "  define_prim name validation: PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
@@ -561,6 +602,7 @@ int main() {
   test_time_samples();
   test_relationships();
   test_path_authoring();
+  test_define_prim_name_validation();
 
   std::cout << "\n=== All Layer tests PASSED ===" << std::endl;
   return 0;

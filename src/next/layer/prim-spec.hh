@@ -1358,6 +1358,7 @@ public:
 
   /// Get the declared type name of a property (nullptr if not recorded)
   const std::string* property_type_name(const std::string& prop_name) const;
+  const std::string* property_type_name(PropNameId name_id) const;
 
   // ============================================================
   // Per-property metadata (interpolation / customData / ...)

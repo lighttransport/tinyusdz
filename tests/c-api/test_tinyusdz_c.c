@@ -232,6 +232,29 @@ static int test_error_handling(void) {
   return 0;
 }
 
+static int test_name_validation(void) {
+  /* Non-identifier names are rejected at creation (pxr and the parser both
+   * reject them), so they can't be authored into an unround-trippable scene. */
+  const double one = 1.0;
+  tusd_stage* stage = NULL;
+  CHECK_OK(tusd_stage_create(&stage));
+  CHECK_OK(tusd_stage_define_prim(stage, "/World", "Xform", 0, NULL));
+  CHECK(tusd_attr_set(stage, "/World", "0abc", TUSD_TYPE_DOUBLE, 0, &one, 1, 0)
+         == TUSD_ERR_INVALID_ARG);
+  CHECK(tusd_attr_set(stage, "/World", "bad name", TUSD_TYPE_DOUBLE, 0, &one, 1, 0)
+         == TUSD_ERR_INVALID_ARG);
+  CHECK(tusd_stage_define_prim(stage, "/World/0abc", "Mesh", 0, NULL)
+         == TUSD_ERR_INVALID_ARG);
+  CHECK(tusd_rel_add_target(stage, "/World", "0rel", "/World")
+         == TUSD_ERR_INVALID_ARG);
+  /* Valid (possibly namespaced) names still work. */
+  CHECK_OK(tusd_attr_set(stage, "/World", "good", TUSD_TYPE_DOUBLE, 0, &one, 1, 0));
+  CHECK_OK(tusd_attr_set(stage, "/World", "xformOp:translate", TUSD_TYPE_DOUBLE,
+                         0, &one, 1, 0));
+  tusd_stage_destroy(stage);
+  return 0;
+}
+
 static int test_file_load(const char* path) {
   tusd_load_options opts;
   tusd_load_options_init(&opts);
@@ -344,6 +367,8 @@ int main(int argc, char** argv) {
   printf("  authoring round-trip: PASSED\n");
   if (test_error_handling()) return 1;
   printf("  error handling: PASSED\n");
+  if (test_name_validation()) return 1;
+  printf("  name validation: PASSED\n");
   if (argc > 1) {
     if (test_file_load(argv[1])) return 1;
   }

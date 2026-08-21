@@ -4,6 +4,7 @@
 // TinyUSDZ Next - PrimSpec Implementation
 
 #include "prim-spec.hh"
+#include "../prim/identifier.hh"
 #include <algorithm>
 #include <cstring>
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -603,6 +604,11 @@ const Value* PrimSpec::property_value(const std::string& name) const {
 }
 
 void PrimSpec::add_property(const std::string& name, Value value, uint16_t flags) {
+  // Authoring boundary: a property name must be a valid (possibly namespaced)
+  // identifier. The parser only ever produces such names, so guarding here keeps
+  // API-authored scenes round-trippable (a non-identifier name would be written
+  // bare and be unparseable by this parser and by usdcat).
+  if (!IsValidNamespacedIdentifier(name)) return;
   PropNameId name_id = GetPropNameTable().intern(name);
   add_property(name_id, std::move(value), flags);
 }
@@ -716,6 +722,9 @@ void PrimSpec::upsert_property(PropNameId name_id, Value value, uint16_t flags) 
 
 void PrimSpec::upsert_property(const std::string& name, Value value,
                                uint16_t flags) {
+  // Authoring boundary (see add_property): reject non-identifier names so API
+  // scenes stay round-trippable.
+  if (!IsValidNamespacedIdentifier(name)) return;
   upsert_property(GetPropNameTable().intern(name), std::move(value), flags);
 }
 
@@ -900,6 +909,9 @@ const std::string* PrimSpec::raw_default_source(PropNameId name_id) const {
 }
 
 void PrimSpec::add_relationship(const std::string& name, const Path& target) {
+  // Authoring boundary (see add_property): keep relationship names valid
+  // identifiers so API scenes stay round-trippable.
+  if (!IsValidNamespacedIdentifier(name)) return;
   relationships_[name].push_back(target);
 }
 
@@ -1016,6 +1028,9 @@ std::vector<std::string> PrimSpec::relationship_names() const {
 }
 
 void PrimSpec::add_connection(const std::string& prop_name, const Path& target) {
+  // Authoring boundary (see add_property): keep connection property names
+  // valid identifiers.
+  if (!IsValidNamespacedIdentifier(prop_name)) return;
   const PropNameId id = GetPropNameTable().intern(prop_name);
   connections_[id.id].push_back(target);
   // Mark the slot as carrying a connection so serializers that gate on the
@@ -1184,14 +1199,17 @@ void PrimSpec::set_property_type_name(const std::string& prop_name,
       GetPropNameTable().intern(type_name).id;
 }
 
-const std::string* PrimSpec::property_type_name(const std::string& prop_name) const {
-  PropNameId id = GetPropNameTable().find(prop_name);
-  if (!id.is_valid()) return nullptr;
-  auto it = prop_type_names_.find(id.id);
+const std::string* PrimSpec::property_type_name(PropNameId name_id) const {
+  if (!name_id.is_valid()) return nullptr;
+  auto it = prop_type_names_.find(name_id.id);
   if (it == prop_type_names_.end()) return nullptr;
   PropNameId tn_id;
   tn_id.id = it->second;
   return &GetPropNameTable().get(tn_id);
+}
+
+const std::string* PrimSpec::property_type_name(const std::string& prop_name) const {
+  return property_type_name(GetPropNameTable().find(prop_name));
 }
 
 const PropMeta* PrimSpec::property_meta(PropNameId name_id) const {

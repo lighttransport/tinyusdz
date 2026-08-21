@@ -401,6 +401,16 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     target_compile_definitions(test_pcp PRIVATE
         TINYUSDZ_TEST_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
+    add_executable(test_instance_group
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_instance_group.cc
+    )
+    target_link_libraries(test_instance_group PRIVATE tinyusdz_next)
+
+    add_executable(test_array_edit_write
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_array_edit_write.cc
+    )
+    target_link_libraries(test_array_edit_write PRIVATE tinyusdz_next)
+
     add_executable(test_pcp_parallel
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_pcp_parallel.cc
     )
@@ -435,6 +445,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_dict.cc
     )
     target_link_libraries(test_crate_dict PRIVATE tinyusdz_next)
+
+    add_executable(test_value_dict
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_value_dict.cc
+    )
+    target_link_libraries(test_value_dict PRIVATE tinyusdz_next)
 
     add_executable(test_crate_alloc_guard
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_alloc_guard.cc
@@ -655,6 +670,10 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_pcp_parallel COMMAND test_pcp_parallel
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_instance_group COMMAND test_instance_group
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_array_edit_write COMMAND test_array_edit_write
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_writer COMMAND test_writer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdc_writer COMMAND test_usdc_writer
@@ -668,6 +687,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_test(NAME next_test_roundtrip_fidelity COMMAND test_roundtrip_fidelity
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_crate_dict COMMAND test_crate_dict
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_value_dict COMMAND test_value_dict
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_crate_alloc_guard COMMAND test_crate_alloc_guard
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -708,6 +729,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         next_test_stage
         next_test_pcp
         next_test_pcp_parallel
+        next_test_instance_group
+        next_test_array_edit_write
         next_test_writer
         next_test_usdc_writer
         next_test_usdc_reader
@@ -715,6 +738,7 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         next_test_complex_usda
         next_test_roundtrip_fidelity
         next_test_crate_dict
+        next_test_value_dict
         next_test_crate_alloc_guard
         next_test_lazy_array
         next_test_schemas

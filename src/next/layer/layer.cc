@@ -447,6 +447,16 @@ uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& ty
   return current_index_;
 }
 
+uint32_t LayerBuilder::define_prim(const std::string& name,
+                                   const std::string& type_name,
+                                   PrimSpecifier specifier, std::string* err) {
+  if (!IsValidIdentifier(name)) {
+    if (err) *err = "Not a valid prim name: " + name;
+    return UINT32_MAX;
+  }
+  return begin_prim(name, type_name, specifier);
+}
+
 void LayerBuilder::end_prim() {
   if (!prim_stack_.empty()) {
     prim_stack_.pop_back();
@@ -466,6 +476,9 @@ void LayerBuilder::add_property(const std::string& name, Value value, uint16_t f
 }
 
 void LayerBuilder::add_time_sample(const std::string& prop_name, double time, Value value) {
+  // Authoring boundary (see PrimSpec::add_property): keep the name a valid
+  // (possibly namespaced) identifier so API scenes stay round-trippable.
+  if (!IsValidNamespacedIdentifier(prop_name)) return;
   if (PrimSpec* p = current()) {
     PropNameId name_id = GetPropNameTable().intern(prop_name);
 

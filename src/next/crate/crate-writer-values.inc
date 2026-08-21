@@ -88,14 +88,19 @@
                             /*is_array_edit=*/true);
     }
 
-    // Collect literal texts (deduplicated) and assign indices.
+    // Collect literal texts (deduplicated, first-appearance order) and assign
+    // indices. lit_texts keeps first-appearance order (the literals array
+    // below is built from it in that order); the map makes the per-op lookup
+    // O(1) instead of a linear scan over the growing vector.
     std::vector<std::string> lit_texts;
+    std::unordered_map<std::string, int64_t> lit_index_by_text;
     auto lit_index = [&](const std::string& t) -> int64_t {
-      for (size_t i = 0; i < lit_texts.size(); ++i) {
-        if (lit_texts[i] == t) return static_cast<int64_t>(i);
-      }
+      auto it = lit_index_by_text.find(t);
+      if (it != lit_index_by_text.end()) return it->second;
+      const int64_t idx = static_cast<int64_t>(lit_texts.size());
+      lit_index_by_text.emplace(t, idx);
       lit_texts.push_back(t);
-      return static_cast<int64_t>(lit_texts.size()) - 1;
+      return idx;
     };
 
     std::vector<int64_t> ins;

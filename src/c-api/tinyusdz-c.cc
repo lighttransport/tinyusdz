@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "next/prim/identifier.hh"
 #include "next/tinyusdz-next.hh"
 #include "next/pipeline/flatten.hh"
 #include "next/writer/usda-writer.hh"
@@ -391,6 +392,13 @@ namespace {
 
 n::Layer* RootLayerOf(tusd_stage* stage) {
   return stage ? stage->stage.GetRootLayer() : nullptr;
+}
+
+// Attribute/relationship names must be valid (possibly namespaced) identifiers
+// -- the parser and usdcat both reject non-identifier names, so an API-created
+// one would not round-trip. Reject it up front with a clear error.
+bool IsValidAttrName(const char* name) {
+  return name && n::IsValidNamespacedIdentifier(name);
 }
 
 n::PrimSpec* MutablePrimAt(tusd_stage* stage, const char* prim_path,
@@ -1612,6 +1620,9 @@ tusd_status tusd_attr_set(tusd_stage* stage, const char* prim_path,
                           const char* name, tusd_type type, uint8_t is_array,
                           const void* data, size_t count, uint16_t flags) {
   if (!name) return Fail(TUSD_ERR_INVALID_ARG, "name is null");
+  if (!IsValidAttrName(name)) {
+    return Fail(TUSD_ERR_INVALID_ARG, "name is not a valid identifier");
+  }
   tusd_status st;
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
@@ -1633,6 +1644,9 @@ tusd_status tusd_attr_set_token_array(tusd_stage* stage, const char* prim_path,
                                       uint16_t flags) {
   if (!name || (!items && count)) {
     return Fail(TUSD_ERR_INVALID_ARG, "name/items is null");
+  }
+  if (!IsValidAttrName(name)) {
+    return Fail(TUSD_ERR_INVALID_ARG, "name is not a valid identifier");
   }
   if (type != TUSD_TYPE_TOKEN && type != TUSD_TYPE_STRING) {
     return Fail(TUSD_ERR_INVALID_ARG, "type must be token or string");
@@ -1658,6 +1672,9 @@ tusd_status tusd_attr_set_timesample(tusd_stage* stage, const char* prim_path,
                                      tusd_type type, uint8_t is_array,
                                      const void* data, size_t count) {
   if (!name) return Fail(TUSD_ERR_INVALID_ARG, "name is null");
+  if (!IsValidAttrName(name)) {
+    return Fail(TUSD_ERR_INVALID_ARG, "name is not a valid identifier");
+  }
   tusd_status st;
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
@@ -1691,6 +1708,9 @@ tusd_status tusd_attr_set_metadata(tusd_stage* stage, const char* prim_path,
                                    tusd_type type, const void* data,
                                    size_t count) {
   if (!name || !key) return Fail(TUSD_ERR_INVALID_ARG, "name/key is null");
+  if (!IsValidAttrName(name)) {
+    return Fail(TUSD_ERR_INVALID_ARG, "name is not a valid identifier");
+  }
   tusd_status st;
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
@@ -1759,6 +1779,9 @@ tusd_status tusd_attr_add_connection(tusd_stage* stage, const char* prim_path,
   if (!name || !target) {
     return Fail(TUSD_ERR_INVALID_ARG, "name/target is null");
   }
+  if (!IsValidAttrName(name)) {
+    return Fail(TUSD_ERR_INVALID_ARG, "name is not a valid identifier");
+  }
   tusd_status st;
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
@@ -1776,6 +1799,9 @@ tusd_status tusd_attr_add_connection(tusd_stage* stage, const char* prim_path,
 tusd_status tusd_attr_block(tusd_stage* stage, const char* prim_path,
                             const char* name) {
   if (!name) return Fail(TUSD_ERR_INVALID_ARG, "name is null");
+  if (!IsValidAttrName(name)) {
+    return Fail(TUSD_ERR_INVALID_ARG, "name is not a valid identifier");
+  }
   tusd_status st;
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
@@ -1800,6 +1826,9 @@ tusd_status tusd_rel_add_target(tusd_stage* stage, const char* prim_path,
   if (!rel_name || !target) {
     return Fail(TUSD_ERR_INVALID_ARG, "rel_name/target is null");
   }
+  if (!IsValidAttrName(rel_name)) {
+    return Fail(TUSD_ERR_INVALID_ARG, "rel_name is not a valid identifier");
+  }
   tusd_status st;
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);
   if (!spec) return st;
@@ -1812,6 +1841,9 @@ tusd_status tusd_rel_set_targets(tusd_stage* stage, const char* prim_path,
                                  const char* const* targets, size_t count) {
   if (!rel_name || (!targets && count)) {
     return Fail(TUSD_ERR_INVALID_ARG, "rel_name/targets is null");
+  }
+  if (!IsValidAttrName(rel_name)) {
+    return Fail(TUSD_ERR_INVALID_ARG, "rel_name is not a valid identifier");
   }
   tusd_status st;
   n::PrimSpec* spec = MutablePrimAt(stage, prim_path, &st);

@@ -313,12 +313,20 @@
     const std::string old_proto = pit->second;
     if (prim_path == old_proto) return;  // re-registering the prototype itself
 
+    // Membership test is O(1) via the prototype_of reverse index, which the
+    // invariant "P is in Q's group vector <=> prototype_of[P] == Q" keeps in
+    // sync (see DropInstancing). The old linear std::find over the group made
+    // registering N instances of one prototype O(N^2) -- minutes on 100k-instance
+    // scenes (e.g. a forest of one tree asset).
+    const auto poit = prototype_of.find(prim_path);
+    const bool in_group =
+        poit != prototype_of.end() && poit->second == old_proto;
+
     if (!prefer_min || old_proto < prim_path) {
       // prim_path is a (non-prototype) instance of the existing prototype.
-      prototype_of[prim_path] = old_proto;
-      auto &vec = instances_by_prototype[old_proto];
-      if (std::find(vec.begin(), vec.end(), prim_path) == vec.end()) {
-        vec.push_back(prim_path);
+      if (!in_group) {
+        prototype_of[prim_path] = old_proto;
+        instances_by_prototype[old_proto].push_back(prim_path);
       }
       return;
     }
@@ -332,9 +340,7 @@
       members = std::move(oit->second);
       instances_by_prototype.erase(oit);
     }
-    if (std::find(members.begin(), members.end(), prim_path) == members.end()) {
-      members.push_back(prim_path);
-    }
+    if (!in_group) members.push_back(prim_path);
     for (const std::string &m : members) prototype_of[m] = prim_path;
     instances_by_prototype[prim_path] = std::move(members);
   }

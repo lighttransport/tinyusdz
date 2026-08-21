@@ -350,28 +350,34 @@ const Value* UsdPrim::EarliestTimeSampleValue(PropNameId name_id) const {
 }
 
 std::vector<std::string> UsdPrim::GetPropertyNames() const {
-  std::vector<std::string> names;
-  if (!spec_) return names;
+  if (!spec_) return {};
 
   const PrimSpec* source = ChildSourceSpec();
   const auto& props = spec_->properties();
+  std::vector<std::string> names;
   names.reserve(props.size() + (source == spec_ ? 0 : source->properties().size()));
 
+  // Membership is tested with a hash set (O(1)) instead of a linear scan: this
+  // runs once per queried prim on the render path, so a dense prim (hundreds of
+  // primvars) used to cost O(P^2) string compares here.
   PropNameTable& table = GetPropNameTable();
+  std::unordered_set<std::string> seen;
+  seen.reserve(names.capacity());
   for (const auto& slot : props.slots()) {
     names.push_back(table.get(slot.name_id));
+    seen.insert(names.back());
   }
   if (source != spec_) {
     for (const auto& slot : source->properties().slots()) {
       const std::string& name = table.get(slot.name_id);
-      if (std::find(names.begin(), names.end(), name) == names.end()) {
+      if (seen.insert(name).second) {
         names.push_back(name);
       }
     }
   }
   for (const std::string& built_in :
        GetSchemaRegistry().PropertyNames(*source)) {
-    if (std::find(names.begin(), names.end(), built_in) == names.end()) {
+    if (seen.insert(built_in).second) {
       names.push_back(built_in);
     }
   }
@@ -380,14 +386,15 @@ std::vector<std::string> UsdPrim::GetPropertyNames() const {
   if (!authored_order.empty()) {
     std::vector<std::string> ordered;
     ordered.reserve(names.size());
+    std::unordered_set<std::string> emitted;
+    emitted.reserve(names.size());
     for (const std::string& wanted : authored_order) {
-      if (std::find(names.begin(), names.end(), wanted) != names.end() &&
-          std::find(ordered.begin(), ordered.end(), wanted) == ordered.end()) {
+      if (seen.count(wanted) && emitted.insert(wanted).second) {
         ordered.push_back(wanted);
       }
     }
     for (const std::string& name : names) {
-      if (std::find(ordered.begin(), ordered.end(), name) == ordered.end()) {
+      if (emitted.insert(name).second) {
         ordered.push_back(name);
       }
     }
@@ -621,8 +628,10 @@ std::vector<std::string> UsdPrim::GetRelationshipNames() const {
   std::vector<std::string> names = spec_->relationship_names();
   const PrimSpec* source = ChildSourceSpec();
   if (source != spec_) {
+    // O(1) dedup (was a linear scan per name).
+    std::unordered_set<std::string> seen(names.begin(), names.end());
     for (const std::string& name : source->relationship_names()) {
-      if (std::find(names.begin(), names.end(), name) == names.end()) {
+      if (seen.insert(name).second) {
         names.push_back(name);
       }
     }
