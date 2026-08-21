@@ -347,6 +347,7 @@ class VulkanRenderer final : public Renderer {
   bool createNativeCarrierPipeline(std::string* err);
   bool rebuildNativeCarrierBuffer(int curveSegments);
   void drawNativeCarriers(VkCommandBuffer cb);
+  void drawNativeCarrierShadows(VkCommandBuffer cb, bool point, int face);
   void destroyNativeCarrierResources();
   bool createSampler(std::string* err);
   bool createDescriptorInfra(std::string* err);
@@ -658,8 +659,11 @@ class VulkanRenderer final : public Renderer {
     int materialId{-1};
     int carrierId{0};
     int purpose{0};
+    uint32_t lightMask{0xffffffffu};
+    uint32_t shadowMask{0xffffffffu};
   };
   VkPipeline nativeCarrierPipeline_{VK_NULL_HANDLE};
+  VkPipeline nativeCarrierShadowPipeline_{VK_NULL_HANDLE};
   VkBuffer nativeCarrierBuf_{VK_NULL_HANDLE};
   VkDeviceMemory nativeCarrierMem_{VK_NULL_HANDLE};
   std::vector<NativeCarrierRange> nativeCarrierRanges_;
@@ -1096,7 +1100,7 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory rtTexDescMem_{VK_NULL_HANDLE};
   VkBuffer rtMatTexBuf_{VK_NULL_HANDLE};        // six texture ids/material
   VkDeviceMemory rtMatTexMem_{VK_NULL_HANDLE};
-  VkBuffer rtMatTexParamBuf_{VK_NULL_HANDLE};   // 72 floats/material
+  VkBuffer rtMatTexParamBuf_{VK_NULL_HANDLE};   // 80 floats/material
   VkDeviceMemory rtMatTexParamMem_{VK_NULL_HANDLE};
   VkBuffer rtMatGraphBuf_{VK_NULL_HANDLE};
   VkDeviceMemory rtMatGraphMem_{VK_NULL_HANDLE};
@@ -1197,6 +1201,8 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory swColMem_{VK_NULL_HANDLE};
   VkBuffer swUvBuf_{VK_NULL_HANDLE};     // HostScene::uv
   VkDeviceMemory swUvMem_{VK_NULL_HANDLE};
+  VkBuffer swUv1Buf_{VK_NULL_HANDLE};    // HostScene::uv1
+  VkDeviceMemory swUv1Mem_{VK_NULL_HANDLE};
   VkBuffer swMatBuf_{VK_NULL_HANDLE};    // HostScene::mat (material id/tri)
   VkDeviceMemory swMatMem_{VK_NULL_HANDLE};
   VkBuffer swFaceBuf_{VK_NULL_HANDLE};   // HostScene::face (source face/tri)

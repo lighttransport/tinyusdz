@@ -556,6 +556,37 @@ uint32_t RtLightCollectionMaskForMesh(
   return mask;
 }
 
+uint32_t RtLightCollectionMaskForPath(
+    const std::vector<DrawLightCPU>& lights, const std::string& carrierPath,
+    bool shadow) {
+  uint32_t mask = 0u;
+  const size_t count = std::min(lights.size(),
+                                static_cast<size_t>(kMaxRtLinkedLights));
+  auto under = [](const std::string& path, const std::string& root) {
+    return path == root ||
+           (path.size() > root.size() &&
+            path.compare(0, root.size(), root) == 0 &&
+            path[root.size()] == '/');
+  };
+  for (size_t i = 0; i < count; ++i) {
+    const DrawLightCPU& light = lights[i];
+    const bool all = shadow ? light.shadowLinksAll : light.lightLinksAll;
+    const std::vector<std::string>& paths =
+        shadow ? light.shadowLinkPaths : light.lightLinkPaths;
+    bool linked = all;
+    if (!linked) {
+      for (const std::string& target : paths) {
+        if (under(carrierPath, target)) {
+          linked = true;
+          break;
+        }
+      }
+    }
+    if (linked) mask |= uint32_t{1} << static_cast<uint32_t>(i);
+  }
+  return mask;
+}
+
 void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
                            const std::vector<DrawMaterialCPU>& materials,
                            HostTextureTable* out,

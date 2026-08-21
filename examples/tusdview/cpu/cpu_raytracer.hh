@@ -66,7 +66,7 @@ class CpuRayTracer {
   HostScene hs_;             // retained (unlike CUDA/HIP, which discard it after device upload)
   // lightrt_c has no instance/TLAS traversal API. These are the expanded
   // world-space hit attributes corresponding one-to-one with scene_ triangles.
-  std::vector<float> cpuTris_, cpuNrms_, cpuUv_;
+  std::vector<float> cpuTris_, cpuNrms_, cpuUv_, cpuUv1_;
   std::vector<int> cpuMat_, cpuInstance_;
   lrt_tri_scene* scene_{nullptr};
   size_t triCount_{0};

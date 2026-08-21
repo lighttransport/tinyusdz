@@ -389,6 +389,12 @@ struct RenderMaterial {
   // Volume shader output.
   bool has_volume{false};
   std::string volume_shader_path;  // Prim path of volume shader
+  // Homogeneous fallback constants retained for renderers that bind a volume
+  // output directly to a surface material (rather than a UsdVol field).
+  float volume_density{0.0f};
+  float volume_albedo[3] = {0.5f, 0.5f, 0.5f};
+  float volume_emission_color[3] = {0.0f, 0.0f, 0.0f};
+  float volume_emission_scale{0.0f};
 
   // Material tag for render pass sorting (opaque vs transparent).
   // Computed by computeMaterialTag() after shader conversion.

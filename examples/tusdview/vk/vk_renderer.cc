@@ -44,6 +44,10 @@
 #include "volume_vert.spv.h"
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
 #include "raytrace_comp.spv.h"  // ray-query compute shader (when glslang supports it)
+#if __has_include("raytrace_fast_comp.spv.h")
+#include "raytrace_fast_comp.spv.h"  // graph-free RT variant
+#define TUSDVIEW_HAVE_FAST_RT_SHADER 1
+#endif
 #endif
 #if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
 #include "raytrace_swbvh_comp.spv.h"  // compute-BVH fallback (no hardware ray query needed)
@@ -100,11 +104,11 @@ void BakeCurveWorld(DrawCurvesCPU* curves) {
 // Persistent VkPipelineCache for the ray-query compute pipeline.
 //
 // The driver compiles that shader on every launch, and on recent NVIDIA parts
-// it is pathologically slow -- measured at 38.2 s of a 38.9 s ray-tracing
-// init on an RTX 5060 Ti (driver 610.43.02), which is long enough to time out
-// every MCP-driven vk-rt test before the transport even comes up. This is the
-// same class of problem the CUDA path documents for NVRTC, and it gets the
-// same treatment: keep the compiled result on disk.
+// it can be pathologically slow (tens of seconds, and substantially longer
+// after a driver or shader change). This is long enough to time out headless
+// vk-rt tests before the transport even comes up. This is the same class of
+// problem the CUDA path documents for NVRTC, and it gets the same treatment:
+// keep the compiled result on disk.
 //
 // Correctness does not depend on our key being right. A VkPipelineCache blob
 // carries vendor/device/driver identifiers and a UUID, and the driver ignores
@@ -118,12 +122,18 @@ std::string RtPipelineCacheEnv(const char* name) {
 
 std::string RtPipelineCacheDir() {
 #if defined(_WIN32)
+  const std::string overrideDir = RtPipelineCacheEnv("TUSDVIEW_VK_PIPELINE_CACHE_DIR");
+  if (!overrideDir.empty()) return overrideDir;
   const std::string base = RtPipelineCacheEnv("LOCALAPPDATA");
   return base.empty() ? std::string() : base + "\\tusdview\\vk";
 #elif defined(__APPLE__)
+  const std::string overrideDir = RtPipelineCacheEnv("TUSDVIEW_VK_PIPELINE_CACHE_DIR");
+  if (!overrideDir.empty()) return overrideDir;
   const std::string home = RtPipelineCacheEnv("HOME");
   return home.empty() ? std::string() : home + "/Library/Caches/tusdview/vk";
 #else
+  const std::string overrideDir = RtPipelineCacheEnv("TUSDVIEW_VK_PIPELINE_CACHE_DIR");
+  if (!overrideDir.empty()) return overrideDir;
   const std::string xdg = RtPipelineCacheEnv("XDG_CACHE_HOME");
   if (!xdg.empty()) return xdg + "/tusdview/vk";
   const std::string home = RtPipelineCacheEnv("HOME");
@@ -140,15 +150,18 @@ uint64_t RtHashBytes(uint64_t hash, const void* data, size_t size) {
   return hash;
 }
 
-// Keyed by the SPIR-V plus the device and driver it was compiled for, so a
-// driver update or a different GPU lands on a different file rather than
-// repeatedly loading a blob the driver will reject.
+// Keyed by the device and driver it was compiled for, so all RT shader
+// variants share one cache and can reuse driver-internal code generation.
+// Vulkan pipeline caches are not tied to one shader module; hashing SPIR-V here
+// needlessly split the graph-free and full MaterialX pipelines into cold,
+// mutually unaware caches.
 std::string RtPipelineCachePath(const VkPhysicalDeviceProperties& props,
                                 const void* spv, size_t spvSize) {
   const std::string dir = RtPipelineCacheDir();
   if (dir.empty()) return std::string();
+  (void)spv;
+  (void)spvSize;
   uint64_t hash = UINT64_C(14695981039346656037);
-  hash = RtHashBytes(hash, spv, spvSize);
   hash = RtHashBytes(hash, &props.vendorID, sizeof(props.vendorID));
   hash = RtHashBytes(hash, &props.deviceID, sizeof(props.deviceID));
   hash = RtHashBytes(hash, &props.driverVersion, sizeof(props.driverVersion));
@@ -380,8 +393,10 @@ struct NativeCarrierPushC {
   int32_t mode[4];  // render mode, reserved
   float cameraRight[4];
   float cameraUp[4];
+  uint32_t lightMask[4];
+  float shadowEye[4];
 };
-static_assert(sizeof(NativeCarrierPushC) == 64,
+static_assert(sizeof(NativeCarrierPushC) == 96,
               "NativeCarrierPushC must match nonmesh shaders");
 // The per-draw metadata entry (set 3) is VulkanRenderer::DrawMetaCPU {int32_t
 // ids[4]}, matching the shader's std430 DrawMeta{ivec4}: .x meshId, .y flag bits.
@@ -498,8 +513,10 @@ struct RtPointGPU {
   float normal[3];
   float radii[2];
   float color[4];
+  uint32_t directLightMask;
+  uint32_t shadowLightMask;
 };
-static_assert(sizeof(RtPointGPU) == 60, "RtPointGPU scalar layout");
+static_assert(sizeof(RtPointGPU) == 68, "RtPointGPU scalar layout");
 
 struct RtPointChunkGPU {
   int first;
@@ -2344,6 +2361,19 @@ bool VulkanRenderer::createNativeCarrierPipeline(std::string* err) {
   ci.subpass = 0;
   const VkResult result = vkCreateGraphicsPipelines(
       device_, VK_NULL_HANDLE, 1, &ci, nullptr, &nativeCarrierPipeline_);
+  if (result == VK_SUCCESS && shadowPass_) {
+    VkPipelineColorBlendAttachmentState shadowCba = cba;
+    shadowCba.colorWriteMask = 0;
+    VkPipelineColorBlendStateCreateInfo shadowBlend = blend;
+    shadowBlend.pAttachments = &shadowCba;
+    VkGraphicsPipelineCreateInfo shadowCi = ci;
+    shadowCi.renderPass = shadowPass_;
+    shadowCi.pColorBlendState = &shadowBlend;
+    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &shadowCi,
+                                  nullptr, &nativeCarrierShadowPipeline_) !=
+        VK_SUCCESS)
+      nativeCarrierShadowPipeline_ = VK_NULL_HANDLE;
+  }
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
   if (result != VK_SUCCESS) {
@@ -7610,6 +7640,8 @@ bool VulkanRenderer::rebuildNativeCarrierBuffer(int curveSegments) {
     range.materialId = points.materialId;
     range.carrierId = carrierId++;
     range.purpose = PurposeId(points.purpose);
+    range.lightMask = RasterLightMaskForPath(rasterLights_, points.absPath);
+    range.shadowMask = RasterShadowMaskForPath(rasterLights_, points.absPath);
     const float scale = worldScale(points);
     for (size_t i = 0; i < count; ++i) {
       NativeCarrierInstanceGPU rec{};
@@ -7654,6 +7686,8 @@ bool VulkanRenderer::rebuildNativeCarrierBuffer(int curveSegments) {
     range.materialId = curves.materialId;
     range.carrierId = carrierId++;
     range.purpose = PurposeId(curves.purpose);
+    range.lightMask = RasterLightMaskForPath(rasterLights_, curves.absPath);
+    range.shadowMask = RasterShadowMaskForPath(rasterLights_, curves.absPath);
     const float scale = worldScale(curves);
     const size_t np = curves.points.size() / 3;
     size_t base = 0;
@@ -7743,6 +7777,58 @@ void VulkanRenderer::drawNativeCarriers(VkCommandBuffer cb) {
          !nativeCarrierVisible_[visibleIndex]))
       continue;
     if (range.count == 0) continue;
+    push.ids[0] = range.kind;
+    push.ids[1] = range.materialId;
+    push.ids[2] = range.carrierId;
+    push.ids[3] = range.purpose;
+    push.lightMask[0] = range.lightMask;
+    vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(push), &push);
+    vkCmdDraw(cb, 4, range.count, 0, range.first);
+  }
+}
+
+void VulkanRenderer::drawNativeCarrierShadows(VkCommandBuffer cb,
+                                               bool point, int face) {
+  if (!nativeCarrierShadowPipeline_ || !nativeCarrierBuf_ ||
+      nativeCarrierSegments_ != nativeCarrierRequestedSegments_)
+    return;
+  const int lightSlot = point ? pointShadowCameras_.lightSlot
+                              : shadowCamera_.lightSlot;
+  if (lightSlot < 0) return;
+  const uint32_t lightBit = uint32_t{1} << static_cast<uint32_t>(lightSlot);
+  vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    nativeCarrierShadowPipeline_);
+  if (dispParamsSet_)
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipelineLayout_, 2, 1, &dispParamsSet_, 0, nullptr);
+  VkDeviceSize offset = 0;
+  vkCmdBindVertexBuffers(cb, 0, 1, &nativeCarrierBuf_, &offset);
+  NativeCarrierPushC push{};
+  push.mode[1] = point ? 2 + face : 1;
+  const light3d::Vec3& eye = point ? pointShadowCameras_.eye
+                                   : shadowCamera_.eye;
+  const light3d::Vec3& right = point
+      ? pointShadowCameras_.right[static_cast<size_t>(face)]
+      : shadowCamera_.right;
+  const light3d::Vec3& up = point
+      ? pointShadowCameras_.up[static_cast<size_t>(face)]
+      : shadowCamera_.up;
+  push.cameraRight[0] = right.x;
+  push.cameraRight[1] = right.y;
+  push.cameraRight[2] = right.z;
+  push.cameraUp[0] = up.x;
+  push.cameraUp[1] = up.y;
+  push.cameraUp[2] = up.z;
+  push.shadowEye[0] = eye.x;
+  push.shadowEye[1] = eye.y;
+  push.shadowEye[2] = eye.z;
+  for (const NativeCarrierRange& range : nativeCarrierRanges_) {
+    const size_t visibleIndex = static_cast<size_t>(range.carrierId);
+    if ((nativeCarrierPurposeMask_ & (1u << range.purpose)) == 0u ||
+        (visibleIndex < nativeCarrierVisible_.size() &&
+         !nativeCarrierVisible_[visibleIndex]) ||
+        (range.shadowMask & lightBit) == 0u || range.count == 0)
+      continue;
     push.ids[0] = range.kind;
     push.ids[1] = range.materialId;
     push.ids[2] = range.carrierId;
@@ -8781,6 +8867,10 @@ void VulkanRenderer::rebuildTlas() {
       p.color[1] = src.colors.size() >= 3 ? src.colors[ci+1] : 1.0f;
       p.color[2] = src.colors.size() >= 3 ? src.colors[ci+2] : 1.0f;
       p.color[3] = opacity;
+      p.directLightMask = RtLightCollectionMaskForPath(
+          rtLightsCpu_, src.absPath, false);
+      p.shadowLightMask = RtLightCollectionMaskForPath(
+          rtLightsCpu_, src.absPath, true);
       pointDescs.push_back(p);
     }
   }
@@ -9661,7 +9751,29 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &rtPipelineLayout_),
            "rt pipeline layout");
 
-  VkShaderModule cs = createShader(raytrace_comp_spv, sizeof(raytrace_comp_spv));
+  const bool hasMaterialXGraphs = std::any_of(
+      rtMaterialsCpu_.begin(), rtMaterialsCpu_.end(), [](const DrawMaterialCPU& m) {
+        // The compact graph-free module intentionally handles only the common
+        // untextured Preview-style material. Keep textured/OpenPBR materials on
+        // the full module so the fast startup variant never silently drops
+        // authored lobes or semantic texture slots.
+        return !m.materialXGraph.nodes.empty() || m.hasLightRtOpenPBR ||
+               m.baseColorTex >= 0 || m.metallicTex >= 0 ||
+               m.roughnessTex >= 0 || m.normalTex >= 0 || m.opacityTex >= 0 ||
+               m.emissiveTex >= 0 || m.coatNormalTex >= 0;
+      });
+#if defined(TUSDVIEW_HAVE_FAST_RT_SHADER) && TUSDVIEW_HAVE_FAST_RT_SHADER
+  const void* rtShaderCode = hasMaterialXGraphs
+                                  ? static_cast<const void*>(raytrace_comp_spv)
+                                  : static_cast<const void*>(raytrace_fast_comp_spv);
+  const size_t rtShaderBytes = hasMaterialXGraphs
+                                   ? sizeof(raytrace_comp_spv)
+                                   : sizeof(raytrace_fast_comp_spv);
+#else
+  const void* rtShaderCode = raytrace_comp_spv;
+  const size_t rtShaderBytes = sizeof(raytrace_comp_spv);
+#endif
+  VkShaderModule cs = createShader(rtShaderCode, rtShaderBytes);
   if (!cs) {
     if (err) *err = "rt shader module";
     return false;
@@ -9671,8 +9783,9 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   VkPhysicalDeviceProperties props{};
   vkGetPhysicalDeviceProperties(phys_, &props);
   const std::string cachePath =
-      RtPipelineCachePath(props, raytrace_comp_spv, sizeof(raytrace_comp_spv));
+      RtPipelineCachePath(props, rtShaderCode, rtShaderBytes);
   std::vector<uint8_t> cacheBlob;
+  bool cacheHit = false;
   if (!cachePath.empty()) {
     std::ifstream in(cachePath, std::ios::binary);
     if (in) {
@@ -9683,6 +9796,8 @@ bool VulkanRenderer::createRtResources(std::string* err) {
         cacheBlob.resize(static_cast<size_t>(sz));
         if (!in.read(reinterpret_cast<char*>(cacheBlob.data()), sz)) {
           cacheBlob.clear();
+        } else {
+          cacheHit = true;
         }
       }
     }
@@ -9710,8 +9825,16 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   cpci.stage.module = cs;
   cpci.stage.pName = "main";
   cpci.layout = rtPipelineLayout_;
+  const auto pipelineStart = std::chrono::steady_clock::now();
   VkResult r = vkCreateComputePipelines(device_, pipeCache, 1, &cpci, nullptr,
                                         &rtPipeline_);
+  if (std::getenv("TUSDVIEW_RT_TIMING")) {
+    const double seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - pipelineStart).count();
+    LOGI("[vk] RT compute pipeline: %.3f s (%s cache, shader %.1f KiB)",
+         seconds, cacheHit ? "warm" : "cold",
+         static_cast<double>(rtShaderBytes) / 1024.0);
+  }
   vkDestroyShaderModule(device_, cs, nullptr);
 
   // Persist whatever the driver produced. Written to a temporary and renamed so
@@ -9776,7 +9899,7 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   // SW-technique-specific (BVH/triangle data) and free to reuse numbers the
   // hardware layout spends on AS(0)/MeshDesc(2)/InstInfo(4)/points(15-18),
   // since the two layouts never coexist in one pipeline.
-  VkDescriptorSetLayoutBinding b[23]{};
+  VkDescriptorSetLayoutBinding b[24]{};
   auto img = [](VkDescriptorSetLayoutBinding& x, uint32_t bnd) {
     x.binding = bnd; x.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     x.descriptorCount = 1; x.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -9817,16 +9940,18 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   b[22].binding = 22;
   b[22].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   b[22].descriptorCount = 1;
+  b[23] = b[22];
+  b[23].binding = 23;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 23;
+  lci.bindingCount = 24;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &swRtSetLayout_),
            "sw-rt descriptor set layout");
 
   VkDescriptorPoolSize ps[3]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
-  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 17};
+  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 18};
   ps[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
            3 + TUSDVIEW_RT_PTEXTURE_IMAGE_CAP};
   VkDescriptorPoolCreateInfo pci{};
@@ -9895,6 +10020,8 @@ void VulkanRenderer::destroySwRt() {
   if (swColMem_) { vkFreeMemory(device_, swColMem_, nullptr); swColMem_ = VK_NULL_HANDLE; }
   if (swUvBuf_) { vkDestroyBuffer(device_, swUvBuf_, nullptr); swUvBuf_ = VK_NULL_HANDLE; }
   if (swUvMem_) { vkFreeMemory(device_, swUvMem_, nullptr); swUvMem_ = VK_NULL_HANDLE; }
+  if (swUv1Buf_) { vkDestroyBuffer(device_, swUv1Buf_, nullptr); swUv1Buf_ = VK_NULL_HANDLE; }
+  if (swUv1Mem_) { vkFreeMemory(device_, swUv1Mem_, nullptr); swUv1Mem_ = VK_NULL_HANDLE; }
   if (swMatBuf_) { vkDestroyBuffer(device_, swMatBuf_, nullptr); swMatBuf_ = VK_NULL_HANDLE; }
   if (swMatMem_) { vkFreeMemory(device_, swMatMem_, nullptr); swMatMem_ = VK_NULL_HANDLE; }
   if (swFaceBuf_) { vkDestroyBuffer(device_, swFaceBuf_, nullptr); swFaceBuf_ = VK_NULL_HANDLE; }
@@ -10045,6 +10172,8 @@ void VulkanRenderer::rebuildSwBvh() {
     if (swColMem_) { vkFreeMemory(device_, swColMem_, nullptr); swColMem_ = VK_NULL_HANDLE; }
     if (swUvBuf_) { vkDestroyBuffer(device_, swUvBuf_, nullptr); swUvBuf_ = VK_NULL_HANDLE; }
     if (swUvMem_) { vkFreeMemory(device_, swUvMem_, nullptr); swUvMem_ = VK_NULL_HANDLE; }
+    if (swUv1Buf_) { vkDestroyBuffer(device_, swUv1Buf_, nullptr); swUv1Buf_ = VK_NULL_HANDLE; }
+    if (swUv1Mem_) { vkFreeMemory(device_, swUv1Mem_, nullptr); swUv1Mem_ = VK_NULL_HANDLE; }
     if (swMatBuf_) { vkDestroyBuffer(device_, swMatBuf_, nullptr); swMatBuf_ = VK_NULL_HANDLE; }
     if (swMatMem_) { vkFreeMemory(device_, swMatMem_, nullptr); swMatMem_ = VK_NULL_HANDLE; }
     if (swFaceBuf_) { vkDestroyBuffer(device_, swFaceBuf_, nullptr); swFaceBuf_ = VK_NULL_HANDLE; }
@@ -10106,6 +10235,7 @@ void VulkanRenderer::rebuildSwBvh() {
   ok = uploadFloats(hs.nrms, &swNrmBuf_, &swNrmMem_) && ok;
   ok = uploadFloats(hs.cols, &swColBuf_, &swColMem_) && ok;
   ok = uploadFloats(hs.uv, &swUvBuf_, &swUvMem_) && ok;
+  ok = uploadFloats(hs.uv1, &swUv1Buf_, &swUv1Mem_) && ok;
   ok = uploadInts(hs.mat, &swMatBuf_, &swMatMem_) && ok;
   ok = uploadInts(hs.face, &swFaceBuf_, &swFaceMem_) && ok;
   ok = uploadNodes(hs.blas, &swBlasBuf_, &swBlasMem_) && ok;
@@ -10166,6 +10296,7 @@ void VulkanRenderer::rebuildSwBvh() {
   VkDescriptorBufferInfo swNrmsInfo{swNrmBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swColsInfo{swColBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swUvInfo{swUvBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo swUv1Info{swUv1Buf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swMatIdInfo{swMatBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swFaceInfo{swFaceBuf_, 0, VK_WHOLE_SIZE};
 
@@ -10208,7 +10339,7 @@ void VulkanRenderer::rebuildSwBvh() {
                                                         : whiteView_;
     ptexImages[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   }
-  VkWriteDescriptorSet w[23]{};
+  VkWriteDescriptorSet w[24]{};
   bufW(w[0], 0, &tlasInfo);
   imgW(w[1], 1, &outImgInfo);
   bufW(w[2], 2, &blasInfo);
@@ -10231,13 +10362,14 @@ void VulkanRenderer::rebuildSwBvh() {
   bufW(w[19], 19, &swMatIdInfo);
   bufW(w[20], 20, &swFaceInfo);
   bufW(w[21], 22, &graphInfo);
-  w[22].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  w[22].dstSet = swRtSet_;
-  w[22].dstBinding = 21;
-  w[22].descriptorCount = static_cast<uint32_t>(ptexImages.size());
-  w[22].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  w[22].pImageInfo = ptexImages.data();
-  vkUpdateDescriptorSets(device_, 23, w, 0, nullptr);
+  bufW(w[22], 23, &swUv1Info);
+  w[23].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[23].dstSet = swRtSet_;
+  w[23].dstBinding = 21;
+  w[23].descriptorCount = static_cast<uint32_t>(ptexImages.size());
+  w[23].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  w[23].pImageInfo = ptexImages.data();
+  vkUpdateDescriptorSets(device_, 24, w, 0, nullptr);
   if (directPtexCount > 0) {
     std::fprintf(stderr, "[vk_swrt] direct compressed Ptex images: %zu\n",
                  directPtexCount);
@@ -12131,8 +12263,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
             const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12u];
             push.baseColor[0] = mc[0]; push.baseColor[1] = mc[1];
             push.baseColor[2] = mc[2]; push.baseColor[3] = mc[3];
-            push.matAux[2] = mc[6];
-            push.matAux[3] = mc[7];
+            // Shadow.frag uses matAux.z/w for alpha mode/cutoff.  The
+            // material color packing stores those in row 1 (lanes 0/1), not
+            // the emissive row that the lit fragment consumes.
+            push.matAux[2] = mc[4];
+            push.matAux[3] = mc[5];
           } else {
             push.baseColor[0] = push.baseColor[1] = push.baseColor[2] = 0.6f;
             push.baseColor[3] = 1.0f;
@@ -12207,6 +12342,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                              static_cast<uint32_t>(sub.indexOffset), 0, 0);
         }
       }
+      drawNativeCarrierShadows(cb, renderPointShadow, shadowFace);
       vkCmdEndRenderPass(cb);
       }
     }
@@ -13111,6 +13247,7 @@ void VulkanRenderer::shutdown() {
   if (gpuQueryPool_) { vkDestroyQueryPool(device_, gpuQueryPool_, nullptr); gpuQueryPool_ = VK_NULL_HANDLE; }
   if (tessPipeline_) { vkDestroyPipeline(device_, tessPipeline_, nullptr); tessPipeline_ = VK_NULL_HANDLE; }
   if (nativeCarrierPipeline_) { vkDestroyPipeline(device_, nativeCarrierPipeline_, nullptr); nativeCarrierPipeline_ = VK_NULL_HANDLE; }
+  if (nativeCarrierShadowPipeline_) { vkDestroyPipeline(device_, nativeCarrierShadowPipeline_, nullptr); nativeCarrierShadowPipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
   if (instPipeline_) { vkDestroyPipeline(device_, instPipeline_, nullptr); instPipeline_ = VK_NULL_HANDLE; }
   if (instTranslucentPipeline_) { vkDestroyPipeline(device_, instTranslucentPipeline_, nullptr); instTranslucentPipeline_ = VK_NULL_HANDLE; }

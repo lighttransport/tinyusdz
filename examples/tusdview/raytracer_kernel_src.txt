@@ -22,6 +22,14 @@ __device__ F3 norm3(F3 a){ float l=sqrtf(dot3(a,a)); return l>0.f?scale(a,1.f/l)
 __device__ float ggxD(float nh,float r){float a=fmaxf(r*r,0.002f),a2=a*a,d=nh*nh*(a2-1.f)+1.f;return a2/fmaxf(3.14159265f*d*d,1e-6f);}
 __device__ float ggxG1(float nx,float r){float k=(r+1.f)*(r+1.f)*0.125f;return nx/fmaxf(nx*(1.f-k)+k,1e-6f);}
 __device__ F3 fresnelSchlick(float vh,F3 f0){float q=powf(1.f-fminf(fmaxf(vh,0.f),1.f),5.f);return mk(f0.x+(1.f-f0.x)*q,f0.y+(1.f-f0.y)*q,f0.z+(1.f-f0.z)*q);}
+__device__ F3 applyThinFilm(F3 f0,float cosTheta,float weight,float thickness,float ior){
+  float w=fminf(fmaxf(weight,0.f),1.f); if(w<=0.f||thickness<=0.f)return f0;
+  float phase=6.28318530718f*fmaxf(ior,1.f)*thickness*(1.f-fminf(fmaxf(cosTheta,0.f),1.f));
+  F3 film=mk(0.5f+0.5f*cosf(phase),0.5f+0.5f*cosf(phase*1.17f+2.1f),0.5f+0.5f*cosf(phase*1.35f+4.2f));
+  return mk(f0.x+(1.f-f0.x)*film.x*0.65f*w,
+            f0.y+(1.f-f0.y)*film.y*0.65f*w,
+            f0.z+(1.f-f0.z)*film.z*0.65f*w);
+}
 __device__ float linearToSrgb1(float x){x=fminf(fmaxf(x,0.f),1.f);return x<=0.0031308f?x*12.92f:1.055f*powf(x,1.f/2.4f)-0.055f;}
 // Stable distinct color per material id (-1 -> neutral gray).
 __device__ F3 idColor(int id){
@@ -109,11 +117,11 @@ __device__ F4 sampleMaterialTexture(const unsigned char* texels,
 // Compact MaterialX graph interpreter shared by CUDA and HIP. Graph blocks
 // are fixed-size and bounded; repeated passes resolve forward references
 // without recursion. Texture ids are already remapped to the resident table.
-__device__ F4 evalMaterialXGraph(const float* graph, int mid, int route,
-                                 float u, float v, int face,
+__device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
+                                    float u, float v, float u1, float v1, int face,
                                  const unsigned char* texels,
                                  const TexDesc* textures, int numTextures) {
-  const int stride = 1352;
+  const int stride = 1355;
   const int base = mid * stride;
   if (!graph || mid < 0 || route < 0 || base + 7 >= 0x3fffffff) return mk4(0.f,0.f,0.f,0.f);
   int count = (int)fminf(fmaxf(graph[base], 0.f), 64.f);
@@ -124,7 +132,7 @@ __device__ F4 evalMaterialXGraph(const float* graph, int mid, int route,
   for (int pass=0; pass<64; ++pass) {
     for (int i=0; i<64; ++i) {
       if (i>=count) continue;
-      const int p=base+8+i*21;
+      const int p=base+10+i*21;
       const int op=(int)(graph[p]+0.5f);
       const int ia=(int)(graph[p+1]+0.5f), ib=(int)(graph[p+2]+0.5f),
                 ic=(int)(graph[p+3]+0.5f);
@@ -136,7 +144,16 @@ __device__ F4 evalMaterialXGraph(const float* graph, int mid, int route,
       if (op==0) values[i]=fallback;
       else if (op==1 || op==2)
       {
-        const float gu=u*graph[p+17]+graph[p+19], gv=v*graph[p+18]+graph[p+20];
+        float gu=u, gv=v;
+        // Preserve the -1 sentinel for image nodes without a texcoord input.
+        // C-style truncation would convert -1 to zero and pin the sample to
+        // the first graph value rather than the hit UV.
+        const int uvInput=(int)floorf(graph[p+15]+0.5f);
+        if (uvInput==0) { gu=a.x; gv=a.y; }
+        else if (uvInput==1) { gu=b.x; gv=b.y; }
+        else if (uvInput==2) { gu=c.x; gv=c.y; }
+        gu=gu*graph[p+17]+graph[p+19];
+        gv=gv*graph[p+18]+graph[p+20];
         values[i]=tex>=0 ? sampleMaterialTexture(texels,textures,numTextures,
                                                   tex,gu,gv,(unsigned int)face,
                                                   0.f,mk4(1.f,1.f,1.f,1.f))
@@ -171,7 +188,8 @@ __device__ F4 evalMaterialXGraph(const float* graph, int mid, int route,
       else if (op==18) values[i]=mk4(cosf(a.x),cosf(a.y),cosf(a.z),cosf(a.w));
       else if (op==19) { float l=a.x*.2126f+a.y*.7152f+a.z*.0722f; values[i]=mk4(l,l,l,a.w); }
       else if (op==20) values[i]=a.x>=.5f?b:c;
-      else if (op==21) values[i]=mk4(u,v,0.f,1.f);
+      else if (op==21) values[i]=mk4(graph[p+14] > 0.5f ? u1 : u,
+                                     graph[p+14] > 0.5f ? v1 : v, 0.f, 1.f);
       else if (op==22) values[i]=mk4(floorf(a.x),floorf(a.y),floorf(a.z),floorf(a.w));
       else if (op==23) values[i]=mk4(ceilf(a.x),ceilf(a.y),ceilf(a.z),ceilf(a.w));
       else if (op==24) values[i]=mk4(a.x-floorf(a.x),a.y-floorf(a.y),a.z-floorf(a.z),a.w-floorf(a.w));
@@ -180,20 +198,32 @@ __device__ F4 evalMaterialXGraph(const float* graph, int mid, int route,
       else if (op==27) { F3 n=mk(a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x); values[i]=mk4(n.x,n.y,n.z,a.w); }
       else if (op==28) { float l=sqrtf(a.x*a.x+a.y*a.y+a.z*a.z); values[i]=mk4(l,l,l,l); }
       else if (op==29) { float n=sinf((a.x+u)*127.1f+(a.y+v)*311.7f)*43758.5453f; n=n-floorf(n); values[i]=mk4(n,n,n,n); }
+      else if (op==40) { float n=sinf((a.x+u*17.f)*127.1f+(a.y+v*31.f)*311.7f+a.z*74.7f)*43758.5453f; n=n-floorf(n); values[i]=mk4(n,n,n,n); }
       else if (op==30) values[i]=mk4(tanf(a.x),tanf(a.y),tanf(a.z),tanf(a.w));
       else if (op==31) values[i]=mk4(expf(a.x),expf(a.y),expf(a.z),expf(a.w));
       else if (op==32) values[i]=mk4(logf(fmaxf(a.x,1e-6f)),logf(fmaxf(a.y,1e-6f)),logf(fmaxf(a.z,1e-6f)),logf(fmaxf(a.w,1e-6f)));
       else if (op==33) values[i]=mk4(fmodf(a.x,fmaxf(fabsf(b.x),1e-6f)),fmodf(a.y,fmaxf(fabsf(b.y),1e-6f)),fmodf(a.z,fmaxf(fabsf(b.z),1e-6f)),fmodf(a.w,fmaxf(fabsf(b.w),1e-6f)));
+      else if (op==41) values[i]=mk4(atan2f(a.x,b.x),atan2f(a.y,b.y),atan2f(a.z,b.z),atan2f(a.w,b.w));
+      else if (op==42) values[i]=mk4(a.x>0.f?1.f:(a.x<0.f?-1.f:0.f),a.y>0.f?1.f:(a.y<0.f?-1.f:0.f),a.z>0.f?1.f:(a.z<0.f?-1.f:0.f),a.w>0.f?1.f:(a.w<0.f?-1.f:0.f));
+      else if (op==43) values[i]=mk4(roundf(a.x),roundf(a.y),roundf(a.z),roundf(a.w));
       else if (op==34) values[i]=mk4(1.f-a.x,1.f-a.y,1.f-a.z,1.f-a.w);
       else if (op==35) values[i]=mk4((a.x-b.x)/fmaxf(c.x-b.x,1e-6f),(a.y-b.y)/fmaxf(c.y-b.y,1e-6f),(a.z-b.z)/fmaxf(c.z-b.z,1e-6f),(a.w-b.w)/fmaxf(c.w-b.w,1e-6f));
       else if (op==36) values[i]=mk4(0.f,0.f,1.f,1.f);
       else if (op==37) values[i]=mk4(1.f,0.f,0.f,1.f);
       else if (op==38) { F3 axis=norm3(mk(b.x,b.y,b.z)); float ang=a.x*0.0174532925199433f, cs=cosf(ang), sn=sinf(ang), d=axis.x*c.x+axis.y*c.y+axis.z*c.z; F3 q=mk(c.x*cs+(axis.y*c.z-axis.z*c.y)*sn+axis.x*d*(1.f-cs),c.y*cs+(axis.z*c.x-axis.x*c.z)*sn+axis.y*d*(1.f-cs),c.z*cs+(axis.x*c.y-axis.y*c.x)*sn+axis.z*d*(1.f-cs)); values[i]=mk4(q.x,q.y,q.z,c.w); }
+      else if (op==39) { float tx=a.x*graph[p+17]+graph[p+19], ty=a.y*graph[p+18]+graph[p+20], ang=graph[p+15]*0.0174532925199433f, cs=cosf(ang), sn=sinf(ang); values[i]=mk4(tx*cs-ty*sn,tx*sn+ty*cs,a.z,a.w); }
       else values[i]=fallback;
     }
   }
   (void)face;
   return values[wanted];
+}
+__device__ F4 evalMaterialXGraph(const float* graph, int mid, int route,
+                                 float u, float v, int face,
+                                 const unsigned char* texels,
+                                 const TexDesc* textures, int numTextures) {
+  return evalMaterialXGraphUv(graph, mid, route, u, v, u, v, face,
+                              texels, textures, numTextures);
 }
 __device__ F4 sampleTexRGBALod(const unsigned char* texels, const TexDesc* tex,
                                int numTex, int id, float u, float v, float lod);
@@ -646,7 +676,7 @@ __device__ bool cutoutAllowsHit(
     if (dot3(cross3(sub(p1,p0),sub(p2,p0)),rayDir)>0.f) mid=backMats[ht];
   }
   if (mid<0 || mid>=numMats || !matLightRt) return true;
-  const float* lrt=&matLightRt[mid*56];
+  const float* lrt=&matLightRt[mid*80];
   float alphaMode=lrt[54];
   if (!(alphaMode>0.5f && alphaMode<1.5f)) return true;
   float w0=1.f-bu-bv;
@@ -680,7 +710,7 @@ __device__ bool cutoutAllowsHit(
     int ch=tp?(int)(tp[66]+0.5f):0;
     opacity*=channel4(ot,ch)*(tp?tp[67]:1.f)+(tp?tp[68]:0.f);
   }
-  if (matGraph && matGraph[mid*1352+4] >= 0.f) {
+  if (matGraph && matGraph[mid*1355+4] >= 0.f) {
     opacity=evalMaterialXGraph(matGraph,mid,3,ouu,ovv,(unsigned int)ht,
                                texels,textures,numTextures).x;
   }
@@ -727,7 +757,7 @@ __device__ float traverseCutout(
 __device__ F3 approxPrimaryLayer(
     int ht, float bu, float bv, int hitInst, const float* cols,
     const int* mats, const float* matBase, const float* matPbr,
-    const float* matLightRt, int numMats, const int* matTex,
+    const float* matLightRt, const float* matGraph, int numMats, const int* matTex,
     const float* matTexParam, const unsigned char* texels,
     const TexDesc* textures, int numTextures, const float* uvs,
     const Inst* insts) {
@@ -737,9 +767,9 @@ __device__ F3 approxPrimaryLayer(
   if (mid >= 0 && mid < numMats) {
     if (matBase) base = mk(matBase[mid * 3], matBase[mid * 3 + 1],
                             matBase[mid * 3 + 2]);
-    if (matLightRt && matLightRt[mid * 56 + 51] > 0.5f)
-      base = mk(matLightRt[mid * 56], matLightRt[mid * 56 + 1],
-                matLightRt[mid * 56 + 2]);
+    if (matLightRt && matLightRt[mid * 80 + 51] > 0.5f)
+      base = scale(mk(matLightRt[mid * 80], matLightRt[mid * 80 + 1],
+                      matLightRt[mid * 80 + 2]), matLightRt[mid * 80 + 3]);
     if (matPbr) emission = mk(matPbr[mid * 6 + 2], matPbr[mid * 6 + 3],
                               matPbr[mid * 6 + 4]);
     const float* uv = &uvs[ht * 6];
@@ -750,7 +780,7 @@ __device__ F3 approxPrimaryLayer(
                                  (unsigned int)ht, 0.f,
                                  mk4(1.f, 1.f, 1.f, 1.f));
     base = mk(base.x * t.x, base.y * t.y, base.z * t.z);
-    if (matGraph && matGraph[mid * 1352 + 1] >= 0.f) {
+    if (matGraph && matGraph[mid * 1355 + 1] >= 0.f) {
       F4 g = evalMaterialXGraph(matGraph, mid, 0, u, v, ht, texels,
                                 textures, numTextures);
       base = mk(g.x, g.y, g.z);
@@ -765,7 +795,7 @@ __device__ F3 approxPrimaryLayer(
               e.z * p[54] + p[58], e.w * p[55] + p[59]);
       emission = mk(emission.x * e.x, emission.y * e.y, emission.z * e.z);
     }
-    if (matGraph && matGraph[mid * 1352 + 5] >= 0.f) {
+    if (matGraph && matGraph[mid * 1355 + 5] >= 0.f) {
       F4 g = evalMaterialXGraph(matGraph, mid, 4, u, v, ht, texels,
                                 textures, numTextures);
       emission = mk(fmaxf(g.x, 0.f), fmaxf(g.y, 0.f), fmaxf(g.z, 0.f));
@@ -784,12 +814,14 @@ __device__ F3 primaryLayerTransmissionTint(
   if (!mats || !matLightRt || tri < 0) return mk(1.f, 1.f, 1.f);
   int mid = mats[tri];
   if (mid < 0 || mid >= numMats) return mk(1.f, 1.f, 1.f);
-  const float* p = &matLightRt[mid * 56];
+  const float* p = &matLightRt[mid * 80];
   float w = fminf(fmaxf(p[11], 0.f), 1.f);
   float depth = fmaxf(p[15], 0.f);
-  return mk(expf(-w * depth * (fmaxf(0.f, 1.f - fminf(fmaxf(p[8], 0.f), 1.f)) + 0.25f * fmaxf(p[12], 0.f))),
-            expf(-w * depth * (fmaxf(0.f, 1.f - fminf(fmaxf(p[9], 0.f), 1.f)) + 0.25f * fmaxf(p[13], 0.f))),
-            expf(-w * depth * (fmaxf(0.f, 1.f - fminf(fmaxf(p[10], 0.f), 1.f)) + 0.25f * fmaxf(p[14], 0.f))));
+  float dispersion=fminf(fmaxf(p[60]*p[62],0.f),1.f);
+  F3 tint=mk(1.f+0.35f*dispersion,1.f,1.f-0.25f*dispersion);
+  return mk(tint.x*expf(-w * depth * (fmaxf(0.f, 1.f - fminf(fmaxf(p[8], 0.f), 1.f)) + 0.25f * fmaxf(p[12], 0.f))),
+            tint.y*expf(-w * depth * (fmaxf(0.f, 1.f - fminf(fmaxf(p[9], 0.f), 1.f)) + 0.25f * fmaxf(p[13], 0.f))),
+            tint.z*expf(-w * depth * (fmaxf(0.f, 1.f - fminf(fmaxf(p[10], 0.f), 1.f)) + 0.25f * fmaxf(p[14], 0.f))));
 }
 
 __device__ F3 primaryLayerRefractedColor(
@@ -798,33 +830,72 @@ __device__ F3 primaryLayerRefractedColor(
     const Node* tlas, const Node* blas, const float* cols, const float* matBase,
     const int* backMats,
     const float* matPbr, const float* matGraph, const int* matTex,
-    const float* matTexParam, const unsigned char* texels,
-    const TexDesc* textures, int numTextures, const float* uvs,
-    const float* uvs1, F3 rayDir) {
+  const float* matTexParam, const unsigned char* texels,
+  const TexDesc* textures, int numTextures, const float* uvs,
+  const float* uvs1, F3 rayOrigin, F3 rayDir, F3* outOrigin, F3* outDir) {
   if (!tris || !insts || !mats || tri < 0 || hitInst < 0) return mk(0.f, 0.f, 0.f);
-  int mid = mats[tri];
-  if (mid < 0 || mid >= numMats || !matLightRt) return mk(0.f, 0.f, 0.f);
-  F3 p0 = xfPt(insts[hitInst].o2w, mk(tris[tri * 9 + 0], tris[tri * 9 + 1], tris[tri * 9 + 2]));
-  F3 p1 = xfPt(insts[hitInst].o2w, mk(tris[tri * 9 + 3], tris[tri * 9 + 4], tris[tri * 9 + 5]));
-  F3 p2 = xfPt(insts[hitInst].o2w, mk(tris[tri * 9 + 6], tris[tri * 9 + 7], tris[tri * 9 + 8]));
-  F3 n = xfNrm(insts[hitInst].w2o, norm3(cross3(sub(p1, p0), sub(p2, p0))));
-  if (dot3(n, rayDir) > 0.f) n = scale(n, -1.f);
-  float eta = 1.f / fmaxf(matLightRt[mid * 56 + 43], 1.f);
-  float cosi = -dot3(n, rayDir);
-  float k = 1.f - eta * eta * (1.f - cosi * cosi);
-  F3 refr = k < 0.f ? sub(rayDir, scale(n, 2.f * dot3(rayDir, n)))
-                    : add(scale(rayDir, eta), scale(n, eta * cosi - sqrtf(k)));
-  refr = norm3(refr);
-  F3 hit = add(add(scale(p0, 1.f - bu - bv), scale(p1, bu)), scale(p2, bv));
-  int nht = -1, ninst = -1; float nbu = 0.f, nbv = 0.f;
-  traverseCutout(tlas, insts, blas, tris, add(hit, scale(refr, 1.0e-3f)), refr,
-                1.0e30f, &nht, &nbu, &nbv, &ninst, cols, mats, backMats,
-                matPbr, matLightRt, matGraph, numMats, matTex, matTexParam,
-                texels, textures, numTextures, uvs, uvs1, -1, false);
-  if (nht < 0 || ninst < 0) return mk(0.f, 0.f, 0.f);
-  return approxPrimaryLayer(nht, nbu, nbv, ninst, cols, mats, matBase,
-                            matPbr, matLightRt, numMats, matTex, matTexParam,
-                            texels, textures, numTextures, uvs, insts);
+  if (!matLightRt) return mk(0.f, 0.f, 0.f);
+  F3 throughput = mk(1.f, 1.f, 1.f);
+  if (outOrigin) *outOrigin = rayOrigin;
+  if (outDir) *outDir = rayDir;
+  int currentTri = tri, currentInst = hitInst;
+  float currentBu = bu, currentBv = bv;
+  F3 currentDir = rayDir;
+  // Match the Vulkan RT bounded walk: retain transmission through three
+  // refractive interfaces before falling back to the approximate underlay.
+  for (int bounce = 0; bounce < 3; ++bounce) {
+    int mid = mats[currentTri];
+    if (mid < 0 || mid >= numMats) return mk(0.f, 0.f, 0.f);
+    F3 p0 = xfPt(insts[currentInst].o2w,
+                 mk(tris[currentTri * 9 + 0], tris[currentTri * 9 + 1],
+                    tris[currentTri * 9 + 2]));
+    F3 p1 = xfPt(insts[currentInst].o2w,
+                 mk(tris[currentTri * 9 + 3], tris[currentTri * 9 + 4],
+                    tris[currentTri * 9 + 5]));
+    F3 p2 = xfPt(insts[currentInst].o2w,
+                 mk(tris[currentTri * 9 + 6], tris[currentTri * 9 + 7],
+                    tris[currentTri * 9 + 8]));
+    F3 n = xfNrm(insts[currentInst].w2o,
+                 norm3(cross3(sub(p1, p0), sub(p2, p0))));
+    const float normalDir = dot3(n, currentDir);
+    const bool entering = normalDir < 0.f;
+    if (normalDir > 0.f) n = scale(n, -1.f);
+    const float ior = fmaxf(matLightRt[mid * 80 + 43], 1.f);
+    const float eta = entering ? 1.f / ior : ior;
+    const float cosi = -dot3(n, currentDir);
+    const float k = 1.f - eta * eta * (1.f - cosi * cosi);
+    F3 refr = k < 0.f ? sub(currentDir, scale(n, 2.f * dot3(currentDir, n)))
+                      : add(scale(currentDir, eta),
+                            scale(n, eta * cosi - sqrtf(k)));
+    refr = norm3(refr);
+    F3 tint = primaryLayerTransmissionTint(currentTri, mats, matLightRt,
+                                           numMats);
+    throughput = mk(throughput.x * tint.x, throughput.y * tint.y,
+                     throughput.z * tint.z);
+    F3 hit = add(add(scale(p0, 1.f - currentBu - currentBv),
+                     scale(p1, currentBu)), scale(p2, currentBv));
+    if (outOrigin) *outOrigin = add(hit, scale(refr, 1.0e-3f));
+    if (outDir) *outDir = refr;
+    int nextTri = -1, nextInst = -1; float nextBu = 0.f, nextBv = 0.f;
+    traverseCutout(tlas, insts, blas, tris, add(hit, scale(refr, 1.0e-3f)),
+                  refr, 1.0e30f, &nextTri, &nextBu, &nextBv, &nextInst,
+                  cols, mats, backMats, matPbr, matLightRt, matGraph, numMats,
+                  matTex, matTexParam, texels, textures, numTextures, uvs, uvs1,
+                  -1, false);
+    if (nextTri < 0 || nextInst < 0) return mk(0.f, 0.f, 0.f);
+    currentTri = nextTri; currentInst = nextInst;
+    currentBu = nextBu; currentBv = nextBv; currentDir = refr;
+    if (bounce == 2) {
+      F3 result = approxPrimaryLayer(currentTri, currentBu, currentBv,
+                                      currentInst, cols, mats, matBase,
+                                      matPbr, matLightRt, matGraph, numMats, matTex,
+                                      matTexParam, texels, textures,
+                                      numTextures, uvs, insts);
+      return mk(throughput.x * result.x, throughput.y * result.y,
+                throughput.z * result.z);
+    }
+  }
+  return mk(0.f, 0.f, 0.f);
 }
 
 // Analytic Gaussian ellipse traversal. Point leaves use the same compact Node
@@ -1022,8 +1093,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       N=norm3(cross3(sub(wp1,wp0),sub(wp2,wp0)));
       if (dot3(N,d)>0.f) N=scale(N,-1.f);  // two-sided
     } else {
-      const float* nv=&nrms[ht*9];
-      F3 nl=mk(nv[0]*w0+nv[3]*bu+nv[6]*bv, nv[1]*w0+nv[4]*bu+nv[7]*bv, nv[2]*w0+nv[5]*bu+nv[8]*bv);
+      const float* nrmv=&nrms[ht*9];
+      F3 nl=mk(nrmv[0]*w0+nrmv[3]*bu+nrmv[6]*bv, nrmv[1]*w0+nrmv[4]*bu+nrmv[7]*bv, nrmv[2]*w0+nrmv[5]*bu+nrmv[8]*bv);
       N=norm3(xfNrm(I->w2o,nl));  // object->world normal (inverse-transpose)
     }
     const float* cv=&cols[ht*12];
@@ -1061,10 +1132,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       if (matTexParam) tp=&matTexParam[mid*155];
     }
     const float* lrt = (matLightRt && mid>=0 && mid<numMats &&
-                        matLightRt[mid*56+51] > 0.5f) ? &matLightRt[mid*56] : 0;
+                        matLightRt[mid*80+51] > 0.5f) ? &matLightRt[mid*80] : 0;
     if (mid>=0 && mid<numMats && matBase) {
       F3 mb=mk(matBase[mid*3],matBase[mid*3+1],matBase[mid*3+2]);
-      if (lrt) mb=mk(lrt[0],lrt[1],lrt[2]);
+      if (lrt) mb=scale(mk(lrt[0],lrt[1],lrt[2]),lrt[3]);
       base=mk(base.x*mb.x,base.y*mb.y,base.z*mb.z);
     }
     float buu=uu,bvv=vv2,muu=uu,mvv=vv2,ruu=uu,rvv=vv2;
@@ -1088,10 +1159,24 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     float metallic=(mid>=0&&mid<numMats)?matPbr[mid*6+0]:0.f;
     float roughness=(mid>=0&&mid<numMats)?matPbr[mid*6+1]:0.5f;
     float opacity=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f;
-    float alphaMode=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*56+54]:0.f;
-    float alphaCutoff=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*56+55]:0.5f;
-    float specWeight=1.f, specIor=1.5f, coatWeight=0.f, coatRoughness=0.1f;
+    float alphaMode=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*80+54]:0.f;
+    float alphaCutoff=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*80+55]:0.5f;
+    float specWeight=1.f, specIor=1.5f, specAnisotropy=0.f,
+          specRotation=0.f, coatWeight=0.f, coatRoughness=0.1f;
+    float sheenWeight=0.f, sheenRoughness=0.3f;
+    float thinFilmWeight=0.f, thinFilmThickness=0.f, thinFilmIor=1.5f;
+    float transmission=0.f, transmissionDispersion=0.f;
+    float transmissionDispersionScale=0.f;
+    float subsurface=0.f;
+    F3 subsurfaceColor=mk(1.f,1.f,1.f);
+    F3 subsurfaceRadius=mk(1.f,1.f,1.f);
+    float subsurfaceScale=1.f;
+    float coatAffectColor=0.f, coatAffectRoughness=0.f, coatDarkening=0.f;
+    F3 sheenColor=mk(1.f,1.f,1.f);
     F3 coatColor=mk(1.f,1.f,1.f);
+    F3 transmissionColor=mk(1.f,1.f,1.f);
+    F3 volumeAlbedo=mk(1.f,1.f,1.f), volumeEmission=mk(0.f,0.f,0.f);
+    float volumeDensity=0.f, volumeEmissionScale=0.f;
     F3 emissionConst=(mid>=0&&mid<numMats)?mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]):mk(0.f,0.f,0.f);
     if (lrt) {
       // `matPbr` is the live texture-neutralized source for base factors.
@@ -1101,7 +1186,53 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       coatWeight=lrt[27];
       coatColor=mk(lrt[24],lrt[25],lrt[26]);
       coatRoughness=lrt[44];
+      transmission=lrt[11];
+      transmissionColor=mk(lrt[8],lrt[9],lrt[10]);
+      volumeAlbedo=mk(lrt[72],lrt[73],lrt[74]);
+      volumeDensity=lrt[75];
+      volumeEmission=mk(lrt[76],lrt[77],lrt[78]);
+      volumeEmissionScale=lrt[79];
+      subsurface=lrt[19];
+      subsurfaceColor=mk(lrt[16],lrt[17],lrt[18]);
+      subsurfaceRadius=mk(fmaxf(lrt[20],0.f),fmaxf(lrt[21],0.f),fmaxf(lrt[22],0.f));
+      subsurfaceScale=fmaxf(lrt[23],0.f);
+      transmissionDispersion=lrt[60];
+      transmissionDispersionScale=lrt[62];
+      coatAffectColor=lrt[67];
+      coatAffectRoughness=lrt[68];
+      coatDarkening=lrt[70];
+      sheenWeight=lrt[31];
+      sheenColor=mk(lrt[28],lrt[29],lrt[30]);
+      sheenRoughness=lrt[46];
+      thinFilmWeight=lrt[48];
+      thinFilmThickness=lrt[49];
+      thinFilmIor=lrt[50];
+      specAnisotropy=fminf(fmaxf(lrt[57]+0.5f*lrt[59],-1.f),1.f);
+      specRotation=lrt[58];
+      roughness=fminf(fmaxf(roughness *
+                            (1.f-0.25f*fabsf(specAnisotropy)),
+                            0.02f),1.f);
     }
+    float dispersion=fminf(fmaxf(transmissionDispersion *
+                                 transmissionDispersionScale,0.f),1.f);
+    transmissionColor=mk(transmissionColor.x*(1.f+0.35f*dispersion),
+                          transmissionColor.y,
+                          transmissionColor.z*(1.f-0.25f*dispersion));
+    base=mk(base.x*(1.f-subsurface)+subsurfaceColor.x*subsurface,
+            base.y*(1.f-subsurface)+subsurfaceColor.y*subsurface,
+            base.z*(1.f-subsurface)+subsurfaceColor.z*subsurface);
+    base=scale(base,1.f-0.2f*fminf(fmaxf(coatWeight*coatDarkening,0.f),1.f));
+    base=mk(base.x*(1.f+(coatColor.x-1.f)*coatWeight*coatAffectColor),
+            base.y*(1.f+(coatColor.y-1.f)*coatWeight*coatAffectColor),
+            base.z*(1.f+(coatColor.z-1.f)*coatWeight*coatAffectColor));
+    roughness=roughness*(1.f-fminf(fmaxf(coatWeight*coatAffectRoughness,0.f),1.f))+
+              coatRoughness*fminf(fmaxf(coatWeight*coatAffectRoughness,0.f),1.f);
+    float volumeOpacity=1.f-expf(-fmaxf(volumeDensity,0.f)*0.1f);
+    base=mk(base.x*(1.f+(volumeAlbedo.x-1.f)*volumeOpacity),
+            base.y*(1.f+(volumeAlbedo.y-1.f)*volumeOpacity),
+            base.z*(1.f+(volumeAlbedo.z-1.f)*volumeOpacity));
+    emissionConst=add(emissionConst,scale(volumeEmission,
+                                          fmaxf(volumeEmissionScale,0.f)*volumeOpacity));
     // Occlusion / coat texture slots (matTex 6..9). Unbound slots sample white,
     // and the loaders neutralize the matching constant to 1 whenever a texture
     // is bound, so constant*texel is unconditionally correct.
@@ -1146,6 +1277,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                       materialF0.z*(st.z*tp[134]+tp[138]));
       }
     }
+    float nv=fmaxf(dot3(N,scale(d,-1.f)),1e-4f);
+    materialF0=applyThinFilm(materialF0,nv,thinFilmWeight,thinFilmThickness,thinFilmIor);
     float occlusion=1.f;
     if (occlusionTex>=0){
       F4 at=sampleMaterialTexture(texels,textures,numTextures,occlusionTex,
@@ -1275,29 +1408,56 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     // output is authoritative for that lane; unconnected lanes retain the
     // regular material path above.
     if (matGraph && mid >= 0 && mid < numMats) {
-      const int gb=mid*1352;
+      const int gb=mid*1355;
       if (matGraph[gb+1]>=0.f) {
-        F4 g=evalMaterialXGraph(matGraph,mid,0,buu,bvv,faces[ht],texels,textures,numTextures);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,0,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
         base=mk(g.x,g.y,g.z);
       }
       if (matGraph[gb+2]>=0.f)
-        metallic=fminf(fmaxf(evalMaterialXGraph(matGraph,mid,1,muu,mvv,faces[ht],texels,textures,numTextures).x,0.f),1.f);
+        metallic=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,muu,mvv,uu1,vv21,faces[ht],texels,textures,numTextures).x,0.f),1.f);
       if (matGraph[gb+3]>=0.f)
-        roughness=fminf(fmaxf(evalMaterialXGraph(matGraph,mid,2,ruu,rvv,faces[ht],texels,textures,numTextures).x,0.03f),1.f);
+        roughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,ruu,rvv,uu1,vv21,faces[ht],texels,textures,numTextures).x,0.03f),1.f);
       if (matGraph[gb+4]>=0.f) {
-        opacity=fminf(fmaxf(evalMaterialXGraph(matGraph,mid,3,ouu,ovv,faces[ht],texels,textures,numTextures).x,0.f),1.f);
+        opacity=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,3,ouu,ovv,uu1,vv21,faces[ht],texels,textures,numTextures).x,0.f),1.f);
         materialOpacity=fminf(fmaxf(opacity*vertexOpacity*I->tint[3],0.f),1.f);
       }
       if (matGraph[gb+5]>=0.f) {
-        F4 g=evalMaterialXGraph(matGraph,mid,4,euu,evv,faces[ht],texels,textures,numTextures);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,4,euu,evv,uu1,vv21,faces[ht],texels,textures,numTextures);
         emissionConst=mk(g.x,g.y,g.z);
+      }
+      if (matGraph[gb+7]>=0.f)
+        subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures).x,0.f),1.f);
+      if (matGraph[gb+8]>=0.f) {
+        F4 g=evalMaterialXGraphUv(matGraph,mid,7,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
+        subsurfaceColor=mk(fmaxf(g.x,0.f),fmaxf(g.y,0.f),fmaxf(g.z,0.f));
+      }
+      if (matGraph[gb+9]>=0.f) {
+        F4 g=evalMaterialXGraphUv(matGraph,mid,8,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
+        subsurfaceRadius=mk(fmaxf(g.x,0.f),fmaxf(g.y,0.f),fmaxf(g.z,0.f));
+      }
+      if (matGraph[gb+6]>=0.f) {
+        // MaterialX normalmap output: decode the graph's tangent-space
+        // [0,1] value and apply it in the same triangle tangent frame as the
+        // semantic normal-texture path above.
+        F4 gn=evalMaterialXGraphUv(matGraph,mid,5,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
+        F3 ge1=sub(wp1,wp0), ge2=sub(wp2,wp0);
+        F3 gN=norm3(cross3(ge1,ge2));
+        float gd1u=uvh[2]-uvh[0], gd1v=uvh[3]-uvh[1];
+        float gd2u=uvh[4]-uvh[0], gd2v=uvh[5]-uvh[1];
+        float gdet=gd1u*gd2v-gd2u*gd1v;
+        F3 gT=fabsf(gdet)>1e-12f
+          ? norm3(scale(sub(scale(ge1,gd2v),scale(ge2,gd1v)),1.f/gdet))
+          : norm3(cross3(fabsf(gN.z)<0.999f?mk(0.f,0.f,1.f):mk(0.f,1.f,0.f),gN));
+        F3 gB=norm3(cross3(gN,gT));
+        N=norm3(add(add(scale(gT,gn.x*2.f-1.f),
+                         scale(gB,gn.y*2.f-1.f)),
+                     scale(gN,gn.z*2.f-1.f)));
       }
     }
 
-    // Default shaded view: limited LightRT/OpenPBR preview. This is not the full
-    // BSDF, but it consumes the baked OpenPBR constants for roughness, metalness,
-    // specular, coat, emission and opacity while preserving the existing texture
-    // sampling and debug-AOV behavior.
+    // Default shaded view: realtime OpenPBR preview. It consumes the canonical
+    // packed material block while preserving the existing texture sampling and
+    // debug-AOV behavior.
     F3 V=norm3(scale(d,-1.f));               // toward the eye
     F3 Ns=(dot3(N,V)<0.f)?scale(N,-1.f):N;   // forward-facing shading normal
     F3 coatNs=(dot3(coatN,V)<0.f)?scale(coatN,-1.f):coatN;
@@ -1373,7 +1533,8 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     }
     F3 direct3=mk(0.f,0.f,0.f);
     bool hadDirect=false;
-    float nv=fmaxf(dot3(Ns,V),1e-4f);
+    nv=fmaxf(dot3(Ns,V),1e-4f);
+    float directionalRoughness=roughness;
     for (int li=0; lightParams && li<numLights; ++li) {
       const float* lp=&lightParams[li*80];
       int lt=(int)(lp[0]+0.5f);
@@ -1438,13 +1599,39 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       F3 diffB=mk((1.f-F.x)*(1.f-metallic)*base.x*0.31830989f,
                   (1.f-F.y)*(1.f-metallic)*base.y*0.31830989f,
                   (1.f-F.z)*(1.f-metallic)*base.z*0.31830989f);
+      F3 transmissionB=mk(transmissionColor.x*transmission*(1.f-F.x)*0.31830989f,
+                          transmissionColor.y*transmission*(1.f-F.y)*0.31830989f,
+                          transmissionColor.z*transmission*(1.f-F.z)*0.31830989f);
+      float sheenScale=fminf(fmaxf(sheenWeight,0.f),1.f) *
+          (0.5f+0.5f*fminf(fmaxf(sheenRoughness,0.f),1.f)) *
+          powf(1.f-nl,5.f)*0.31830989f;
+      F3 sheenB=scale(sheenColor,sheenScale);
+      F3 tangent=fabsf(Ns.y)<0.9f?norm3(cross3(Ns,mk(0.f,1.f,0.f))):
+                 norm3(cross3(Ns,mk(1.f,0.f,0.f)));
+      F3 bitangent=norm3(cross3(Ns,tangent));
+      float rot=specRotation*0.01745329252f, cs=cosf(rot), sn=sinf(rot);
+      F3 rotatedT=add(scale(tangent,cs),scale(bitangent,sn));
+      F3 rotatedB=add(scale(tangent,-sn),scale(bitangent,cs));
+      float hT=dot3(Hh,rotatedT), hB=dot3(Hh,rotatedB);
+      directionalRoughness=fminf(fmaxf(roughness *
+          (1.f+specAnisotropy*(hT*hT-hB*hB)),0.02f),1.f);
+      float radiusGain=fminf(fmaxf(sqrtf(fmaxf(dot3(subsurfaceRadius,
+          mk(0.2126f,0.7152f,0.0722f))*subsurfaceScale,0.f))*8.f,0.f),1.f);
+      float diffusionShape=(1.f-radiusGain)*(0.25f+0.75f*powf(1.f-nl,2.f))+
+                           radiusGain*(0.25f+0.75f*(1.f-nl));
+      F3 subsurfaceB=scale(subsurfaceColor,
+                          fminf(fmaxf(subsurface,0.f),1.f) * diffusionShape *
+                          0.31830989f);
       float cnl=fmaxf(dot3(coatNs,Ll),0.f),cnv=fmaxf(dot3(coatNs,V),1e-4f);
       float cnh=fmaxf(dot3(coatNs,Hh),0.f);
       F3 cF=fresnelSchlick(vh,mk(0.04f,0.04f,0.04f));
       float cg=ggxD(cnh,coatRoughness)*ggxG1(cnv,coatRoughness)*ggxG1(cnl,coatRoughness)/fmaxf(4.f*cnv*cnl,1e-5f)*fminf(fmaxf(coatWeight,0.f),1.f);
       F3 coatB=mk(cF.x*cg*coatColor.x,cF.y*cg*coatColor.y,cF.z*cg*coatColor.z);
       float ds=lp[29],ss=lp[30];
-      F3 baseBrdf=add(scale(diffB,ds),scale(specB,ss));
+      F3 baseBrdf=add(add(add(add(scale(diffB,ds),scale(sheenB,ds)),
+                              scale(transmissionB,ds)), scale(subsurfaceB,ds)),
+                       scale(specB,ss));
+      baseBrdf=scale(baseBrdf,1.f-0.5f*fminf(fmaxf(coatWeight,0.f),1.f));
       F3 coatBrdf=scale(coatB,ss);
       F3 brdf=add(scale(baseBrdf,nl),scale(coatBrdf,cnl));
       F3 rad=scale(lt==7?emitter:mk(lp[12],lp[13],lp[14]),
@@ -1457,15 +1644,27 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       float nh=fmaxf(dot3(Ns,Hh),0.f),vh=fmaxf(dot3(V,Hh),0.f);
       F3 f0=materialF0;
       F3 F=fresnelSchlick(vh,f0);
-      float sg=ggxD(nh,roughness)*ggxG1(nv,roughness)*ggxG1(nl,roughness)/fmaxf(4.f*nv*nl,1e-5f)*fmaxf(specWeight,0.f);
-      direct3=mk(((1.f-F.x)*(1.f-metallic)*base.x*0.31830989f+F.x*sg)*nl,
-                 ((1.f-F.y)*(1.f-metallic)*base.y*0.31830989f+F.y*sg)*nl,
-                 ((1.f-F.z)*(1.f-metallic)*base.z*0.31830989f+F.z*sg)*nl);
+      float sg=ggxD(nh,directionalRoughness)*ggxG1(nv,directionalRoughness)*
+               ggxG1(nl,directionalRoughness)/fmaxf(4.f*nv*nl,1e-5f)*
+               fmaxf(specWeight,0.f);
+      float sheenScale=fminf(fmaxf(sheenWeight,0.f),1.f) *
+          (0.5f+0.5f*fminf(fmaxf(sheenRoughness,0.f),1.f)) *
+          powf(1.f-nl,5.f)*0.31830989f;
+      direct3=mk(((1.f-F.x)*(1.f-metallic)*base.x*0.31830989f+
+                  sheenColor.x*sheenScale+transmissionColor.x*transmission*(1.f-F.x)*0.31830989f+F.x*sg)*nl,
+                 ((1.f-F.y)*(1.f-metallic)*base.y*0.31830989f+
+                  sheenColor.y*sheenScale+transmissionColor.y*transmission*(1.f-F.y)*0.31830989f+F.y*sg)*nl,
+                 ((1.f-F.z)*(1.f-metallic)*base.z*0.31830989f+
+                  sheenColor.z*sheenScale+transmissionColor.z*transmission*(1.f-F.z)*0.31830989f+F.z*sg)*nl);
     }
     // Occlusion modulates indirect/ambient only, never direct (matches raster).
     F3 ambientBase=mk(base.x*amb3.x*occlusion,base.y*amb3.y*occlusion,
                       base.z*amb3.z*occlusion);
-    outc=add(add(add(ambientBase,direct3),scale(specIBL3,occlusion)),em);
+    ambientBase=add(ambientBase,scale(mk(transmissionColor.x*transmission,
+                                         transmissionColor.y*transmission,
+                                         transmissionColor.z*transmission),0.25f));
+    outc=add(add(add(add(ambientBase,direct3),scale(specIBL3,occlusion)),
+                 scale(sheenColor,fminf(fmaxf(sheenWeight,0.f),1.f)*0.025f)),em);
     // Render mode (clear[3]): 1=wireframe, 2=shading normal, 3=material-id,
     // 4=geometric normal, 5=uv set 0, 6=depth (t/depthScale in lightDir[3]).
     int rmode=(int)(cam.clear[3]+0.5f);
@@ -1479,20 +1678,25 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
         F3 throughput=scale(topTint,1.f-materialOpacity);
         F3 throughColor=mk(cam.clear[0],cam.clear[1],cam.clear[2]);
         float topTransmission = (matLightRt && mats[ht] >= 0)
-            ? fminf(fmaxf(matLightRt[mats[ht]*56+11],0.f),1.f) : 0.f;
+            ? fminf(fmaxf(matLightRt[mats[ht]*80+11],0.f),1.f) : 0.f;
+        F3 refractedOrigin=o, refractedDir=d;
         F3 topRefr=primaryLayerRefractedColor(
             ht,bu,bv,hitInst,tris,insts,mats,matLightRt,numMats,tlas,blas,
             cols,matBase,backMats,matPbr,matGraph,matTex,matTexParam,texels,
-            textures,numTextures,uvs,uvs1,d);
+            textures,numTextures,uvs,uvs1,o,d,&refractedOrigin,&refractedDir);
         throughColor=mk(throughColor.x*(1.f-topTransmission)+topRefr.x*topTransmission,
                         throughColor.y*(1.f-topTransmission)+topRefr.y*topTransmission,
                         throughColor.z*(1.f-topTransmission)+topRefr.z*topTransmission);
+        F3 walkOrigin=o, walkDir=d;
         float cursor=t+1.0e-4f;
+        if (topTransmission > 0.f) {
+          walkOrigin=refractedOrigin; walkDir=refractedDir; cursor=1.0e-4f;
+        }
         for (int layer=0; layer<7 &&
              (throughput.x+throughput.y+throughput.z)>0.009f; ++layer) {
           int nht=-1, ninst=-1; float nbu=0.f, nbv=0.f;
-          F3 no=add(o,scale(d,cursor));
-          float nt=traverseCutout(tlas,insts,blas,tris,no,d,1.0e30f,
+          F3 no=add(walkOrigin,scale(walkDir,cursor));
+          float nt=traverseCutout(tlas,insts,blas,tris,no,walkDir,1.0e30f,
                                   &nht,&nbu,&nbv,&ninst,cols,mats,backMats,
                                   matPbr,matLightRt,matGraph,numMats,matTex,
                                   matTexParam,texels,textures,numTextures,
@@ -1504,8 +1708,8 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
           if (nmid>=0 && nmid<numMats) {
             na=matPbr ? matPbr[nmid*6+5] : 1.f;
             if (matLightRt) {
-              nam=matLightRt[nmid*56+54];
-              if (matLightRt[nmid*56+51]>0.5f) na=matLightRt[nmid*56+39];
+              nam=matLightRt[nmid*80+54];
+              if (matLightRt[nmid*80+51]>0.5f) na=matLightRt[nmid*80+39];
               if (nam>0.5f && nam<1.5f) na=1.f;
             }
             const float* nc=&cols[nht*12];
@@ -1515,26 +1719,23 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
           }
           na=fminf(fmaxf(na,0.f),1.f);
           F3 lc=approxPrimaryLayer(nht,nbu,nbv,ninst,cols,mats,matBase,
-                                   matPbr,matLightRt,numMats,matTex,
+                                   matPbr,matLightRt,matGraph,numMats,matTex,
                                    matTexParam,texels,textures,numTextures,
                                    uvs,insts);
           accum=add(accum,mk(lc.x*throughput.x*na,
                              lc.y*throughput.y*na,
                              lc.z*throughput.z*na));
           F3 ltint=primaryLayerTransmissionTint(nht,mats,matLightRt,numMats);
-          float layerTransmission = (matLightRt && nmid >= 0)
-              ? fminf(fmaxf(matLightRt[nmid*56+11],0.f),1.f) : 0.f;
-          F3 layerRefr=primaryLayerRefractedColor(
-              nht,nbu,nbv,ninst,tris,insts,mats,matLightRt,numMats,tlas,blas,
-              cols,matBase,backMats,matPbr,matGraph,matTex,matTexParam,texels,
-              textures,numTextures,uvs,uvs1,d);
-          throughColor=mk(throughColor.x*ltint.x*(1.f-layerTransmission)+layerRefr.x*layerTransmission,
-                          throughColor.y*ltint.y*(1.f-layerTransmission)+layerRefr.y*layerTransmission,
-                          throughColor.z*ltint.z*(1.f-layerTransmission)+layerRefr.z*layerTransmission);
+          // The top-layer bounded walk already carries its changed direction
+          // across subsequent interfaces. Underlayers here were discovered on
+          // the original straight camera ray, so launching another refracted
+          // walk from that original direction would describe a contradictory
+          // path. Retain their bounded tint/alpha approximation only.
           throughput=mk(throughput.x*ltint.x*(1.f-na),
                         throughput.y*ltint.y*(1.f-na),
                         throughput.z*ltint.z*(1.f-na));
-          cursor+=nt+1.0e-4f;
+          walkOrigin=add(no,scale(walkDir,nt+1.0e-4f));
+          cursor=1.0e-4f;
           if (nam>0.5f && nam<1.5f) break;
         }
         outc=add(accum,mk(throughColor.x*throughput.x,

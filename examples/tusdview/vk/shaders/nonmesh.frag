@@ -37,6 +37,8 @@ layout(push_constant) uniform Push {
   ivec4 mode;
   vec4 cameraRight;
   vec4 cameraUp;
+  uvec4 lightMask;
+  vec4 shadowEye;
 } pc;
 
 layout(location = 0) out vec4 fragColor;
@@ -85,6 +87,8 @@ void main() {
     N = normalize(vView);
   }
 
+  if (pc.mode.y != 0) { fragColor = vec4(0.0); return; }
+
   // Render mode AOVs
   if (pc.mode.x == 2) { fragColor = vec4(N * 0.5 + 0.5, 1); return; }
   if (pc.mode.x == 3) { fragColor = vec4(idColor(pc.ids.y), 1); return; }
@@ -100,12 +104,6 @@ void main() {
   if (pc.mode.x == 12) { fragColor = vec4(vec3(vColor.a), 1); return; }
   if (pc.mode.x != 0) { fragColor = vec4(0.18, 0.18, 0.18, 1); return; }
 
-  // The existing Vulkan non-mesh fallback is an unlit RGB overlay. Preserve
-  // those color semantics so switching to persistent carriers changes only
-  // geometry generation/performance, not authored displayColor appearance.
-  fragColor = vec4(vColor.rgb, 1.0);
-  return;
-
   vec3 V = normalize(vView);
   float nv = max(dot(N, V), 1e-4);
   float roughness = 0.5;
@@ -114,7 +112,7 @@ void main() {
   for (int li = 0; li < 16; ++li) {
     if (li >= int(fr.rasterLightInfo.x)) break;
     uvec4 info = fr.rasterLightInfo;
-    if ((info.y & (1u << uint(li))) == 0u) continue;
+    if ((pc.lightMask.x & (1u << uint(li))) == 0u) continue;
 
     vec4 pt = fr.rasterLights[li].positionType;
     vec4 da = fr.rasterLights[li].directionAngle;

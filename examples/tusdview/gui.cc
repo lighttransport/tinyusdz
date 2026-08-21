@@ -4725,6 +4725,47 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
     outT = best;
     return true;
   };
+  auto pointHit = [&](const DrawPointsCPU& p, float& outT) -> bool {
+    const size_t np = p.points.size() / 3;
+    if (np == 0) return false;
+    const light3d::Mat4 view = cam_->view();
+    const light3d::Vec3 cameraRight{view.m[0], view.m[4], view.m[8]};
+    float best = 1.0e30f;
+    for (size_t i = 0; i < np; ++i) {
+      const float x = p.points[i * 3], y = p.points[i * 3 + 1],
+                  z = p.points[i * 3 + 2];
+      const light3d::Vec3 center{
+          p.world[0] * x + p.world[4] * y + p.world[8] * z + p.world[12],
+          p.world[1] * x + p.world[5] * y + p.world[9] * z + p.world[13],
+          p.world[2] * x + p.world[6] * y + p.world[10] * z + p.world[14]};
+      float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+      if (!project(center, sx, sy, sz)) continue;
+      float radiusWorld = 0.5f;
+      if (p.gaussian && p.ellipseRadii.size() >= (i + 1) * 2) {
+        radiusWorld = 0.5f * std::max(p.ellipseRadii[i * 2],
+                                      p.ellipseRadii[i * 2 + 1]);
+      } else if (!p.widths.empty()) {
+        radiusWorld = p.widths.size() == 1
+            ? 0.5f * p.widths[0]
+            : 0.5f * p.widths[std::min(i, p.widths.size() - 1)];
+      }
+      if (!std::isfinite(radiusWorld) || radiusWorld < 0.0f) continue;
+      float ex = 0.0f, ey = 0.0f, ez = 0.0f;
+      const light3d::Vec3 edge = center + cameraRight * radiusWorld;
+      float radius = 2.0f;
+      if (project(edge, ex, ey, ez)) {
+        radius = std::max(2.0f, std::min(64.0f,
+            std::sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy))));
+      }
+      const float dx = px - sx, dy = py - sy;
+      if (dx * dx + dy * dy > radius * radius) continue;
+      const float t = light3d::dot(center - ro, rd);
+      if (t > 1.0e-5f) best = std::min(best, t);
+    }
+    if (best == 1.0e30f) return false;
+    outT = best;
+    return true;
+  };
   std::string bestPath;
   float bestT = 1.0e30f;
   auto consider = [&](const std::string& path, const std::string& purpose,
@@ -4736,8 +4777,16 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
       bestPath = path;
     }
   };
-  for (const DrawPointsCPU& p : draw_->points)
-    consider(p.absPath, p.purpose, p.aabbMin, p.aabbMax);
+  for (const DrawPointsCPU& p : draw_->points) {
+    if (!meshPurposeVisible(p.purpose) || p.absPath.empty()) continue;
+    float pointT = 0.0f;
+    if (pointHit(p, pointT) && pointT < bestT) {
+      bestT = pointT;
+      bestPath = p.absPath;
+    } else if (p.points.empty()) {
+      consider(p.absPath, p.purpose, p.aabbMin, p.aabbMax);
+    }
+  }
   for (size_t i = 0; i < draw_->curves.size(); ++i) {
     const DrawCurvesCPU& c = draw_->curves[i];
     if (!carrierVisibleForView(draw_->points.size() + i)) continue;

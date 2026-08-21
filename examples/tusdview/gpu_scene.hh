@@ -443,6 +443,13 @@ enum class MaterialXGraphOpCPU : uint32_t {
   GeometricNormal,
   GeometricTangent,
   Rotate3D,
+  Transform2D,
+  // MaterialX noise3d keeps the authored z coordinate instead of degrading
+  // to the legacy two-dimensional noise approximation.
+  Noise3D = 40,
+  Atan2 = 41,
+  Sign = 42,
+  Round = 43,
   Unknown,
 };
 
@@ -470,8 +477,10 @@ struct MaterialXGraphNodeCPU {
 struct MaterialXGraphRuntimeCPU {
   std::vector<MaterialXGraphNodeCPU> nodes;
   // OpenPBR output node indices: base, metalness, roughness, opacity,
-  // emission, normal. -1 means no graph connection for that lane.
-  int output[6]{-1, -1, -1, -1, -1, -1};
+  // emission, normal, subsurface weight, subsurface color, subsurface radius.
+  // -1 means no graph
+  // connection for that lane.
+  int output[9]{-1, -1, -1, -1, -1, -1, -1, -1, -1};
   bool valid{false};
   bool hasImages{false};
 };
@@ -490,6 +499,10 @@ struct DrawMaterialCPU {
   bool hasVolumeOutput{false};
   std::string displacementShaderPath;
   std::string volumeShaderPath;
+  float volumeDensity{0.0f};
+  float volumeAlbedo[3]{0.5f, 0.5f, 0.5f};
+  float volumeEmission[3]{0.0f, 0.0f, 0.0f};
+  float volumeEmissionScale{0.0f};
   std::string materialXNodeGraphJson;
   MaterialXGraphRuntimeCPU materialXGraph;
   std::vector<DrawMaterialParamCPU> params;
@@ -850,8 +863,13 @@ struct DrawLightCPU {
   std::string materialSyncMode;
   bool lightLinksAll{true};
   std::vector<int> lightLinkMeshIndices;
+  // Authored carrier/collection targets retained alongside resolved mesh ids.
+  // Native point/curve carriers do not have a mesh index, so RT/raster carrier
+  // paths use these targets when applying the same collection mask.
+  std::vector<std::string> lightLinkPaths;
   bool shadowLinksAll{true};
   std::vector<int> shadowLinkMeshIndices;
+  std::vector<std::string> shadowLinkPaths;
   bool hasSpectralEmission{false};
 };
 
@@ -878,6 +896,8 @@ struct DrawPointsCPU {
   int colorsInterpolation{0};
   int opacitiesInterpolation{0};
   int materialId{-1};
+  uint32_t directLightMask{0xffffffffu};
+  uint32_t shadowLightMask{0xffffffffu};
   float world[16]{};            // column-major local-to-world
   float aabbMin[3]{0, 0, 0};
   float aabbMax[3]{0, 0, 0};

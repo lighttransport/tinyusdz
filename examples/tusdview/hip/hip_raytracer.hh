@@ -85,7 +85,7 @@ class HipRayTracer {
   uintptr_t dBackMat_{0};    // optional back-face material id per triangle
   uintptr_t dMatPbr_{0};     // float[6] per material: metal,rough,emitRGB,alpha
   uintptr_t dMatBase_{0};    // float[3] per material: base color
-  uintptr_t dMatLightRt_{0};  // float[56] per material: LightRT/OpenPBR params
+  uintptr_t dMatLightRt_{0};  // float[80] per material: LightRT/OpenPBR params
   uintptr_t dMatGraph_{0};    // fixed-size per-material MaterialX graph IR
   uintptr_t dMatTex_{0};     // int[6]: base,metal,rough,normal,emissive,opacity
   uintptr_t dMatTexParam_{0}; // float[56] per material: texture UV/channel params

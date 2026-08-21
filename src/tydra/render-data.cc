@@ -938,7 +938,10 @@ static const Attribute *ResolveShadeInput(const Stage &stage,
 
 static void ApplyVolumeShaderConstants(const Stage &stage,
                                        const UsdShadePrim &shader,
-                                       RenderVolume *dst) {
+                                       float *density_scale,
+                                       float albedo[3],
+                                       float emission_color[3],
+                                       float *emission_scale) {
   auto scalar = [&](const char *name, float *out) {
     if (const Attribute *source = FindShadeInput(shader, name)) {
       if (source->connections().size() == 1) {
@@ -975,16 +978,16 @@ static void ApplyVolumeShaderConstants(const Stage &stage,
       out[0] = (*v)[0]; out[1] = (*v)[1]; out[2] = (*v)[2];
     }
   };
-  scalar("inputs:density", &dst->density_scale);
-  color("inputs:scattering_color", dst->albedo);
-  color("inputs:scatter_color", dst->albedo);
-  color("inputs:emission_color", dst->emission_color);
-  color("inputs:emissionColor", dst->emission_color);
-  scalar("inputs:emission", &dst->emission_scale);
-  scalar("inputs:emission_intensity", &dst->emission_scale);
-  scalar("inputs:emissionIntensity", &dst->emission_scale);
-  dst->density_scale = std::max(0.0f, dst->density_scale);
-  dst->emission_scale = std::max(0.0f, dst->emission_scale);
+  scalar("inputs:density", density_scale);
+  color("inputs:scattering_color", albedo);
+  color("inputs:scatter_color", albedo);
+  color("inputs:emission_color", emission_color);
+  color("inputs:emissionColor", emission_color);
+  scalar("inputs:emission", emission_scale);
+  scalar("inputs:emission_intensity", emission_scale);
+  scalar("inputs:emissionIntensity", emission_scale);
+  *density_scale = std::max(0.0f, *density_scale);
+  *emission_scale = std::max(0.0f, *emission_scale);
 }
 
 bool RenderSceneConverter::ConvertVolume(
@@ -1039,7 +1042,10 @@ bool RenderSceneConverter::ConvertVolume(
               &lookup_err) && shader_prim) {
         if (const Shader *shader = shader_prim->as<Shader>()) {
           if (const ShaderNode *node = shader->value.as<ShaderNode>()) {
-            ApplyVolumeShaderConstants(env.stage, *node, dst);
+            ApplyVolumeShaderConstants(env.stage, *node,
+                                        &dst->density_scale, dst->albedo,
+                                        dst->emission_color,
+                                        &dst->emission_scale);
           }
         }
       }

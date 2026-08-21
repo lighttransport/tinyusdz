@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cmath>
 #include <limits>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "gpu_scene.hh"
@@ -44,6 +46,10 @@ struct RasterLightSet {
   // separate: USD permits a mesh to receive a light while being excluded from
   // that light's shadow collection (and vice versa).
   std::vector<uint32_t> shadowMeshMasks;
+  std::vector<std::pair<std::string, uint32_t>> carrierPathMasks;
+  uint32_t carrierExplicitMask{0u};
+  std::vector<std::pair<std::string, uint32_t>> shadowCarrierPathMasks;
+  uint32_t shadowCarrierExplicitMask{0u};
   // Direct-light slot selected for the single deterministic raster shadow map.
   // Prefer the first enabled distant light; otherwise use the first enabled
   // finite light supported by the single-map approximation.
@@ -160,9 +166,65 @@ inline RasterLightSet PackRasterLights(const std::vector<DrawLightCPU>& src,
           out.shadowMeshMasks[static_cast<size_t>(meshIndex)] |= bit;
       }
     }
+    if (!light.lightLinksAll) {
+      out.carrierExplicitMask |= bit;
+      for (const std::string& path : light.lightLinkPaths) {
+        if (!path.empty()) out.carrierPathMasks.emplace_back(path, bit);
+      }
+    }
+    if (!light.shadowLinksAll) {
+      out.shadowCarrierExplicitMask |= bit;
+      for (const std::string& path : light.shadowLinkPaths) {
+        if (!path.empty()) out.shadowCarrierPathMasks.emplace_back(path, bit);
+      }
+    }
   }
   if (out.shadowLightSlot < 0) out.shadowLightSlot = finiteFallback;
   return out;
+}
+
+inline uint32_t RasterShadowMaskForPath(const RasterLightSet& lights,
+                                        const std::string& carrierPath) {
+  uint32_t mask = 0u;
+  for (const auto& entry : lights.shadowCarrierPathMasks) {
+    const std::string& root = entry.first;
+    if (carrierPath == root ||
+        (carrierPath.size() > root.size() &&
+         carrierPath.compare(0, root.size(), root) == 0 &&
+         carrierPath[root.size()] == '/'))
+      mask |= entry.second;
+  }
+  for (int i = 0; i < lights.count; ++i) {
+    const uint32_t bit = uint32_t{1} << static_cast<uint32_t>(i);
+    if ((lights.shadowCarrierExplicitMask & bit) == 0u) mask |= bit;
+  }
+  return mask;
+}
+
+inline bool RasterShadowIncludesPath(const RasterLightSet& lights,
+                                     const std::string& carrierPath) {
+  if (lights.shadowLightSlot < 0) return false;
+  const uint32_t bit = uint32_t{1} <<
+      static_cast<uint32_t>(lights.shadowLightSlot);
+  return (RasterShadowMaskForPath(lights, carrierPath) & bit) != 0u;
+}
+
+inline uint32_t RasterLightMaskForPath(const RasterLightSet& lights,
+                                       const std::string& carrierPath) {
+  uint32_t mask = 0u;
+  for (const auto& entry : lights.carrierPathMasks) {
+    const std::string& root = entry.first;
+    if (carrierPath == root ||
+        (carrierPath.size() > root.size() &&
+         carrierPath.compare(0, root.size(), root) == 0 &&
+         carrierPath[root.size()] == '/'))
+      mask |= entry.second;
+  }
+  for (int i = 0; i < lights.count; ++i) {
+    const uint32_t bit = uint32_t{1} << static_cast<uint32_t>(i);
+    if ((lights.carrierExplicitMask & bit) == 0u) mask |= bit;
+  }
+  return mask;
 }
 
 inline bool RasterShadowIncludesMesh(const RasterLightSet& lights,
@@ -186,6 +248,9 @@ inline uint32_t RasterLightMaskForMesh(const RasterLightSet& lights,
 
 struct RasterShadowCamera {
   light3d::Mat4 viewProj;
+  light3d::Vec3 eye{0.0f, 0.0f, 0.0f};
+  light3d::Vec3 right{1.0f, 0.0f, 0.0f};
+  light3d::Vec3 up{0.0f, 1.0f, 0.0f};
   int lightSlot{-1};
   float nearPlane{0.01f};
   float farPlane{1.0f};
@@ -198,6 +263,9 @@ struct RasterShadowCamera {
 // sampling cannot silently disagree about a face's orientation.
 struct RasterPointShadowCameras {
   std::array<light3d::Mat4, 6> viewProj{};
+  light3d::Vec3 eye{0.0f, 0.0f, 0.0f};
+  std::array<light3d::Vec3, 6> right{};
+  std::array<light3d::Vec3, 6> up{};
   int lightSlot{-1};
   float nearPlane{0.01f};
   float farPlane{1.0f};
@@ -270,7 +338,11 @@ inline bool BuildRasterPointShadowCameras(const RasterLightSet& lights,
   for (size_t face = 0; face < directions.size(); ++face) {
     out->viewProj[face] = proj * light3d::lookAt(
         eye, eye + directions[face], ups[face]);
+    out->right[face] = light3d::normalize(light3d::cross(
+        directions[face], ups[face]));
+    out->up[face] = ups[face];
   }
+  out->eye = eye;
   out->lightSlot = lights.shadowLightSlot;
   out->nearPlane = nearPlane;
   out->farPlane = farPlane;
@@ -308,8 +380,11 @@ inline bool BuildRasterShadowCamera(const RasterLightSet& lights,
   float nearPlane = 0.01f;
   float farPlane = radius * 4.0f;
   bool perspective = false;
+  light3d::Vec3 eye;
+  light3d::Vec3 shadowUp = up;
   if (type == static_cast<int>(DrawLightCPU::Type::Distant)) {
-    view = light3d::lookAt(center + direction * (radius * 2.0f), center, up);
+    eye = center + direction * (radius * 2.0f);
+    view = light3d::lookAt(eye, center, up);
     // A square scene-enclosing volume is stable under light rotation and leaves
     // a small guard band for PCF taps at the fitted edge.
     const float span = radius * 1.05f;
@@ -320,8 +395,7 @@ inline bool BuildRasterShadowCamera(const RasterLightSet& lights,
   } else if (light.specularShape[3] > 0.5f ||
              (type >= static_cast<int>(DrawLightCPU::Type::Point) &&
               type <= static_cast<int>(DrawLightCPU::Type::Cylinder))) {
-    const light3d::Vec3 eye{light.positionType[0], light.positionType[1],
-                            light.positionType[2]};
+    eye = {light.positionType[0], light.positionType[1], light.positionType[2]};
     const bool unshapedFinite = light.specularShape[3] <= 0.5f;
     if (unshapedFinite && type != static_cast<int>(DrawLightCPU::Type::Rect) &&
         type != static_cast<int>(DrawLightCPU::Type::Disk)) {
@@ -330,9 +404,9 @@ inline bool BuildRasterShadowCamera(const RasterLightSet& lights,
           light3d::normalize(towardScene);
       else direction = {0.0f, -1.0f, 0.0f};
     }
-    const light3d::Vec3 shadowUp = std::fabs(direction.y) > 0.99f
-                                       ? light3d::Vec3{1.0f, 0.0f, 0.0f}
-                                       : light3d::Vec3{0.0f, 1.0f, 0.0f};
+    shadowUp = std::fabs(direction.y) > 0.99f
+                   ? light3d::Vec3{1.0f, 0.0f, 0.0f}
+                   : light3d::Vec3{0.0f, 1.0f, 0.0f};
     view = light3d::lookAt(eye, eye + direction, shadowUp);
     farPlane = std::max(radius * 4.0f, light3d::length(center - eye) + radius);
     float nearestForward = farPlane;
@@ -367,6 +441,9 @@ inline bool BuildRasterShadowCamera(const RasterLightSet& lights,
     return false;
   }
   out->viewProj = proj * view;
+  out->eye = eye;
+  out->right = light3d::normalize(light3d::cross(direction, shadowUp));
+  out->up = shadowUp;
   out->lightSlot = lights.shadowLightSlot;
   out->nearPlane = nearPlane;
   out->farPlane = farPlane;

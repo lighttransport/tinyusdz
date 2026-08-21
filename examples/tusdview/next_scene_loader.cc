@@ -400,6 +400,10 @@ size_t ProgressiveSceneStream::queuedBytes() const {
   return queuedBytes_;
 }
 
+static void ResolveNextSurfaceVolumeMaterial(const tnext::Stage& stage,
+                                             const tnext::UsdPrim& material,
+                                             DrawMaterialCPU* out);
+
 namespace {
 
 // Pack a tinyusdz row-major matrix4d (m[row][col], row-vector p*M) into a 3x4
@@ -3318,6 +3322,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   dm.hasVolumeOutput = rm.has_volume;
   dm.displacementShaderPath = rm.displacement_shader_path;
   dm.volumeShaderPath = rm.volume_shader_path;
+  if (rm.has_volume)
+    ResolveNextSurfaceVolumeMaterial(stage, matPrim, &dm);
   bool reportedDegradedMaterial = false;
   for (const tydn::MaterialDiagnostic& diagnostic : rm.diagnostics) {
     if (diagnostic.kind == tydn::MaterialDiagnosticKind::DegradedMaterial) {
@@ -4701,6 +4707,14 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
           p.GetRelationship(base + "includes");
       const std::vector<tnext::Path>* excludes =
           p.GetRelationship(base + "excludes");
+      std::vector<std::string>* carrierPaths =
+          std::string(instanceName) == "lightLink" ? &dst->lightLinkPaths
+                                                     : &dst->shadowLinkPaths;
+      for (const std::string& target : directTargets) carrierPaths->push_back(target);
+      if (includes) {
+        for (const tnext::Path& target : *includes)
+          carrierPaths->push_back(target.str());
+      }
       const bool authoredCollection = includes || excludes;
       if (!authoredCollection && directTargets.empty()) { *all = true; return; }
       bool includeRoot = false;
@@ -5147,6 +5161,39 @@ void ResolveNextVolumeMaterial(const tnext::Stage& stage,
   out->densityScale = std::max(0.0f, out->densityScale);
   emissionScale = std::max(0.0f, emissionScale);
   for (float& channel : out->emission) channel *= emissionScale;
+}
+
+static void ResolveNextSurfaceVolumeMaterial(const tnext::Stage& stage,
+                                             const tnext::UsdPrim& material,
+                                             DrawMaterialCPU* out) {
+  if (!out) return;
+  const std::string shaderPath = tnext::GetVolumeShader(stage, material);
+  if (shaderPath.empty()) return;
+  const tnext::UsdPrim shader = stage.GetPrimAtPath(shaderPath);
+  if (!shader) return;
+  auto scalar = [&](const char* name, float* dst) {
+    tnext::Value value;
+    if (!tnext::ResolveShaderPortValue(stage, shader, name, &value)) return;
+    if (const float* f = value.as_float()) *dst = *f;
+    else if (const double* d = value.as_double()) *dst = float(*d);
+  };
+  auto color = [&](const char* name, float dst[3]) {
+    tnext::Value value;
+    if (!tnext::ResolveShaderPortValue(stage, shader, name, &value)) return;
+    if (const float* f = value.as_float3()) {
+      dst[0] = f[0]; dst[1] = f[1]; dst[2] = f[2];
+    }
+  };
+  scalar("inputs:density", &out->volumeDensity);
+  color("inputs:scattering_color", out->volumeAlbedo);
+  color("inputs:scatter_color", out->volumeAlbedo);
+  color("inputs:emission_color", out->volumeEmission);
+  color("inputs:emissionColor", out->volumeEmission);
+  scalar("inputs:emission", &out->volumeEmissionScale);
+  scalar("inputs:emission_intensity", &out->volumeEmissionScale);
+  scalar("inputs:emissionIntensity", &out->volumeEmissionScale);
+  out->volumeDensity = std::max(0.0f, out->volumeDensity);
+  out->volumeEmissionScale = std::max(0.0f, out->volumeEmissionScale);
 }
 
 bool BuildNextVolumes(

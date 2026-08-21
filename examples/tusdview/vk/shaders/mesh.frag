@@ -152,6 +152,14 @@ struct MaterialTexParam {
   vec4 ptexCoatWeightInfo;
   vec4 ptexCoatColorInfo;
   vec4 ptexCoatRoughInfo;
+  // Approximate transmission for raster: weight, depth, dispersion, reserved.
+  vec4 transmissionParams;
+  vec4 transmissionColor;
+  vec4 volumeParams;  // density, emission scale
+  vec4 volumeAlbedo;
+  vec4 volumeEmission;
+  vec4 subsurfaceParams; // weight, scale, radius, reserved
+  vec4 subsurfaceColor;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 layout(set = 3, binding = 1, std430) readonly buffer MatGraph { float graphRows[]; } mgraph;
@@ -222,14 +230,14 @@ vec4 sampleGraphImage(int slot, float udimRow, vec2 uv, vec4 missing) {
 
 bool hasGraphRoute(int route) {
   int mid = max(pc.ids.x, 0);
-  uint base = uint(mid) * 1352u;
-  return route >= 0 && route < 6 && base + uint(route) + 1u < uint(mgraph.graphRows.length()) &&
+  uint base = uint(mid) * 1355u;
+  return route >= 0 && route < 9 && base + uint(route) + 1u < uint(mgraph.graphRows.length()) &&
          mgraph.graphRows[base + uint(route) + 1u] >= 0.0;
 }
 
 vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
   int mid = max(pc.ids.x, 0);
-  uint base = uint(mid) * 1352u;
+  uint base = uint(mid) * 1355u;
   if (!hasGraphRoute(route)) return vec4(0.0);
   int count = int(clamp(mgraph.graphRows[base], 0.0, 64.0));
   int wanted = int(mgraph.graphRows[base + uint(route) + 1u] + 0.5);
@@ -239,7 +247,7 @@ vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
   for (int pass = 0; pass < 64; ++pass) {
     for (int i = 0; i < 64; ++i) {
       if (i >= count) continue;
-      uint p = base + 8u + uint(i) * 21u;
+      uint p = base + 10u + uint(i) * 21u;
       int op = int(mgraph.graphRows[p] + 0.5);
       int a = int(mgraph.graphRows[p + 1u] + 0.5);
       int b = int(mgraph.graphRows[p + 2u] + 0.5);
@@ -249,8 +257,13 @@ vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
       vec4 cv = (c >= 0 && c < count) ? v[c] : vec4(mgraph.graphRows[p + 12u], mgraph.graphRows[p + 13u], mgraph.graphRows[p + 14u], mgraph.graphRows[p + 15u]);
       vec4 value = av;
       int encoded = int(mgraph.graphRows[p + 16u] + (mgraph.graphRows[p + 16u] < 0.0 ? -0.5 : 0.5));
-      vec2 graphUv = uv * vec2(mgraph.graphRows[p + 17u], mgraph.graphRows[p + 18u]) +
-                     vec2(mgraph.graphRows[p + 19u], mgraph.graphRows[p + 20u]);
+      vec2 graphUv = uv;
+      int uvInput = int(floor(mgraph.graphRows[p + 15u] + 0.5));
+      if (uvInput == 0) graphUv = av.xy;
+      else if (uvInput == 1) graphUv = bv.xy;
+      else if (uvInput == 2) graphUv = cv.xy;
+      graphUv = graphUv * vec2(mgraph.graphRows[p + 17u], mgraph.graphRows[p + 18u]) +
+                vec2(mgraph.graphRows[p + 19u], mgraph.graphRows[p + 20u]);
       if (op == 0) v[i] = value;
       else if (op == 1 || op == 2) {
         int slot = encoded;
@@ -275,7 +288,8 @@ vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
       else if (op == 18) v[i] = cos(av);
       else if (op == 19) { float l = dot(av.xyz, vec3(0.2126, 0.7152, 0.0722)); v[i] = vec4(l, l, l, av.w); }
       else if (op == 20) v[i] = av.x >= 0.5 ? bv : cv;
-      else if (op == 21) v[i] = vec4(uv, 0.0, 1.0);
+      else if (op == 21) v[i] = vec4(mgraph.graphRows[p + 14u] > 0.5 ? vUV1 : uv,
+                                      0.0, 1.0);
       else if (op == 22) v[i] = floor(av);
       else if (op == 23) v[i] = ceil(av);
       else if (op == 24) v[i] = fract(av);
@@ -284,6 +298,9 @@ vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
       else if (op == 27) v[i] = vec4(cross(av.xyz, bv.xyz), av.w);
       else if (op == 28) v[i] = vec4(length(av.xyz));
       else if (op == 29) v[i] = vec4(fract(sin(dot(av.xy + uv, vec2(127.1, 311.7))) * 43758.5453));
+      else if (op == 40) v[i] = vec4(fract(sin(dot(av.xyz + vec3(uv, uv.x + uv.y),
+                                                        vec3(127.1, 311.7, 74.7))) *
+                                           43758.5453));
       else if (op == 30) v[i] = tan(av);
       else if (op == 31) v[i] = exp(av);
       else if (op == 32) v[i] = log(max(av, vec4(1e-6)));
@@ -298,6 +315,11 @@ vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
         vec3 q = cv.xyz;
         v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
                     axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+      }
+      else if (op == 39) {
+        v[i] = vec4(av.xy * vec2(mgraph.graphRows[p + 17u], mgraph.graphRows[p + 18u]) +
+                    vec2(mgraph.graphRows[p + 19u], mgraph.graphRows[p + 20u]),
+                    av.zw);
       }
       else v[i] = value;
     }
@@ -574,18 +596,11 @@ float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
   return visible / 9.0;
 }
 
-vec3 applyNormalMap(vec3 n) {
-  if ((pc.ids.w & 16) == 0) {
-    return n;
-  }
-
+vec3 applyTangentNormal(vec3 n, vec3 tangentNormal, vec2 normalUv) {
   // Build the tangent frame from the exact coordinates used for the normal
   // sample. Using raw vUV here makes UV1-routed or transformed normal maps
   // fetch the right texel but interpret its tangent-space vector in the wrong
   // basis (GL and the software RT path already use the transformed UVs).
-  MaterialTexParam m = matTexParam();
-  vec2 sourceUv = (m.uvSets.z > 0.5) ? vUV1 : vUV;
-  vec2 normalUv = xformUv(sourceUv, m.normalUv0, m.normalUv1);
   vec3 dp1 = dFdx(vWorldPos);
   vec3 dp2 = dFdy(vWorldPos);
   vec2 du1 = dFdx(normalUv);
@@ -595,8 +610,17 @@ vec3 applyNormalMap(vec3 n) {
   t = (abs(r) > 1e-8) ? t / r : dp1;
   t = normalize(t - n * dot(n, t));
   vec3 b = normalize(cross(n, t)) * (r < 0.0 ? -1.0 : 1.0);
-  vec3 nm = sampleNormal(vUV).xyz;
-  return normalize(mat3(t, b, n) * nm);
+  return normalize(mat3(t, b, n) * tangentNormal);
+}
+
+vec3 applyNormalMap(vec3 n) {
+  if ((pc.ids.w & 16) == 0) {
+    return n;
+  }
+  MaterialTexParam m = matTexParam();
+  vec2 sourceUv = (m.uvSets.z > 0.5) ? vUV1 : vUV;
+  vec2 normalUv = xformUv(sourceUv, m.normalUv0, m.normalUv1);
+  return applyTangentNormal(n, sampleNormal(vUV).xyz, normalUv);
 }
 
 void main() {
@@ -617,7 +641,15 @@ void main() {
   vec4 graphOpacity = evalRasterMaterialXGraph(3, vUV);
   vec4 graphEmission = evalRasterMaterialXGraph(4, vUV);
   vec4 graphNormal = evalRasterMaterialXGraph(5, vUV);
-  if (hasGraphRoute(5)) N = normalize(graphNormal.xyz * 2.0 - 1.0);
+  vec4 graphSubsurface = evalRasterMaterialXGraph(6, vUV);
+  vec4 graphSubsurfaceColor = evalRasterMaterialXGraph(7, vUV);
+  vec4 graphSubsurfaceRadius = evalRasterMaterialXGraph(8, vUV);
+  if (hasGraphRoute(5)) {
+    MaterialTexParam gm = matTexParam();
+    vec2 graphSourceUv = (gm.uvSets.z > 0.5) ? vUV1 : vUV;
+    vec2 graphNormalUv = xformUv(graphSourceUv, gm.normalUv0, gm.normalUv1);
+    N = applyTangentNormal(N, graphNormal.xyz * 2.0 - 1.0, graphNormalUv);
+  }
   vec3 coatN = applyCoatNormalMap(N);
   // Debug AOVs.
   if (fr.mode.x != 0 && fr.mode.x != 36 && fr.mode.x != 37 &&
@@ -775,6 +807,18 @@ void main() {
   float met = clamp(metallic, 0.0, 1.0);
   vec3 F0 = computeF0(base, met);
   MaterialTexParam pbr = matTexParam();
+  float subsurfaceWeight = clamp(pbr.subsurfaceParams.x, 0.0, 1.0);
+  vec3 subsurfaceColor = max(pbr.subsurfaceColor.rgb, vec3(0.0));
+  if (hasGraphRoute(6)) subsurfaceWeight = clamp(graphSubsurface.x, 0.0, 1.0);
+  if (hasGraphRoute(7)) subsurfaceColor = max(graphSubsurfaceColor.rgb, vec3(0.0));
+  float subsurfaceRadius = max(pbr.subsurfaceParams.z, 0.0);
+  if (hasGraphRoute(8)) subsurfaceRadius = max(dot(graphSubsurfaceRadius.rgb,
+                                                    vec3(0.2126, 0.7152, 0.0722)), 0.0);
+  float volumeOpacity = clamp(1.0 - exp(-max(pbr.volumeParams.x, 0.0) * 0.1),
+                              0.0, 1.0);
+  base = mix(base, base * pbr.volumeAlbedo.rgb, volumeOpacity);
+  emissive += pbr.volumeEmission.rgb * max(pbr.volumeParams.y, 0.0) *
+              volumeOpacity;
   // inputs:specularColor texture modulates F0, but only in the specular
   // workflow (where F0 *is* specularColor). Vulkan has the sampler budget for
   // this slot; the GL path deliberately omits it.
@@ -918,6 +962,17 @@ void main() {
                     geometrySchlickGGX(NoL, rgh) * F /
                     max(4.0 * NoV * NoL, 1e-5);
     vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * base / kPi;
+    float radiusGain = clamp(sqrt(max(pbr.subsurfaceParams.y *
+                                      subsurfaceRadius, 0.0)) * 8.0,
+                              0.0, 1.0);
+    float diffusionShape = mix(0.15 + 0.85 * NoL,
+                               0.15 + 0.85 * sqrt(NoL), radiusGain);
+    vec3 subsurfaceDiffuse = subsurfaceColor * diffusionShape / kPi;
+    diffuse = mix(diffuse, subsurfaceDiffuse, subsurfaceWeight);
+    float transmissionWeight = clamp(pbr.transmissionParams.x, 0.0, 1.0);
+    vec3 transmissionDiffuse = max(pbr.transmissionColor.rgb, vec3(0.0)) *
+                                transmissionWeight * (1.0 - NoL) *
+                                (1.0 - met) * (0.5 / kPi);
     float coatNoL = max(dot(coatNf, L), 0.0);
     float coatNoV = max(dot(coatNf, V), 1e-4);
     float coatNoH = max(dot(coatNf, H), 0.0);
@@ -931,7 +986,8 @@ void main() {
     vec3 coatBrdf = coatSpecular * coatTint * coatWeight * ss.x;
     float visibility = (int(li) == int(fr.iblParams.z + 0.5))
                            ? sampleShadow(vWorldPos, Nf, L) : 1.0;
-    direct += (baseBrdf * NoL + coatBrdf * coatNoL) * lc.rgb *
+    direct += (baseBrdf * NoL + coatBrdf * coatNoL +
+               transmissionDiffuse * (0.25 + 0.75 * NoL)) * lc.rgb *
               (attenuation * shape * ies * visibility) / float(sampleCount);
     }
   }
@@ -950,7 +1006,19 @@ void main() {
                     geometrySchlickGGX(NoL, rgh) * F /
                     max(4.0 * NoV * NoL, 1e-5);
     vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * base / kPi;
-    direct = (diffuse + specular) * lightColor * NoL;
+    float radiusGain = clamp(sqrt(max(pbr.subsurfaceParams.y *
+                                      subsurfaceRadius, 0.0)) * 8.0,
+                              0.0, 1.0);
+    float diffusionShape = mix(0.15 + 0.85 * NoL,
+                               0.15 + 0.85 * sqrt(NoL), radiusGain);
+    vec3 subsurfaceDiffuse = subsurfaceColor * diffusionShape / kPi;
+    diffuse = mix(diffuse, subsurfaceDiffuse, subsurfaceWeight);
+    float transmissionWeight = clamp(pbr.transmissionParams.x, 0.0, 1.0);
+    vec3 transmissionDiffuse = max(pbr.transmissionColor.rgb, vec3(0.0)) *
+                                transmissionWeight * (1.0 - NoL) *
+                                (1.0 - met) * (0.5 / kPi);
+    direct = (diffuse + specular) * lightColor * NoL +
+             transmissionDiffuse * lightColor * 0.25;
   }
   // Ambient: DomeLight split-sum IBL when baked, else the constant floor
   // (matches the GL raster path in light3d/material.cpp).

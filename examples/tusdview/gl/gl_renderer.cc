@@ -106,6 +106,10 @@ void UploadRasterLightMask(GLuint program, const RasterLightSet& lights,
                RasterLightMaskForMesh(lights, meshIndex));
 }
 
+void UploadRasterLightMaskValue(GLuint program, uint32_t mask) {
+  glUniform1ui(glGetUniformLocation(program, "uLightMask"), mask);
+}
+
 // Compressed-format enum values that may be absent from older glad headers.
 #ifndef GL_COMPRESSED_RG_RGTC2
 #define GL_COMPRESSED_RG_RGTC2 0x8DBD
@@ -260,8 +264,20 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   program_ = glutil::CompileProgram(light3d::getMaterialVertexShaderGL330(),
                                     light3d::getMaterialFragmentShaderGL330(), err);
   if (!program_) {
-    if (err && err->empty()) *err = "Failed to build GL material program";
-    return false;
+    // Low-sampler GL implementations (notably software Mesa) can reject the
+    // full MaterialX/OpenPBR shader before scene initialization. Keep the
+    // raster backend usable with a one-texture bounded preview; capable
+    // drivers continue using the complete shader above.
+    std::string fallbackErr;
+    program_ = glutil::CompileProgram(
+        light3d::getMaterialVertexShaderGL330(),
+        light3d::getMaterialFragmentShaderGL330Fallback(), &fallbackErr);
+    if (!program_) {
+      if (err && err->empty()) *err = "Failed to build GL material program: " + fallbackErr;
+      return false;
+    }
+    std::fprintf(stderr, "[tusdview] full GL material shader unavailable; using low-sampler fallback: %s\n",
+                 err ? err->c_str() : "fragment sampler limit");
   }
   glUseProgram(program_);
   uMVP_ = glGetUniformLocation(program_, "uModelViewProj");
@@ -356,10 +372,71 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       glGetUniformLocation(program_, "uCoatNormalUdimRoute");
   uCoatNormalUdimSlot_ =
       glGetUniformLocation(program_, "uCoatNormalUdimSlot");
+  uGraphNodeCount_ = glGetUniformLocation(program_, "uGraphNodeCount");
+  uGraphOutputs0_ = glGetUniformLocation(program_, "uGraphOutputs0");
+  uGraphOutputs1_ = glGetUniformLocation(program_, "uGraphOutputs1");
+  uGraphOutputs2_ = glGetUniformLocation(program_, "uGraphOutputs2");
+  uGraphOutputs3_ = glGetUniformLocation(program_, "uGraphOutputs3");
+  uGraphUsable_ = glGetUniformLocation(program_, "uGraphUsable");
+  uGraphNode0_ = glGetUniformLocation(program_, "uGraphNode0");
+  uGraphNode1_ = glGetUniformLocation(program_, "uGraphNode1");
+  uGraphNode2_ = glGetUniformLocation(program_, "uGraphNode2");
+  uGraphNode3_ = glGetUniformLocation(program_, "uGraphNode3");
+  uGraphNode4_ = glGetUniformLocation(program_, "uGraphNode4");
+  uGraphNode5_ = glGetUniformLocation(program_, "uGraphNode5");
+  for (int i = 0; i < 8; ++i) {
+    uGraphTex_[i] = glGetUniformLocation(
+        program_, (std::string("uGraphTex") + std::to_string(i)).c_str());
+    if (uGraphTex_[i] >= 0) glUniform1i(uGraphTex_[i], 31 + i);
+  }
   uCoatWeight_ = glGetUniformLocation(program_, "uCoatWeight");
   uCoatColor_ = glGetUniformLocation(program_, "uCoatColor");
   uCoatRoughness_ = glGetUniformLocation(program_, "uCoatRoughness");
   uCoatIor_ = glGetUniformLocation(program_, "uCoatIor");
+  uTransmission_ = glGetUniformLocation(program_, "uTransmission");
+  uTransmissionColor_ = glGetUniformLocation(program_, "uTransmissionColor");
+  uTransmissionDepth_ = glGetUniformLocation(program_, "uTransmissionDepth");
+  uTransmissionScatter_ = glGetUniformLocation(program_, "uTransmissionScatter");
+  uVolumeDensity_ = glGetUniformLocation(program_, "uVolumeDensity");
+  uVolumeAlbedo_ = glGetUniformLocation(program_, "uVolumeAlbedo");
+  uVolumeEmission_ = glGetUniformLocation(program_, "uVolumeEmission");
+  uVolumeEmissionScale_ =
+      glGetUniformLocation(program_, "uVolumeEmissionScale");
+  uDiffuseRoughness_ = glGetUniformLocation(program_, "uDiffuseRoughness");
+  uTransmissionDispersionAbbeNumber_ =
+      glGetUniformLocation(program_, "uTransmissionDispersionAbbeNumber");
+  uSubsurfaceAnisotropy_ =
+      glGetUniformLocation(program_, "uSubsurfaceAnisotropy");
+  uSubsurfaceScatterAnisotropy_ =
+      glGetUniformLocation(program_, "uSubsurfaceScatterAnisotropy");
+  uSpecularAnisotropy_ = glGetUniformLocation(program_, "uSpecularAnisotropy");
+  uSpecularRotation_ = glGetUniformLocation(program_, "uSpecularRotation");
+  uSpecularRoughnessAnisotropy_ =
+      glGetUniformLocation(program_, "uSpecularRoughnessAnisotropy");
+  uCoatAnisotropy_ = glGetUniformLocation(program_, "uCoatAnisotropy");
+  uCoatRotation_ = glGetUniformLocation(program_, "uCoatRotation");
+  uCoatRoughnessAnisotropy_ =
+      glGetUniformLocation(program_, "uCoatRoughnessAnisotropy");
+  uTransmissionDispersion_ =
+      glGetUniformLocation(program_, "uTransmissionDispersion");
+  uTransmissionDispersionScale_ =
+      glGetUniformLocation(program_, "uTransmissionDispersionScale");
+  uCoatAffectColor_ = glGetUniformLocation(program_, "uCoatAffectColor");
+  uCoatAffectRoughness_ =
+      glGetUniformLocation(program_, "uCoatAffectRoughness");
+  uCoatDarkening_ = glGetUniformLocation(program_, "uCoatDarkening");
+  uBaseWeight_ = glGetUniformLocation(program_, "uBaseWeight");
+  uSpecularWeight_ = glGetUniformLocation(program_, "uSpecularWeight");
+  uSubsurface_ = glGetUniformLocation(program_, "uSubsurface");
+  uSubsurfaceColor_ = glGetUniformLocation(program_, "uSubsurfaceColor");
+  uSubsurfaceScale_ = glGetUniformLocation(program_, "uSubsurfaceScale");
+  uSubsurfaceRadius_ = glGetUniformLocation(program_, "uSubsurfaceRadius");
+  uSheenWeight_ = glGetUniformLocation(program_, "uSheenWeight");
+  uSheenColor_ = glGetUniformLocation(program_, "uSheenColor");
+  uSheenRoughness_ = glGetUniformLocation(program_, "uSheenRoughness");
+  uThinFilmWeight_ = glGetUniformLocation(program_, "uThinFilmWeight");
+  uThinFilmThickness_ = glGetUniformLocation(program_, "uThinFilmThickness");
+  uThinFilmIor_ = glGetUniformLocation(program_, "uThinFilmIor");
   uEmissive_ = glGetUniformLocation(program_, "uEmissive");
   uAlpha_ = glGetUniformLocation(program_, "uAlpha");
   uAlphaMode_ = glGetUniformLocation(program_, "uAlphaMode");
@@ -1641,6 +1718,8 @@ void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
     gm.displacementConst = m.displacementConst;
     gm.displacementTexScale = m.displacementTexScale;
     gm.displacementTexBias = m.displacementTexBias;
+    gm.materialXGraph = m.materialXGraph;
+    gm.lightRtOpenPBR = m.lightRtOpenPBR;
     materials_.push_back(gm);
   }
 }
@@ -2292,6 +2371,7 @@ void GLRenderer::appendPoints(const DrawPointsCPU& src) {
   b.count=static_cast<GLsizei>(n); b.kind=0; b.materialId=src.materialId;
   b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());
   b.carrierIndex = static_cast<int>(nonMeshBatches_.size());
+  b.absPath = src.absPath;
   b.purposeId=PurposeId(src.purpose); b.translucent=translucent;
   glGenVertexArrays(1,&b.vao); glGenBuffers(1,&b.vbo);
   glBindVertexArray(b.vao); glBindBuffer(GL_ARRAY_BUFFER,b.vbo);
@@ -2344,7 +2424,7 @@ void GLRenderer::appendCurves(const DrawCurvesCPU& src) {
     base=end;
   }
   if(data.empty())return;
-  GLNonMeshBatch b;b.count=static_cast<GLsizei>(data.size()/11);b.kind=1;b.materialId=src.materialId;b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());b.carrierIndex=static_cast<int>(nonMeshBatches_.size());b.purposeId=PurposeId(src.purpose);b.translucent=translucent;
+  GLNonMeshBatch b;b.count=static_cast<GLsizei>(data.size()/11);b.kind=1;b.materialId=src.materialId;b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());b.carrierIndex=static_cast<int>(nonMeshBatches_.size());b.absPath=src.absPath;b.purposeId=PurposeId(src.purpose);b.translucent=translucent;
   glGenVertexArrays(1,&b.vao);glGenBuffers(1,&b.vbo);glBindVertexArray(b.vao);glBindBuffer(GL_ARRAY_BUFFER,b.vbo);glBufferData(GL_ARRAY_BUFFER,static_cast<GLsizeiptr>(data.size()*sizeof(float)),data.data(),GL_STATIC_DRAW);
   const GLsizei stride=11*sizeof(float);for(int a=0;a<4;++a){glEnableVertexAttribArray(a);glVertexAttribDivisor(a,1);}glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,(void*)0);glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,stride,(void*)(3*sizeof(float)));glVertexAttribPointer(2,1,GL_FLOAT,GL_FALSE,stride,(void*)(6*sizeof(float)));glVertexAttribPointer(3,4,GL_FLOAT,GL_FALSE,stride,(void*)(7*sizeof(float)));glBindVertexArray(0);nonMeshBatches_.push_back(b);
 }
@@ -3444,6 +3524,41 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3f(uCoatColor_, 1.0f, 1.0f, 1.0f);
         glUniform1f(uCoatRoughness_, 0.1f);
         glUniform1f(uCoatIor_, 1.5f);
+        glUniform1f(uTransmission_, 0.0f);
+        glUniform3f(uTransmissionColor_, 1.0f, 1.0f, 1.0f);
+        glUniform1f(uTransmissionDepth_, 0.0f);
+        glUniform3f(uTransmissionScatter_, 0.0f, 0.0f, 0.0f);
+        glUniform1f(uVolumeDensity_, 0.0f);
+        glUniform3f(uVolumeAlbedo_, 1.0f, 1.0f, 1.0f);
+        glUniform3f(uVolumeEmission_, 0.0f, 0.0f, 0.0f);
+        glUniform1f(uVolumeEmissionScale_, 0.0f);
+        glUniform1f(uDiffuseRoughness_, 0.0f);
+        glUniform1f(uTransmissionDispersionAbbeNumber_, 0.0f);
+        glUniform1f(uSubsurfaceAnisotropy_, 0.0f);
+        glUniform1f(uSubsurfaceScatterAnisotropy_, 0.0f);
+        glUniform1f(uSpecularAnisotropy_, 0.0f);
+        glUniform1f(uSpecularRotation_, 0.0f);
+        glUniform1f(uSpecularRoughnessAnisotropy_, 0.0f);
+        glUniform1f(uCoatAnisotropy_, 0.0f);
+        glUniform1f(uCoatRotation_, 0.0f);
+        glUniform1f(uCoatRoughnessAnisotropy_, 0.0f);
+        glUniform1f(uTransmissionDispersion_, 0.0f);
+        glUniform1f(uTransmissionDispersionScale_, 0.0f);
+        glUniform1f(uCoatAffectColor_, 0.0f);
+        glUniform1f(uCoatAffectRoughness_, 0.0f);
+        glUniform1f(uCoatDarkening_, 0.0f);
+        glUniform1f(uBaseWeight_, 1.0f);
+        glUniform1f(uSpecularWeight_, 1.0f);
+        glUniform1f(uSubsurface_, 0.0f);
+        glUniform3f(uSubsurfaceColor_, 0.8f, 0.8f, 0.8f);
+        glUniform1f(uSubsurfaceScale_, 1.0f);
+        glUniform1f(uSubsurfaceRadius_, 1.0f);
+        glUniform1f(uSheenWeight_, 0.0f);
+        glUniform3f(uSheenColor_, 1.0f, 1.0f, 1.0f);
+        glUniform1f(uSheenRoughness_, 0.3f);
+        glUniform1f(uThinFilmWeight_, 0.0f);
+        glUniform1f(uThinFilmThickness_, 0.0f);
+        glUniform1f(uThinFilmIor_, 1.5f);
         glUniform3fv(uEmissive_, 1, overrideEmissive);
         glUniform1f(uAlpha_, 1.f);
         glUniform1i(uAlphaMode_, 0);
@@ -3488,6 +3603,44 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3fv(uCoatColor_, 1, mat.coatColor);
         glUniform1f(uCoatRoughness_, mat.coatRoughness);
         glUniform1f(uCoatIor_, mat.coatIor);
+        const DrawLightRtOpenPBRCPU& p = mat.lightRtOpenPBR;
+        glUniform1f(uBaseWeight_, p.baseWeight);
+        glUniform1f(uSpecularWeight_, p.specularWeight);
+        glUniform1f(uTransmission_, p.transmission);
+        glUniform3fv(uTransmissionColor_, 1, p.transmissionColor);
+        glUniform1f(uTransmissionDepth_, p.transmissionDepth);
+        glUniform3fv(uTransmissionScatter_, 1, p.transmissionScatter);
+        glUniform1f(uVolumeDensity_, p.volumeDensity);
+        glUniform3fv(uVolumeAlbedo_, 1, p.volumeAlbedo);
+        glUniform3fv(uVolumeEmission_, 1, p.volumeEmission);
+        glUniform1f(uVolumeEmissionScale_, p.volumeEmissionScale);
+        glUniform1f(uDiffuseRoughness_, p.diffuseRoughness);
+        glUniform1f(uTransmissionDispersionAbbeNumber_,
+                    p.transmissionDispersionAbbeNumber);
+        glUniform1f(uSubsurfaceAnisotropy_, p.subsurfaceAnisotropy);
+        glUniform1f(uSubsurfaceScatterAnisotropy_,
+                    p.subsurfaceScatterAnisotropy);
+        glUniform1f(uSpecularAnisotropy_, p.specularAnisotropy);
+        glUniform1f(uSpecularRotation_, p.specularRotation);
+        glUniform1f(uSpecularRoughnessAnisotropy_, p.specularRoughnessAnisotropy);
+        glUniform1f(uCoatAnisotropy_, p.coatAnisotropy);
+        glUniform1f(uCoatRotation_, p.coatRotation);
+        glUniform1f(uCoatRoughnessAnisotropy_, p.coatRoughnessAnisotropy);
+        glUniform1f(uTransmissionDispersion_, p.transmissionDispersion);
+        glUniform1f(uTransmissionDispersionScale_, p.transmissionDispersionScale);
+        glUniform1f(uCoatAffectColor_, p.coatAffectColor);
+        glUniform1f(uCoatAffectRoughness_, p.coatAffectRoughness);
+        glUniform1f(uCoatDarkening_, p.coatDarkening);
+        glUniform1f(uSubsurface_, p.subsurface);
+        glUniform3fv(uSubsurfaceColor_, 1, p.subsurfaceColor);
+        glUniform1f(uSubsurfaceScale_, p.subsurfaceScale);
+        glUniform1f(uSubsurfaceRadius_, p.subsurfaceRadius[0]);
+        glUniform1f(uSheenWeight_, p.sheenWeight);
+        glUniform3fv(uSheenColor_, 1, p.sheenColor);
+        glUniform1f(uSheenRoughness_, p.sheenRoughness);
+        glUniform1f(uThinFilmWeight_, p.thinFilmWeight);
+        glUniform1f(uThinFilmThickness_, p.thinFilmThicknessNm);
+        glUniform1f(uThinFilmIor_, p.thinFilmIor);
         glUniform3fv(uEmissive_, 1, mat.emissive);
         glUniform1f(uAlpha_, mat.alpha);
         glUniform1i(uAlphaMode_, mat.alphaMode);
@@ -3689,6 +3842,85 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uCoatNormalUdimSlot_, mat.coatNormalTex);
         bindMaterialTexture(mat.occlusionTex, GL_TEXTURE23, GL_TEXTURE24,
                             uHasOcclusionTex_, uOcclusionTexIsUdim_);
+        glActiveTexture(GL_TEXTURE0);
+      }
+      // Native MaterialX graph upload. Keep graph images in a separate high
+      // texture-unit range so semantic bindings remain valid for mixed graphs.
+      // UDIM/over-limit graphs deliberately use the existing baked fallback.
+      {
+        const MaterialXGraphRuntimeCPU& graph = mat.materialXGraph;
+        std::vector<int> graphTextureIds;
+        bool graphUsable = graph.valid && graph.nodes.size() <= 64;
+        if (graphUsable) {
+          for (const MaterialXGraphNodeCPU& node : graph.nodes) {
+            if (node.isUdim) { graphUsable = false; break; }
+            if (node.textureId < 0) continue;
+            if (std::find(graphTextureIds.begin(), graphTextureIds.end(),
+                          node.textureId) == graphTextureIds.end()) {
+              graphTextureIds.push_back(node.textureId);
+              if (graphTextureIds.size() > 8) { graphUsable = false; break; }
+            }
+          }
+        }
+        for (int i = 0; i < 8; ++i) {
+          glActiveTexture(GL_TEXTURE0 + 31 + i);
+          GLuint tex = whiteTex_;
+          if (graphUsable && i < static_cast<int>(graphTextureIds.size())) {
+            const int slot = graphTextureIds[static_cast<size_t>(i)];
+            if (slot >= 0 && static_cast<size_t>(slot) < textures_.size() &&
+                textures_[static_cast<size_t>(slot)].tex2d)
+              tex = textures_[static_cast<size_t>(slot)].tex2d;
+            else
+              graphUsable = false;
+          }
+          glBindTexture(GL_TEXTURE_2D, tex);
+        }
+        glUniform1i(uGraphUsable_, graphUsable ? 1 : 0);
+        glUniform1i(uGraphNodeCount_, graphUsable ? static_cast<GLint>(graph.nodes.size()) : 0);
+        glUniform4iv(uGraphOutputs0_, 1, graph.output);
+        glUniform2i(uGraphOutputs1_, graph.output[4], graph.output[5]);
+        glUniform2i(uGraphOutputs2_, graph.output[6], graph.output[7]);
+        glUniform1i(uGraphOutputs3_, graph.output[8]);
+        if (graphUsable) {
+          std::vector<GLfloat> n0(graph.nodes.size() * 4, 0.0f);
+          std::vector<GLfloat> n1(graph.nodes.size() * 4, 0.0f);
+          std::vector<GLfloat> n2(graph.nodes.size() * 4, 0.0f);
+          std::vector<GLfloat> n3(graph.nodes.size() * 4, 0.0f);
+          std::vector<GLfloat> n4(graph.nodes.size() * 4, 0.0f);
+          std::vector<GLfloat> n5(graph.nodes.size() * 4, 0.0f);
+          for (size_t i = 0; i < graph.nodes.size(); ++i) {
+            const MaterialXGraphNodeCPU& node = graph.nodes[i];
+            n0[i * 4 + 0] = static_cast<float>(node.op);
+            n0[i * 4 + 1] = static_cast<float>(node.input[0]);
+            n0[i * 4 + 2] = static_cast<float>(node.input[1]);
+            n0[i * 4 + 3] = static_cast<float>(node.input[2]);
+            for (int lane = 0; lane < 4; ++lane) {
+              n1[i * 4 + lane] = node.value[0][lane];
+              n2[i * 4 + lane] = node.value[1][lane];
+              n3[i * 4 + lane] = node.value[2][lane];
+            }
+            int local = -1;
+            if (node.textureId >= 0) {
+              auto it = std::find(graphTextureIds.begin(), graphTextureIds.end(),
+                                  node.textureId);
+              local = it == graphTextureIds.end()
+                          ? -1
+                          : static_cast<int>(it - graphTextureIds.begin());
+            }
+            n4[i * 4 + 0] = static_cast<float>(local);
+            n4[i * 4 + 1] = node.uvScale[0];
+            n4[i * 4 + 2] = node.uvScale[1];
+            n4[i * 4 + 3] = node.uvOffset[0];
+            n5[i * 4 + 0] = node.uvOffset[1];
+            n5[i * 4 + 1] = node.value[2][3];
+          }
+          glUniform4fv(uGraphNode0_, static_cast<GLsizei>(graph.nodes.size()), n0.data());
+          glUniform4fv(uGraphNode1_, static_cast<GLsizei>(graph.nodes.size()), n1.data());
+          glUniform4fv(uGraphNode2_, static_cast<GLsizei>(graph.nodes.size()), n2.data());
+          glUniform4fv(uGraphNode3_, static_cast<GLsizei>(graph.nodes.size()), n3.data());
+          glUniform4fv(uGraphNode4_, static_cast<GLsizei>(graph.nodes.size()), n4.data());
+          glUniform4fv(uGraphNode5_, static_cast<GLsizei>(graph.nodes.size()), n5.data());
+        }
         glActiveTexture(GL_TEXTURE0);
       }
       glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
@@ -3910,7 +4142,6 @@ void GLRenderer::drawNonMesh(const RenderFrameParams& params) {
   glUniform3fv(nmLightDir_,1,params.lightDir);
   glUniform3fv(nmLightColor_,1,params.lightColor);
   UploadRasterLightArray(nonMeshProgram_, rasterLights_);
-  UploadRasterLightMask(nonMeshProgram_, rasterLights_, -1);
   glUniform1f(nmExposure_,params.exposure);
   glUniform1i(nmRenderMode_,static_cast<int>(params.mode));
   glDisable(GL_CULL_FACE);
@@ -3922,6 +4153,8 @@ void GLRenderer::drawNonMesh(const RenderFrameParams& params) {
       if (params.carrierVisible && b.carrierIndex >= 0 &&
           b.carrierIndex < params.carrierVisibleCount &&
           !params.carrierVisible[b.carrierIndex]) continue;
+      UploadRasterLightMaskValue(nonMeshProgram_,
+                                 RasterLightMaskForPath(rasterLights_, b.absPath));
       glUniform1i(nmKind_,b.kind);glUniform1i(nmMaterialId_,b.materialId);
       glUniform1i(nmCarrierId_,b.carrierId);glUniform1i(nmPurpose_,b.purposeId);
       glBindVertexArray(b.vao);
@@ -4092,6 +4325,40 @@ void GLRenderer::renderShadowMap(const RenderFrameParams& params) {
             mesh.drawInstanceCount);
       }
     }
+    }
+    if (nonMeshProgram_ && !nonMeshBatches_.empty()) {
+      const light3d::Vec3& eye = point ? pointShadowCameras_.eye
+                                       : shadowCamera_.eye;
+      const light3d::Vec3& right = point
+          ? pointShadowCameras_.right[static_cast<size_t>(face)]
+          : shadowCamera_.right;
+      const light3d::Vec3& up = point
+          ? pointShadowCameras_.up[static_cast<size_t>(face)]
+          : shadowCamera_.up;
+      const float eyeData[3] = {eye.x, eye.y, eye.z};
+      const float rightData[3] = {right.x, right.y, right.z};
+      const float upData[3] = {up.x, up.y, up.z};
+      glUseProgram(nonMeshProgram_);
+      glUniformMatrix4fv(nmViewProj_, 1, GL_FALSE, shadowViewProj.m);
+      glUniform3fv(nmCameraPos_, 1, eyeData);
+      glUniform3fv(nmCameraRight_, 1, rightData);
+      glUniform3fv(nmCameraUp_, 1, upData);
+      glUniform1i(nmRenderMode_, 1);
+      glDisable(GL_CULL_FACE);
+      for (const GLNonMeshBatch& batch : nonMeshBatches_) {
+        if ((params.purposeVisibleMask &
+             (1u << static_cast<unsigned>(batch.purposeId))) == 0)
+          continue;
+        if (params.carrierVisible && batch.carrierIndex >= 0 &&
+            batch.carrierIndex < params.carrierVisibleCount &&
+            !params.carrierVisible[batch.carrierIndex])
+          continue;
+        if (!RasterShadowIncludesPath(rasterLights_, batch.absPath)) continue;
+        glUniform1i(nmKind_, batch.kind);
+        glBindVertexArray(batch.vao);
+        glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, batch.count);
+      }
+      glEnable(GL_CULL_FACE);
     }
   }
   glBindVertexArray(0);

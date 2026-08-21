@@ -4987,7 +4987,8 @@ int App::run(const std::string& initialFile, int maxFrames,
   // A headless --cuda/--hip run writes its own screenshot from the RT trace and
   // returns before the rasterized capture is used, so the raster scene upload +
   // per-frame draw are pure waste (huge on heavily-instanced scenes). Skip them.
-  rtOwnsScreenshot_ = (cudaRt_ || hipRt_) && headless_ && !screenshot.empty();
+  rtOwnsScreenshot_ = (cudaRt_ || hipRt_ || cpuRt_) && headless_ &&
+                      !screenshot.empty();
   // Windowed --hip: the HIP tracer drives the viewport per frame (build once,
   // retrace on the orbit camera). Skip the raster scene upload (which would stall
   // on huge instanced scenes like Moana Island) and render single-threaded so the
@@ -4995,9 +4996,8 @@ int App::run(const std::string& initialFile, int maxFrames,
   hipInteractive_ = hipRt_ && !headless_;
   // Windowed --cuda: same shape as --hip above, driven by CudaRayTracer.
   cudaInteractive_ = cudaRt_ && !headless_;
-  // Windowed --cpu-rt: same shape, driven by CpuRayTracer. No headless
-  // one-shot path yet (unlike CUDA/HIP's post-loop screenshot trace) -- a
-  // headless --cpu-rt run just falls through to the normal raster screenshot.
+  // Windowed --cpu-rt: same shape, driven by CpuRayTracer. Headless CPU RT uses
+  // the one-shot screenshot path after the frame loop, like CUDA/HIP.
   cpuInteractive_ = cpuRt_ && !headless_;
   if (cudaInteractive_) activeOverlay_ = OverlayKind::CudaRT;
   else if (hipInteractive_) activeOverlay_ = OverlayKind::HipRT;
@@ -6052,6 +6052,67 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
     }
     return finishRun(0);  // HIP owns the screenshot.
+  }
+
+  // CPU ray tracing owns headless screenshots just like CUDA/HIP. Keeping this
+  // out of the frame loop avoids building the BVH repeatedly and makes the CPU
+  // compositor available to deterministic, display-free regression tests.
+  if (cpuRt_ && headless_ && !screenshot.empty() && !draw_.empty()) {
+    std::string cerr;
+    poseNextDrawForTracer(animTime_);
+    ensureRtTexturePayloads();
+    if (!cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
+                          gui_.displacementScale())) {
+      LOGW("CPU ray tracing build failed: %s", cerr.c_str());
+    } else {
+      int w = 0, h = 0;
+      getRequestedWindowSize(&w, &h);
+      if (w <= 0 || h <= 0) { w = 1024; h = 768; }
+      camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
+      const light3d::Mat4 pv =
+          camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
+      const light3d::Mat4 inv = pv.inverse();
+      const light3d::Vec3 eye = camera_.eye();
+      const float camPos[3] = {eye.x, eye.y, eye.z};
+      float lightDir[3];
+      CopyPreviewLightDir(draw_, lightDir);
+      const float clear[3] = {0.12f, 0.12f, 0.13f};
+      const int rmode = static_cast<int>(gui_.renderMode());
+      float depthScale = 1.0f;
+      float sceneMin[3] = {0, 0, 0};
+      float sceneExtent[3] = {1, 1, 1};
+      if (draw_.hasBounds) {
+        const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
+        const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
+        const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
+        depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+        for (int i = 0; i < 3; ++i) {
+          sceneMin[i] = draw_.aabbMin[i];
+          sceneExtent[i] =
+              std::max(1e-4f, draw_.aabbMax[i] - draw_.aabbMin[i]);
+        }
+      }
+      std::vector<uint8_t> rgba;
+      if (cpuTracer_.trace(inv.m, pv.m, camPos, lightDir, clear,
+                           camera_.exposure(), rmode, depthScale, sceneMin,
+                           sceneExtent, w, h, &rgba, &cerr, rtSamples_,
+                           &cameraLens_)) {
+        reportCaptureWidth_ = w;
+        reportCaptureHeight_ = h;
+        std::string werr;
+        if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
+          LOGI("CPU RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(),
+               w, h, cpuTracer_.triangleCount(),
+               cpuTracer_.truncated() ? ", truncated" : "",
+               cpuTracer_.deviceName());
+        } else {
+          LOGW("CPU RT screenshot write failed: %s", werr.c_str());
+        }
+      } else {
+        LOGW("CPU ray trace failed: %s", cerr.c_str());
+      }
+    }
+    return finishRun(0);
   }
 
   if (modeSweep_.empty()) shot(screenshot, /*window=*/false);

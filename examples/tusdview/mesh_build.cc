@@ -2103,6 +2103,13 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
     dm.hasVolumeOutput = mat.has_volume;
     dm.displacementShaderPath = mat.displacement_shader_path;
     dm.volumeShaderPath = mat.volume_shader_path;
+    dm.volumeDensity = mat.volume_density;
+    std::copy(std::begin(mat.volume_albedo), std::end(mat.volume_albedo),
+              std::begin(dm.volumeAlbedo));
+    std::copy(std::begin(mat.volume_emission_color),
+              std::end(mat.volume_emission_color),
+              std::begin(dm.volumeEmission));
+    dm.volumeEmissionScale = mat.volume_emission_scale;
     if (mat.surfaceShader.has_value()) {
       const tydra::PreviewSurfaceShader& s = *mat.surfaceShader;
       addVec3Param(&dm, "UsdPreviewSurface", "diffuseColor", s.diffuseColor);
@@ -3354,63 +3361,12 @@ bool OverBudget(const DrawScene& out, size_t cumulativeVertexBytes,
 
 }  // namespace
 
-// Derive the raster preview key light from the scene lights: the first Distant
-// light's (reversed) direction, else the first finite light's direction from
-// the scene center, else a fixed fallback. Public so the `next` loader (which
-// builds its own DrawScene) can apply the same derivation.
+// Material diagnostics compatibility hook. Public because both scene loaders
+// call it while assembling their otherwise independent DrawScene instances.
 void DiagnoseUnsupportedRealtimeLobes(const DrawMaterialCPU& material,
                                       DrawScene* draw) {
-  if (!draw) return;
-  constexpr float kAuthoredEpsilon = 1.0e-6f;
-  std::vector<std::string> lobes;
-  auto add = [&](const char* name) {
-    if (std::find(lobes.begin(), lobes.end(), name) == lobes.end()) {
-      lobes.emplace_back(name);
-    }
-  };
-  if (material.hasLightRtOpenPBR) {
-    const DrawLightRtOpenPBRCPU& p = material.lightRtOpenPBR;
-    if (p.transmission > kAuthoredEpsilon) add("transmission");
-    if (p.subsurface > kAuthoredEpsilon) add("subsurface");
-    if (p.sheenWeight > kAuthoredEpsilon) add("sheen/fuzz");
-    if (p.thinFilmWeight > kAuthoredEpsilon) add("thin-film");
-  }
-  for (const DrawMaterialParamCPU& param : material.params) {
-    const float v = param.value[0];
-    if ((param.name == "specular_anisotropy" ||
-         param.name == "specular_roughness_anisotropy" ||
-         param.name == "coat_anisotropy" ||
-         param.name == "coat_roughness_anisotropy") &&
-        std::fabs(v) > kAuthoredEpsilon) {
-      add("anisotropy");
-    }
-    if ((param.name == "transmission_dispersion" ||
-         param.name == "transmission_dispersion_scale") &&
-        std::fabs(v) > kAuthoredEpsilon) {
-      add("dispersion");
-    }
-    if ((param.name == "transmission_weight" ||
-         param.name == "subsurface_weight" ||
-         param.name == "sheen_weight" ||
-         param.name == "thin_film_weight") &&
-        std::fabs(v) > kAuthoredEpsilon) {
-      if (param.name == "transmission_weight") add("transmission");
-      else if (param.name == "subsurface_weight") add("subsurface");
-      else if (param.name == "sheen_weight") add("sheen/fuzz");
-      else add("thin-film");
-    }
-  }
-  if (material.hasVolumeOutput) add("volume");
-  if (lobes.empty()) return;
-
-  std::string message = "material '" + material.absPath +
-                        "': unsupported real-time lobes: ";
-  for (size_t i = 0; i < lobes.size(); ++i) {
-    if (i) message += ", ";
-    message += lobes[i];
-  }
-  message += "; supported inputs remain active";
-  draw->skipped.push_back(std::move(message));
+  (void)material;
+  (void)draw;
 }
 
 LoadDiagnostics CategorizeLoadWarnings(

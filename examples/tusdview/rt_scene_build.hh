@@ -32,6 +32,12 @@ void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
 uint32_t RtLightCollectionMaskForMesh(const std::vector<DrawLightCPU>& lights,
                                       int meshIndex, bool shadow);
 
+// Resolve the same bounded stage-order collection mask for a native point or
+// curve carrier, which has an authored USD path but no mesh index.
+uint32_t RtLightCollectionMaskForPath(const std::vector<DrawLightCPU>& lights,
+                                      const std::string& carrierPath,
+                                      bool shadow);
+
 // Live progress for a (possibly background-threaded) scene build. Polled by the
 // UI to show a responsive progress overlay during the multi-second build.
 struct BuildProgress {
@@ -157,7 +163,7 @@ struct HostScene {
   std::vector<Inst> instances;  // leaf-order (matches the TLAS)
   std::vector<float> matPbr;
   std::vector<float> matBase;  // 3 floats/material; base color constant
-  // 56 floats/material: vec4-friendly LightRT/OpenPBR constant fallback.
+  // 80 floats/material: vec4-friendly LightRT/OpenPBR constant fallback.
   // See lightrt_mtlx_bridge.hh PackLightRtOpenPBR.
   std::vector<float> matLightRt;
   // Packed MaterialX graph IR, kRtMaterialGraphFloats per material.

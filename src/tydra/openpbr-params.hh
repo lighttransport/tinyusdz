@@ -9,7 +9,7 @@
 namespace tinyusdz {
 namespace tydra {
 
-constexpr int kLightRtOpenPBRVec4s = 14;
+constexpr int kLightRtOpenPBRVec4s = 20;
 constexpr int kLightRtOpenPBRFloats = kLightRtOpenPBRVec4s * 4;
 
 struct RealtimePbrMaterial {
@@ -40,6 +40,27 @@ struct RealtimePbrMaterial {
   float thinFilmWeight{0.0f};
   float thinFilmThicknessNm{0.0f};
   float thinFilmIor{1.5f};
+  // Extended OpenPBR controls retained in the canonical packed block. The
+  // realtime preview consumes the anisotropy/dispersion terms when supported;
+  // keeping them here prevents loaders from silently discarding authored data.
+  float specularAnisotropy{0.0f};
+  float specularRotation{0.0f};
+  float specularRoughnessAnisotropy{0.0f};
+  float transmissionDispersion{0.0f};
+  float transmissionDispersionAbbeNumber{0.0f};
+  float transmissionDispersionScale{0.0f};
+  float subsurfaceAnisotropy{0.0f};
+  float subsurfaceScatterAnisotropy{0.0f};
+  float coatAnisotropy{0.0f};
+  float coatRotation{0.0f};
+  float coatAffectColor{0.0f};
+  float coatAffectRoughness{0.0f};
+  float coatRoughnessAnisotropy{0.0f};
+  float coatDarkening{0.0f};
+  float volumeDensity{0.0f};
+  float volumeAlbedo[3]{0.5f, 0.5f, 0.5f};
+  float volumeEmission[3]{0.0f, 0.0f, 0.0f};
+  float volumeEmissionScale{0.0f};
   float emission{0.0f};
   float emissionColor[3]{1.0f, 1.0f, 1.0f};
   float normal[3]{0.0f, 0.0f, 1.0f};
@@ -68,6 +89,17 @@ inline void ClampRealtimePbrMaterial(RealtimePbrMaterial* p) {
   p->thinFilmWeight = clamp01(p->thinFilmWeight);
   p->thinFilmThicknessNm = std::max(0.0f, p->thinFilmThicknessNm);
   p->thinFilmIor = std::max(1.0f, p->thinFilmIor);
+  p->specularAnisotropy = std::max(-1.0f, std::min(1.0f, p->specularAnisotropy));
+  p->specularRoughnessAnisotropy = std::max(-1.0f, std::min(1.0f, p->specularRoughnessAnisotropy));
+  p->transmissionDispersion = std::max(0.0f, p->transmissionDispersion);
+  p->transmissionDispersionScale = std::max(0.0f, p->transmissionDispersionScale);
+  p->coatAnisotropy = std::max(-1.0f, std::min(1.0f, p->coatAnisotropy));
+  p->coatRoughnessAnisotropy = std::max(-1.0f, std::min(1.0f, p->coatRoughnessAnisotropy));
+  p->coatAffectColor = clamp01(p->coatAffectColor);
+  p->coatAffectRoughness = clamp01(p->coatAffectRoughness);
+  p->coatDarkening = clamp01(p->coatDarkening);
+  p->volumeDensity = std::max(0.0f, p->volumeDensity);
+  p->volumeEmissionScale = std::max(0.0f, p->volumeEmissionScale);
   p->emission = std::max(0.0f, p->emission);
   p->opacity = clamp01(p->opacity);
 }
@@ -109,6 +141,23 @@ inline void PackRealtimePbrMaterial(const RealtimePbrMaterial& p,
   dst[53] = p.hasNormalInput ? 1.0f : 0.0f;
   dst[54] = alpha_mode;
   dst[55] = alpha_cutoff;
+  dst[56] = p.diffuseRoughness;
+  dst[57] = p.specularAnisotropy;
+  dst[58] = p.specularRotation;
+  dst[59] = p.specularRoughnessAnisotropy;
+  dst[60] = p.transmissionDispersion;
+  dst[61] = p.transmissionDispersionAbbeNumber;
+  dst[62] = p.transmissionDispersionScale;
+  dst[63] = p.subsurfaceAnisotropy;
+  dst[64] = p.subsurfaceScatterAnisotropy;
+  dst[65] = p.coatAnisotropy;
+  dst[66] = p.coatRotation;
+  dst[67] = p.coatAffectColor;
+  dst[68] = p.coatAffectRoughness;
+  dst[69] = p.coatRoughnessAnisotropy;
+  dst[70] = p.coatDarkening;
+  StoreOpenPBR3(p.volumeAlbedo, dst + 72);        dst[75] = p.volumeDensity;
+  StoreOpenPBR3(p.volumeEmission, dst + 76);     dst[79] = p.volumeEmissionScale;
 }
 
 

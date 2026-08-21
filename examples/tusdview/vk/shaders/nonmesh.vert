@@ -40,6 +40,8 @@ layout(push_constant) uniform Push {
   ivec4 mode;      // render mode, reserved
   vec4 cameraRight;
   vec4 cameraUp;
+  uvec4 lightMask;
+  vec4 shadowEye;
 } pc;
 
 layout(location = 0) out vec2 vLocal;
@@ -77,8 +79,9 @@ void main() {
     // avoiding the triangular sawtooth gaps of independent segment quads.
     float along = corner.y * 0.5 + 0.5;
     vec3 center = mix(aP0, aP1, along);
-    vec3 view0 = normalize(fr.camPos.xyz - aP0);
-    vec3 view1 = normalize(fr.camPos.xyz - aP1);
+    vec3 eye = pc.mode.y == 0 ? fr.camPos.xyz : pc.shadowEye.xyz;
+    vec3 view0 = normalize(eye - aP0);
+    vec3 view1 = normalize(eye - aP1);
     vec3 side0 = cross(aP1 - aPrev, view0);
     vec3 side1 = cross(aNext - aP0, view1);
     side0 = dot(side0, side0) < 1e-10 ? camRight : normalize(side0);
@@ -92,7 +95,11 @@ void main() {
   }
 
   vWorldPos = p;
-  vView = normalize(fr.camPos.xyz - p);
+  vec3 eye = pc.mode.y == 0 ? fr.camPos.xyz : pc.shadowEye.xyz;
+  vView = normalize(eye - p);
   vInstanceId = gl_InstanceIndex;
-  gl_Position = fr.viewProj * vec4(p, 1.0);
+  mat4 vp = pc.mode.y >= 2
+      ? fr.pointShadowViewProj[pc.mode.y - 2]
+      : (pc.mode.y == 1 ? fr.shadowViewProj : fr.viewProj);
+  gl_Position = vp * vec4(p, 1.0);
 }

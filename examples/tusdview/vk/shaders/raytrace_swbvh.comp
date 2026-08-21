@@ -1,6 +1,7 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_control_flow_attributes : enable
 
 #ifndef TUSDVIEW_RT_PTEXTURE_IMAGE_CAP
 #define TUSDVIEW_RT_PTEXTURE_IMAGE_CAP 256
@@ -14,9 +15,9 @@
 // Real two-level (TLAS -> per-instance BLAS) triangle traversal plus a
 // self-contained PBR shading pass: base color/metallic/roughness (+ the
 // OpenPBR transmission/subsurface rows already packed into the same
-// LrtMats SSBO the hardware shader reads, of which only the cheap
-// subsurface-tint approximation and one-bounce transmission/refraction are
-// applied so far -- no multi-bounce path tracing yet, that is follow-up work),
+// LrtMats SSBO the hardware shader reads, including the cheap
+// subsurface-tint approximation and bounded three-interface
+// transmission/refraction walk),
 // the packed analytic
 // scene lights, and dome-cube ambient. Geometry lights and IES profiles use
 // packed sampling data; portal lights use the rectangular sampling path.
@@ -69,6 +70,7 @@ layout(set = 0, binding = 16, scalar) readonly buffer Nrms { float nrms[]; };   
 layout(set = 0, binding = 17, scalar) readonly buffer Cols { float cols[]; };   // 12 floats/tri
 layout(set = 0, binding = 18, scalar) readonly buffer Uv   { float uvs[]; };    // 6 floats/tri
 layout(set = 0, binding = 19, scalar) readonly buffer MatId { int triMat[]; };
+layout(set = 0, binding = 23, scalar) readonly buffer Uv1  { float uvs1[]; };   // 6 floats/tri
 
 struct RtTexDesc {
   int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
@@ -84,9 +86,9 @@ layout(set = 0, binding = 22, scalar) readonly buffer RtMaterialGraphs { float g
 layout(set = 0, binding = 20, scalar) readonly buffer FaceId { int faceIds[]; };
 layout(set = 0, binding = 21) uniform sampler2D swPtexImages[TUSDVIEW_RT_PTEXTURE_IMAGE_CAP];
 
-// 14 vec4 per material (LightRT/OpenPBR), matches PackRealtimePbrMaterial
+// 18 vec4 per material (LightRT/OpenPBR), matches PackRealtimePbrMaterial
 // (src/tydra/openpbr-params.hh) -- same layout+macro as raytrace.comp.
-#define lrt(id, k) lrtRows[(id) * 14u + (k)]
+#define lrt(id, k) lrtRows[(id) * 20u + (k)]
 // 3 vec4 per material (baseColor.rgb+alpha, metallic/roughness/alphaMode/
 // alphaCutoff, emissive) -- same layout+macro as raytrace.comp.
 #define mat(id, k) matRows[(id) * 3u + (k)]
@@ -230,7 +232,7 @@ vec3 swDomeRadiance(vec3 direction) {
     b[7] = 1.092548 * d.x * d.z;
     b[8] = 0.546274 * (d.x * d.x - d.y * d.y);
     vec3 e = vec3(0.0);
-    for (int k = 0; k < 9; ++k) {
+    [[dont_unroll]] for (int k = 0; k < 9; ++k) {
       for (int c = 0; c < 3; ++c) {
         uint coeff = uint(k * 3 + c);
         vec4 row = lightRows[i * 20u + 13u + coeff / 4u];
@@ -240,6 +242,18 @@ vec3 swDomeRadiance(vec3 direction) {
     return max(e, vec3(0.0)) * lightRows[i * 20u + 4u].rgb;
   }
   return vec3(0.0);
+}
+
+vec3 swApplyThinFilm(vec3 f0, float cosTheta, float weight,
+                     float thickness, float ior) {
+  float w = clamp(weight, 0.0, 1.0);
+  if (w <= 0.0 || thickness <= 0.0) return f0;
+  float phase = 6.28318530718 * max(ior, 1.0) * thickness *
+                (1.0 - clamp(cosTheta, 0.0, 1.0));
+  vec3 film = 0.5 + 0.5 * cos(phase * vec3(1.0, 1.17, 1.35) +
+                              vec3(0.0, 2.1, 4.2));
+  return mix(f0, clamp(f0 + (vec3(1.0) - f0) * film * 0.65,
+                       vec3(0.0), vec3(1.0)), w);
 }
 
 bool swSampleGeometryLight(uint li, inout uint state, out vec3 position,
@@ -330,6 +344,15 @@ vec4 swSampleTexture(int id, vec2 uv, vec2 duvdx, vec2 duvdy,
                      uint face, vec4 missing) {
   if (id < 0 || id >= int(texDescs.length())) return missing;
   RtTexDesc td = texDescs[id];
+  if (td.isUdim != 0) {
+    ivec2 tile = ivec2(floor(uv));
+    int lut = tile.x + tile.y * 10;
+    if (lut < 0 || lut >= 100) return missing;
+    int tileId = td.udimLayer[lut];
+    if (tileId < 0 || tileId >= int(texDescs.length())) return missing;
+    td = texDescs[tileId];
+    uv = fract(uv);
+  }
   if (td.width <= 0 || td.height <= 0) return missing;
   vec2 sourceUv = uv;
   if (td.isPtex != 0 && td.imageSlot >= 0 &&
@@ -352,19 +375,28 @@ vec4 swSampleTexture(int id, vec2 uv, vec2 duvdx, vec2 duvdy,
 // Bounded interpreter for the same compact MaterialX IR used by the
 // ray-query path. Fixed-point passes resolve forward references while keeping
 // malformed graphs bounded and deterministic.
-vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv, uint face) {
-  const uint STRIDE = 1352u;
+vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
+  const uint STRIDE = 1355u;
   uint base = mid * STRIDE;
-  if (base + 7u >= uint(graphRows.length()) || route < 0) return vec4(0.0);
+  if (base + 9u >= uint(graphRows.length()) || route < 0 || route > 8) return vec4(0.0);
   int count = int(clamp(graphRows[base], 0.0, 64.0));
   int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
   if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
+  bool hasForwardRef = false;
+  for (int i = 0; i < count && !hasForwardRef; ++i) {
+    uint p = base + 10u + uint(i) * 21u;
+    hasForwardRef = int(graphRows[p + 1u] + 0.5) > i ||
+                    int(graphRows[p + 2u] + 0.5) > i ||
+                    int(graphRows[p + 3u] + 0.5) > i;
+  }
+  int passCount = hasForwardRef ? count : 1;
   vec4 v[64];
-  for (int i = 0; i < 64; ++i) v[i] = vec4(0.0);
-  for (int pass = 0; pass < 64; ++pass) {
-    for (int i = 0; i < 64; ++i) {
-      if (i >= count) continue;
-      uint p = base + 8u + uint(i) * 21u;
+  // Runtime bounds avoid a literal 64x64 graph-evaluation nest during driver
+  // compilation while retaining the fixed-size packed graph ABI.
+  [[dont_unroll]] for (int i = 0; i < count; ++i) v[i] = vec4(0.0);
+  [[dont_unroll]] for (int pass = 0; pass < passCount; ++pass) {
+    [[dont_unroll]] for (int i = 0; i < count; ++i) {
+      uint p = base + 10u + uint(i) * 21u;
       int op = int(graphRows[p] + 0.5);
       int a = int(graphRows[p + 1u] + 0.5);
       int b = int(graphRows[p + 2u] + 0.5);
@@ -374,8 +406,13 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv, uint face) {
       vec4 cv = (c >= 0 && c < count) ? v[c] : vec4(graphRows[p + 12u], graphRows[p + 13u], graphRows[p + 14u], graphRows[p + 15u]);
       vec4 value = av;
       int tex = int(graphRows[p + 16u] + 0.5);
-      vec2 graphUv = uv * vec2(graphRows[p + 17u], graphRows[p + 18u]) +
-                     vec2(graphRows[p + 19u], graphRows[p + 20u]);
+      vec2 graphUv = uv0;
+      int uvInput = int(floor(graphRows[p + 15u] + 0.5));
+      if (uvInput == 0) graphUv = av.xy;
+      else if (uvInput == 1) graphUv = bv.xy;
+      else if (uvInput == 2) graphUv = cv.xy;
+      graphUv = graphUv * vec2(graphRows[p + 17u], graphRows[p + 18u]) +
+                vec2(graphRows[p + 19u], graphRows[p + 20u]);
       if (op == 0) v[i] = value;
       else if (op == 1 || op == 2) v[i] = tex >= 0
           ? swSampleTexture(tex, graphUv, vec2(0.0), vec2(0.0), face, value) : value;
@@ -399,7 +436,7 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv, uint face) {
         float l = dot(av.xyz, vec3(0.2126, 0.7152, 0.0722));
         v[i] = vec4(l, l, l, av.w);
       } else if (op == 20) v[i] = av.x >= 0.5 ? bv : cv;
-      else if (op == 21) v[i] = vec4(uv, 0.0, 1.0);
+      else if (op == 21) v[i] = vec4(uv1, 0.0, 1.0);
       else if (op == 22) v[i] = floor(av);
       else if (op == 23) v[i] = ceil(av);
       else if (op == 24) v[i] = fract(av);
@@ -407,11 +444,17 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv, uint face) {
       else if (op == 26) v[i] = smoothstep(bv, cv, av);
       else if (op == 27) v[i] = vec4(cross(av.xyz, bv.xyz), av.w);
       else if (op == 28) v[i] = vec4(length(av.xyz));
-      else if (op == 29) v[i] = vec4(fract(sin(dot(av.xy + uv, vec2(127.1, 311.7))) * 43758.5453));
+      else if (op == 29) v[i] = vec4(fract(sin(dot(av.xy + uv0, vec2(127.1, 311.7))) * 43758.5453));
+      else if (op == 40) v[i] = vec4(fract(sin(dot(av.xyz + vec3(uv0, uv0.x + uv0.y),
+                                                        vec3(127.1, 311.7, 74.7))) *
+                                           43758.5453));
       else if (op == 30) v[i] = tan(av);
       else if (op == 31) v[i] = exp(av);
       else if (op == 32) v[i] = log(max(av, vec4(1e-6)));
       else if (op == 33) v[i] = mod(av, max(abs(bv), vec4(1e-6)));
+      else if (op == 41) v[i] = atan(av, bv);
+      else if (op == 42) v[i] = sign(av);
+      else if (op == 43) v[i] = round(av);
       else if (op == 34) v[i] = vec4(1.0) - av;
       else if (op == 35) v[i] = (av - bv) / max(cv - bv, vec4(1e-6));
       else if (op == 36) v[i] = vec4(0.0, 0.0, 1.0, 1.0);
@@ -423,10 +466,36 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv, uint face) {
         v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
                     axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
       }
+      else if (op == 39) {
+        vec2 t = av.xy * vec2(graphRows[p + 17u], graphRows[p + 18u]) +
+                 vec2(graphRows[p + 19u], graphRows[p + 20u]);
+        float a2 = radians(graphRows[p + 15u]);
+        v[i] = vec4(vec2(t.x * cos(a2) - t.y * sin(a2),
+                         t.x * sin(a2) + t.y * cos(a2)), av.zw);
+      }
       else v[i] = value;
     }
   }
   return v[wanted];
+}
+
+float swGgxDAniso(float nh, float hT, float hB, float roughness,
+                  float anisotropy) {
+  float a = max(roughness * roughness, 0.002);
+  float ax = max(a * (1.0 + anisotropy), 0.001);
+  float ay = max(a * (1.0 - anisotropy), 0.001);
+  float q = (hT * hT) / (ax * ax) + (hB * hB) / (ay * ay) + nh * nh;
+  return 1.0 / max(3.14159265 * ax * ay * q * q, 1e-6);
+}
+float swGgxG1Aniso(float nv, float vT, float vB, float roughness,
+                   float anisotropy) {
+  float a = max(roughness * roughness, 0.002);
+  float ax = max(a * (1.0 + anisotropy), 0.001);
+  float ay = max(a * (1.0 - anisotropy), 0.001);
+  float vn2 = max(nv * nv, 1e-6);
+  float lambda = 0.5 * (-1.0 + sqrt(1.0 +
+      (vT * vT * ax * ax + vB * vB * ay * ay) / vn2));
+  return 1.0 / max(1.0 + lambda, 1e-6);
 }
 
 vec2 swMaterialUv(int mid, int slot, vec2 uv) {
@@ -470,11 +539,11 @@ float swOpacityAtHit(int iid, int tri, vec2 bc, out float alphaMode) {
     float channel = ch == 1 ? ot.g : (ch == 2 ? ot.b : (ch == 3 ? ot.a : ot.r));
     alpha *= channel * matTexParams[pb + 67u] + matTexParams[pb + 68u];
   }
-  uint graphBase = uint(mid) * 1352u;
+  uint graphBase = uint(mid) * 1355u;
   if (graphBase + 4u < uint(graphRows.length()) &&
       graphRows[graphBase + 4u] >= 0.0) {
     alpha = clamp(swEvalMaterialXGraph(uint(mid), 3,
-                                       uv, uint(max(tri, 0))).x, 0.0, 1.0);
+                                       uv, uv, uint(max(tri, 0))).x, 0.0, 1.0);
   }
   alpha *= (cols[tri * 12 + 3] * w0 + cols[tri * 12 + 7] * bc.x +
             cols[tri * 12 + 11] * bc.y) * insts[iid].tint.a;
@@ -511,10 +580,10 @@ vec3 swApproxLayerColor(int iid, int tri, vec2 bc) {
     if (lrt(mid, 12u).w > 0.5)
       base *= lrt(mid, 0u).rgb;
     tint *= vec3(1.0);
-  uint gb = uint(mid) * 1352u;
-    if (gb + 7u < uint(graphRows.length())) {
+  uint gb = uint(mid) * 1355u;
+    if (gb + 9u < uint(graphRows.length())) {
       if (graphRows[gb + 1u] >= 0.0)
-        base = swEvalMaterialXGraph(uint(mid), 0, uv, uint(max(tri, 0))).rgb;
+        base = swEvalMaterialXGraph(uint(mid), 0, uv, uv, uint(max(tri, 0))).rgb;
     }
     vec3 v0 = xformPoint(insts[iid].o2w,
                          vec3(tris[tri * 9 + 0], tris[tri * 9 + 1], tris[tri * 9 + 2]));
@@ -527,17 +596,51 @@ vec3 swApproxLayerColor(int iid, int tri, vec2 bc) {
     vec3 V = normalize(pc.camPos.xyz - hit);
     float metallic = mat(mid, 1u).x;
     float roughness = clamp(mat(mid, 1u).y, 0.03, 1.0);
-    if (gb + 7u < uint(graphRows.length())) {
+    float specAnisotropy = clamp(lrt(mid, 14u).y + 0.5 * lrt(mid, 14u).w,
+                                 -1.0, 1.0);
+    float specRotation = lrt(mid, 14u).z;
+    float transmission = clamp(lrt(mid, 2u).w, 0.0, 1.0);
+    vec3 transmissionColor = max(lrt(mid, 2u).rgb, vec3(0.0));
+    float subsurface = clamp(lrt(mid, 4u).w, 0.0, 1.0);
+    vec3 subsurfaceColor = max(lrt(mid, 4u).rgb, vec3(0.0));
+    vec3 subsurfaceRadius = max(lrt(mid, 5u).rgb, vec3(0.0));
+    float subsurfaceScale = max(lrt(mid, 5u).w, 0.0);
+    vec3 coatColor = max(lrt(mid, 6u).rgb, vec3(0.0));
+    float coatWeight = clamp(lrt(mid, 6u).w, 0.0, 1.0);
+    float coatRoughness = clamp(lrt(mid, 11u).x, 0.02, 1.0);
+    float thinFilmWeight = clamp(lrt(mid, 12u).x, 0.0, 1.0);
+    float thinFilmThickness = max(lrt(mid, 12u).y, 0.0);
+    float thinFilmIor = max(lrt(mid, 12u).z, 1.0);
+    if (gb + 9u < uint(graphRows.length())) {
       if (graphRows[gb + 2u] >= 0.0)
-        metallic = clamp(swEvalMaterialXGraph(uint(mid), 1, uv, uint(max(tri, 0))).x, 0.0, 1.0);
+        metallic = clamp(swEvalMaterialXGraph(uint(mid), 1, uv, uv, uint(max(tri, 0))).x, 0.0, 1.0);
       if (graphRows[gb + 3u] >= 0.0)
-        roughness = clamp(swEvalMaterialXGraph(uint(mid), 2, uv, uint(max(tri, 0))).x, 0.03, 1.0);
+        roughness = clamp(swEvalMaterialXGraph(uint(mid), 2, uv, uv, uint(max(tri, 0))).x, 0.03, 1.0);
       if (graphRows[gb + 5u] >= 0.0)
-        emission = max(swEvalMaterialXGraph(uint(mid), 4, uv, uint(max(tri, 0))).rgb,
+        emission = max(swEvalMaterialXGraph(uint(mid), 4, uv, uv, uint(max(tri, 0))).rgb,
                        vec3(0.0));
+      if (graphRows[gb + 7u] >= 0.0)
+        subsurface = clamp(swEvalMaterialXGraph(uint(mid), 6, uv, uv,
+                                                uint(max(tri, 0))).x,
+                           0.0, 1.0);
+      if (graphRows[gb + 8u] >= 0.0)
+        subsurfaceColor = max(swEvalMaterialXGraph(uint(mid), 7, uv, uv,
+                                                   uint(max(tri, 0))).rgb,
+                               vec3(0.0));
+      if (graphRows[gb + 9u] >= 0.0)
+        subsurfaceRadius = max(swEvalMaterialXGraph(uint(mid), 8, uv, uv,
+                                                    uint(max(tri, 0))).rgb,
+                               vec3(0.0));
     }
     float fd = 0.04;
     vec3 f0 = mix(vec3(fd), base, metallic);
+    if (thinFilmWeight > 0.0 && thinFilmThickness > 0.0) {
+      float phase = 6.2831853 * thinFilmIor * thinFilmThickness;
+      vec3 film = 0.5 + 0.5 * cos(phase * vec3(1.0, 1.17, 1.35) +
+                                  vec3(0.0, 2.1, 4.2));
+      f0 = mix(f0, clamp(f0 + (vec3(1.0) - f0) * film * 0.65,
+                         vec3(0.0), vec3(1.0)), thinFilmWeight);
+    }
     vec3 shaded = emission + base * 0.05;
     for (uint li = 0u; li < uint(lightRows.length()) / 20u; ++li) {
       vec4 l0 = lightRows[li * 20u];
@@ -563,15 +666,50 @@ vec3 swApproxLayerColor(int iid, int tri, vec2 bc) {
       float nv = max(dot(N, V), 1e-4);
       float nh = max(dot(N, H), 0.0), vh = max(dot(V, H), 0.0);
       vec3 F = f0 + (vec3(1.0) - f0) * pow(1.0 - vh, 5.0);
-      float a2 = roughness * roughness * roughness * roughness;
-      float den = nh * nh * (a2 - 1.0) + 1.0;
-      float D = a2 / max(3.14159265 * den * den, 1e-6);
-      float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-      float G = (nv / max(nv * (1.0 - k) + k, 1e-6)) *
-                (nl / max(nl * (1.0 - k) + k, 1e-6));
+      vec3 tangentRaw = v1 - v0 - N * dot(N, v1 - v0);
+      vec3 tangent = dot(tangentRaw, tangentRaw) > 1e-6
+                         ? normalize(tangentRaw)
+                         : normalize(abs(N.y) < 0.9 ? cross(N, vec3(0, 1, 0))
+                                                   : cross(N, vec3(1, 0, 0)));
+      vec3 bitangent = normalize(cross(N, tangent));
+      float rot = radians(specRotation);
+      vec3 rotatedT = tangent * cos(rot) + bitangent * sin(rot);
+      vec3 rotatedB = -tangent * sin(rot) + bitangent * cos(rot);
+      float hT = dot(H, rotatedT), hB = dot(H, rotatedB);
+      float vT = dot(V, rotatedT), vB = dot(V, rotatedB);
+      float lT = dot(L, rotatedT), lB = dot(L, rotatedB);
+      float D = swGgxDAniso(nh, hT, hB, roughness, specAnisotropy);
+      float G = swGgxG1Aniso(nv, vT, vB, roughness, specAnisotropy) *
+                swGgxG1Aniso(nl, lT, lB, roughness, specAnisotropy);
       vec3 spec = D * G * F / max(4.0 * nv * nl, 1e-5);
-      vec3 diff = (vec3(1.0) - F) * (1.0 - metallic) * base / 3.14159265;
-      shaded += (diff + spec) * lightRows[li * 20u + 3u].rgb *
+      vec3 diff = (vec3(1.0) - F) * (1.0 - metallic) *
+                  (1.0 - transmission) * base / 3.14159265;
+      vec3 transmissionLobe = transmissionColor * transmission *
+                              (vec3(1.0) - F) / 3.14159265;
+      float radiusGain = clamp(sqrt(max(dot(subsurfaceRadius,
+                                           vec3(0.2126, 0.7152, 0.0722)) *
+                                       subsurfaceScale, 0.0)) * 8.0,
+                               0.0, 1.0);
+      float diffusionShape = mix(0.25 + 0.75 * pow(1.0 - nl, 2.0),
+                                 0.25 + 0.75 * (1.0 - nl), radiusGain);
+      vec3 subsurfaceLobe = subsurfaceColor * subsurface *
+                            diffusionShape / 3.14159265;
+      float coatNh = max(dot(N, H), 0.0), coatNv = max(dot(N, V), 1e-4);
+      float coatNl = max(dot(N, L), 0.0);
+      vec3 coatF = f0 + (vec3(1.0) - f0) * pow(1.0 - vh, 5.0);
+      float coatA2 = coatRoughness * coatRoughness *
+                     coatRoughness * coatRoughness;
+      float coatDen = coatNh * coatNh * (coatA2 - 1.0) + 1.0;
+      float coatD = coatA2 / max(3.14159265 * coatDen * coatDen, 1e-6);
+      float coatK = (coatRoughness + 1.0) * (coatRoughness + 1.0) / 8.0;
+      float coatG = (coatNv / max(coatNv * (1.0 - coatK) + coatK, 1e-6)) *
+                    (coatNl / max(coatNl * (1.0 - coatK) + coatK, 1e-6));
+      vec3 coatLobe = coatD * coatG * coatF /
+                      max(4.0 * coatNv * coatNl, 1e-5) * coatColor * coatWeight;
+      vec3 baseLobe = (diff + spec + transmissionLobe + subsurfaceLobe) *
+                      (1.0 - 0.5 * coatWeight);
+      shaded += (baseLobe + coatLobe) *
+                lightRows[li * 20u + 3u].rgb *
                 attenuation * nl;
     }
   return shaded * tint;
@@ -585,13 +723,15 @@ vec3 swApproxLayerColor(int iid, int tri, vec2 bc) {
 
 vec3 swLayerTransmissionTint(int iid, int tri) {
   int mid = triMat[tri];
-  if (mid < 0 || mid >= int(lrtRows.length() / 14u)) return vec3(1.0);
+  if (mid < 0 || mid >= int(lrtRows.length() / 20u)) return vec3(1.0);
   float weight = clamp(lrt(mid, 2u).w, 0.0, 1.0);
   float depth = max(lrt(mid, 3u).w, 0.0);
   vec3 absorption = max(vec3(0.0), vec3(1.0) -
                         clamp(lrt(mid, 2u).rgb, vec3(0.0), vec3(1.0)));
   absorption += max(lrt(mid, 3u).rgb, vec3(0.0)) * 0.25;
-  return exp(-weight * depth * absorption);
+  float dispersion = clamp(lrt(mid, 15u).x * lrt(mid, 15u).z, 0.0, 1.0);
+  return exp(-weight * depth * absorption) *
+         vec3(1.0 + 0.35 * dispersion, 1.0, 1.0 - 0.25 * dispersion);
 }
 
 void swRayForPixel(ivec2 px, ivec2 size, out vec3 origin, out vec3 dir) {
@@ -734,31 +874,58 @@ bool traceClosestSW(vec3 o, vec3 d, out int hitInst, out int hitTri,
 
 float swLayerTransmissionWeight(int tri) {
   int mid = triMat[tri];
-  if (mid < 0 || mid >= int(lrtRows.length() / 14u)) return 0.0;
+  if (mid < 0 || mid >= int(lrtRows.length() / 20u)) return 0.0;
   return clamp(lrt(mid, 2u).w, 0.0, 1.0);
 }
 
 vec3 swLayerRefractedColor(int iid, int tri, vec2 bc, bool front,
-                           vec3 rayOrigin, vec3 rayDir) {
-  int mid = triMat[tri];
-  if (mid < 0 || mid >= int(lrtRows.length() / 14u)) return vec3(0.0);
-  float w0 = 1.0 - bc.x - bc.y;
-  vec3 p0 = xformPoint(insts[iid].o2w,
-                       vec3(tris[tri * 9 + 0], tris[tri * 9 + 1], tris[tri * 9 + 2]));
-  vec3 p1 = xformPoint(insts[iid].o2w,
-                       vec3(tris[tri * 9 + 3], tris[tri * 9 + 4], tris[tri * 9 + 5]));
-  vec3 p2 = xformPoint(insts[iid].o2w,
-                       vec3(tris[tri * 9 + 6], tris[tri * 9 + 7], tris[tri * 9 + 8]));
-  vec3 hit = p0 * w0 + p1 * bc.x + p2 * bc.y;
-  vec3 N = normalize(cross(p1 - p0, p2 - p0));
-  if (!front) N = -N;
-  vec3 refrDir = refract(rayDir, N, 1.0 / max(lrt(mid, 10u).w, 1.0));
-  if (dot(refrDir, refrDir) < 1.0e-8) refrDir = reflect(rayDir, N);
-  int ri, rt; vec2 rb; bool rf; float rdist;
-  if (traceClosestSWRange(hit + refrDir * 1.0e-3, refrDir, 1.0e-3,
-                          1.0e30, ri, rt, rb, rf, rdist))
-    return swApproxLayerColor(ri, rt, rb);
-  return swDomeRadiance(refrDir);
+                           vec3 rayOrigin, vec3 rayDir,
+                           out vec3 walkOrigin, out vec3 walkDir) {
+  walkOrigin = rayOrigin;
+  walkDir = rayDir;
+  vec3 throughput = vec3(1.0);
+  vec3 currentDir = rayDir;
+  int currentIid = iid;
+  int currentTri = tri;
+  vec2 currentBc = bc;
+  bool currentFront = front;
+  for (int bounce = 0; bounce < 3; ++bounce) {
+    int mid = triMat[currentTri];
+    if (mid < 0 || mid >= int(lrtRows.length() / 20u)) return vec3(0.0);
+    float w0 = 1.0 - currentBc.x - currentBc.y;
+    vec3 p0 = xformPoint(insts[currentIid].o2w,
+                         vec3(tris[currentTri * 9 + 0], tris[currentTri * 9 + 1],
+                              tris[currentTri * 9 + 2]));
+    vec3 p1 = xformPoint(insts[currentIid].o2w,
+                         vec3(tris[currentTri * 9 + 3], tris[currentTri * 9 + 4],
+                              tris[currentTri * 9 + 5]));
+    vec3 p2 = xformPoint(insts[currentIid].o2w,
+                         vec3(tris[currentTri * 9 + 6], tris[currentTri * 9 + 7],
+                              tris[currentTri * 9 + 8]));
+    vec3 hit = p0 * w0 + p1 * currentBc.x + p2 * currentBc.y;
+    vec3 N = normalize(cross(p1 - p0, p2 - p0));
+    if (!currentFront) N = -N;
+    float ior = max(lrt(mid, 10u).w, 1.0);
+    vec3 refrDir = refract(currentDir, N, currentFront ? 1.0 / ior : ior);
+    if (dot(refrDir, refrDir) < 1.0e-8) refrDir = reflect(currentDir, N);
+    throughput *= swLayerTransmissionTint(currentIid, currentTri);
+    walkOrigin = hit + refrDir * 1.0e-3;
+    walkDir = refrDir;
+    int nextIid, nextTri; vec2 nextBc; bool nextFront; float nextT;
+    if (!traceClosestSWRange(hit + refrDir * 1.0e-3, refrDir, 1.0e-3,
+                             1.0e30, nextIid, nextTri, nextBc, nextFront,
+                             nextT))
+      return throughput * swDomeRadiance(refrDir);
+    currentDir = refrDir;
+    currentIid = nextIid;
+    currentTri = nextTri;
+    currentBc = nextBc;
+    currentFront = nextFront;
+    if (bounce == 2)
+      return throughput * swApproxLayerColor(currentIid, currentTri,
+                                              currentBc);
+  }
+  return throughput * swDomeRadiance(currentDir);
 }
 
 void main() {
@@ -778,7 +945,7 @@ void main() {
   float primaryCursor = 1e-4;
   // Reject alpha-mask texels before entering the full shading path, then keep
   // the first accepted layer for the bounded front-to-back compositor below.
-  for (int pass = 0; pass < 32; ++pass) {
+  [[dont_unroll]] for (int pass = 0; pass < 32; ++pass) {
     int candidateInst, candidateTri; vec2 candidateBc; bool candidateFront;
     float candidateT;
     if (!traceClosestSWRange(origin, dir, primaryCursor, 1e30,
@@ -823,6 +990,12 @@ void main() {
     vec2 uv0 = vec2(uvs[hitTri * 6 + 0], uvs[hitTri * 6 + 1]) * w0 +
                vec2(uvs[hitTri * 6 + 2], uvs[hitTri * 6 + 3]) * hitBc.x +
                vec2(uvs[hitTri * 6 + 4], uvs[hitTri * 6 + 5]) * hitBc.y;
+    vec2 uv1 = uv0;
+    if (uvs1.length() >= uint(hitTri * 6 + 6)) {
+      uv1 = vec2(uvs1[hitTri * 6 + 0], uvs1[hitTri * 6 + 1]) * w0 +
+            vec2(uvs1[hitTri * 6 + 2], uvs1[hitTri * 6 + 3]) * hitBc.x +
+            vec2(uvs1[hitTri * 6 + 4], uvs1[hitTri * 6 + 5]) * hitBc.y;
+    }
 
     int mid = triMat[hitTri];
     vec3 base = vec3(0.6);
@@ -831,6 +1004,42 @@ void main() {
     float alphaCutoff = 0.5;
     float metallic = 0.0;
     float roughness = 0.5;
+    float baseWeight = 1.0;
+    float specWeight = 1.0;
+    vec3 specColor = vec3(1.0);
+    float specIor = 1.5;
+    float specAnisotropy = 0.0;
+    float specRotation = 0.0;
+    float sheenWeight = 0.0;
+    vec3 sheenColor = vec3(1.0);
+    float sheenRoughness = 0.3;
+    float thinFilmWeight = 0.0;
+    float thinFilmThickness = 0.0;
+    float thinFilmIor = 1.5;
+    float transmission = 0.0;
+    vec3 transmissionColor = vec3(1.0);
+    float transmissionDispersionAbbe = 0.0;
+    float transmissionDispersion = 0.0;
+    float transmissionDispersionScale = 0.0;
+    float subsurface = 0.0;
+    vec3 subsurfaceColor = vec3(1.0);
+    vec3 subsurfaceRadius = vec3(1.0);
+    float subsurfaceScale = 1.0;
+    float subsurfaceAnisotropy = 0.0;
+    float subsurfaceScatterAnisotropy = 0.0;
+    float coatAnisotropy = 0.0;
+    float coatRotation = 0.0;
+    float coatRoughnessAnisotropy = 0.0;
+    float volumeDensity = 0.0;
+    vec3 volumeAlbedo = vec3(1.0);
+    vec3 volumeEmission = vec3(0.0);
+    float volumeEmissionScale = 0.0;
+    float coatWeight = 0.0;
+    vec3 coatColor = vec3(1.0);
+    float coatRoughness = 0.1;
+    float coatAffectColor = 0.0;
+    float coatAffectRoughness = 0.0;
+    float coatDarkening = 0.0;
     vec3 emissive = vec3(0.0);
     if (mid >= 0) {
       base = mat(mid, 0u).rgb;
@@ -839,15 +1048,52 @@ void main() {
       alphaCutoff = mat(mid, 1u).w;
       metallic = mat(mid, 1u).x;
       roughness = mat(mid, 1u).y;
-      emissive = mat(mid, 2u).rgb;
+        emissive = mat(mid, 2u).rgb;
       if (lrt(mid, 12u).w > 0.5) {
+        baseWeight = lrt(mid, 0u).w;
+        specWeight = lrt(mid, 1u).w;
+        specColor = lrt(mid, 1u).rgb;
+        specIor = max(lrt(mid, 10u).w, 1.0);
+        sheenWeight = lrt(mid, 7u).w;
+        sheenColor = lrt(mid, 7u).rgb;
+        sheenRoughness = lrt(mid, 11u).z;
+        thinFilmWeight = lrt(mid, 12u).x;
+        thinFilmThickness = lrt(mid, 12u).y;
+        thinFilmIor = lrt(mid, 12u).z;
+        specAnisotropy = clamp(lrt(mid, 14u).y +
+                               0.5 * lrt(mid, 14u).w, -1.0, 1.0);
+        specRotation = lrt(mid, 14u).z;
+        roughness = clamp(roughness *
+                          (1.0 - 0.25 * abs(specAnisotropy)),
+                          0.03, 1.0);
         metallic = lrt(mid, 10u).x;
         roughness = lrt(mid, 10u).z;
         alpha = lrt(mid, 9u).w;
         emissive = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
-        float transmission = lrt(mid, 2u).w;
-        float subsurface = lrt(mid, 4u).w;
-        vec3 subsurfaceColor = lrt(mid, 4u).rgb;
+        transmission = lrt(mid, 2u).w;
+        transmissionColor = lrt(mid, 2u).rgb;
+        coatWeight = lrt(mid, 6u).w;
+        coatColor = lrt(mid, 6u).rgb;
+        coatRoughness = lrt(mid, 11u).x;
+        transmissionDispersionAbbe = lrt(mid, 15u).y;
+        transmissionDispersion = lrt(mid, 15u).x;
+        transmissionDispersionScale = lrt(mid, 15u).z;
+        subsurfaceAnisotropy = lrt(mid, 15u).w;
+        subsurfaceScatterAnisotropy = lrt(mid, 16u).x;
+        coatAnisotropy = lrt(mid, 16u).y;
+        coatRotation = lrt(mid, 16u).z;
+        coatAffectColor = lrt(mid, 16u).w;
+        coatAffectRoughness = lrt(mid, 17u).x;
+        coatRoughnessAnisotropy = lrt(mid, 17u).y;
+        coatDarkening = lrt(mid, 17u).w;
+        volumeAlbedo = lrt(mid, 18u).rgb;
+        volumeDensity = lrt(mid, 18u).w;
+        volumeEmission = lrt(mid, 19u).rgb;
+        volumeEmissionScale = lrt(mid, 19u).w;
+        subsurface = lrt(mid, 4u).w;
+        subsurfaceColor = lrt(mid, 4u).rgb;
+        subsurfaceRadius = max(lrt(mid, 5u).rgb, vec3(0.0));
+        subsurfaceScale = max(lrt(mid, 5u).w, 0.0);
         // Cheap subsurface approximation (see file header + Phase 1 in
         // raytrace.comp): tint diffuse albedo toward subsurfaceColor.
         // Verified numerically at runtime on real hardware against
@@ -858,7 +1104,9 @@ void main() {
         // models/openpbr-subsurface-sphere.usda, collapses to the
         // same default and shows no visible tint -- not a bug here).
         base = mix(base, subsurfaceColor * (1.0 - metallic) * (1.0 - transmission),
-                  subsurface);
+                  clamp(subsurface * (1.0 + 0.25 * abs(subsurfaceAnisotropy) +
+                                      0.25 * abs(subsurfaceScatterAnisotropy)),
+                        0.0, 1.0));
       }
       uint sourceFace = hitTri >= 0 && uint(hitTri) < uint(faceIds.length()) &&
                         faceIds[hitTri] >= 0
@@ -895,33 +1143,113 @@ void main() {
         base *= swSampleTexture(baseTexId, uv0, duvdx, duvdy,
                                 sourceFace, vec4(1.0)).rgb;
       }
+      // OpenPBR specular_color has a dedicated texture slot and transform;
+      // keep SWBVH in lockstep with hardware RT instead of silently falling
+      // back to the constant tint when the input is texture-connected.
+      uint texParamBase = uint(mid) * 155u;
+      int specTexId = matTexIds[mid * 12 + 10];
+      bool hasSpecTexture = matTexParams[texParamBase + 131u] > 0.5 ||
+                            matTexParams[texParamBase + 139u] > 0.5;
+      if (specTexId >= 0 && hasSpecTexture) {
+        vec2 specUv = vec2(
+            matTexParams[texParamBase + 124u] * uv0.x +
+                matTexParams[texParamBase + 125u] * uv0.y +
+                matTexParams[texParamBase + 126u],
+            matTexParams[texParamBase + 127u] * uv0.x +
+                matTexParams[texParamBase + 128u] * uv0.y +
+                matTexParams[texParamBase + 129u]);
+        specColor *= swSampleTexture(specTexId, specUv, vec2(0.0),
+                                     vec2(0.0), sourceFace,
+                                     vec4(1.0)).rgb;
+      }
     }
-    uint graphBase = uint(mid) * 1352u;
-    if (graphBase + 7u < uint(graphRows.length())) {
+    uint graphBase = uint(mid) * 1355u;
+    if (graphBase + 9u < uint(graphRows.length())) {
       if (graphRows[graphBase + 1u] >= 0.0)
-        base = swEvalMaterialXGraph(uint(mid), 0, uv0,
+        base = swEvalMaterialXGraph(uint(mid), 0, uv0, uv1,
                                     uint(max(hitTri, 0))).rgb;
       if (graphRows[graphBase + 2u] >= 0.0)
-        metallic = clamp(swEvalMaterialXGraph(uint(mid), 1, uv0,
+        metallic = clamp(swEvalMaterialXGraph(uint(mid), 1, uv0, uv1,
                                                uint(max(hitTri, 0))).x,
                          0.0, 1.0);
       if (graphRows[graphBase + 3u] >= 0.0)
-        roughness = clamp(swEvalMaterialXGraph(uint(mid), 2, uv0,
+        roughness = clamp(swEvalMaterialXGraph(uint(mid), 2, uv0, uv1,
                                                 uint(max(hitTri, 0))).x,
                           0.03, 1.0);
       if (graphRows[graphBase + 4u] >= 0.0)
-        alpha = clamp(swEvalMaterialXGraph(uint(mid), 3, uv0,
+        alpha = clamp(swEvalMaterialXGraph(uint(mid), 3, uv0, uv1,
                                            uint(max(hitTri, 0))).x,
                       0.0, 1.0);
       if (graphRows[graphBase + 5u] >= 0.0)
-        emissive = max(swEvalMaterialXGraph(uint(mid), 4, uv0,
+        emissive = max(swEvalMaterialXGraph(uint(mid), 4, uv0, uv1,
                                             uint(max(hitTri, 0))).rgb,
                        vec3(0.0));
+      if (graphRows[graphBase + 7u] >= 0.0)
+        subsurface = clamp(swEvalMaterialXGraph(uint(mid), 6, uv0, uv1,
+                                                uint(max(hitTri, 0))).x,
+                           0.0, 1.0);
+      if (graphRows[graphBase + 8u] >= 0.0)
+        subsurfaceColor = max(swEvalMaterialXGraph(uint(mid), 7, uv0, uv1,
+                                                   uint(max(hitTri, 0))).rgb,
+                              vec3(0.0));
+      if (graphRows[graphBase + 9u] >= 0.0)
+        subsurfaceRadius = max(swEvalMaterialXGraph(uint(mid), 8, uv0, uv1,
+                                                     uint(max(hitTri, 0))).rgb,
+                                vec3(0.0));
+      if (graphRows[graphBase + 6u] >= 0.0) {
+        vec4 gn = swEvalMaterialXGraph(uint(mid), 5, uv0, uv1,
+                                       uint(max(hitTri, 0)));
+        vec3 gp0 = xformPoint(inst.o2w,
+                              vec3(tris[hitTri * 9 + 0], tris[hitTri * 9 + 1],
+                                   tris[hitTri * 9 + 2]));
+        vec3 gp1 = xformPoint(inst.o2w,
+                              vec3(tris[hitTri * 9 + 3], tris[hitTri * 9 + 4],
+                                   tris[hitTri * 9 + 5]));
+        vec3 gp2 = xformPoint(inst.o2w,
+                              vec3(tris[hitTri * 9 + 6], tris[hitTri * 9 + 7],
+                                   tris[hitTri * 9 + 8]));
+        vec2 guv0 = vec2(uvs[hitTri * 6 + 0], uvs[hitTri * 6 + 1]);
+        vec2 guv1 = vec2(uvs[hitTri * 6 + 2], uvs[hitTri * 6 + 3]);
+        vec2 guv2 = vec2(uvs[hitTri * 6 + 4], uvs[hitTri * 6 + 5]);
+        vec3 ge1 = gp1 - gp0, ge2 = gp2 - gp0;
+        vec3 gN = normalize(cross(ge1, ge2));
+        vec2 gd1 = guv1 - guv0, gd2 = guv2 - guv0;
+        float gdet = gd1.x * gd2.y - gd1.y * gd2.x;
+        vec3 gT = abs(gdet) > 1e-12
+                      ? normalize((ge1 * gd2.y - ge2 * gd1.y) / gdet)
+                      : normalize(cross(abs(gN.z) < 0.999 ? vec3(0, 0, 1)
+                                                          : vec3(0, 1, 0), gN));
+        vec3 gB = normalize(cross(gN, gT));
+        N = normalize(gT * (gn.x * 2.0 - 1.0) +
+                      gB * (gn.y * 2.0 - 1.0) +
+                      gN * (gn.z * 2.0 - 1.0));
+      }
     }
     base *= vertColor.rgb;
     alpha *= vertColor.a * inst.tint.a;
-    base *= inst.tint.rgb;
+      base *= inst.tint.rgb * clamp(baseWeight, 0.0, 1.0);
+    float dispersion = clamp(transmissionDispersion *
+                              transmissionDispersionScale *
+                              (transmissionDispersionAbbe > 0.0
+                                   ? 1.0 + 20.0 / max(transmissionDispersionAbbe, 1.0)
+                                   : 1.0), 0.0, 1.0);
+    transmissionColor *= vec3(1.0 + 0.35 * dispersion, 1.0,
+                               1.0 - 0.25 * dispersion);
+    base = mix(base, base * coatColor,
+               clamp(coatWeight * coatAffectColor, 0.0, 1.0));
+    base *= 1.0 - 0.2 * clamp(coatWeight * coatDarkening, 0.0, 1.0);
+    roughness = mix(roughness, coatRoughness,
+                    clamp(coatWeight * coatAffectRoughness, 0.0, 1.0));
+    roughness = clamp(roughness *
+                      (1.0 - 0.1 * abs(coatAnisotropy) -
+                       0.05 * abs(cos(radians(coatRotation)))), 0.03, 1.0);
+    coatRoughness = clamp(coatRoughness *
+                          (1.0 + 0.25 * coatRoughnessAnisotropy), 0.03, 1.0);
     roughness = clamp(roughness, 0.03, 1.0);
+    float volumeOpacity = clamp(1.0 - exp(-max(volumeDensity, 0.0) * 0.1),
+                                0.0, 1.0);
+    base = mix(base, base * volumeAlbedo, volumeOpacity);
+    emissive += volumeEmission * max(volumeEmissionScale, 0.0) * volumeOpacity;
 
     // Direct term: evaluate the same packed analytic lights used by the
     // hardware ray-query path. Geometry lights sample one emissive triangle
@@ -929,7 +1257,10 @@ void main() {
     vec3 hit = origin + dir * hitT;
     vec3 V = normalize(-dir);
     float NdotV = max(dot(N, V), 1e-4);
-    vec3 F0 = mix(vec3(0.04), base, metallic);
+    float specFd = (specIor - 1.0) / (specIor + 1.0);
+    vec3 F0 = mix(vec3(specFd * specFd) * specColor, base, metallic);
+    F0 = swApplyThinFilm(F0, NdotV, thinFilmWeight,
+                         thinFilmThickness, thinFilmIor);
     vec3 direct = vec3(0.0);
     bool hadDirectLight = false;
     uint directLightCount = uint(lightRows.length()) / 20u;
@@ -1001,7 +1332,7 @@ void main() {
         vec3 shadowOrigin = hit + N * 1e-3;
         float cursor = 1e-3;
         int blendLayers = 0;
-        for (int pass = 0; pass < 32 && visibility > 1e-3; ++pass) {
+        [[dont_unroll]] for (int pass = 0; pass < 32 && visibility > 1e-3; ++pass) {
           int shadowInst, shadowTri; vec2 shadowBc; bool shadowFront;
           float shadowT;
           bool blocked = traceClosestSWRange(
@@ -1030,22 +1361,43 @@ void main() {
       }
 
       vec3 H = normalize(L + V);
+      vec3 tangent = normalize(abs(N.y) < 0.9 ? cross(N, vec3(0.0, 1.0, 0.0))
+                                              : cross(N, vec3(1.0, 0.0, 0.0)));
+      vec3 bitangent = normalize(cross(N, tangent));
+      float rot = radians(specRotation);
+      vec3 rotatedT = tangent * cos(rot) + bitangent * sin(rot);
+      vec3 rotatedB = -tangent * sin(rot) + bitangent * cos(rot);
+      float hT = dot(H, rotatedT), hB = dot(H, rotatedB);
       float nDotH = max(dot(N, H), 0.0);
       float vDotH = max(dot(V, H), 0.0);
       vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - vDotH, 5.0);
-      float a2 = roughness * roughness * roughness * roughness;
-      float dDen = (nDotH * nDotH) * (a2 - 1.0) + 1.0;
-      float D = a2 / max(3.14159265 * dDen * dDen, 1e-6);
-      float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-      float gV = NdotV / (NdotV * (1.0 - k) + k);
-      float gL = nDotL / (nDotL * (1.0 - k) + k);
+      float vT = dot(V, rotatedT), vB = dot(V, rotatedB);
+      float lT = dot(L, rotatedT), lB = dot(L, rotatedB);
+      float D = swGgxDAniso(nDotH, hT, hB, roughness, specAnisotropy);
+      float gV = swGgxG1Aniso(NdotV, vT, vB, roughness, specAnisotropy);
+      float gL = swGgxG1Aniso(nDotL, lT, lB, roughness, specAnisotropy);
       vec3 spec = (D * gV * gL * F) /
-                  max(4.0 * NdotV * nDotL, 1e-6);
+                  max(4.0 * NdotV * nDotL, 1e-6) * max(specWeight, 0.0);
       vec3 kd = (vec3(1.0) - F) * (1.0 - metallic);
+      vec3 sheen = sheenColor * clamp(sheenWeight, 0.0, 1.0) *
+                   (0.5 + 0.5 * clamp(sheenRoughness, 0.0, 1.0)) *
+                   pow(1.0 - nDotL, 5.0) / 3.14159265;
       vec3 radiance = geometryEmission *
                       (attenuation * shape * swIesFactor(li, -L));
       vec4 weights = lightRows[li * 20u + 7u];
-      direct += (kd * base / 3.14159265 * weights.y + spec * weights.z) *
+      vec3 transmissionBrdf = transmissionColor * clamp(transmission, 0.0, 1.0) *
+                              (vec3(1.0) - F) / 3.14159265;
+      float radiusGain = clamp(sqrt(max(dot(subsurfaceRadius,
+                                             vec3(0.2126, 0.7152, 0.0722)) *
+                                         subsurfaceScale, 0.0)) * 8.0,
+                                0.0, 1.0);
+      float diffusionShape = mix(0.25 + 0.75 * pow(1.0 - nDotL, 2.0),
+                                 0.25 + 0.75 * (1.0 - nDotL), radiusGain);
+      vec3 subsurfaceBrdf = subsurfaceColor * clamp(subsurface, 0.0, 1.0) *
+                            diffusionShape / 3.14159265;
+      direct += ((kd * base / 3.14159265 + sheen + transmissionBrdf +
+                  subsurfaceBrdf) * weights.y +
+                 spec * weights.z) *
                 nDotL * radiance * visibility;
     }
     if (!hadDirectLight) {
@@ -1063,8 +1415,22 @@ void main() {
       float gL = nDotL / (nDotL * (1.0 - k) + k);
       vec3 spec = (D * gV * gL * F) /
                   max(4.0 * NdotV * nDotL, 1e-6);
+      vec3 sheen = sheenColor * clamp(sheenWeight, 0.0, 1.0) *
+                   (0.5 + 0.5 * clamp(sheenRoughness, 0.0, 1.0)) *
+                   pow(1.0 - nDotL, 5.0) / 3.14159265;
+      vec3 transmissionBrdf = transmissionColor * clamp(transmission, 0.0, 1.0) *
+                              (vec3(1.0) - F) / 3.14159265;
+      float radiusGain = clamp(sqrt(max(dot(subsurfaceRadius,
+                                             vec3(0.2126, 0.7152, 0.0722)) *
+                                         subsurfaceScale, 0.0)) * 8.0,
+                                0.0, 1.0);
+      float diffusionShape = mix(0.25 + 0.75 * pow(1.0 - nDotL, 2.0),
+                                 0.25 + 0.75 * (1.0 - nDotL), radiusGain);
+      vec3 subsurfaceBrdf = subsurfaceColor * clamp(subsurface, 0.0, 1.0) *
+                            diffusionShape / 3.14159265;
       direct = ((vec3(1.0) - F) * (1.0 - metallic) * base /
-                3.14159265 + spec) * nDotL;
+                3.14159265 + sheen + transmissionBrdf + subsurfaceBrdf +
+                spec * max(specWeight, 0.0)) * nDotL;
     }
 
     // Ambient: dome-cube diffuse (mip'd roughly by material roughness via
@@ -1075,7 +1441,10 @@ void main() {
     vec3 prefiltered = textureLod(uPrefilteredCube, R, roughness * 6.0).rgb;
     vec2 brdf = texture(uBrdfLut, vec2(NdotV, roughness)).rg;
     vec3 ambient = base * (1.0 - metallic) * irradiance * 0.3 +
-                   prefiltered * (F0 * brdf.x + brdf.y);
+                   prefiltered * (F0 * brdf.x + brdf.y) * max(specWeight, 0.0);
+    ambient += sheenColor * clamp(sheenWeight, 0.0, 1.0) * 0.025;
+    ambient += transmissionColor * clamp(transmission, 0.0, 1.0) *
+               irradiance * 0.25;
 
     outc = direct + ambient + emissive;
     if (renderMode == 0) {
@@ -1091,33 +1460,49 @@ void main() {
         vec3 layerColor[8];
         float layerAlpha[8];
         vec3 layerTint[8];
-        vec3 layerRefract[8];
-        float layerTransmission[8];
         int layerCount = 1;
         float topMode = 0.0;
         layerColor[0] = outc;
         layerAlpha[0] = swOpacityAtHit(hitInst, hitTri, hitBc, topMode);
         layerTint[0] = swLayerTransmissionTint(hitInst, hitTri);
-        layerTransmission[0] = swLayerTransmissionWeight(hitTri);
-        layerRefract[0] = swLayerRefractedColor(hitInst, hitTri, hitBc,
-                                                hitFront, origin, dir);
+        float topTransmission = swLayerTransmissionWeight(hitTri);
+        vec3 refractedOrigin, refractedDir;
+        vec3 topRefract = swLayerRefractedColor(hitInst, hitTri, hitBc,
+                                                hitFront, origin, dir,
+                                                refractedOrigin, refractedDir);
+        vec3 walkOrigin = origin;
+        vec3 walkDir = dir;
         float cursor = hitT + 1e-3;
+        if (topTransmission > 0.0) {
+          walkOrigin = refractedOrigin;
+          walkDir = refractedDir;
+          cursor = 1e-3;
+        }
         bool opaqueTail = false;
         vec3 tailColor = bgc;
-        for (int pass = 1; pass < 8; ++pass) {
+        [[dont_unroll]] for (int pass = 1; pass < 8; ++pass) {
           int li, lt; vec2 lb; bool lf; float ldist;
-          if (!traceClosestSWRange(origin, dir, cursor, 1e30,
+          if (!traceClosestSWRange(walkOrigin, walkDir, cursor, 1e30,
                                    li, lt, lb, lf, ldist)) break;
-          cursor = ldist + 1e-3;
+          walkOrigin += walkDir * (ldist + 1e-3);
+          cursor = 1e-3;
           float lm = 0.0;
           float la = swOpacityAtHit(li, lt, lb, lm);
           if (lm > 0.5 && lm < 1.5 && la <= 0.0) continue;
           layerColor[layerCount] = swApproxLayerColor(li, lt, lb);
           layerAlpha[layerCount] = la;
           layerTint[layerCount] = swLayerTransmissionTint(li, lt);
-          layerTransmission[layerCount] = swLayerTransmissionWeight(lt);
-          layerRefract[layerCount] = swLayerRefractedColor(
-              li, lt, lb, lf, origin, dir);
+          // Carry the refracted direction through each transparent
+          // intermediate interface. Without this, stacked glass layers are
+          // shaded on a straight ray even though the top interface bent it.
+          if (swLayerTransmissionWeight(lt) > 0.0) {
+            vec3 nextOrigin, nextDir;
+            swLayerRefractedColor(li, lt, lb, lf, walkOrigin, walkDir,
+                                  nextOrigin, nextDir);
+            walkOrigin = nextOrigin;
+            walkDir = nextDir;
+            cursor = 1.0e-3;
+          }
           ++layerCount;
           if (lm <= 0.5 || (lm > 1.5 && la >= 1.0)) break;
         }
@@ -1126,7 +1511,7 @@ void main() {
         // clear color through an arbitrarily deep transparent stack.
         if (layerCount == 8) {
           int ti, tt; vec2 tb; bool tf; float td;
-          if (traceClosestSWRange(origin, dir, cursor, 1e30,
+          if (traceClosestSWRange(walkOrigin, walkDir, cursor, 1e30,
                                   ti, tt, tb, tf, td)) {
             float tm = 0.0;
             float ta = swOpacityAtHit(ti, tt, tb, tm);
@@ -1137,13 +1522,19 @@ void main() {
           }
         }
         vec3 composite = opaqueTail ? tailColor : bgc;
-        for (int i = layerCount - 1; i >= 0; --i) {
+        // The nearest layer's bounded walk already propagates the refracted
+        // direction through subsequent interfaces. Do not start unrelated
+        // walks for underlayers found along the original straight camera ray.
+        for (int i = layerCount - 1; i >= 1; --i) {
           float a = clamp(layerAlpha[i], 0.0, 1.0);
           vec3 transmitted = composite * layerTint[i];
-          transmitted = mix(transmitted, layerRefract[i],
-                            clamp(layerTransmission[i], 0.0, 1.0));
           composite = mix(transmitted, layerColor[i], a);
         }
+        vec3 topTransmitted = composite * layerTint[0];
+        topTransmitted = mix(topTransmitted, topRefract,
+                             clamp(topTransmission, 0.0, 1.0));
+        composite = mix(topTransmitted, layerColor[0],
+                        clamp(layerAlpha[0], 0.0, 1.0));
         outc = composite;
       }
     }
