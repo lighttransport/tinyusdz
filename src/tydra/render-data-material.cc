@@ -75,6 +75,48 @@ namespace {
 using TydraPerfClock = std::chrono::steady_clock;
 constexpr int32_t kWorkingColorValueTextureId = -2;
 
+// Material conversion also retains the constant portion of a volume output
+// for surface-bound volume fallbacks. UsdVol conversion has the graph-aware
+// equivalent in render-data.cc; this local path covers direct shader inputs
+// without making material conversion depend on that translation unit's
+// private helpers.
+static void ApplyMaterialVolumeConstants(const ShaderNode &shader,
+                                         float *density_scale,
+                                         float albedo[3],
+                                         float emission_color[3],
+                                         float *emission_scale) {
+  auto attr = [&](const char *name) -> const Attribute * {
+    auto it = shader.props.find(name);
+    if (it == shader.props.end() || !it->second.is_attribute()) return nullptr;
+    return it->second.get_attribute_or_null();
+  };
+  auto scalar = [&](const char *name, float *out) {
+    const Attribute *a = attr(name);
+    if (!a || a->has_timesamples()) return;
+    if (auto v = a->get_value<float>()) *out = v.value();
+    else if (auto d = a->get_value<double>()) *out = float(d.value());
+  };
+  auto color = [&](const char *name, float out[3]) {
+    const Attribute *a = attr(name);
+    if (!a || a->has_timesamples()) return;
+    if (auto v = a->get_value<value::color3f>()) {
+      out[0] = (*v)[0]; out[1] = (*v)[1]; out[2] = (*v)[2];
+    } else if (auto v = a->get_value<value::float3>()) {
+      out[0] = (*v)[0]; out[1] = (*v)[1]; out[2] = (*v)[2];
+    }
+  };
+  scalar("inputs:density", density_scale);
+  color("inputs:scattering_color", albedo);
+  color("inputs:scatter_color", albedo);
+  color("inputs:emission_color", emission_color);
+  color("inputs:emissionColor", emission_color);
+  scalar("inputs:emission", emission_scale);
+  scalar("inputs:emission_intensity", emission_scale);
+  scalar("inputs:emissionIntensity", emission_scale);
+  *density_scale = std::max(0.0f, *density_scale);
+  *emission_scale = std::max(0.0f, *emission_scale);
+}
+
 static uint64_t ElapsedNs(const TydraPerfClock::time_point &start) {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                       TydraPerfClock::now() - start)
@@ -4206,6 +4248,13 @@ static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
   // Subsurface
   dst.subsurface_weight = src.subsurface;
   dst.subsurface_color = src.subsurface_color;
+  // StandardSurface stores mean-free-path radius as a color3 (one value per
+  // channel), while OpenPBR splits the same quantity into a scalar radius and
+  // a color scale. Preserve the authored per-channel values in the scale and
+  // use the neutral scalar radius so graph-connected radius inputs are not
+  // discarded during the conversion.
+  dst.subsurface_radius_scale = src.subsurface_radius;
+  dst.subsurface_radius.set_value(Animatable<float>(1.0f));
   dst.subsurface_scale = src.subsurface_scale;
   dst.subsurface_anisotropy = src.subsurface_anisotropy;
 
@@ -4227,6 +4276,11 @@ static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
   // Thin film
   dst.thin_film_thickness = src.thin_film_thickness;
   dst.thin_film_ior = src.thin_film_IOR;
+  // StandardSurface has no separate film-weight input. A positive authored
+  // thickness denotes an active film; keeping the weight at one preserves
+  // that intent in the OpenPBR representation (zero thickness remains a
+  // no-op in the shader).
+  dst.thin_film_weight.set_value(Animatable<float>(1.0f));
 
   // Emission
   dst.emission_luminance = src.emission;
@@ -5236,6 +5290,20 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
     if (vol_paths.size() == 1) {
       rmat.has_volume = true;
       rmat.volume_shader_path = vol_paths[0].full_path_name();
+      const Prim *volume_shader_prim = nullptr;
+      std::string volume_lookup_err;
+      if (env.stage.find_prim_at_path(
+              Path(vol_paths[0].prim_part(), ""), volume_shader_prim,
+              &volume_lookup_err) && volume_shader_prim) {
+        if (const Shader *volume_shader = volume_shader_prim->as<Shader>()) {
+          if (const ShaderNode *node = volume_shader->value.as<ShaderNode>()) {
+            ApplyMaterialVolumeConstants(*node, &rmat.volume_density,
+                                          rmat.volume_albedo,
+                                          rmat.volume_emission_color,
+                                          &rmat.volume_emission_scale);
+          }
+        }
+      }
       DCOUT("Material has volume shader: " << rmat.volume_shader_path);
     }
   }

@@ -210,6 +210,8 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"base_diffuse_roughness"},
              &p->diffuseRoughness);
+  FloatParam(mat, {"OpenPBRSurface"}, {"base_roughness"},
+             &p->specularRoughness);
   FloatParam(mat, {"OpenPBRSurface"}, {"base_metalness"}, &p->metalness);
   if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"base_metalness"})) {
     p->metalness = 1.0f;
@@ -228,6 +230,12 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
     p->specularRoughness = 1.0f;
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"specular_ior"}, &p->specularIor);
+  FloatParam(mat, {"OpenPBRSurface"}, {"specular_anisotropy"},
+             &p->specularAnisotropy);
+  FloatParam(mat, {"OpenPBRSurface"}, {"specular_rotation"},
+             &p->specularRotation);
+  FloatParam(mat, {"OpenPBRSurface"}, {"specular_roughness_anisotropy"},
+             &p->specularRoughnessAnisotropy);
   FloatParam(mat, {"OpenPBRSurface"}, {"transmission_weight"},
              &p->transmission);
   Vec3Param(mat, {"OpenPBRSurface"}, {"transmission_color"},
@@ -238,6 +246,12 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
             p->transmissionScatter);
   FloatParam(mat, {"OpenPBRSurface"}, {"transmission_scatter_anisotropy"},
              &p->transmissionScatterAnisotropy);
+  FloatParam(mat, {"OpenPBRSurface"}, {"transmission_dispersion"},
+             &p->transmissionDispersion);
+  FloatParam(mat, {"OpenPBRSurface"}, {"transmission_dispersion_abbe_number"},
+             &p->transmissionDispersionAbbeNumber);
+  FloatParam(mat, {"OpenPBRSurface"}, {"transmission_dispersion_scale"},
+             &p->transmissionDispersionScale);
   FloatParam(mat, {"OpenPBRSurface"}, {"subsurface_weight"}, &p->subsurface);
   Vec3Param(mat, {"OpenPBRSurface"}, {"subsurface_color"}, p->subsurfaceColor);
   float radius = p->subsurfaceRadius[0];
@@ -267,6 +281,14 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
     p->coatRoughness = 1.0f;
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"coat_ior"}, &p->coatIor);
+  FloatParam(mat, {"OpenPBRSurface"}, {"coat_anisotropy"}, &p->coatAnisotropy);
+  FloatParam(mat, {"OpenPBRSurface"}, {"coat_rotation"}, &p->coatRotation);
+  FloatParam(mat, {"OpenPBRSurface"}, {"coat_affect_color"}, &p->coatAffectColor);
+  FloatParam(mat, {"OpenPBRSurface"}, {"coat_affect_roughness"},
+             &p->coatAffectRoughness);
+  FloatParam(mat, {"OpenPBRSurface"}, {"coat_roughness_anisotropy"},
+             &p->coatRoughnessAnisotropy);
+  FloatParam(mat, {"OpenPBRSurface"}, {"coat_darkening"}, &p->coatDarkening);
   FloatParam(mat, {"OpenPBRSurface"}, {"sheen_weight", "fuzz_weight"},
              &p->sheenWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"sheen_color", "fuzz_color"},
@@ -276,7 +298,9 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   FloatParam(mat, {"OpenPBRSurface"}, {"thin_film_weight"}, &p->thinFilmWeight);
   if (FloatParam(mat, {"OpenPBRSurface"}, {"thin_film_thickness"},
                  &p->thinFilmThicknessNm)) {
-    p->thinFilmThicknessNm *= 1000.0f;  // OpenPBR micrometers -> LightRT nm.
+    // OpenPBR and the LightRT evaluator both use nanometers for film
+    // thickness. Keep the canonical value unchanged; multiplying here would
+    // turn the documented 450 nm test film into a 450,000 nm layer.
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"thin_film_ior"}, &p->thinFilmIor);
   FloatParam(mat, {"OpenPBRSurface"}, {"emission_luminance"}, &p->emission);
@@ -1057,6 +1081,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "divide") out.op = MaterialXGraphOpCPU::Divide;
     else if (cat == "mix") out.op = MaterialXGraphOpCPU::Mix;
     else if (cat == "clamp") out.op = MaterialXGraphOpCPU::Clamp;
+    else if (cat == "saturate") {
+      out.op = MaterialXGraphOpCPU::Clamp;
+      // MaterialX saturate is a unary clamp with implicit [0, 1] bounds.
+      out.value[1][0] = out.value[1][1] = out.value[1][2] = 0.0f;
+      out.value[1][3] = 0.0f;
+      out.value[2][0] = out.value[2][1] = out.value[2][2] = 1.0f;
+      out.value[2][3] = 1.0f;
+    }
     else if (cat == "dot" || cat == "dotproduct") out.op = MaterialXGraphOpCPU::Dot;
     else if (cat == "normalize") out.op = MaterialXGraphOpCPU::Normalized;
     else if (cat == "power" || cat == "pow")
@@ -1072,8 +1104,13 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "luminance") out.op = MaterialXGraphOpCPU::Luminance;
     else if (cat == "ifgreaterequal" || cat == "ifequal" ||
              cat == "select") out.op = MaterialXGraphOpCPU::Select;
-    else if (cat == "texcoord" || cat == "texcoord0" || cat == "texcoord1")
+    else if (cat == "texcoord" || cat == "texcoord0" || cat == "texcoord1") {
       out.op = MaterialXGraphOpCPU::Texcoord;
+      // Preserve the explicit second-set form in the graph IR.  The z lane
+      // of the third fallback value is otherwise unused by texcoord nodes;
+      // the w lane remains reserved for image UV-input routing.
+      out.value[2][2] = (cat == "texcoord1") ? 1.0f : 0.0f;
+    }
     else if (cat == "floor") out.op = MaterialXGraphOpCPU::Floor;
     else if (cat == "ceil" || cat == "ceiling") out.op = MaterialXGraphOpCPU::Ceil;
     else if (cat == "fract" || cat == "fraction") out.op = MaterialXGraphOpCPU::Fract;
@@ -1081,6 +1118,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "smoothstep") out.op = MaterialXGraphOpCPU::Smoothstep;
     else if (cat == "cross") out.op = MaterialXGraphOpCPU::Cross;
     else if (cat == "length") out.op = MaterialXGraphOpCPU::Length;
+    else if (cat == "noise3d") out.op = MaterialXGraphOpCPU::Noise3D;
     else if (cat == "noise2d" || cat == "noise")
       out.op = MaterialXGraphOpCPU::Noise2D;
     else if (cat == "tan") out.op = MaterialXGraphOpCPU::Tangent;
@@ -1088,6 +1126,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "normal") out.op = MaterialXGraphOpCPU::GeometricNormal;
     else if (cat == "rotate3d" || cat == "rotate")
       out.op = MaterialXGraphOpCPU::Rotate3D;
+    else if (cat == "transform2d" || cat == "place2d" ||
+             cat == "place2dtransform")
+      out.op = MaterialXGraphOpCPU::Transform2D;
     else if (cat == "exp" || cat == "exponential")
       out.op = MaterialXGraphOpCPU::Exponential;
     else if (cat == "log" || cat == "logarithm")
@@ -1095,8 +1136,15 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "modulo" || cat == "mod") out.op = MaterialXGraphOpCPU::Modulo;
     else if (cat == "invert") out.op = MaterialXGraphOpCPU::Invert;
     else if (cat == "remap" || cat == "range") out.op = MaterialXGraphOpCPU::Remap;
+    else if (cat == "atan2" || cat == "arctan2") out.op = MaterialXGraphOpCPU::Atan2;
+    else if (cat == "sign" || cat == "signum") out.op = MaterialXGraphOpCPU::Sign;
+    else if (cat == "round") out.op = MaterialXGraphOpCPU::Round;
+    if (out.op == MaterialXGraphOpCPU::Image ||
+        out.op == MaterialXGraphOpCPU::TiledImage)
+      out.value[2][3] = -1.0f;
     const auto inputsIt = node.find("inputs");
     int nextInput = 0;
+    int uvInput = -1;
     if (inputsIt != node.end() && inputsIt->is_array()) {
       for (const nlohmann::json& input : *inputsIt) {
         const std::string inputName = JsonString(input, "name");
@@ -1112,6 +1160,26 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           for (size_t c = 0; c < valueIt->size() && c < 2; ++c)
             if ((*valueIt)[c].is_number()) dst[c] = (*valueIt)[c].get<float>();
           continue;
+        }
+        if (valueIt != input.end() && valueIt->is_number() &&
+            (inputName == "rotation" || inputName == "rotate" ||
+             inputName == "angle") &&
+            (cat == "transform2d" || cat == "place2d" ||
+             cat == "place2dtransform")) {
+          // The packed node has no spare scalar lane. Transform2D's value[2].w
+          // is reserved for this authored rotation (degrees); other nodes keep
+          // their normal fallback value untouched.
+          out.value[2][3] = valueIt->get<float>();
+          continue;
+        }
+        // Preserve connected graph coordinates for image nodes. The runtime
+        // interpreters use this metadata instead of silently sampling the hit
+        // UV whenever an image has a texcoord/place2d input.
+        if ((inputName == "texcoord" || inputName == "uv" ||
+             inputName == "st" || inputName == "coord") &&
+            (cat == "image" || cat == "tiledimage" ||
+             cat == "hextiledimage")) {
+          uvInput = nextInput;
         }
         if (nextInput >= 3) continue;
         const std::string source = JsonString(input, "nodename");
@@ -1135,6 +1203,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         ++nextInput;
       }
     }
+    if (uvInput >= 0) out.value[2][3] = static_cast<float>(uvInput);
     graph.nodes.push_back(std::move(out));
   }
   if (graph.nodes.empty()) {
@@ -1166,6 +1235,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       else if (input == "geometry_opacity") destination = &graph.output[3];
       else if (input == "emission_color") destination = &graph.output[4];
       else if (input == "geometry_normal") destination = &graph.output[5];
+      else if (input == "subsurface_weight") destination = &graph.output[6];
+      else if (input == "subsurface_color") destination = &graph.output[7];
+      else if (input == "subsurface_radius") destination = &graph.output[8];
       if (destination) *destination = nodeIt->second;
     }
   }
@@ -1200,7 +1272,24 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
     return (!value.empty() && (value[0] == '/' || value[0] == '\\')) ||
            (value.size() > 1 && value[1] == ':');
   };
-  for (MaterialXGraphNodeCPU& node : mat->materialXGraph.nodes) {
+  // Infer the color-data subgraph for images that must be loaded here.  The
+  // normal scene texture table already carries authored sRGB metadata, but a
+  // graph image that was not discovered by the loader needs the same choice:
+  // base/emission/subsurface-color are color data; roughness, normal, and
+  // scalar masks are linear.  Shared nodes conservatively use sRGB whenever
+  // they feed any color output.
+  std::set<int> srgbNodes;
+  std::function<void(int)> markSrgb = [&](int index) {
+    if (index < 0 || static_cast<size_t>(index) >= mat->materialXGraph.nodes.size() ||
+        !srgbNodes.insert(index).second) return;
+    const MaterialXGraphNodeCPU& source = mat->materialXGraph.nodes[static_cast<size_t>(index)];
+    for (int input : source.input) markSrgb(input);
+  };
+  for (int route : {0, 4, 7}) markSrgb(mat->materialXGraph.output[route]);
+
+  for (size_t nodeIndex = 0; nodeIndex < mat->materialXGraph.nodes.size();
+       ++nodeIndex) {
+    MaterialXGraphNodeCPU& node = mat->materialXGraph.nodes[nodeIndex];
     if (node.textureId >= 0 || node.imagePath.empty()) continue;
     const std::string wanted = normalizePath(node.imagePath);
     const size_t slash = wanted.find_last_of('/');
@@ -1235,7 +1324,7 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
                                       static_cast<size_t>(image.channels)) {
           DrawTextureCPU texture;
           texture.assetIdentifier = assetPath;
-          texture.srgb = true;
+          texture.srgb = srgbNodes.count(static_cast<int>(nodeIndex)) != 0;
           texture.image.width = image.width;
           texture.image.height = image.height;
           texture.image.channels = 4;
@@ -1390,6 +1479,10 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
   }
   p.hasTextureInputs = HasTextureInput(*mat);
   p.hasNormalInput = HasNormalInput(*mat);
+  p.volumeDensity = mat->volumeDensity;
+  std::memcpy(p.volumeAlbedo, mat->volumeAlbedo, sizeof(p.volumeAlbedo));
+  std::memcpy(p.volumeEmission, mat->volumeEmission, sizeof(p.volumeEmission));
+  p.volumeEmissionScale = mat->volumeEmissionScale;
   ClampLightRtParams(&p);
 
   std::set<std::string> textureDeps = DirectTextureInputs(*mat);
@@ -1427,8 +1520,8 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
   mat->lightRtOpenPBR = p;
   mat->hasLightRtOpenPBR = true;
 
-  // Keep the existing limited GL/VK/CUDA material buffers aligned with the
-  // LightRT/OpenPBR constant fallback until those backends consume the full block.
+  // Keep legacy material slots aligned with the canonical OpenPBR block;
+  // texture-backed lanes remain neutralized and are sampled at hit time.
   if (mat->baseColorTex < 0) {
     std::memcpy(mat->baseColor, p.baseColor, sizeof(mat->baseColor));
   }
@@ -1551,13 +1644,13 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
                                const std::vector<int>* sourceToTable) {
   if (!dst) return;
   std::fill(dst, dst + kRtMaterialGraphFloats, 0.0f);
-  for (int i = 0; i < 6; ++i) dst[1 + i] = -1.0f;
+  for (int i = 0; i < 9; ++i) dst[1 + i] = -1.0f;
   const MaterialXGraphRuntimeCPU& graph = mat.materialXGraph;
   if (!graph.valid) return;
   const size_t count = std::min<size_t>(graph.nodes.size(),
                                         kRtMaterialGraphMaxNodes);
   dst[0] = static_cast<float>(count);
-  for (int i = 0; i < 6; ++i) dst[1 + i] = static_cast<float>(graph.output[i]);
+  for (int i = 0; i < 9; ++i) dst[1 + i] = static_cast<float>(graph.output[i]);
   for (size_t i = 0; i < count; ++i) {
     const MaterialXGraphNodeCPU& node = graph.nodes[i];
     const size_t base = kRtMaterialGraphHeaderFloats +
@@ -1585,13 +1678,13 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
 void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
   if (!dst) return;
   std::fill(dst, dst + kRtMaterialGraphFloats, 0.0f);
-  for (int i = 0; i < 6; ++i) dst[1 + i] = -1.0f;
+  for (int i = 0; i < 9; ++i) dst[1 + i] = -1.0f;
   const MaterialXGraphRuntimeCPU& graph = mat.materialXGraph;
   if (!graph.valid) return;
   const size_t count = std::min<size_t>(graph.nodes.size(),
                                         kRtMaterialGraphMaxNodes);
   dst[0] = static_cast<float>(count);
-  for (int i = 0; i < 6; ++i) dst[1 + i] = static_cast<float>(graph.output[i]);
+  for (int i = 0; i < 9; ++i) dst[1 + i] = static_cast<float>(graph.output[i]);
   std::vector<int> textureIds;
   textureIds.reserve(kRasterMaterialGraphImageCount);
   auto isUdim = [&](const MaterialXGraphNodeCPU& node) {
@@ -1651,6 +1744,33 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
 void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   if (!dst) return;
   std::fill(dst, dst + kRasterMaterialTextureParamFloats, 0.0f);
+  dst[67 * 4 + 0] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmission : 0.0f;
+  dst[67 * 4 + 1] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionDepth : 0.0f;
+  dst[67 * 4 + 2] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionDispersion : 0.0f;
+  dst[68 * 4 + 0] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionColor[0] : 1.0f;
+  dst[68 * 4 + 1] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionColor[1] : 1.0f;
+  dst[68 * 4 + 2] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.transmissionColor[2] : 1.0f;
+  dst[69 * 4 + 0] = mat.volumeDensity;
+  dst[69 * 4 + 1] = mat.volumeEmissionScale;
+  dst[70 * 4 + 0] = mat.volumeAlbedo[0];
+  dst[70 * 4 + 1] = mat.volumeAlbedo[1];
+  dst[70 * 4 + 2] = mat.volumeAlbedo[2];
+  dst[71 * 4 + 0] = mat.volumeEmission[0];
+  dst[71 * 4 + 1] = mat.volumeEmission[1];
+  dst[71 * 4 + 2] = mat.volumeEmission[2];
+  dst[72 * 4 + 0] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.subsurface : 0.0f;
+  dst[72 * 4 + 1] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.subsurfaceScale : 1.0f;
+  // Raster keeps a scalar radius for its bounded diffusion approximation;
+  // reduce the authored OpenPBR radius color consistently with the other
+  // scalar color reductions instead of silently discarding G/B channels.
+  dst[72 * 4 + 2] = mat.hasLightRtOpenPBR
+                        ? (0.2126f * mat.lightRtOpenPBR.subsurfaceRadius[0] +
+                           0.7152f * mat.lightRtOpenPBR.subsurfaceRadius[1] +
+                           0.0722f * mat.lightRtOpenPBR.subsurfaceRadius[2])
+                        : 1.0f;
+  dst[73 * 4 + 0] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.subsurfaceColor[0] : 1.0f;
+  dst[73 * 4 + 1] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.subsurfaceColor[1] : 1.0f;
+  dst[73 * 4 + 2] = mat.hasLightRtOpenPBR ? mat.lightRtOpenPBR.subsurfaceColor[2] : 1.0f;
   StoreUvVec4Rows(mat.baseColorSample.uv, dst + 0 * 4);
   StoreUvVec4Rows(mat.metallicSample.uv, dst + 2 * 4);
   StoreUvVec4Rows(mat.normalSample.uv, dst + 4 * 4);

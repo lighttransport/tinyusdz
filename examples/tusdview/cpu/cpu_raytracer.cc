@@ -28,6 +28,7 @@ void CpuRayTracer::freeScene() {
   cpuTris_.clear();
   cpuNrms_.clear();
   cpuUv_.clear();
+  cpuUv1_.clear();
   cpuMat_.clear();
   cpuInstance_.clear();
 }
@@ -79,6 +80,7 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
   cpuTris_.reserve(expandedCount * 9);
   cpuNrms_.reserve(expandedCount * 9);
   cpuUv_.reserve(expandedCount * 6);
+  cpuUv1_.reserve(expandedCount * 6);
   cpuMat_.reserve(expandedCount);
   cpuInstance_.reserve(expandedCount);
 
@@ -119,6 +121,11 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
                         hs_.uv.begin() + static_cast<ptrdiff_t>(src * 6 + 6));
         else
           cpuUv_.insert(cpuUv_.end(), 6, 0.0f);
+        if (src * 6 + 6 <= hs_.uv1.size())
+          cpuUv1_.insert(cpuUv1_.end(), hs_.uv1.begin() + static_cast<ptrdiff_t>(src * 6),
+                         hs_.uv1.begin() + static_cast<ptrdiff_t>(src * 6 + 6));
+        else
+          cpuUv1_.insert(cpuUv1_.end(), 6, 0.0f);
         cpuMat_.push_back(src < hs_.mat.size() ? hs_.mat[src] : -1);
         cpuInstance_.push_back(static_cast<int>(instanceIndex));
       }
@@ -347,7 +354,8 @@ inline float SampleTextureBilinearChannel(
 }
 
 std::array<float, 4> EvalCpuMaterialXGraph(
-    const HostScene& scene, int materialId, int route, float u, float v) {
+    const HostScene& scene, int materialId, int route, float u, float v,
+    float u1, float v1) {
   constexpr int kStride = kRtMaterialGraphFloats;
   std::array<float, 4> zero{0.0f, 0.0f, 0.0f, 0.0f};
   const size_t base = static_cast<size_t>(materialId) * kStride;
@@ -382,8 +390,14 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       else if (op == static_cast<int>(MaterialXGraphOpCPU::Image) ||
                op == static_cast<int>(MaterialXGraphOpCPU::TiledImage)) {
         float rgb[3];
-        const float su = u * scene.matGraph[p + 17] + scene.matGraph[p + 19];
-        const float sv = v * scene.matGraph[p + 18] + scene.matGraph[p + 20];
+        float gu = u, gv = v;
+        const int uvInput = static_cast<int>(std::floor(
+            scene.matGraph[p + 15] + 0.5f));
+        if (uvInput == 0) { gu = a[0]; gv = a[1]; }
+        else if (uvInput == 1) { gu = b[0]; gv = b[1]; }
+        else if (uvInput == 2) { gu = c[0]; gv = c[1]; }
+        const float su = gu * scene.matGraph[p + 17] + scene.matGraph[p + 19];
+        const float sv = gv * scene.matGraph[p + 18] + scene.matGraph[p + 20];
         SampleTextureBilinear(scene.textures, scene.texels, textureId, su, sv,
                               rgb);
         dst = {rgb[0], rgb[1], rgb[2], 1.0f};
@@ -436,7 +450,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Select)) {
         dst = (a[0] >= 0.5f) ? b : c;
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Texcoord)) {
-        dst = {u, v, 0.0f, 1.0f};
+        const bool secondSet = c[2] > 0.5f;
+        dst = {secondSet ? u1 : u, secondSet ? v1 : v, 0.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Floor)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::floor(a[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Ceil)) {
@@ -463,6 +478,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
                                  (a[1] + v * 31.0f) * 311.7f) * 43758.5453f;
         const float f = n - std::floor(n);
         dst = {f, f, f, f};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Noise3D)) {
+        const float n = std::sin((a[0] + u * 17.0f) * 127.1f +
+                                 (a[1] + v * 31.0f) * 311.7f +
+                                 a[2] * 74.7f) * 43758.5453f;
+        const float f = n - std::floor(n);
+        dst = {f, f, f, f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Tangent)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::tan(a[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Exponential)) {
@@ -471,6 +492,13 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::log(std::max(a[cidx], 1.0e-6f));
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Modulo)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::fmod(a[cidx], std::max(std::fabs(b[cidx]), 1.0e-6f));
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Atan2)) {
+        for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::atan2(a[cidx], b[cidx]);
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Sign)) {
+        for (int cidx = 0; cidx < 4; ++cidx)
+          dst[cidx] = a[cidx] > 0.0f ? 1.0f : (a[cidx] < 0.0f ? -1.0f : 0.0f);
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Round)) {
+        for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::round(a[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Invert)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = 1.0f - a[cidx];
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Remap)) {
@@ -493,6 +521,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
                  c[1] * cs + (az * c[0] - ax * c[2]) * sn + ay * d * (1.0f - cs),
                  c[2] * cs + (ax * c[1] - ay * c[0]) * sn + az * d * (1.0f - cs), c[3]};
         } else dst = c;
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Transform2D)) {
+        float tx = a[0] * scene.matGraph[p + 17] + scene.matGraph[p + 19];
+        float ty = a[1] * scene.matGraph[p + 18] + scene.matGraph[p + 20];
+        const float angle = scene.matGraph[p + 15] * 0.0174532925199433f;
+        const float cs = std::cos(angle), sn = std::sin(angle);
+        dst = {tx * cs - ty * sn, tx * sn + ty * cs, a[2], a[3]};
       } else dst = fallback(0);
     }
   }
@@ -650,6 +684,9 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       if (static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size()) {
         float uv[2];
         Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], bu, bv, uv);
+        float uv1[2] = {uv[0], uv[1]};
+        if (static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size())
+          Interp6(&cpuUv1_[static_cast<size_t>(tri) * 6], bu, bv, uv1);
         if (!hs_.matTex.empty() && static_cast<size_t>(mid) * kRtMaterialTexSlots <
                                       hs_.matTex.size()) {
           const int tex = hs_.matTex[static_cast<size_t>(mid) * kRtMaterialTexSlots];
@@ -660,8 +697,26 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         const size_t graphBase = static_cast<size_t>(mid) * kRtMaterialGraphFloats;
         if (graphBase + kRtMaterialGraphHeaderFloats <= hs_.matGraph.size() &&
             hs_.matGraph[graphBase + 1] >= 0.0f) {
-          const auto graph = EvalCpuMaterialXGraph(hs_, mid, 0, uv[0], uv[1]);
+          const auto graph = EvalCpuMaterialXGraph(hs_, mid, 0, uv[0], uv[1],
+                                                   uv1[0], uv1[1]);
           color[0] = graph[0]; color[1] = graph[1]; color[2] = graph[2];
+        }
+      }
+    }
+    if (mid >= 0) {
+      const size_t lrtBase = static_cast<size_t>(mid) * kLightRtOpenPBRFloats;
+      if (lrtBase + 79 < hs_.matLightRt.size()) {
+        const float volumeOpacity =
+            std::clamp(1.0f - std::exp(-std::max(hs_.matLightRt[lrtBase + 75],
+                                                  0.0f) * 0.1f),
+                       0.0f, 1.0f);
+        for (int c = 0; c < 3; ++c) {
+          color[c] *= 1.0f +
+                      (hs_.matLightRt[lrtBase + 72 + c] - 1.0f) *
+                          volumeOpacity;
+          color[c] += hs_.matLightRt[lrtBase + 76 + c] *
+                      std::max(hs_.matLightRt[lrtBase + 79], 0.0f) *
+                      volumeOpacity;
         }
       }
     }
@@ -682,9 +737,66 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
     const float nl = std::max(0.0f, normal[0] * lightDirN[0] +
                                       normal[1] * lightDirN[1] +
                                       normal[2] * lightDirN[2]);
+    // Match the primary RT material response for intermediate layers: retain
+    // a compact dielectric/metallic GGX lobe instead of reducing every
+    // underlayer to Lambertian color. This keeps the bounded compositor cheap
+    // while preserving authored roughness and metalness contrast.
+    float metallic = 0.0f;
+    float roughness = 0.35f;
+    float subsurface = 0.0f;
+    float subsurfaceScale = 1.0f;
+    float coatWeight = 0.0f;
+    float coatRoughness = 0.2f;
+    float subsurfaceColor[3] = {color[0], color[1], color[2]};
+    float coatColor[3] = {1.0f, 1.0f, 1.0f};
+    if (mid >= 0) {
+      const size_t lrtBase = static_cast<size_t>(mid) * kLightRtOpenPBRFloats;
+      if (lrtBase + 42 < hs_.matLightRt.size()) {
+        metallic = std::clamp(hs_.matLightRt[lrtBase + 40], 0.0f, 1.0f);
+        roughness = std::clamp(hs_.matLightRt[lrtBase + 42], 0.03f, 1.0f);
+        if (lrtBase + 43 < hs_.matLightRt.size()) {
+          subsurfaceColor[0] = std::max(0.0f, hs_.matLightRt[lrtBase + 16]);
+          subsurfaceColor[1] = std::max(0.0f, hs_.matLightRt[lrtBase + 17]);
+          subsurfaceColor[2] = std::max(0.0f, hs_.matLightRt[lrtBase + 18]);
+          subsurface = std::clamp(hs_.matLightRt[lrtBase + 19], 0.0f, 1.0f);
+          subsurfaceScale = std::max(0.0f, hs_.matLightRt[lrtBase + 23]);
+          coatColor[0] = std::max(0.0f, hs_.matLightRt[lrtBase + 24]);
+          coatColor[1] = std::max(0.0f, hs_.matLightRt[lrtBase + 25]);
+          coatColor[2] = std::max(0.0f, hs_.matLightRt[lrtBase + 26]);
+          coatWeight = std::clamp(hs_.matLightRt[lrtBase + 27], 0.0f, 1.0f);
+          coatRoughness = std::clamp(hs_.matLightRt[lrtBase + 44], 0.03f, 1.0f);
+        }
+      }
+    }
+    float hit[3] = {0.0f, 0.0f, 0.0f};
+    if (static_cast<size_t>(tri) * 9 + 8 < cpuTris_.size()) {
+      const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+      const float w0 = 1.0f - bu - bv;
+      for (int c = 0; c < 3; ++c)
+        hit[c] = tv[c] * w0 + tv[3 + c] * bu + tv[6 + c] * bv;
+    }
+    float view[3] = {camPos[0] - hit[0], camPos[1] - hit[1], camPos[2] - hit[2]};
+    Normalize3(view);
+    float halfVec[3] = {lightDirN[0] + view[0], lightDirN[1] + view[1],
+                         lightDirN[2] + view[2]};
+    Normalize3(halfVec);
+    const float nh = std::max(0.0f, normal[0] * halfVec[0] +
+                                      normal[1] * halfVec[1] +
+                                      normal[2] * halfVec[2]);
+    const float f0 = 0.04f * (1.0f - metallic) + metallic;
+    const float spec = std::pow(nh, std::max(1.0f, 2.0f /
+                                                 (roughness * roughness) - 2.0f));
     const float lit = 0.15f + 0.85f * nl;
-    return std::array<float, 3>{color[0] * lit, color[1] * lit,
-                                color[2] * lit};
+    const float radiusGain = std::clamp(std::sqrt(std::max(subsurfaceScale, 0.0f)) *
+                                            2.0f, 0.0f, 1.0f);
+    const float diffusion = subsurface * (0.2f + 0.8f * (1.0f - nl) * radiusGain);
+    const float coatSpec = coatWeight * 0.04f * nl /
+                           std::max(0.08f, coatRoughness * coatRoughness);
+    const float scale = lit * (1.0f - metallic) + f0 * spec + coatSpec;
+    return std::array<float, 3>{
+        color[0] * scale * (1.0f - diffusion) + subsurfaceColor[0] * diffusion + coatColor[0] * coatSpec,
+        color[1] * scale * (1.0f - diffusion) + subsurfaceColor[1] * diffusion + coatColor[1] * coatSpec,
+        color[2] * scale * (1.0f - diffusion) + subsurfaceColor[2] * diffusion + coatColor[2] * coatSpec};
   };
 
   auto cpuLayerTransmission = [&](int tri) {
@@ -706,7 +818,146 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       tint[c] = std::exp(-weight * depth *
                          (std::max(0.0f, 1.0f - color) + 0.25f * scatter));
     }
+    // Match the CUDA/Vulkan OpenPBR transmission dispersion approximation.
+    // The compact material lane stores the authored dispersion strength and
+    // scale separately; Abbe number increases the effect for low-dispersion
+    // media while remaining bounded for malformed input.
+    const float dispersion = base + 62 < hs_.matLightRt.size()
+                                 ? std::clamp(
+                                       hs_.matLightRt[base + 60] *
+                                           hs_.matLightRt[base + 62] *
+                                           (base + 61 < hs_.matLightRt.size() &&
+                                                    hs_.matLightRt[base + 61] > 0.0f
+                                                ? 1.0f +
+                                                      20.0f / std::max(
+                                                          hs_.matLightRt[base + 61],
+                                                          1.0f)
+                                                : 1.0f),
+                                       0.0f, 1.0f)
+                                 : 0.0f;
+    tint[0] *= 1.0f + 0.35f * dispersion;
+    tint[2] *= 1.0f - 0.25f * dispersion;
     return tint;
+  };
+
+  auto cpuLayerTransmissionWeight = [&](int tri) {
+    if (tri < 0 || static_cast<size_t>(tri) >= cpuMat_.size()) return 0.0f;
+    const int mid = cpuMat_[static_cast<size_t>(tri)];
+    if (mid < 0) return 0.0f;
+    const size_t base = static_cast<size_t>(mid) * kLightRtOpenPBRFloats;
+    return base + 11 < hs_.matLightRt.size()
+               ? std::clamp(hs_.matLightRt[base + 11], 0.0f, 1.0f)
+               : 0.0f;
+  };
+
+  struct CpuRefractResult {
+    std::array<float, 3> color{0.0f, 0.0f, 0.0f};
+    std::array<float, 3> origin{0.0f, 0.0f, 0.0f};
+    std::array<float, 3> dir{0.0f, 0.0f, -1.0f};
+    // The compositor needs the first continuation ray independently of the
+    // bounded three-interface color approximation.  Reusing the latter's
+    // terminal ray skips any interfaces that the underlayer walk should see.
+    std::array<float, 3> continuationOrigin{0.0f, 0.0f, 0.0f};
+    std::array<float, 3> continuationDir{0.0f, 0.0f, -1.0f};
+    bool hasContinuation{false};
+  };
+  auto cpuLayerRefracted = [&](int tri, float bu, float bv,
+                               const float rayOrigin[3], const float rayDir[3]) {
+    CpuRefractResult result;
+    std::copy(rayOrigin, rayOrigin + 3, result.origin.begin());
+    std::copy(rayDir, rayDir + 3, result.dir.begin());
+    std::array<float, 3> throughput{1.0f, 1.0f, 1.0f};
+    int currentTri = tri;
+    float currentBu = bu, currentBv = bv;
+    float currentDir[3] = {rayDir[0], rayDir[1], rayDir[2]};
+    for (int bounce = 0; bounce < 3; ++bounce) {
+      if (currentTri < 0 ||
+          static_cast<size_t>(currentTri) * 9 + 8 >= cpuTris_.size())
+        return result;
+      const float* tv = &cpuTris_[static_cast<size_t>(currentTri) * 9];
+      const float p0[3] = {tv[0], tv[1], tv[2]};
+      const float p1[3] = {tv[3], tv[4], tv[5]};
+      const float p2[3] = {tv[6], tv[7], tv[8]};
+      float n[3] = {(p1[1] - p0[1]) * (p2[2] - p0[2]) -
+                       (p1[2] - p0[2]) * (p2[1] - p0[1]),
+                   (p1[2] - p0[2]) * (p2[0] - p0[0]) -
+                       (p1[0] - p0[0]) * (p2[2] - p0[2]),
+                   (p1[0] - p0[0]) * (p2[1] - p0[1]) -
+                       (p1[1] - p0[1]) * (p2[0] - p0[0])};
+      const float nl = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+      if (nl <= 1.0e-8f) return result;
+      for (float& v : n) v /= nl;
+      const float normalDir = n[0] * currentDir[0] +
+                              n[1] * currentDir[1] +
+                              n[2] * currentDir[2];
+      const bool entering = normalDir < 0.0f;
+      if (normalDir > 0.0f) {
+        for (float& v : n) v = -v;
+      }
+      int mid = currentTri < static_cast<int>(cpuMat_.size())
+                    ? cpuMat_[static_cast<size_t>(currentTri)]
+                    : -1;
+      const size_t mb = mid >= 0 ? static_cast<size_t>(mid) *
+                                      kLightRtOpenPBRFloats
+                                : hs_.matLightRt.size();
+      const float ior = mb + 43 < hs_.matLightRt.size()
+                            ? std::max(hs_.matLightRt[mb + 43], 1.0f)
+                            : 1.0f;
+      const float eta = entering ? 1.0f / ior : ior;
+      const float cosi = -(n[0] * currentDir[0] + n[1] * currentDir[1] +
+                           n[2] * currentDir[2]);
+      const float k = 1.0f - eta * eta * (1.0f - cosi * cosi);
+      float refr[3];
+      if (k < 0.0f) {
+        const float dot = n[0] * currentDir[0] + n[1] * currentDir[1] +
+                          n[2] * currentDir[2];
+        for (int c = 0; c < 3; ++c) refr[c] = currentDir[c] - 2.0f * dot * n[c];
+      } else {
+        const float scale = eta * cosi - std::sqrt(k);
+        for (int c = 0; c < 3; ++c) refr[c] = eta * currentDir[c] + scale * n[c];
+      }
+      const float rl = std::sqrt(refr[0] * refr[0] + refr[1] * refr[1] +
+                                 refr[2] * refr[2]);
+      if (rl <= 1.0e-8f) return result;
+      for (float& v : refr) v /= rl;
+      const auto tint = cpuLayerTransmission(currentTri);
+      for (int c = 0; c < 3; ++c) throughput[c] *= tint[c];
+      float hit[3] = {p0[0] * (1.0f - currentBu - currentBv) +
+                          p1[0] * currentBu + p2[0] * currentBv,
+                      p0[1] * (1.0f - currentBu - currentBv) +
+                          p1[1] * currentBu + p2[1] * currentBv,
+                      p0[2] * (1.0f - currentBu - currentBv) +
+                          p1[2] * currentBu + p2[2] * currentBv};
+      lrt_ray nextRay{};
+      for (int c = 0; c < 3; ++c) {
+        nextRay.org[c] = hit[c] + refr[c] * 1.0e-4f;
+        nextRay.dir[c] = refr[c];
+        result.origin[c] = nextRay.org[c];
+        result.dir[c] = refr[c];
+        if (bounce == 0) {
+          result.continuationOrigin[c] = nextRay.org[c];
+          result.continuationDir[c] = refr[c];
+        }
+      }
+      if (bounce == 0) result.hasContinuation = true;
+      nextRay.tmin = 1.0e-4f;
+      nextRay.tmax = 1.0e30f;
+      lrt_hit nextHit{};
+      if (!lrt_tri_intersect1(scene_, &nextRay, &nextHit) ||
+          nextHit.prim_id == LRT_TRI_NO_HIT)
+        return result;
+      currentTri = static_cast<int>(nextHit.prim_id);
+      currentBu = nextHit.u;
+      currentBv = nextHit.v;
+      std::copy(refr, refr + 3, currentDir);
+      if (bounce == 2) {
+        const auto color = cpuLayerColor(currentTri, currentBu, currentBv);
+        result.color = {color[0] * throughput[0], color[1] * throughput[1],
+                        color[2] * throughput[2]};
+        return result;
+      }
+    }
+    return result;
   };
 
   auto worker = [&]() {
@@ -828,8 +1079,12 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
             if (hs_.matGraph[graphBase + 1] >= 0.0f && tri * 6 + 5 < cpuUv_.size()) {
               float uv[2];
               Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], hit.u, hit.v, uv);
+              float uv1[2] = {uv[0], uv[1]};
+              if (static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size())
+                Interp6(&cpuUv1_[static_cast<size_t>(tri) * 6], hit.u, hit.v, uv1);
               const auto graphBaseColor = EvalCpuMaterialXGraph(hs_, matId, 0,
-                                                                  uv[0], uv[1]);
+                                                                  uv[0], uv[1],
+                                                                  uv1[0], uv1[1]);
               base[0] = graphBaseColor[0];
               base[1] = graphBaseColor[1];
               base[2] = graphBaseColor[2];
@@ -938,10 +1193,176 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           const float diff = hadDirectLight ? direct :
               std::max(0.0f, nrm[0] * lightDirN[0] + nrm[1] * lightDirN[1] +
                              nrm[2] * lightDirN[2]);
-          const float lit = 0.15f + 0.85f * diff;
-          outCol[0] = base[0] * lit * exposureMul;
-          outCol[1] = base[1] * lit * exposureMul;
-          outCol[2] = base[2] * lit * exposureMul;
+          // Keep the CPU preview on the same compact OpenPBR material lanes
+          // as the CUDA/Vulkan paths.  It remains a single-light preview, but
+          // no longer collapses metallic, transmission, coat, and subsurface
+          // materials to an unconditional Lambertian response.
+          float metallic = 0.0f, roughness = 0.5f, transmission = 0.0f;
+          float specWeight = 1.0f, ior = 1.5f, coatWeight = 0.0f;
+          float coatRoughness = 0.2f;
+          float subsurface = 0.0f, subsurfaceRadius = 1.0f;
+          float anisotropy = 0.0f, anisotropyRotation = 0.0f;
+          float sheenWeight = 0.0f, sheenRoughness = 0.3f;
+          float coatAffectColor = 0.0f, coatAffectRoughness = 0.0f;
+          float coatDarkening = 0.0f;
+          float thinFilmWeight = 0.0f, thinFilmThickness = 0.0f;
+          float thinFilmIor = 1.5f;
+          float emission[3] = {0.0f, 0.0f, 0.0f};
+          float specColor[3] = {1.0f, 1.0f, 1.0f};
+          float sheenColor[3] = {1.0f, 1.0f, 1.0f};
+          float coatColor[3] = {1.0f, 1.0f, 1.0f};
+          if (matId >= 0) {
+            const size_t pb = static_cast<size_t>(matId) * 6;
+            if (pb + 5 < hs_.matPbr.size()) {
+              metallic = std::clamp(hs_.matPbr[pb + 0], 0.0f, 1.0f);
+              roughness = std::clamp(hs_.matPbr[pb + 1], 0.03f, 1.0f);
+              emission[0] = hs_.matPbr[pb + 2];
+              emission[1] = hs_.matPbr[pb + 3];
+              emission[2] = hs_.matPbr[pb + 4];
+            }
+            const size_t lb = static_cast<size_t>(matId) * kLightRtOpenPBRFloats;
+            if (lb + 79 < hs_.matLightRt.size()) {
+              const float* lrt = &hs_.matLightRt[lb];
+              specColor[0] = std::max(0.0f, lrt[4]);
+              specColor[1] = std::max(0.0f, lrt[5]);
+              specColor[2] = std::max(0.0f, lrt[6]);
+              specWeight = std::clamp(lrt[7], 0.0f, 1.0f);
+              sheenColor[0] = std::max(0.0f, lrt[28]);
+              sheenColor[1] = std::max(0.0f, lrt[29]);
+              sheenColor[2] = std::max(0.0f, lrt[30]);
+              sheenWeight = std::clamp(lrt[31], 0.0f, 1.0f);
+              transmission = std::clamp(lrt[11], 0.0f, 1.0f);
+              subsurface = std::clamp(lrt[19], 0.0f, 1.0f);
+              subsurfaceRadius = std::max(
+                  0.0f, (0.2126f * lrt[20] + 0.7152f * lrt[21] +
+                         0.0722f * lrt[22]) * lrt[23]);
+              coatWeight = std::clamp(lrt[27], 0.0f, 1.0f);
+              coatColor[0] = std::max(0.0f, lrt[24]);
+              coatColor[1] = std::max(0.0f, lrt[25]);
+              coatColor[2] = std::max(0.0f, lrt[26]);
+              coatRoughness = std::clamp(lrt[44], 0.03f, 1.0f);
+              sheenRoughness = std::clamp(lrt[46], 0.0f, 1.0f);
+              thinFilmWeight = std::clamp(lrt[48], 0.0f, 1.0f);
+              thinFilmThickness = std::max(lrt[49], 0.0f);
+              thinFilmIor = std::max(lrt[50], 1.0f);
+              ior = std::max(lrt[43], 1.0f);
+              anisotropy = std::clamp(lrt[57] + 0.5f * lrt[59], -1.0f, 1.0f);
+              anisotropyRotation = lrt[58];
+              coatAffectColor = std::clamp(lrt[67], 0.0f, 1.0f);
+              coatAffectRoughness = std::clamp(lrt[68], 0.0f, 1.0f);
+              coatDarkening = std::clamp(lrt[70], 0.0f, 1.0f);
+              emission[0] += lrt[76] * std::max(lrt[79], 0.0f);
+              emission[1] += lrt[77] * std::max(lrt[79], 0.0f);
+              emission[2] += lrt[78] * std::max(lrt[79], 0.0f);
+            }
+          }
+          const float viewLen = std::sqrt(
+              (camPos[0] - hitP[0]) * (camPos[0] - hitP[0]) +
+              (camPos[1] - hitP[1]) * (camPos[1] - hitP[1]) +
+              (camPos[2] - hitP[2]) * (camPos[2] - hitP[2]));
+          const float nv = std::max(1.0e-4f,
+                                    (nrm[0] * (camPos[0] - hitP[0]) +
+                                     nrm[1] * (camPos[1] - hitP[1]) +
+                                     nrm[2] * (camPos[2] - hitP[2])) /
+                                        std::max(viewLen, 1.0e-4f));
+          float directionalRoughness = roughness;
+          if (std::fabs(anisotropy) > 1.0e-4f &&
+              static_cast<size_t>(tri) * 6 + 5 < cpuUv_.size() &&
+              static_cast<size_t>(tri) * 9 + 8 < cpuTris_.size()) {
+            const float* tv = &cpuTris_[static_cast<size_t>(tri) * 9];
+            const float* uv = &cpuUv_[static_cast<size_t>(tri) * 6];
+            const float e1[3] = {tv[3] - tv[0], tv[4] - tv[1], tv[5] - tv[2]};
+            const float e2[3] = {tv[6] - tv[0], tv[7] - tv[1], tv[8] - tv[2]};
+            const float du1 = uv[2] - uv[0], dv1 = uv[3] - uv[1];
+            const float du2 = uv[4] - uv[0], dv2 = uv[5] - uv[1];
+            const float det = du1 * dv2 - du2 * dv1;
+            if (std::fabs(det) > 1.0e-8f) {
+              float t[3] = {(e1[0] * dv2 - e2[0] * dv1) / det,
+                            (e1[1] * dv2 - e2[1] * dv1) / det,
+                            (e1[2] * dv2 - e2[2] * dv1) / det};
+              const float tn = std::sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
+              if (tn > 1.0e-6f) {
+                for (float& c : t) c /= tn;
+                float b[3] = {nrm[1] * t[2] - nrm[2] * t[1],
+                              nrm[2] * t[0] - nrm[0] * t[2],
+                              nrm[0] * t[1] - nrm[1] * t[0]};
+                const float rot = anisotropyRotation * 0.01745329252f;
+                const float cr = std::cos(rot), sr = std::sin(rot);
+                const float rt[3] = {t[0] * cr + b[0] * sr,
+                                     t[1] * cr + b[1] * sr,
+                                     t[2] * cr + b[2] * sr};
+                const float rb[3] = {-t[0] * sr + b[0] * cr,
+                                     -t[1] * sr + b[1] * cr,
+                                     -t[2] * sr + b[2] * cr};
+                float h[3] = {lightDirN[0] + (camPos[0] - hitP[0]) / viewLen,
+                              lightDirN[1] + (camPos[1] - hitP[1]) / viewLen,
+                              lightDirN[2] + (camPos[2] - hitP[2]) / viewLen};
+                const float hn = std::sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]);
+                if (hn > 1.0e-6f) {
+                  for (float& c : h) c /= hn;
+                  const float ht = h[0] * rt[0] + h[1] * rt[1] + h[2] * rt[2];
+                  const float hb = h[0] * rb[0] + h[1] * rb[1] + h[2] * rb[2];
+                  directionalRoughness = std::clamp(
+                      roughness * (1.0f + anisotropy * (ht * ht - hb * hb)),
+                      0.03f, 1.0f);
+                }
+              }
+            }
+          }
+          const float f0 = std::pow((ior - 1.0f) / (ior + 1.0f), 2.0f);
+          const float fresnel = f0 + (1.0f - f0) *
+              std::pow(1.0f - std::clamp(nv, 0.0f, 1.0f), 5.0f);
+          if (thinFilmWeight > 0.0f && thinFilmThickness > 0.0f) {
+            const float phase = 6.28318530718f * thinFilmIor *
+                                thinFilmThickness *
+                                (1.0f - std::clamp(nv, 0.0f, 1.0f));
+            const float phaseMul[3] = {1.0f, 1.17f, 1.35f};
+            const float phaseOff[3] = {0.0f, 2.1f, 4.2f};
+            for (int c = 0; c < 3; ++c) {
+              const float film = 0.5f + 0.5f *
+                  std::cos(phase * phaseMul[c] + phaseOff[c]);
+              const float filmF = std::clamp(
+                  f0 + (1.0f - f0) * film * 0.65f, 0.0f, 1.0f);
+              specColor[c] *= 1.0f - thinFilmWeight +
+                              thinFilmWeight * (filmF / std::max(f0, 1.0e-4f));
+            }
+          }
+          // Keep the CPU preview aligned with the packed OpenPBR coat and
+          // sheen controls used by the Vulkan/CUDA paths.  These bounded
+          // energy adjustments avoid turning either lobe into an additive
+          // brightness spike on grazing views.
+          const float coatColorMix = std::clamp(coatWeight * coatAffectColor,
+                                                0.0f, 1.0f);
+          for (int c = 0; c < 3; ++c) {
+            base[c] *= 1.0f - 0.2f * std::clamp(coatWeight * coatDarkening,
+                                                0.0f, 1.0f);
+            base[c] *= 1.0f + (coatColor[c] - 1.0f) * coatColorMix;
+          }
+          const float coatRoughMix = std::clamp(coatWeight * coatAffectRoughness,
+                                                0.0f, 1.0f);
+          const float lobeRoughness = roughness * (1.0f - coatRoughMix) +
+                                      std::max(0.03f, coatRoughness) * coatRoughMix;
+          const float diffuseWeight = (1.0f - metallic) *
+                                      (1.0f - transmission) *
+                                      (1.0f - fresnel);
+          const float radiusGain = std::clamp(std::sqrt(subsurfaceRadius) * 8.0f,
+                                               0.0f, 1.0f);
+          const float diffusion = subsurface *
+              (0.25f + 0.75f * (1.0f - diff) * radiusGain);
+          const float specular = specWeight * (fresnel + metallic) *
+              diff / std::max(0.08f, directionalRoughness * directionalRoughness * 4.0f);
+          const float coat = coatWeight * 0.04f * diff /
+                             std::max(0.08f, lobeRoughness * lobeRoughness);
+          const float sheen = sheenWeight *
+              (0.5f + 0.5f * sheenRoughness) *
+              std::pow(1.0f - std::clamp(nv, 0.0f, 1.0f), 2.0f) * diff;
+          const float lit = 0.15f + 0.85f * diff * diffuseWeight + diffusion;
+          outCol[0] = (base[0] * lit + specColor[0] * specular +
+                       sheenColor[0] * sheen + coat + emission[0]) * exposureMul;
+          outCol[1] = (base[1] * lit + specColor[1] * specular +
+                       sheenColor[1] * sheen + coat + emission[1]) * exposureMul;
+          outCol[2] = (base[2] * lit + specColor[2] * specular +
+                       sheenColor[2] * sheen + coat + emission[2]) * exposureMul;
           if (renderMode == 0) {
             const int mid = (tri < cpuMat_.size()) ? cpuMat_[tri] : -1;
             float alphaMode = 0.0f;
@@ -954,22 +1375,37 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               outCol[0] = clearColor[0]; outCol[1] = clearColor[1];
               outCol[2] = clearColor[2];
             } else if (alphaMode > 1.5f && topAlpha < 1.0f) {
-              float accum[3] = {outCol[0] * topAlpha, outCol[1] * topAlpha,
-                                outCol[2] * topAlpha};
+              const float topColor[3] = {outCol[0], outCol[1], outCol[2]};
+              const auto refracted = cpuLayerRefracted(
+                  static_cast<int>(tri), hit.u, hit.v, rayOrg, dir);
               const auto topTint = cpuLayerTransmission(static_cast<int>(tri));
-              float throughput[3] = {
-                  topTint[0] * (1.0f - topAlpha),
-                  topTint[1] * (1.0f - topAlpha),
-                  topTint[2] * (1.0f - topAlpha)};
+              const float topTransmission = cpuLayerTransmissionWeight(
+                  static_cast<int>(tri));
+              float underAccum[3] = {0.0f, 0.0f, 0.0f};
+              float throughput[3] = {1.0f, 1.0f, 1.0f};
+              // Continue the underlayer walk from the last refracted interface.
+              // This preserves the changed direction through stacked glass while
+              // retaining the original camera ray for non-transmissive materials.
+              float walkOrigin[3] = {rayOrg[0], rayOrg[1], rayOrg[2]};
+              float walkDir[3] = {dir[0], dir[1], dir[2]};
               float cursor = hit.t + 1.0e-4f;
+              if (topTransmission > 0.0f) {
+                if (refracted.hasContinuation) {
+                  std::copy(refracted.continuationOrigin.begin(),
+                            refracted.continuationOrigin.end(), walkOrigin);
+                  std::copy(refracted.continuationDir.begin(),
+                            refracted.continuationDir.end(), walkDir);
+                }
+                cursor = 1.0e-4f;
+              }
               for (int layer = 0; layer < 7 &&
                    (throughput[0] + throughput[1] + throughput[2]) > 0.009f;
                    ++layer) {
                 lrt_ray nextRay{};
-                nextRay.org[0] = rayOrg[0]; nextRay.org[1] = rayOrg[1];
-                nextRay.org[2] = rayOrg[2];
-                nextRay.dir[0] = dir[0]; nextRay.dir[1] = dir[1];
-                nextRay.dir[2] = dir[2];
+                nextRay.org[0] = walkOrigin[0]; nextRay.org[1] = walkOrigin[1];
+                nextRay.org[2] = walkOrigin[2];
+                nextRay.dir[0] = walkDir[0]; nextRay.dir[1] = walkDir[1];
+                nextRay.dir[2] = walkDir[2];
                 nextRay.tmin = cursor; nextRay.tmax = 1.0e30f;
                 lrt_hit nextHit{};
                 if (!lrt_tri_intersect1(scene_, &nextRay, &nextHit) ||
@@ -977,18 +1413,40 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 const int nextTri = static_cast<int>(nextHit.prim_id);
                 const float layerAlpha = cpuLayerAlpha(nextTri, nextHit.u, nextHit.v);
                 const auto layerColor = cpuLayerColor(nextTri, nextHit.u, nextHit.v);
-                accum[0] += layerColor[0] * throughput[0] * layerAlpha;
-                accum[1] += layerColor[1] * throughput[1] * layerAlpha;
-                accum[2] += layerColor[2] * throughput[2] * layerAlpha;
+                underAccum[0] += layerColor[0] * throughput[0] * layerAlpha;
+                underAccum[1] += layerColor[1] * throughput[1] * layerAlpha;
+                underAccum[2] += layerColor[2] * throughput[2] * layerAlpha;
                 const auto layerTint = cpuLayerTransmission(nextTri);
                 for (int c = 0; c < 3; ++c)
                   throughput[c] *= layerTint[c] * (1.0f - layerAlpha);
-                cursor = nextHit.t + 1.0e-4f;
+                // Intermediate transparent interfaces can change the
+                // direction of the remaining walk.  Propagate that bounded
+                // refraction instead of continuing every layer along the
+                // previous ray; opaque/alpha-only layers remain straight.
+                if (cpuLayerTransmissionWeight(nextTri) > 0.0f) {
+                  const auto layerRefracted = cpuLayerRefracted(
+                      nextTri, nextHit.u, nextHit.v, walkOrigin, walkDir);
+                  std::copy(layerRefracted.origin.begin(),
+                            layerRefracted.origin.end(), walkOrigin);
+                  std::copy(layerRefracted.dir.begin(),
+                            layerRefracted.dir.end(), walkDir);
+                } else {
+                  for (int c = 0; c < 3; ++c)
+                    walkOrigin[c] += walkDir[c] * nextHit.t + walkDir[c] * 1.0e-4f;
+                }
+                cursor = 1.0e-4f;
                 if (layerAlpha >= 0.999f) break;
               }
-              outCol[0] = accum[0] + clearColor[0] * throughput[0];
-              outCol[1] = accum[1] + clearColor[1] * throughput[1];
-              outCol[2] = accum[2] + clearColor[2] * throughput[2];
+              for (int c = 0; c < 3; ++c) {
+                const float straightUnder = underAccum[c] +
+                    clearColor[c] * throughput[c];
+                const float straightTransmitted = straightUnder * topTint[c];
+                const float transmitted = straightTransmitted *
+                    (1.0f - topTransmission) +
+                    refracted.color[c] * topTransmission;
+                outCol[c] = topColor[c] * topAlpha +
+                            transmitted * (1.0f - topAlpha);
+              }
             }
           }
         }

@@ -32,7 +32,7 @@ struct LoadDiagnostics {
   int degraded_material = 0;   // material rendered through a degraded surface
   int missing_texture = 0;     // a texture/image failed to load or resolve
   int unsupported_mtlx = 0;    // a MaterialX node could not be evaluated
-  int unsupported_lobes = 0;   // extracted PBR lobes not evaluated in real time
+  int unsupported_lobes = 0;   // material outputs not evaluated in real time
   int skipped = 0;             // draw-side skipped items (UDIM/undecoded/empty)
   int other = 0;               // any other warning line
   std::vector<std::string> examples;  // a few representative lines (capped)
@@ -54,10 +54,9 @@ struct LoadDiagnostics {
 LoadDiagnostics CategorizeLoadWarnings(const std::string& warn_blob,
                                        const std::vector<std::string>& skipped);
 
-// Report authored advanced PBR lobes that are preserved in the neutral
-// DrawMaterialCPU record but not evaluated by the current real-time shaders.
-// Emits at most one stable, path-qualified DrawScene::skipped entry per
-// material, so headless loads can classify the degradation structurally.
+// Compatibility hook for material diagnostics. OpenPBR surface and homogeneous
+// volume controls are currently packed and consumed by all preview backends,
+// so this intentionally does not add a skipped/degraded record.
 void DiagnoseUnsupportedRealtimeLobes(const DrawMaterialCPU& material,
                                       DrawScene* draw);
 

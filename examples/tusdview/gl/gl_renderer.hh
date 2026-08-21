@@ -178,6 +178,7 @@ class GLRenderer final : public Renderer {
     DrawTexSampleCPU emissiveSample;
     DrawTexSampleCPU opacitySample;
     DrawTexSampleCPU occlusionSample;
+    DrawLightRtOpenPBRCPU lightRtOpenPBR;
     int opacityChannel{0};
     float opacityTexScale{1.0f};
     float opacityTexBias{0.0f};
@@ -195,6 +196,7 @@ class GLRenderer final : public Renderer {
     float displacementConst{0.0f};
     float displacementTexScale{1.0f};
     float displacementTexBias{0.0f};
+    MaterialXGraphRuntimeCPU materialXGraph;
     bool hasDisplacement() const { return displacementTex >= 0 || displacementConst != 0.0f; }
   };
 
@@ -240,6 +242,24 @@ class GLRenderer final : public Renderer {
   GLint uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
   GLint uOcclusion_{-1}, uCoatWeight_{-1}, uCoatColor_{-1};
   GLint uCoatRoughness_{-1}, uCoatIor_{-1};
+  GLint uTransmission_{-1}, uTransmissionColor_{-1};
+  GLint uTransmissionDepth_{-1}, uTransmissionScatter_{-1};
+  GLint uVolumeDensity_{-1}, uVolumeAlbedo_{-1};
+  GLint uVolumeEmission_{-1}, uVolumeEmissionScale_{-1};
+  GLint uDiffuseRoughness_{-1};
+  GLint uTransmissionDispersionAbbeNumber_{-1};
+  GLint uSubsurfaceAnisotropy_{-1}, uSubsurfaceScatterAnisotropy_{-1};
+  GLint uSpecularAnisotropy_{-1}, uSpecularRotation_{-1};
+  GLint uSpecularRoughnessAnisotropy_{-1};
+  GLint uCoatAnisotropy_{-1}, uCoatRotation_{-1};
+  GLint uCoatRoughnessAnisotropy_{-1};
+  GLint uTransmissionDispersion_{-1}, uTransmissionDispersionScale_{-1};
+  GLint uCoatAffectColor_{-1}, uCoatAffectRoughness_{-1}, uCoatDarkening_{-1};
+  GLint uBaseWeight_{-1}, uSpecularWeight_{-1};
+  GLint uSubsurface_{-1}, uSubsurfaceColor_{-1};
+  GLint uSubsurfaceScale_{-1}, uSubsurfaceRadius_{-1};
+  GLint uSheenWeight_{-1}, uSheenColor_{-1}, uSheenRoughness_{-1};
+  GLint uThinFilmWeight_{-1}, uThinFilmThickness_{-1}, uThinFilmIor_{-1};
   GLint uExposure_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetallicTex_{-1}, uHasRoughnessTex_{-1};
   GLint uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
@@ -289,6 +309,12 @@ class GLRenderer final : public Renderer {
   GLint uAdvancedUdimSlots_{-1};
   GLint uCoatNormalTexIsUdim_{-1}, uCoatNormalUdimRoute_{-1};
   GLint uCoatNormalUdimSlot_{-1};
+  GLint uGraphNodeCount_{-1}, uGraphOutputs0_{-1}, uGraphOutputs1_{-1},
+      uGraphOutputs2_{-1}, uGraphOutputs3_{-1};
+  GLint uGraphUsable_{-1};
+  GLint uGraphNode0_{-1}, uGraphNode1_{-1}, uGraphNode2_{-1};
+  GLint uGraphNode3_{-1}, uGraphNode4_{-1}, uGraphNode5_{-1};
+  GLint uGraphTex_[8]{-1, -1, -1, -1, -1, -1, -1, -1};
   GLint uUdimSlots_{-1}, uOpacityUdimSlot_{-1}, uRoughnessUdimSlot_{-1};
   GLint uOcclusionUdimSlot_{-1};
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
@@ -449,6 +475,7 @@ class GLRenderer final : public Renderer {
     int materialId{-1};
     int carrierId{-1};
     int carrierIndex{-1};
+    std::string absPath;
     int purposeId{0};
     bool translucent{false};
   };

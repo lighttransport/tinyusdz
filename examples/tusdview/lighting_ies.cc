@@ -2,6 +2,7 @@
 #include "lighting_ies.hh"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -116,6 +117,8 @@ bool LoadIesProfile(const std::string& path, DrawLightCPU* light,
   std::string line;
   bool sawTilt = false;
   bool includeTilt = false;
+  bool tiltPayloadPending = false;
+  std::string tiltIncludeFile;
   std::string numeric;
   while (std::getline(file, line)) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -123,6 +126,7 @@ bool LoadIesProfile(const std::string& path, DrawLightCPU* light,
       sawTilt = true;
       if (line == "TILT=INCLUDE") {
         includeTilt = true;
+        tiltPayloadPending = true;
       } else if (line != "TILT=NONE") {
         if (err) *err = "IES TILT mode is unsupported (only NONE is accepted)";
         return false;
@@ -130,6 +134,26 @@ bool LoadIesProfile(const std::string& path, DrawLightCPU* light,
       continue;
     }
     if (sawTilt) {
+      if (tiltPayloadPending) {
+        std::vector<float> probe;
+        if (ParseFloatList(line, &probe) && probe.empty()) {
+          size_t begin = 0;
+          while (begin < line.size() &&
+                 std::isspace(static_cast<unsigned char>(line[begin]))) ++begin;
+          size_t end = line.size();
+          while (end > begin &&
+                 std::isspace(static_cast<unsigned char>(line[end - 1]))) --end;
+          tiltIncludeFile = line.substr(begin, end - begin);
+          if (tiltIncludeFile.size() >= 2 &&
+              ((tiltIncludeFile.front() == '"' && tiltIncludeFile.back() == '"') ||
+               (tiltIncludeFile.front() == '\'' && tiltIncludeFile.back() == '\''))) {
+            tiltIncludeFile = tiltIncludeFile.substr(1, tiltIncludeFile.size() - 2);
+          }
+          tiltPayloadPending = false;
+          continue;
+        }
+        tiltPayloadPending = false;
+      }
       numeric.append(line);
       numeric.push_back(' ');
     }
@@ -137,6 +161,26 @@ bool LoadIesProfile(const std::string& path, DrawLightCPU* light,
   if (!sawTilt) {
     if (err) *err = "IES profile has no TILT section";
     return false;
+  }
+
+  if (!tiltIncludeFile.empty()) {
+    std::string::size_type slash = path.find_last_of("/\\");
+    const std::string tiltPath =
+        (slash == std::string::npos ? std::string() : path.substr(0, slash + 1)) +
+        tiltIncludeFile;
+    std::ifstream tiltFile(tiltPath);
+    if (!tiltFile) {
+      if (err) *err = "cannot open IES TILT include: " + tiltPath;
+      return false;
+    }
+    std::string tiltNumeric;
+    std::string tiltLine;
+    while (std::getline(tiltFile, tiltLine)) {
+      if (!tiltLine.empty() && tiltLine.back() == '\r') tiltLine.pop_back();
+      tiltNumeric.append(tiltLine);
+      tiltNumeric.push_back(' ');
+    }
+    numeric = tiltNumeric + numeric;
   }
 
   std::vector<float> values;

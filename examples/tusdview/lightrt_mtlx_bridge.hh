@@ -23,11 +23,12 @@ constexpr int kLightRtOpenPBRFloats =
 // 140-145 carry coat-normal UV transform, 146 its UV set, and 147-154 its
 // scale/bias vectors.
 constexpr int kRtMaterialTextureParamFloats = 155;
-// Fixed-size Vulkan RT graph block. The first eight floats are node count and
-// six output indices; each node then occupies op, three input indices, four
-// constants, and a resolved texture id.
+// Fixed-size Vulkan RT graph block. The first eleven floats are node count and
+// nine output indices (base, metalness, roughness, opacity, emission, normal,
+// subsurface weight, subsurface color, subsurface radius); each node then occupies op, three input
+// indices, four constants, and a resolved texture id.
 constexpr int kRtMaterialGraphMaxNodes = 64;
-constexpr int kRtMaterialGraphHeaderFloats = 8;
+constexpr int kRtMaterialGraphHeaderFloats = 11;
 // op + 3 input indices + 3 vec4 fallbacks + texture id + uv scale/offset.
 constexpr int kRtMaterialGraphNodeFloats = 21;
 constexpr int kRtMaterialGraphFloats =
@@ -49,7 +50,9 @@ constexpr int kRtMaterialTexSlots = 12;
 // coatRoughnessUvSet), row 41 carries the remaining UV-set selectors, and rows
 // 42-49 carry scale/bias for specular color and the three coat slots.
 // Rows 50-53 carry coat-normal UV transform, scale/bias, UV set, and presence.
-constexpr int kRasterMaterialTextureParamVec4s = 67;
+// Rows 67-68 carry the raster transmission approximation (weight/depth/
+// dispersion and transmission color); rows 69-73 carry volume and subsurface.
+constexpr int kRasterMaterialTextureParamVec4s = 74;
 constexpr int kRasterMaterialTextureParamFloats =
     kRasterMaterialTextureParamVec4s * 4;
 

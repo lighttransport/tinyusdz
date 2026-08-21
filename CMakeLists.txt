@@ -2608,6 +2608,17 @@ if(TINYUSDZ_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300)
 
     add_test(
+      NAME tusdview-vk-stacked-glass
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "ASSET=${PROJECT_SOURCE_DIR}/models/tusdview-stacked-glass.usda"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-render.sh"
+    )
+    set_tests_properties(tusdview-vk-stacked-glass PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300
+                         LABELS "tusdview;vulkan;transparency")
+
+    add_test(
       NAME tusdview-vk-swbvh-render
       COMMAND ${CMAKE_COMMAND} -E env
               "TUSDVIEW=$<TARGET_FILE:tusdview>"
@@ -2617,6 +2628,17 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-vk-swbvh-render PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180
                          LABELS "tusdview;vulkan;rt")
+
+    add_test(
+      NAME tusdview-vk-swbvh-stacked-glass
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "ASSET=${PROJECT_SOURCE_DIR}/models/tusdview-stacked-glass.usda"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-swbvh-render.sh"
+    )
+    set_tests_properties(tusdview-vk-swbvh-stacked-glass PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180
+                         LABELS "tusdview;vulkan;rt;transparency")
 
     add_test(
       NAME tusdview-vk-texture-validation
@@ -2655,6 +2677,15 @@ if(TINYUSDZ_BUILD_TESTS)
               "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
       )
     set_tests_properties(tusdview-raster-shadow-map PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-raster-carrier-shadow
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-raster-carrier-shadow.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+    set_tests_properties(tusdview-raster-carrier-shadow PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview")
 
     add_test(
@@ -3477,6 +3508,49 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-transparency.sh"
       )
     set_tests_properties(tusdview-transparency PROPERTIES SKIP_RETURN_CODE 77)
+
+    # The CPU tracer must own headless screenshots, including its bounded
+    # stacked-alpha compositor, rather than silently capturing Vulkan raster.
+    add_test(
+      NAME tusdview-cpu-rt-headless
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cpu-rt-headless.sh"
+      )
+    set_tests_properties(tusdview-cpu-rt-headless PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180)
+
+    add_test(
+      NAME tusdview-cpu-rt-stacked-glass
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "ASSET=${PROJECT_SOURCE_DIR}/models/tusdview-stacked-glass.usda"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cpu-rt-headless.sh"
+    )
+    set_tests_properties(tusdview-cpu-rt-stacked-glass PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180
+                         LABELS "tusdview;rt;transparency")
+
+    add_test(
+      NAME tusdview-cpu-rt-openpbr-lobes
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/tusdview-unsupported-realtime-lobes.usda"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cpu-rt-headless.sh"
+    )
+    set_tests_properties(tusdview-cpu-rt-openpbr-lobes PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180
+                         LABELS "tusdview;rt;openpbr")
+
+    add_test(
+      NAME tusdview-openchess-materials
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-openchess-materials.sh"
+      )
+    set_tests_properties(tusdview-openchess-materials PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 240
+                         LABELS "tusdview;rt;materialx;openpbr")
 
     # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
     # both put the stand-in on top of the geometry it stands in for (intent-vfx's

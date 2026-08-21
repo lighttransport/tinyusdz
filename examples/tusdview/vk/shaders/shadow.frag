@@ -50,6 +50,11 @@ struct MaterialTexParam {
   vec4 ptexCoatWeightInfo;
   vec4 ptexCoatColorInfo;
   vec4 ptexCoatRoughInfo;
+  vec4 volumeParams;
+  vec4 volumeAlbedo;
+  vec4 volumeEmission;
+  vec4 subsurfaceParams;
+  vec4 subsurfaceColor;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex {
   MaterialTexParam p[];
@@ -83,7 +88,10 @@ vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
 }
 
 void main() {
-  if (pc.matAux.z < 0.5 || pc.matAux.z > 1.5) return;
+  // Rejected alpha modes must discard the fragment, not merely return: a
+  // return with no color output still performs the depth write in Vulkan and
+  // incorrectly turns an opaque/cutout blocker into a solid shadow caster.
+  if (pc.matAux.z < 0.5 || pc.matAux.z > 1.5) discard;
   MaterialTexParam m = mtp.p[max(pc.ids.x, 0)];
   vec2 baseUv = m.uvSets.x > 0.5 ? vUV1 : vUV;
   vec2 baseTuv = xformUv(baseUv, m.baseUv0, m.baseUv1);

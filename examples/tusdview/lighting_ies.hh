@@ -9,7 +9,7 @@
 namespace tusdview {
 
 // Loads an IES LM-63 photometric profile into the canonical DrawLightCPU
-// record. The parser intentionally accepts only TILT=NONE profiles for now;
+// record. TILT=NONE and inline or external TILT=INCLUDE tables are supported;
 // the authored light remains valid and cone shaping remains active when a
 // profile cannot be loaded.
 bool LoadIesProfile(const std::string& path, DrawLightCPU* light,

@@ -96,6 +96,35 @@ else
     echo "    glslang or glslc to enable Vulkan RT."
   fi
 fi
+
+# A graph-free RT variant avoids compiling the large MaterialX interpreter for
+# scenes that have no MaterialX node graphs. The descriptor ABI remains the
+# same, so the renderer can select it per scene without another pipeline
+# layout. Keep this on the glslc path because the bundled glslang may reject
+# ray-query modules before preprocessing this variant.
+RAYTRACE_FAST_TMP="$(mktemp "${TMPDIR:-/tmp}/tusdview-raytrace-fast.XXXXXX.spv")"
+cleanup_raytrace_fast_tmp() {
+  rm -f "$RAYTRACE_FAST_TMP"
+}
+trap cleanup_raytrace_fast_tmp EXIT
+GLSLC_FAST="${GLSLC:-$(command -v glslc || true)}"
+if [ -n "$GLSLC_FAST" ] && [ -x "$GLSLC_FAST" ] &&
+  "$GLSLC_FAST" --target-env=vulkan1.2 "$RT_SHADER_DEFINE" \
+      -DTUSDVIEW_RT_FAST_MATERIAL=1 \
+      -DTUSDVIEW_RT_DISABLE_MTLX=1 -DTUSDVIEW_RT_DISABLE_DEBUG_RAYS=1 \
+      -o "$RAYTRACE_FAST_TMP" \
+      "$HERE/raytrace.comp"; then
+  xxd -i -c 12 "$RAYTRACE_FAST_TMP" "$OUT/raytrace_fast_comp.spv.h"
+  sed -i 's/unsigned char _tmp_.*_spv\[\]/const unsigned char raytrace_fast_comp_spv[]/' "$OUT/raytrace_fast_comp.spv.h"
+  sed -i 's/unsigned int _tmp_.*_spv_len/const unsigned int raytrace_fast_comp_spv_len/' "$OUT/raytrace_fast_comp.spv.h"
+  sed -i '1i#pragma once' "$OUT/raytrace_fast_comp.spv.h"
+  echo "==> raytrace.comp (graph-free) -> embedded/raytrace_fast_comp.spv.h"
+else
+  rm -f "$OUT/raytrace_fast_comp.spv.h"
+  echo "==> WARNING: graph-free RT shader omitted"
+fi
+cleanup_raytrace_fast_tmp
+trap - EXIT
 cleanup_raytrace_tmp
 trap - EXIT
 

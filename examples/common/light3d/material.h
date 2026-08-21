@@ -104,6 +104,9 @@ TriangleMaterialIdData buildTriangleMaterialIds(const MeshGeometry& geometry);
 // Submesh shaders (GL330): material via uniforms, one draw call per submesh
 const char* getMaterialVertexShaderGL330();
 const char* getMaterialFragmentShaderGL330();
+// Low-sampler compatibility path for GL implementations exposing fewer than
+// the full material shader's fragment texture-unit budget.
+const char* getMaterialFragmentShaderGL330Fallback();
 
 // Bindless shaders (GL430): materials SSBO + face material ID SSBO + gl_PrimitiveID.
 // UNUSED + STALE scaffold for a future GL 4.3 path -- predate GPU morph/skin/
