@@ -465,7 +465,7 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
   WriteIndent(os, depth, opts.indent);
 
   // Type name: prefer the declared name, else derive from the first sample.
-  if (const std::string* decl = spec.property_type_name(name)) {
+  if (const std::string* decl = spec.property_type_name(name_id)) {
     os << *decl;
   } else {
     const Value* first_val = spec.time_sample_value(samples->front().second);
@@ -487,7 +487,12 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
   for (size_t i = 0; i < samples->size(); ++i) {
     const auto& sample = (*samples)[i];
     WriteIndent(os, depth + 1, opts.indent);
-    os << dtos(sample.first) << ": ";
+    // Format the time into a stack buffer (no per-sample std::string alloc);
+    // 32 bytes covers a double (same bound the dtos_append path uses).
+    char time_buf[32];
+    const size_t tlen = dtos_to(time_buf, sample.first);
+    os.write(time_buf, tlen);
+    os << ": ";
 
     const Value* val = spec.time_sample_value(sample.second);
     if (val && val->is_block()) {
@@ -518,7 +523,7 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
     WriteIndent(os, depth, opts.indent);
     if (opts.emit_custom && slot.is_custom()) os << "custom ";
     if (slot.is_uniform()) os << "uniform ";
-    const std::string* decl = spec.property_type_name(name);
+    const std::string* decl = spec.property_type_name(slot.name_id);
     os << (decl ? *decl : std::string("opaque")) << " " << name << " = "
        << *raw;
     WritePropMeta(os, spec, slot.name_id, depth, opts);
@@ -530,7 +535,7 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
     WriteIndent(os, depth, opts.indent);
     if (opts.emit_custom && slot.is_custom()) os << "custom ";
     if (slot.is_uniform()) os << "uniform ";
-    if (const std::string* decl = spec.property_type_name(name)) {
+    if (const std::string* decl = spec.property_type_name(slot.name_id)) {
       os << *decl;
     } else {
       const char* tn = GetTypeName(static_cast<TypeId>(slot.value_type));
@@ -545,7 +550,7 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   // is Invalid). GetTypeName returns nullptr for Invalid, so guard the fallback.
   TypeId type_id = static_cast<TypeId>(slot.value_type);
   std::string type_name;
-  if (const std::string* decl = spec.property_type_name(name)) {
+  if (const std::string* decl = spec.property_type_name(slot.name_id)) {
     type_name = *decl;
   } else {
     const char* tn = GetTypeName(type_id);

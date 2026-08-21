@@ -9,6 +9,7 @@
 #include "type-id.hh"
 #include <cstddef>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace tinyusdz {
@@ -377,25 +378,73 @@ private:
 /// re-emits them exactly as authored. A value may itself be a Dictionary.
 struct Dict {
   std::vector<std::pair<std::string, Value>> entries;
+  // key -> position in `entries`. Maintained by set() and lazily repaired when
+  // legacy callers mutate the public entries vector directly. The implicit
+  // copy/move ctors carry the order-based index with the entries. This makes
+  // normal find()/set() calls O(1) instead of a linear scan: building a d-key
+  // dict (USDA parse, or per-reference expression-variable compose) used to
+  // cost O(d^2) string compares -- a hostile 100k-key metadata block is a
+  // parse-time DoS.
+  std::unordered_map<std::string, size_t> index_;
 
   const Value* find(const std::string& key) const {
-    for (const auto& kv : entries) {
-      if (kv.first == key) return &kv.second;
+    auto it = index_.find(key);
+    if (it != index_.end() && it->second < entries.size() &&
+        entries[it->second].first == key) {
+      return &entries[it->second].second;
+    }
+    // `entries` remains public for source compatibility. If legacy callers
+    // mutate it directly, repair the index lazily instead of returning a
+    // stale result.
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (entries[i].first == key) return &entries[i].second;
     }
     return nullptr;
   }
   Value* find(const std::string& key) {
-    for (auto& kv : entries) {
-      if (kv.first == key) return &kv.second;
+    auto it = index_.find(key);
+    if (it != index_.end() && it->second < entries.size() &&
+        entries[it->second].first == key) {
+      return &entries[it->second].second;
+    }
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (entries[i].first == key) {
+        index_[key] = i;
+        return &entries[i].second;
+      }
     }
     return nullptr;
   }
   /// Replace the value for an existing key, or append a new entry.
   void set(std::string key, Value v) {
-    if (Value* existing = find(key)) {
-      *existing = std::move(v);
+    auto it = index_.find(key);
+    if (it != index_.end() && it->second < entries.size() &&
+        entries[it->second].first == key) {
+      entries[it->second].second = std::move(v);
     } else {
-      entries.emplace_back(std::move(key), std::move(v));
+      // A missing key with matching map/vector sizes is the normal insertion
+      // path. Avoid scanning the whole vector here, or bulk construction would
+      // regress to O(N^2). A size mismatch indicates direct legacy mutation and
+      // enables the compatibility fallback below.
+      if (it == index_.end() && index_.size() == entries.size()) {
+        index_[key] = entries.size();
+        entries.emplace_back(std::move(key), std::move(v));
+        return;
+      }
+      size_t found = entries.size();
+      for (size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i].first == key) {
+          found = i;
+          break;
+        }
+      }
+      if (found != entries.size()) {
+        index_[key] = found;
+        entries[found].second = std::move(v);
+      } else {
+        index_[key] = entries.size();
+        entries.emplace_back(std::move(key), std::move(v));
+      }
     }
   }
   size_t size() const { return entries.size(); }

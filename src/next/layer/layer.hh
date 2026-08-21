@@ -329,6 +329,18 @@ public:
   uint32_t begin_prim(const std::string& name, const std::string& type_name,
                       PrimSpecifier specifier = PrimSpecifier::Def);
 
+  /// Strict authoring entry point: validates the prim name (a plain
+  /// identifier) before creating it, so the C++ API can't author a
+  /// non-identifier prim name that won't round-trip (pxr rejects e.g.
+  /// "0abc" / "bad name"). begin_prim is the unvalidated reconstruction
+  /// primitive the parser/reader use (the crate reader passes variant
+  /// last-components like "{geo=hi}" as the name). Prefer this for authoring;
+  /// returns UINT32_MAX (and sets *err) on an invalid name, leaving the layer
+  /// unchanged.
+  uint32_t define_prim(const std::string& name, const std::string& type_name,
+                       PrimSpecifier specifier = PrimSpecifier::Def,
+                       std::string* err = nullptr);
+
   /// End current prim (validates and finalizes)
   void end_prim();
 

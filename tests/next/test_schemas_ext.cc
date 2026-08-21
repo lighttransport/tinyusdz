@@ -336,6 +336,85 @@ void test_skel_types() {
   PASS();
 }
 
+void test_skel_validate_topology() {
+  // topology[i] is the parent index of joint i; -1 marks the root.
+  TEST("SkelValidateTopology");
+  // Valid: root 0, chain 0 -> 1 -> 2.
+  {
+    std::vector<int> topology = {-1, 0, 1};
+    std::string err;
+    if (!SkelValidateTopology(topology, &err)) {
+      FAIL(("valid chain rejected: " + err).c_str());
+      return;
+    }
+  }
+  // Valid: root 0, branch (1 and 4 -> 0, 2 -> 1, 3 -> 2).
+  {
+    std::vector<int> topology = {-1, 0, 1, 2, 1};
+    std::string err;
+    if (!SkelValidateTopology(topology, &err)) {
+      FAIL(("valid branch rejected: " + err).c_str());
+      return;
+    }
+  }
+  // Rejected: 2-cycle (1's parent 2, 2's parent 1). The old DFS reported
+  // this as valid; the 3-color walk must reject it.
+  {
+    std::vector<int> topology = {-1, 2, 1};
+    std::string err;
+    if (SkelValidateTopology(topology, &err)) {
+      FAIL("2-cycle not detected");
+      return;
+    }
+  }
+  // Rejected: self-loop (node 1's parent is itself).
+  {
+    std::vector<int> topology = {-1, 1};
+    std::string err;
+    if (SkelValidateTopology(topology, &err)) {
+      FAIL("self-loop not detected");
+      return;
+    }
+  }
+  // Rejected: two roots.
+  {
+    std::vector<int> topology = {-1, -1};
+    std::string err;
+    if (SkelValidateTopology(topology, &err)) {
+      FAIL("two roots not rejected");
+      return;
+    }
+  }
+  // Rejected: out-of-range parent.
+  {
+    std::vector<int> topology = {-1, 5};
+    std::string err;
+    if (SkelValidateTopology(topology, &err)) {
+      FAIL("out-of-range parent not rejected");
+      return;
+    }
+  }
+  // Rejected: parent values other than -1 are not valid roots.
+  {
+    std::vector<int> topology = {-1, -2};
+    std::string err;
+    if (SkelValidateTopology(topology, &err)) {
+      FAIL("negative non-root parent not rejected");
+      return;
+    }
+  }
+  // Rejected: empty.
+  {
+    std::vector<int> topology;
+    std::string err;
+    if (SkelValidateTopology(topology, &err)) {
+      FAIL("empty topology not rejected");
+      return;
+    }
+  }
+  PASS();
+}
+
 void test_skeleton() {
   TEST("IsSkeleton");
   auto stage = MakeSkelStage();
@@ -907,6 +986,7 @@ int main() {
 
   printf("Skel:\n");
   test_skel_types();
+  test_skel_validate_topology();
   test_skeleton();
   test_skel_animation();
   test_blend_shape();

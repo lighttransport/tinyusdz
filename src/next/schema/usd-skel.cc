@@ -452,7 +452,7 @@ bool SkelValidateTopology(const std::vector<int>& topology,
   // Check for valid parent indices
   for (size_t i = 0; i < topology.size(); ++i) {
     int parent = topology[i];
-    if (parent >= static_cast<int>(topology.size())) {
+    if (parent < -1 || parent >= static_cast<int>(topology.size())) {
       if (err) {
         *err = "Invalid parent index " + IntToStr(parent) +
                " at joint " + UIntToStr(i);
@@ -461,50 +461,27 @@ bool SkelValidateTopology(const std::vector<int>& topology,
     }
   }
 
-  // Check for cycles using DFS
-  std::vector<bool> visited(topology.size(), false);
-  std::vector<bool> inStack(topology.size(), false);
-
+  // Check for cycles. Each node has exactly one parent pointer, so the parent
+  // chain from any node either reaches the root or revisits a node (a cycle).
+  // With one root and valid indices (checked above), a cycle-free topology is
+  // also reachable from the root, so this subsumes the reachability check.
+  // O(n) via a 3-color walk: 0 = unvisited, 1 = on the current walk,
+  // 2 = proven acyclic.
+  std::vector<int> state(topology.size(), 0);
   for (size_t i = 0; i < topology.size(); ++i) {
-    if (topology[i] == -1) {
-      // Start DFS from root
-      std::vector<size_t> stack;
-      stack.push_back(i);
-
-      while (!stack.empty()) {
-        size_t idx = stack.back();
-        stack.pop_back();
-
-        if (inStack[idx]) {
-          if (err) {
-            *err = "Cycle detected at joint " + UIntToStr(idx);
-          }
-          return false;
-        }
-
-        if (visited[idx]) continue;
-        visited[idx] = true;
-        inStack[idx] = true;
-
-        // Find children
-        for (size_t j = 0; j < topology.size(); ++j) {
-          if (topology[j] == static_cast<int>(idx)) {
-            stack.push_back(j);
-          }
-        }
-
-        inStack[idx] = false;
+    if (state[i] != 0) continue;
+    size_t cur = i;
+    while (topology[cur] != -1 && state[cur] != 2) {
+      if (state[cur] == 1) {
+        if (err) *err = "Cycle detected at joint " + UIntToStr(cur);
+        return false;
       }
+      state[cur] = 1;
+      cur = topology[cur];
     }
-  }
-
-  // Check all nodes visited (connected)
-  for (size_t i = 0; i < topology.size(); ++i) {
-    if (!visited[i]) {
-      if (err) {
-        *err = "Unreachable joint " + UIntToStr(i);
-      }
-      return false;
+    for (size_t w = i; topology[w] != -1 && state[w] != 2;) {
+      state[w] = 2;
+      w = topology[w];
     }
   }
 
