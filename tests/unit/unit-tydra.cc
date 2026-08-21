@@ -1660,6 +1660,15 @@ void tydra_material_binding_validation_test(void) {
         Animatable<value::color3f>(value::color3f({0.25f, 0.5f, 0.75f})));
     standard_surface.metalness.set_value(Animatable<float>(0.4f));
     standard_surface.specular_roughness.set_value(Animatable<float>(0.32f));
+    standard_surface.transmission.set_value(Animatable<float>(0.8f));
+    standard_surface.transmission_color.set_value(
+        Animatable<value::color3f>(value::color3f({0.3f, 0.5f, 0.7f})));
+    standard_surface.subsurface.set_value(Animatable<float>(0.22f));
+    standard_surface.subsurface_color.set_value(
+        Animatable<value::color3f>(value::color3f({0.6f, 0.7f, 0.8f})));
+    standard_surface.subsurface_radius.set_value(
+        Animatable<value::color3f>(value::color3f({0.7f, 0.5f, 0.3f})));
+    standard_surface.thin_film_thickness.set_value(Animatable<float>(420.0f));
     standard_surface.emission.set_value(Animatable<float>(1.75f));
     standard_surface.emission_color.set_value(
         Animatable<value::color3f>(value::color3f({0.2f, 0.3f, 0.4f})));
@@ -1703,6 +1712,20 @@ void tydra_material_binding_validation_test(void) {
         TEST_CHECK(NearlyEqual(shader.base_color.value[2], 0.75f));
         TEST_CHECK(NearlyEqual(shader.base_metalness.value, 0.4f));
         TEST_CHECK(NearlyEqual(shader.specular_roughness.value, 0.32f));
+        TEST_CHECK(NearlyEqual(shader.transmission_weight.value, 0.8f));
+        TEST_CHECK(NearlyEqual(shader.transmission_color.value[0], 0.3f));
+        TEST_CHECK(NearlyEqual(shader.transmission_color.value[1], 0.5f));
+        TEST_CHECK(NearlyEqual(shader.transmission_color.value[2], 0.7f));
+        TEST_CHECK(NearlyEqual(shader.subsurface_weight.value, 0.22f));
+        TEST_CHECK(NearlyEqual(shader.subsurface_color.value[0], 0.6f));
+        TEST_CHECK(NearlyEqual(shader.subsurface_color.value[1], 0.7f));
+        TEST_CHECK(NearlyEqual(shader.subsurface_color.value[2], 0.8f));
+        TEST_CHECK(NearlyEqual(shader.subsurface_radius_scale.value[0], 0.7f));
+        TEST_CHECK(NearlyEqual(shader.subsurface_radius_scale.value[1], 0.5f));
+        TEST_CHECK(NearlyEqual(shader.subsurface_radius_scale.value[2], 0.3f));
+        TEST_CHECK(NearlyEqual(shader.subsurface_radius.value, 1.0f));
+        TEST_CHECK(NearlyEqual(shader.thin_film_thickness.value, 420.0f));
+        TEST_CHECK(NearlyEqual(shader.thin_film_weight.value, 1.0f));
         TEST_CHECK(NearlyEqual(shader.emission_luminance.value, 1.75f));
         TEST_CHECK(NearlyEqual(shader.emission_color.value[0], 0.2f));
         const float expected_alpha =

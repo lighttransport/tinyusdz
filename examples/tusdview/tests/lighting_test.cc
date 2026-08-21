@@ -279,6 +279,32 @@ int main() {
     return 1;
   }
 
+  const std::string tiltIncludeTable = "/tmp/tusdview-lighting-tilt.tbl";
+  const std::string tiltIncludeProfile = "/tmp/tusdview-lighting-tilt-file.ies";
+  {
+    std::ofstream table(tiltIncludeTable);
+    table << "2\n0 90\n1 0.5\n";
+    std::ofstream ies(tiltIncludeProfile);
+    ies << "IESNA:LM-63-1995\nTILT=INCLUDE\n"
+        << "  \"tusdview-lighting-tilt.tbl\"  \n"
+        << "1 1000 1 3 1 1 2 1 1 1 1 1 1\n"
+        << "0 45 90\n0\n1 0.5 0.25\n";
+  }
+  tusdview::DrawLightCPU externalTiltLight;
+  const bool externalTiltLoaded = tusdview::LoadIesProfile(
+      tiltIncludeProfile, &externalTiltLight, &iesError);
+  std::remove(tiltIncludeTable.c_str());
+  std::remove(tiltIncludeProfile.c_str());
+  if (!externalTiltLoaded ||
+      !Near(tusdview::EvaluateIesProfile(externalTiltLight, 90.0f, 0.0f),
+            0.125f)) {
+    std::fprintf(stderr, "external IES TILT include mismatch: loaded=%d value=%f (%s)\n",
+                 externalTiltLoaded ? 1 : 0,
+                 tusdview::EvaluateIesProfile(externalTiltLight, 90.0f, 0.0f),
+                 iesError.c_str());
+    return 1;
+  }
+
   tusdview::DrawLightCPU geometry;
   geometry.type = tusdview::DrawLightCPU::Type::Geometry;
   geometry.geometryTriOffset = 17;
@@ -413,6 +439,32 @@ int main() {
       tusdview::RtLightCollectionMaskForMesh(linkedShadow, 2, true) != 2u ||
       tusdview::RtLightCollectionMaskForMesh(linkedShadow, 1, true) != 1u) {
     std::fprintf(stderr, "RT light/shadow collection mask mismatch\n");
+    return 1;
+  }
+  linkedShadow[0].lightLinkPaths = {"/World/Points"};
+  linkedShadow[0].shadowLinkPaths = {"/World/Points"};
+  if (tusdview::RtLightCollectionMaskForPath(linkedShadow, "/World/Points/Carrier",
+                                             false) != 3u ||
+      tusdview::RtLightCollectionMaskForPath(linkedShadow, "/World/Other",
+                                             false) != 2u) {
+    std::fprintf(stderr, "native carrier light-link path mask mismatch\n");
+    return 1;
+  }
+  const tusdview::RasterLightSet carrierRaster =
+      tusdview::PackRasterLights(linkedShadow, 0);
+  if (tusdview::RasterLightMaskForPath(carrierRaster,
+                                       "/World/Points/Carrier") != 3u ||
+      tusdview::RasterLightMaskForPath(carrierRaster, "/World/Other") != 2u) {
+    std::fprintf(stderr, "raster carrier light-link path mask mismatch\n");
+    return 1;
+  }
+  if (tusdview::RasterShadowMaskForPath(carrierRaster,
+                                        "/World/Points/Carrier") != 1u ||
+      tusdview::RasterShadowMaskForPath(carrierRaster, "/World/Other") != 0u ||
+      !tusdview::RasterShadowIncludesPath(carrierRaster,
+                                          "/World/Points/Carrier") ||
+      tusdview::RasterShadowIncludesPath(carrierRaster, "/World/Other")) {
+    std::fprintf(stderr, "raster carrier shadow-link path mask mismatch\n");
     return 1;
   }
   const float shadowMin[3] = {-2.0f, -1.0f, -3.0f};

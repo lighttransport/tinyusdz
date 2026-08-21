@@ -61,8 +61,23 @@ int main() {
   mat.params.push_back(FloatParam("coat_ior", 1.4f));
   mat.params.push_back(FloatParam("emission_luminance", 2.0f));
   mat.params.push_back(Vec3Param("emission_color", 0.1f, 0.2f, 0.3f));
+  mat.params.push_back(FloatParam("transmission_weight", 0.8f));
+  mat.params.push_back(Vec3Param("transmission_color", 0.25f, 0.5f, 1.0f));
+  mat.params.push_back(FloatParam("subsurface_weight", 0.22f));
+  mat.params.push_back(Vec3Param("subsurface_color", 0.6f, 0.7f, 0.8f));
+  mat.params.push_back(
+      Vec3Param("subsurface_radius_scale", 0.7f, 0.5f, 0.3f));
+  mat.params.push_back(FloatParam("thin_film_weight", 1.0f));
+  mat.params.push_back(FloatParam("thin_film_thickness", 450.0f));
+  mat.params.push_back(FloatParam("thin_film_ior", 1.4f));
   mat.params.push_back(FloatParam("opacity", 0.65f));
   tusdview::BakeRealtimePbrMaterial(&mat);
+  if (!Near(mat.lightRtOpenPBR.thinFilmWeight, 1.0f) ||
+      !Near(mat.lightRtOpenPBR.thinFilmThicknessNm, 450.0f) ||
+      !Near(mat.lightRtOpenPBR.thinFilmIor, 1.4f)) {
+    std::fprintf(stderr, "OpenPBR thin-film units were not preserved\n");
+    return 1;
+  }
   mat.occlusion = 0.65f;
   mat.baseColorSample.uv = {1.0f, 0.1f, 0.2f, 0.9f, 0.3f, 0.4f};
   mat.metallicSample.uv = {0.5f, 0.0f, 0.0f, 0.5f, 0.1f, 0.2f};
@@ -147,6 +162,17 @@ int main() {
   std::vector<float> directRasterTexPack(
       tusdview::kRasterMaterialTextureParamFloats, -1.0f);
   tusdview::PackRasterMaterialTextureParams(mat, directRasterTexPack.data());
+  if (!Near(directRasterTexPack[67 * 4 + 0], 0.8f) ||
+      !Near(directRasterTexPack[68 * 4 + 0], 0.25f) ||
+      !Near(directRasterTexPack[68 * 4 + 1], 0.5f) ||
+      !Near(directRasterTexPack[68 * 4 + 2], 1.0f) ||
+      !Near(directRasterTexPack[72 * 4 + 0], 0.22f) ||
+      !Near(directRasterTexPack[72 * 4 + 1], 1.0f) ||
+      !Near(directRasterTexPack[72 * 4 + 2],
+            0.2126f * 0.7f + 0.7152f * 0.5f + 0.0722f * 0.3f)) {
+    std::fprintf(stderr, "raster transmission controls were not packed\n");
+    return 1;
+  }
   scene.materials.push_back(mat);
 
   tusdview::DrawMeshCPU mesh;
@@ -403,6 +429,45 @@ int main() {
       std::fprintf(stderr, "shared/default realtime-PBR pack mismatch at %d\n", i);
       return 1;
     }
+  }
+  tinyusdz::tydra::RealtimePbrMaterial extendedPbr;
+  extendedPbr.specularAnisotropy = 0.25f;
+  extendedPbr.specularRotation = 12.0f;
+  extendedPbr.specularRoughnessAnisotropy = -0.15f;
+  extendedPbr.transmissionDispersion = 0.4f;
+  extendedPbr.transmissionDispersionAbbeNumber = 32.0f;
+  extendedPbr.transmissionDispersionScale = 0.75f;
+  extendedPbr.subsurfaceAnisotropy = 0.2f;
+  extendedPbr.subsurfaceScatterAnisotropy = -0.3f;
+  extendedPbr.coatAnisotropy = 0.1f;
+  extendedPbr.coatRotation = 45.0f;
+  extendedPbr.coatRoughnessAnisotropy = -0.2f;
+  extendedPbr.coatDarkening = 0.6f;
+  extendedPbr.volumeDensity = 2.0f;
+  extendedPbr.volumeAlbedo[0] = 0.2f;
+  extendedPbr.volumeAlbedo[1] = 0.3f;
+  extendedPbr.volumeAlbedo[2] = 0.4f;
+  extendedPbr.volumeEmission[0] = 0.5f;
+  extendedPbr.volumeEmission[1] = 0.6f;
+  extendedPbr.volumeEmission[2] = 0.7f;
+  extendedPbr.volumeEmissionScale = 3.0f;
+  std::vector<float> extendedPack(tusdview::kLightRtOpenPBRFloats, 0.0f);
+  tinyusdz::tydra::PackRealtimePbrMaterial(
+      extendedPbr, true, 0.0f, 0.5f, extendedPack.data());
+  if (!Near(extendedPack[57], 0.25f) ||
+      !Near(extendedPack[58], 12.0f) ||
+      !Near(extendedPack[59], -0.15f) || !Near(extendedPack[60], 0.4f) ||
+      !Near(extendedPack[61], 32.0f) || !Near(extendedPack[62], 0.75f) ||
+      !Near(extendedPack[63], 0.2f) || !Near(extendedPack[64], -0.3f) ||
+      !Near(extendedPack[65], 0.1f) || !Near(extendedPack[66], 45.0f) ||
+      !Near(extendedPack[69], -0.2f) ||
+      !Near(extendedPack[70], 0.6f) || !Near(extendedPack[72], 0.2f) ||
+      !Near(extendedPack[73], 0.3f) || !Near(extendedPack[74], 0.4f) ||
+      !Near(extendedPack[75], 2.0f) || !Near(extendedPack[76], 0.5f) ||
+      !Near(extendedPack[77], 0.6f) || !Near(extendedPack[78], 0.7f) ||
+      !Near(extendedPack[79], 3.0f)) {
+    std::fprintf(stderr, "extended OpenPBR controls were not packed\n");
+    return 1;
   }
 
   tusdview::DrawMaterialCPU neutralNormalMat;
@@ -726,7 +791,8 @@ int main() {
   std::vector<float> packedGraph(tusdview::kRtMaterialGraphFloats, 0.0f);
   tusdview::PackMaterialXGraphRuntime(imageGraphMat, packedGraph.data());
   if (packedGraph[0] != 2.0f || packedGraph[1] < 0.0f ||
-      packedGraph[2] < 0.0f) {
+      packedGraph[2] < 0.0f ||
+      packedGraph[tusdview::kRtMaterialGraphHeaderFloats + 15] != -1.0f) {
     std::fprintf(stderr, "MaterialX graph runtime packing failed\n");
     return 1;
   }
@@ -794,6 +860,77 @@ int main() {
       !Near(extendedGraphMat.materialXGraph.nodes[8].value[2][0], 3.0f)) {
     std::fprintf(stderr, "extended MaterialX graph operators failed: %s\n",
                  extendedError.c_str());
+    return 1;
+  }
+
+  tusdview::DrawMaterialCPU scalarGraphMat;
+  scalarGraphMat.materialXNodeGraphJson = R"json({
+    "nodegraph": {"nodes": [
+      {"name":"atan", "category":"atan2", "inputs":[{"value":1.0},{"value":2.0}]},
+      {"name":"sgn", "category":"sign", "inputs":[{"value":-2.0}]},
+      {"name":"rnd", "category":"round", "inputs":[{"value":1.6}]},
+      {"name":"sat", "category":"saturate", "inputs":[{"value":-0.5}]}
+    ], "outputs": []}, "connections": []
+  })json";
+  std::string scalarError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&scalarGraphMat, &scalarError) ||
+      scalarGraphMat.materialXGraph.nodes.size() != 4 ||
+      scalarGraphMat.materialXGraph.nodes[0].op !=
+          tusdview::MaterialXGraphOpCPU::Atan2 ||
+      scalarGraphMat.materialXGraph.nodes[1].op !=
+          tusdview::MaterialXGraphOpCPU::Sign ||
+      scalarGraphMat.materialXGraph.nodes[2].op !=
+          tusdview::MaterialXGraphOpCPU::Round ||
+      scalarGraphMat.materialXGraph.nodes[3].op !=
+          tusdview::MaterialXGraphOpCPU::Clamp ||
+      !Near(scalarGraphMat.materialXGraph.nodes[3].value[2][0], 1.0f)) {
+    std::fprintf(stderr, "MaterialX scalar procedural operators failed: %s\n",
+                 scalarError.c_str());
+    return 1;
+  }
+
+  // Connected image coordinates must survive compilation and packing. This
+  // catches the old raster/RT behavior where image nodes always sampled the
+  // hit UV even when a place2d/transform node was authored upstream.
+  tusdview::DrawMaterialCPU placedImageMat;
+  placedImageMat.materialXNodeGraphJson = R"json({
+    "nodegraph": {"nodes": [
+      {"name":"st", "category":"texcoord1", "type":"vector2"},
+      {"name":"place", "category":"place2d", "type":"vector2",
+       "inputs":[{"name":"in", "nodename":"st"},
+                  {"name":"scale", "value":[2.0,3.0]},
+                  {"name":"offset", "value":[0.1,0.2]},
+                  {"name":"rotation", "value":30.0}]},
+      {"name":"img", "category":"image", "type":"color3",
+       "inputs":[{"name":"file", "type":"filename", "value":"x.png"},
+                  {"name":"texcoord", "nodename":"place"},
+                  {"name":"default", "value":[0.2,0.3,0.4]}]}
+    ], "outputs":[{"name":"base", "nodename":"img"}]},
+    "connections":[{"input":"base_color", "nodegraph":"nodegraph",
+                     "output":"base"}]
+  })json";
+  std::string placedError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&placedImageMat, &placedError) ||
+      placedImageMat.materialXGraph.nodes.size() != 3 ||
+      placedImageMat.materialXGraph.nodes[1].op !=
+          tusdview::MaterialXGraphOpCPU::Transform2D ||
+      placedImageMat.materialXGraph.nodes[0].value[2][2] != 1.0f ||
+      placedImageMat.materialXGraph.nodes[2].value[2][3] != 1.0f) {
+    std::fprintf(stderr, "MaterialX placed image graph failed: %s\n",
+                 placedError.c_str());
+    return 1;
+  }
+  std::vector<float> placedPack(tusdview::kRtMaterialGraphFloats, 0.0f);
+  tusdview::PackMaterialXGraphRuntime(placedImageMat, placedPack.data());
+  const size_t placedNode = tusdview::kRtMaterialGraphHeaderFloats +
+                            2 * tusdview::kRtMaterialGraphNodeFloats;
+  const size_t placedTransform = tusdview::kRtMaterialGraphHeaderFloats +
+                                 tusdview::kRtMaterialGraphNodeFloats;
+  if (placedPack[placedNode] !=
+          static_cast<float>(tusdview::MaterialXGraphOpCPU::Image) ||
+      placedPack[placedNode + 15] != 1.0f ||
+      !Near(placedPack[placedTransform + 15], 30.0f)) {
+    std::fprintf(stderr, "MaterialX placed image graph packing failed\n");
     return 1;
   }
 

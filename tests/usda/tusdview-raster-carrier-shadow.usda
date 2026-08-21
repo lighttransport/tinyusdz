@@ -1,0 +1,49 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World" {
+    def Mesh "Floor" {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-6, 0, -5), (6, 0, -5), (6, 0, 5), (-6, 0, 5)]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+            interpolation = "vertex"
+        )
+        color3f[] primvars:displayColor = [(0.9, 0.9, 0.9)]
+        uniform bool doubleSided = true
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Points "LinkedPoints" {
+        point3f[] points = [(-2.5, 2.5, 0), (-1.2, 2.5, 0)]
+        float[] widths = [1.4]
+        color3f[] primvars:displayColor = [(0.9, 0.15, 0.1)]
+    }
+
+    def BasisCurves "ExcludedCurve" {
+        uniform token type = "linear"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [3]
+        point3f[] points = [(0.8, 2.5, -1.5), (2.1, 2.5, 0), (3.4, 2.5, 1.5)]
+        float[] widths = [0.9]
+        color3f[] primvars:displayColor = [(0.1, 0.25, 0.9)]
+    }
+
+    def DistantLight "Sun" {
+        float inputs:intensity = 3
+        bool inputs:shadow:enable = 1
+        rel collection:shadowLink:includes = </World/LinkedPoints>
+        uniform token collection:shadowLink:expansionRule = "expandPrims"
+        float3 xformOp:rotateXYZ = (-90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    def Camera "Cam" {
+        double3 xformOp:translate = (0, 9, 13)
+        float xformOp:rotateX = -35
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+    }
+}

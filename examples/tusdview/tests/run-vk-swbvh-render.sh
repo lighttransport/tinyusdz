@@ -21,8 +21,14 @@ trap 'rm -rf "$TMP"' EXIT
 OUT="$TMP/swbvh.ppm"
 
 set +e
-LOG="$(TUSDVIEW_RT_FORCE_SW=1 "$TUSDVIEW" --headless --backend vk --rt \
-      --frames 2 --screenshot "$OUT" "$ASSET" 2>&1)"
+if command -v timeout >/dev/null 2>&1; then
+  LOG="$(TUSDVIEW_RT_FORCE_SW=1 timeout --kill-after=5s \
+      "${TUSDVIEW_RENDER_TIMEOUT:-30s}" "$TUSDVIEW" --headless --backend vk --rt \
+      --frames 1 --size "${TUSDVIEW_SIZE:-64x64}" --screenshot "$OUT" "$ASSET" 2>&1)"
+else
+  LOG="$(TUSDVIEW_RT_FORCE_SW=1 "$TUSDVIEW" --headless --backend vk --rt \
+      --frames 1 --size "${TUSDVIEW_SIZE:-64x64}" --screenshot "$OUT" "$ASSET" 2>&1)"
+fi
 RC=$?
 set -e
 echo "$LOG"

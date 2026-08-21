@@ -399,6 +399,21 @@ else
 fi
 fi
 
+# The software-BVH Vulkan path uses the same UDIM fixture. Keep this separate
+# from the hardware ray-query branch so llvmpipe/CPU Vulkan installations still
+# exercise tile selection rather than silently skipping the regression.
+sw_img="$OUT/opacity-udim-swbvh.ppm"
+TUSDVIEW_RT_FORCE_SW=1 run_viewer "$BIN" --headless --backend vk --rt \
+  --config "$CONFIG" --frames 2 --view-dir 0,0,-1 --screenshot "$sw_img" \
+  "$OUT/opacity-udim.usda" >"$OUT/opacity-udim-swbvh.log" 2>&1
+if grep -q 'renderer: Vulkan (compute BVH)' "$OUT/opacity-udim-swbvh.log" &&
+   [ -s "$sw_img" ]; then
+  mask_ran=$((mask_ran+1))
+  probe "$sw_img" mask-swbvh || { echo "FAIL: mask-swbvh"; fail=1; }
+else
+  echo "SKIP: Vulkan software-BVH UDIM render unavailable"
+fi
+
 for rt in cuda hip; do
   img="$OUT/display-opacity-$rt.ppm"
   run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --frames 4 \
