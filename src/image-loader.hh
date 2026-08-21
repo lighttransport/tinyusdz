@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "image-types.hh"
+#include "security-policy.hh"
 
 #include "nonstd/expected.hpp"
 
@@ -66,10 +67,13 @@ typedef bool (*GetImageInfoFunction)(ImageInfoResult *image, const uint8_t *addr
 /// Load image from a file.
 /// 
 /// @param[in] filename Input filename(or URI)
-/// @param[in] max_memory_limit_in_mb Optional. Maximum image file size in [MB]. Default = 1 TB.
+/// @param[in] max_memory_limit_in_mb Optional. Maximum image file size in [MB]. Default = 512 MB.
 /// @return ImageResult or error message(std::string)
 ///
-nonstd::expected<ImageResult, std::string> LoadImageFromFile(const std::string &filename, const size_t max_memory_limit_in_mb = 1024*1024);
+nonstd::expected<ImageResult, std::string> LoadImageFromFile(
+    const std::string &filename,
+    const size_t max_memory_limit_in_mb =
+        security_policy::kDefaultInputLimitBytes / (1024ull * 1024ull));
 
 ///
 /// Get Image info from file.

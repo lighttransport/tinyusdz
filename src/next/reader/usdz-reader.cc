@@ -202,6 +202,13 @@ bool USDZReader::Open(const uint8_t* data, size_t size,
       return false;
     }
 
+    if (options.max_entries > 0 &&
+        entries_.size() >= options.max_entries) {
+      error_ = "USDZ archive contains too many entries";
+      entries_.clear();
+      return false;
+    }
+
     Entry entry;
     entry.name = name;
     entry.offset = data_pos;

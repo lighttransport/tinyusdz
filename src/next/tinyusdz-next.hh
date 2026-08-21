@@ -21,6 +21,7 @@
 #include <memory>
 #include <vector>
 
+#include "../security-policy.hh"
 #include "execution.hh"
 
 // Core types
@@ -108,7 +109,7 @@ struct LoadUSDOptions {
   /// size, USDC crate input/allocation checks, USDZ archive/entry size, and
   /// composed external layer loads. Nested format-specific caps are combined
   /// with this cap by taking the stricter non-zero value.
-  size_t max_memory = 0;
+  size_t max_memory = security_policy::kDefaultInputLimitBytes;
 
   /// Format-specific USDA options.
   LoadOptions usda_options;

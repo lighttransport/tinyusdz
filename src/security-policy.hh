@@ -12,6 +12,12 @@
 namespace tinyusdz {
 namespace security_policy {
 
+// Safe defaults for untrusted input. Callers handling trusted, genuinely large
+// scenes can raise these through their loader options explicitly.
+constexpr size_t kDefaultInputLimitBytes = 512ull * 1024ull * 1024ull;
+constexpr size_t kDefaultAssetLimitBytes = 512ull * 1024ull * 1024ull;
+constexpr size_t kDefaultArchiveEntryCount = 65536;
+
 // MCP limits
 constexpr size_t kMCPMaxRequestBodyBytes = 16 * 1024 * 1024;
 constexpr size_t kMCPMaxBase64InputBytes = 64 * 1024 * 1024;
@@ -178,4 +184,3 @@ inline bool IsSafeRelativeAssetPath(const std::string &path) {
 
 } // namespace security_policy
 } // namespace tinyusdz
-

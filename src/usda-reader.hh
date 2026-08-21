@@ -19,7 +19,7 @@ struct USDAReaderConfig {
   bool allow_unknown_apiSchema{true};
   bool strict_allowedToken_check{false};
   bool strict_shader_type_check{false}; // Shader input/output type conformance(false: warn, true: error)
-  size_t max_memory_limit_in_mb{16ull*1024ull}; // Default 16GB (matches LoadOptions)
+  size_t max_memory_limit_in_mb{512}; // Fail-closed default; 0 disables the cap.
 
   // MaterialX validation options
   bool validate_mtlx_connection_types{false};

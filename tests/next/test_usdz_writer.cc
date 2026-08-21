@@ -187,6 +187,13 @@ void test_usdz_root_is_first_entry() {
     FAIL("content-sniffed uppercase .USD root was rejected"); return;
   }
 
+  USDZReadOptions entry_limit;
+  entry_limit.max_entries = 1;
+  if (reader.Open(valid.data(), valid.size(), entry_limit) ||
+      reader.Error().find("too many entries") == std::string::npos) {
+    FAIL("archive entry-count limit was ignored"); return;
+  }
+
   std::vector<uint8_t> unsafe;
   AppendStoredEntry(&unsafe, "../root.usda", usda);
   if (reader.Open(unsafe.data(), unsafe.size()) ||
