@@ -344,15 +344,14 @@ void fp_roundtrip_special_values_test(void) {
       TEST_CHECK_(parsed == 0.0, "double +0 roundtrip failed");
     }
 
-    // Negative zero (double) - dragonbox may output as "0" for -0.0
+    // Negative zero (double)
     {
       double v = -0.0;
       std::string s = dtos(v);
-      // Accept either "0" or "-0" for negative zero
-      TEST_CHECK_(s == "0" || s == "-0",
-                  "double -0 should print as '0' or '-0', got '%s'", s.c_str());
+      TEST_CHECK_(s == "-0", "double -0 should print as '-0', got '%s'", s.c_str());
       double parsed = tinyusdz::atof(s);
       TEST_CHECK_(parsed == 0.0, "double -0 roundtrip value failed");
+      TEST_CHECK_(std::signbit(parsed), "double -0 roundtrip sign failed");
     }
 
     // Positive zero (float)
@@ -366,8 +365,9 @@ void fp_roundtrip_special_values_test(void) {
     {
       float v = -0.0f;
       std::string s = dtos(v);
-      TEST_CHECK_(s == "0" || s == "-0",
-                  "float -0 should print as '0' or '-0', got '%s'", s.c_str());
+      TEST_CHECK_(s == "-0", "float -0 should print as '-0', got '%s'", s.c_str());
+      TEST_CHECK_(std::signbit(static_cast<float>(tinyusdz::atof(s))),
+                  "float -0 roundtrip sign failed");
     }
   }
 

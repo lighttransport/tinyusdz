@@ -1111,18 +1111,18 @@ private:
   // decremented via RAII scope guard. Fails with an error when exceeding 64.
   int dict_nesting_depth_ = 0;
 
-  // Phase 5: Value deduplication with NaN-aware hashing.
-  // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;
-  // all other values hash by bit pattern.
+  // Phase 5: authored-value storage deduplication. Floating-point values hash
+  // by representation so +0/-0 and NaN payloads remain bit-exact on disk.
+  // This is intentionally stricter than ordinary USD numerical equality.
   struct NanAwareHash {
     static size_t hash_float(float v) {
-      uint32_t bits = 0;
-      if (v != 0.0f) { std::memcpy(&bits, &v, sizeof(v)); }
+      uint32_t bits;
+      std::memcpy(&bits, &v, sizeof(v));
       return std::hash<uint32_t>{}(bits);
     }
     static size_t hash_double(double v) {
-      uint64_t bits = 0;
-      if (v != 0.0) { std::memcpy(&bits, &v, sizeof(v)); }
+      uint64_t bits;
+      std::memcpy(&bits, &v, sizeof(v));
       return std::hash<uint64_t>{}(bits);
     }
     static size_t combine(size_t seed, size_t h) {
@@ -1132,7 +1132,7 @@ private:
     // element_size: sizeof(float) or sizeof(double) when is_float is true.
     static size_t hash_buffer(const void *data, size_t byte_count,
                               size_t element_size, bool is_float);
-    // NaN-aware buffer equality (canonicalizes +0/-0 before comparison).
+    // Bitwise buffer equality for authored storage.
     static bool buffers_equal(const void *a, const void *b, size_t byte_count,
                               size_t element_size, bool is_float);
   };

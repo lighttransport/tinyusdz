@@ -1348,12 +1348,11 @@ void dedup_cross_type_no_false_share_test(void) {
 }
 
 // NaN and signed-zero behaviour through dedup.
-//  - NaN must survive the write/dedup/read round-trip (kept by bit pattern; the
-//    NaN-aware hash only canonicalizes +0/-0, never NaN), and many identical
-//    NaN-bearing samples must still collapse (NaN==NaN by bits -> dedup).
-//  - +0.0 / -0.0 are deduplicated together (matches OpenUSD TfHash / IEEE
-//    +0==-0), so the *sign* of zero is not guaranteed to survive, but the
-//    numeric value (0.0) must.
+//  - NaN must survive the write/dedup/read round-trip by bit pattern, and many
+//    identical NaN-bearing samples must still collapse (NaN==NaN by bits for
+//    storage deduplication).
+//  - +0.0 / -0.0 remain distinct storage payloads even though ordinary USD
+//    numerical comparison treats them as equal.
 void dedup_nan_signed_zero_roundtrip_test(void) {
   const float qnan = std::numeric_limits<float>::quiet_NaN();
 
@@ -1376,6 +1375,8 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
     // Signed-zero default array on a second attribute.
     AddCustomAttribute(&xform, "negzero", "float[]",
                        value::Value(std::vector<float>{-0.0f, 1.0f}));
+    AddCustomAttribute(&xform, "poszero", "float[]",
+                       value::Value(std::vector<float>{+0.0f, 1.0f}));
     Prim prim("NanPrim", xform);
     stage.root_prims().emplace_back(prim);
   }
@@ -1410,7 +1411,7 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
     TEST_CHECK(!blocked && last == other);
   }
 
-  // Signed zero: numeric value preserved (sign may be canonicalized by dedup).
+  // Signed zero: authored representation survives value deduplication.
   const value::Value* nz = GetLayerAttrValue(layer, "NanPrim", "negzero");
   TEST_CHECK(nz != nullptr);
   if (nz) {
@@ -1419,9 +1420,21 @@ void dedup_nan_signed_zero_roundtrip_test(void) {
     if (p) {
       TEST_CHECK(p->size() == 2);
       if (p->size() == 2) {
-        TEST_CHECK((*p)[0] == 0.0f);  // -0.0f == 0.0f numerically
+        TEST_CHECK((*p)[0] == 0.0f);
+        TEST_CHECK(std::signbit((*p)[0]));
         TEST_CHECK((*p)[1] == 1.0f);
       }
+    }
+  }
+  const value::Value* pz = GetLayerAttrValue(layer, "NanPrim", "poszero");
+  TEST_CHECK(pz != nullptr);
+  if (pz) {
+    const auto* p = pz->as<std::vector<float>>();
+    TEST_CHECK(p != nullptr);
+    if (p && p->size() == 2) {
+      TEST_CHECK((*p)[0] == 0.0f);
+      TEST_CHECK(!std::signbit((*p)[0]));
+      TEST_CHECK((*p)[1] == 1.0f);
     }
   }
 }

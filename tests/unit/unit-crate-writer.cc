@@ -7197,6 +7197,18 @@ void crate_reader_parallel_inlined_fieldsets_test(void) {
 // chosen per array): every pattern must reproduce the input bit-exactly either
 // way. A final size check confirms the option actually shrinks an integer array.
 void crate_writer_float_double_array_compression_roundtrip_test(void) {
+  auto float_bits_equal = [](const std::vector<float>& a,
+                             const std::vector<float>& b) {
+    return a.size() == b.size() &&
+           (a.empty() || std::memcmp(a.data(), b.data(),
+                                    a.size() * sizeof(float)) == 0);
+  };
+  auto double_bits_equal = [](const std::vector<double>& a,
+                              const std::vector<double>& b) {
+    return a.size() == b.size() &&
+           (a.empty() || std::memcmp(a.data(), b.data(),
+                                    a.size() * sizeof(double)) == 0);
+  };
   auto roundtrip_widths = [](const std::vector<float>& in,
                              bool compress) -> std::vector<float> {
     std::string fn = get_temp_filename("test_floatcomp");
@@ -7296,6 +7308,13 @@ void crate_writer_float_double_array_compression_roundtrip_test(void) {
       for (int i = 0; i < 40; ++i) in.push_back(fpal[i % 3]);
       TEST_CHECK(roundtrip_widths(in, compress) == in);
     }
+    // float[]: integral values containing both zero signs. Compression must
+    // avoid the integer codec and keep separate bitwise LUT entries.
+    {
+      std::vector<float> in;
+      for (int i = 0; i < 40; ++i) in.push_back((i & 1) ? -0.0f : +0.0f);
+      TEST_CHECK(float_bits_equal(roundtrip_widths(in, compress), in));
+    }
     // float[]: arbitrary distinct non-integers (uncompressed fallback)
     {
       std::vector<float> in;
@@ -7313,6 +7332,12 @@ void crate_writer_float_double_array_compression_roundtrip_test(void) {
       std::vector<double> in;
       for (int i = 0; i < 40; ++i) in.push_back(dpal[i % 3]);
       TEST_CHECK(roundtrip_knots(in, compress) == in);
+    }
+    // double[]: integral values containing both zero signs.
+    {
+      std::vector<double> in;
+      for (int i = 0; i < 40; ++i) in.push_back((i & 1) ? -0.0 : +0.0);
+      TEST_CHECK(double_bits_equal(roundtrip_knots(in, compress), in));
     }
     // double[]: arbitrary distinct non-integers (uncompressed fallback)
     {

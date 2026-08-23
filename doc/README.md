@@ -20,6 +20,8 @@ documents live in [archive/](archive/).
 - [mmap.md](mmap.md) — MMap-based USD loading and the mmap array fast path.
 - [unregistered-value.md](unregistered-value.md) — UnregisteredValue handling
   (type inference rules) in OpenUSD vs TinyUSDZ.
+- [signed-zero.md](signed-zero.md) — IEEE-754 signed-zero handling in OpenUSD,
+  AOUSD Core requirements and ambiguities, and bit-exact round-trip guidance.
 - [ousd-vs-tusdz.md](ousd-vs-tusdz.md) — AOUSD Core 1.0.1 / OpenUSD review of
   TinyUSDZ `next` and Tydra-next, with remediation status.
 

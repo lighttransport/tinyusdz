@@ -608,9 +608,10 @@ bool CrateWriter::PackMetaVariable(const std::string& key,
 // list ops / paths and other layout-coupled recursive values); the caller then
 // packs them normally.
 //
-// For float/double-component types, *element_size is the PER-COMPONENT width (4
-// or 8) so NanAwareHash canonicalizes +0.0/-0.0 per component; binary types use
-// element_size 1 with is_float=false (raw-byte hashing).
+// For float/double-component types, *element_size is the per-component width.
+// Storage deduplication hashes and compares their raw bytes so authored +0/-0
+// and NaN payload distinctions are retained. Semantic value comparison remains
+// numerical and is independent of this wire-storage key.
 static constexpr uint32_t kDedupArrayTagBit = 1u << 31;
 
 bool CrateWriter::ComputeValueDedupDescriptor(const crate::CrateValue& cv,

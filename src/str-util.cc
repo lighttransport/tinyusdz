@@ -1571,9 +1571,10 @@ char* dtoa_dragonbox_impl_t(const Float f, char* buf, int max_digits, int exp_up
 
   // Handle zero specially (use fpclassify to avoid float comparison warning)
   if (std::fpclassify(f) == FP_ZERO) {
-    // OpenUSD preserves the sign of negative zero (`-0`); the default collapses
-    // it to `0`.
-    if (g_usd_float_format && std::signbit(f)) {
+    // Preserve authored IEEE-754 signed zero independently of the optional
+    // OpenUSD notation mode. Both spellings are valid USD, and `-0` is the
+    // shortest spelling that retains the sign on parse.
+    if (std::signbit(f)) {
       *buf++ = '-';
     }
     *buf++ = '0';
