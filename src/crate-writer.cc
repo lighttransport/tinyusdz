@@ -150,6 +150,11 @@ CrateWriter::~CrateWriter() {
 
 // ============================================================================
 // NanAwareHash implementation
+//
+// This hash is used by the storage deduplicator, not by semantic USD value
+// comparison. Authored values that differ only in an IEEE-754 representation
+// detail (including the sign of zero or a NaN payload) must not share an
+// already-written Crate payload.
 // ============================================================================
 
 #if defined(__clang__)
@@ -164,47 +169,8 @@ size_t CrateWriter::NanAwareHash::hash_buffer(const void *data,
     // Non-float: hash raw bytes directly with XXH3
     return static_cast<size_t>(XXH_INLINE_XXH3_64bits(data, byte_count));
   }
-
-  // Float/double: canonicalize +0/-0 into a temp buffer, then XXH3
-  // (We copy to avoid mutating the caller's data.)
-  std::vector<uint8_t> canon(byte_count);
-  // Guard the copy: an empty float/double array reaches here with
-  // byte_count==0 (and possibly-null data/canon pointers); memcpy(null,null,0)
-  // is UB-by-the-letter / flagged by UBSan's nonnull check. XXH3 of 0 bytes
-  // below is already safe.
-  if (byte_count) std::memcpy(canon.data(), data, byte_count);
-
-  if (element_size == sizeof(float)) {
-    size_t count = byte_count / sizeof(float);
-    for (size_t i = 0; i < count; ++i) {
-      float v;
-      size_t offset;
-      if (!safe::mul(i, sizeof(float), &offset)) {
-        return 0;  // Error - return 0 hash
-      }
-      std::memcpy(&v, canon.data() + offset, sizeof(float));
-      if (v == 0.0f) {
-        uint32_t zero = 0;
-        std::memcpy(canon.data() + offset, &zero, sizeof(float));
-      }
-    }
-  } else { // sizeof(double)
-    size_t count = byte_count / sizeof(double);
-    for (size_t i = 0; i < count; ++i) {
-      double v;
-      size_t offset;
-      if (!safe::mul(i, sizeof(double), &offset)) {
-        return 0;  // Error - return 0 hash
-      }
-      std::memcpy(&v, canon.data() + offset, sizeof(double));
-      if (v == 0.0) {
-        uint64_t zero = 0;
-        std::memcpy(canon.data() + offset, &zero, sizeof(double));
-      }
-    }
-  }
-
-  return static_cast<size_t>(XXH_INLINE_XXH3_64bits(canon.data(), byte_count));
+  (void)element_size;
+  return static_cast<size_t>(XXH_INLINE_XXH3_64bits(data, byte_count));
 }
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -214,44 +180,9 @@ bool CrateWriter::NanAwareHash::buffers_equal(const void *a, const void *b,
                                                size_t byte_count,
                                                size_t element_size,
                                                bool is_float) {
-  const auto *pa = static_cast<const uint8_t *>(a);
-  const auto *pb = static_cast<const uint8_t *>(b);
-
-  if (is_float && element_size == sizeof(float)) {
-    size_t count = byte_count / sizeof(float);
-    for (size_t i = 0; i < count; ++i) {
-      float va, vb;
-      size_t offset;
-      if (!safe::mul(i, sizeof(float), &offset)) {
-        return false;  // Overflow - buffers aren't equal
-      }
-      std::memcpy(&va, pa + offset, sizeof(float));
-      std::memcpy(&vb, pb + offset, sizeof(float));
-      uint32_t ba = 0, bb = 0;
-      if (va != 0.0f) { std::memcpy(&ba, &va, sizeof(float)); }
-      if (vb != 0.0f) { std::memcpy(&bb, &vb, sizeof(float)); }
-      if (ba != bb) return false;
-    }
-    return true;
-  } else if (is_float && element_size == sizeof(double)) {
-    size_t count = byte_count / sizeof(double);
-    for (size_t i = 0; i < count; ++i) {
-      double va, vb;
-      size_t offset;
-      if (!safe::mul(i, sizeof(double), &offset)) {
-        return false;  // Overflow - buffers aren't equal
-      }
-      std::memcpy(&va, pa + offset, sizeof(double));
-      std::memcpy(&vb, pb + offset, sizeof(double));
-      uint64_t ba = 0, bb = 0;
-      if (va != 0.0) { std::memcpy(&ba, &va, sizeof(double)); }
-      if (vb != 0.0) { std::memcpy(&bb, &vb, sizeof(double)); }
-      if (ba != bb) return false;
-    }
-    return true;
-  }
-
-  return std::memcmp(a, b, byte_count) == 0;
+  (void)element_size;
+  (void)is_float;
+  return byte_count == 0 || std::memcmp(a, b, byte_count) == 0;
 }
 
 // ============================================================================
@@ -2748,9 +2679,9 @@ int64_t CrateWriter::WriteCompressedFloatArray(const float* data, uint64_t count
   if (options_.enable_float_array_compression && options_.enable_compression &&
       count >= crate::kMinCompressedArraySize) {
     // Code 'i': every value is an integer exactly representable as int32 (the
-    // reader reconstructs via float(int32)). Note this collapses -0.0f -> +0.0f,
-    // matching OpenUSD's identical heuristic. The range guard before the cast
-    // mirrors OpenUSD's isIntegral() and avoids UB for NaN/Inf/out-of-range
+    // reader reconstructs via float(int32)). Negative zero is deliberately not
+    // eligible because conversion through int32 would erase its authored sign.
+    // The range guard before the cast avoids UB for NaN/Inf/out-of-range
     // values. 2^31 is exactly representable in float; use it as the exclusive
     // upper bound (anything >= it cannot be a valid int32).
     {
@@ -2760,6 +2691,7 @@ int64_t CrateWriter::WriteCompressedFloatArray(const float* data, uint64_t count
       bool all_int = true;
       for (uint64_t i = 0; i < count; ++i) {
         const float v = data[i];
+        if (v == 0.0f && std::signbit(v)) { all_int = false; break; }
         if (!(v >= kInt32Lo && v < kInt32HiExcl)) { all_int = false; break; }
         const int32_t iv = static_cast<int32_t>(v);
         if (!math::is_close(static_cast<float>(iv), v, 0.0f)) { all_int = false; break; }
@@ -2845,8 +2777,9 @@ int64_t CrateWriter::WriteCompressedDoubleArray(const double* data, uint64_t cou
   if (options_.enable_float_array_compression && options_.enable_compression &&
       count >= crate::kMinCompressedArraySize) {
     // Code 'i': integers exactly representable as int32 (reader reconstructs via
-    // double(int32)). int32 is always exact in double. The range guard mirrors
-    // OpenUSD's isIntegral() and avoids UB for NaN/Inf/out-of-range values.
+    // double(int32)). int32 is always exact in double. Negative zero is not
+    // eligible because conversion through int32 would erase its authored sign.
+    // The range guard avoids UB for NaN/Inf/out-of-range values.
     {
       constexpr double kInt32Lo = -2147483648.0;     // -2^31 == INT32_MIN
       constexpr double kInt32HiExcl = 2147483648.0;  // 2^31, one past INT32_MAX
@@ -2854,6 +2787,7 @@ int64_t CrateWriter::WriteCompressedDoubleArray(const double* data, uint64_t cou
       bool all_int = true;
       for (uint64_t i = 0; i < count; ++i) {
         const double v = data[i];
+        if (v == 0.0 && std::signbit(v)) { all_int = false; break; }
         if (!(v >= kInt32Lo && v < kInt32HiExcl)) { all_int = false; break; }
         const int32_t iv = static_cast<int32_t>(v);
         if (!math::is_close(static_cast<double>(iv), v, 0.0)) { all_int = false; break; }
