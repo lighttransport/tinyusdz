@@ -2398,6 +2398,7 @@ def Xform "Scene"
            nodegraph="NG_Test" output="rough" />
     <input name="normal" type="vector3"
            nodegraph="NG_Test" output="normal" />
+    <input name="subsurface_scale" type="float" value="0.003" />
   </standard_surface>
   <surfacematerial name="M_Test" type="material">
     <input name="surfaceshader" type="surfaceshader" nodename="Test" />
@@ -2482,6 +2483,8 @@ def Xform "Scene"
   assert(render_material.openpbr->base_metalness.is_texture());
   assert(render_material.openpbr->specular_roughness.is_texture());
   assert(render_material.openpbr->normal.is_texture());
+  assert(std::fabs(render_material.openpbr->subsurface_scale.value.x -
+                   0.003f) < 1.0e-6f);
   assert(!render_material.default_fallback);
 
   const auto openpbr_it =
@@ -2503,11 +2506,13 @@ def Xform "Scene"
   assert(std::fabs(openpbr_material.openpbr->subsurface_weight.value.x -
                    0.75f) < 1.0e-6f);
   assert(std::fabs(openpbr_material.openpbr->subsurface_radius.value.x -
-                   0.0325f) < 1.0e-6f);
+                   1.0f) < 1.0e-6f);
   assert(std::fabs(openpbr_material.openpbr->subsurface_radius.value.y) <
          1.0e-6f);
   assert(std::fabs(openpbr_material.openpbr->subsurface_radius.value.z -
-                   0.00221f) < 1.0e-6f);
+                   0.068f) < 1.0e-6f);
+  assert(std::fabs(openpbr_material.openpbr->subsurface_scale.value.x -
+                   0.0325f) < 1.0e-6f);
 
   auto texture_for = [&](const char* asset) -> const RenderTexture& {
     for (const RenderTexture& texture : result.scene.textures) {

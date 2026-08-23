@@ -1240,8 +1240,10 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
       s.subsurfaceColor = max(evalMaterialXGraph(mid, 7, uv0, uv1, face).rgb,
                               vec3(0.0));
     if (graphRows[gb + 9u] >= 0.0)
-      s.subsurfaceRadius = max(evalMaterialXGraph(mid, 8, uv0, uv1, face).rgb,
-                               vec3(1.0e-5));
+      s.subsurfaceRadius = max(
+          evalMaterialXGraph(mid, 8, uv0, uv1, face).rgb *
+              max(lrt(mid, 5u).w, 0.0),
+          vec3(1.0e-5));
     if (graphRows[gb + 10u] >= 0.0)
       s.specularWeight = clamp(evalMaterialXGraph(mid, 9, uv0, uv1, face).x,
                                0.0, 1.0);
