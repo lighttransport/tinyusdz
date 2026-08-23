@@ -67,11 +67,12 @@ scripts/prepare-usd-assets.sh --checkout-only
 ```
 
 `scripts/prepare-mujoco-wasm.sh` checks out and builds the pinned manifest
-ref into the verification cache. The pinned MuJoCo ref carries one local
-patch, merged on the fork's `tinyusdz` branch: emscripten's `--emit-tsd` is
-gated behind `MUJOCO_WASM_EMIT_TSD` (default OFF) because the typings codegen
-shells out to `tsc --outFile`, which TypeScript 5.x removed. Point the
-physics tests at the built artifacts with
+ref into the verification cache. This pin upgrades the fork's MuJoCo base
+from 3.7.0 to 3.10.1 and includes the physics-only COM-Jacobian and spatial-
+tendon bindings used by TinyUSDZ. The pinned head also gates emscripten's
+`--emit-tsd` behind `MUJOCO_WASM_EMIT_TSD` (default OFF) because the typings
+codegen shells out to `tsc --outFile`, which TypeScript 5.x removed. Point
+the physics tests at the built artifacts with
 `MUJOCO_WASM_DIR=<cache>/mujoco/wasm/dist`.
 
 `--offline` requires both the pinned MuJoCo checkout and its CMake

@@ -175,6 +175,8 @@ function testMujocoWasm(ctx) {
     TINYUSDZ_VERIFY_CACHE: ctx.cache,
     MUJOCO_WASM_DIR: path.join(ctx.cache, 'mujoco', 'wasm', 'dist'),
   };
+  run(ctx.root, 'MuJoCo WASM binding smoke test', 'node',
+    ['tests/mujoco-physics-bindings.test.mjs'], env, path.join(ctx.root, 'web/js'));
   run(ctx.root, 'MuJoCo WASM physics smoke test', 'node', ['cli/phys-sim.js', '--json'], env, path.join(ctx.root, 'web/js'));
 }
 
