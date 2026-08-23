@@ -1,0 +1,17 @@
+#usda 1.0
+
+def Scope "ArcFidelity" (
+    customData = {
+        string fixture = "authored-arc-fidelity"
+    }
+    prepend references = @asset-a.usda@</Root> (offset = 2; scale = 0.5)
+    append references = </InternalA>
+    delete references = </RemovedA>
+    reorder references = [</InternalA>, @asset-a.usda@</Root> (offset = 2; scale = 0.5)]
+    prepend payload = @payload-a.usda@</Root> (offset = -1; scale = 2)
+    append payload = </InternalPayload>
+    delete payload = </RemovedPayload>
+    reorder payload = [</InternalPayload>, @payload-a.usda@</Root> (offset = -1; scale = 2)]
+)
+{
+}

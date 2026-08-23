@@ -1,0 +1,749 @@
+#usda 1.0
+(
+    doc = "Generated supported-schema coverage; do not edit"
+)
+
+def Xform "S000_APISchemaBase" (
+)
+{
+    custom string parity:schema = "APISchemaBase"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usd"
+}
+
+def Xform "S001_ClipsAPI" (
+)
+{
+    custom string parity:schema = "ClipsAPI"
+    custom token parity:kind = "nonApplied"
+    custom string parity:domain = "usd"
+}
+
+def Xform "S002_CollectionAPI" (
+    prepend apiSchemas = ["CollectionAPI:fixture"]
+)
+{
+    custom string parity:schema = "CollectionAPI"
+    custom token parity:kind = "multipleApply"
+    custom string parity:domain = "usd"
+}
+
+def Xform "S003_ColorSpaceAPI" (
+    prepend apiSchemas = ["ColorSpaceAPI"]
+)
+{
+    custom string parity:schema = "ColorSpaceAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usd"
+}
+
+def Xform "S004_ColorSpaceDefinitionAPI" (
+    prepend apiSchemas = ["ColorSpaceDefinitionAPI:fixture"]
+)
+{
+    custom string parity:schema = "ColorSpaceDefinitionAPI"
+    custom token parity:kind = "multipleApply"
+    custom string parity:domain = "usd"
+}
+
+def Xform "S005_ModelAPI" (
+)
+{
+    custom string parity:schema = "ModelAPI"
+    custom token parity:kind = "nonApplied"
+    custom string parity:domain = "usd"
+}
+
+def Xform "S006_Typed" (
+)
+{
+    custom string parity:schema = "Typed"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usd"
+}
+
+def Xform "S007_BackPlateAPI" (
+    prepend apiSchemas = ["BackPlateAPI:fixture"]
+)
+{
+    custom string parity:schema = "BackPlateAPI"
+    custom token parity:kind = "multipleApply"
+    custom string parity:domain = "usdGeom"
+}
+
+def BasisCurves "S008_BasisCurves" (
+)
+{
+    custom string parity:schema = "BasisCurves"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S009_Boundable" (
+)
+{
+    custom string parity:schema = "Boundable"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdGeom"
+}
+
+def Camera "S010_Camera" (
+)
+{
+    custom string parity:schema = "Camera"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Capsule "S011_Capsule" (
+)
+{
+    custom string parity:schema = "Capsule"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Capsule_1 "S012_Capsule_1" (
+)
+{
+    custom string parity:schema = "Capsule_1"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Cone "S013_Cone" (
+)
+{
+    custom string parity:schema = "Cone"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Cube "S014_Cube" (
+)
+{
+    custom string parity:schema = "Cube"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S015_Curves" (
+)
+{
+    custom string parity:schema = "Curves"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdGeom"
+}
+
+def Cylinder "S016_Cylinder" (
+)
+{
+    custom string parity:schema = "Cylinder"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Cylinder_1 "S017_Cylinder_1" (
+)
+{
+    custom string parity:schema = "Cylinder_1"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S018_GeomModelAPI" (
+)
+{
+    custom string parity:schema = "GeomModelAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdGeom"
+}
+
+def GeomSubset "S019_GeomSubset" (
+)
+{
+    custom string parity:schema = "GeomSubset"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S020_Gprim" (
+)
+{
+    custom string parity:schema = "Gprim"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdGeom"
+}
+
+def HermiteCurves "S021_HermiteCurves" (
+)
+{
+    custom string parity:schema = "HermiteCurves"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S022_Imageable" (
+)
+{
+    custom string parity:schema = "Imageable"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdGeom"
+}
+
+def Mesh "S023_Mesh" (
+)
+{
+    custom string parity:schema = "Mesh"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S024_MotionAPI" (
+)
+{
+    custom string parity:schema = "MotionAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdGeom"
+}
+
+def NurbsCurves "S025_NurbsCurves" (
+)
+{
+    custom string parity:schema = "NurbsCurves"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def NurbsPatch "S026_NurbsPatch" (
+)
+{
+    custom string parity:schema = "NurbsPatch"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Plane "S027_Plane" (
+)
+{
+    custom string parity:schema = "Plane"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S028_PointBased" (
+)
+{
+    custom string parity:schema = "PointBased"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdGeom"
+}
+
+def PointInstancer "S029_PointInstancer" (
+)
+{
+    custom string parity:schema = "PointInstancer"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Points "S030_Points" (
+)
+{
+    custom string parity:schema = "Points"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S031_PrimvarsAPI" (
+)
+{
+    custom string parity:schema = "PrimvarsAPI"
+    custom token parity:kind = "nonApplied"
+    custom string parity:domain = "usdGeom"
+}
+
+def Scope "S032_Scope" (
+)
+{
+    custom string parity:schema = "Scope"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Sphere "S033_Sphere" (
+)
+{
+    custom string parity:schema = "Sphere"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def TetMesh "S034_TetMesh" (
+)
+{
+    custom string parity:schema = "TetMesh"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S035_VisibilityAPI" (
+)
+{
+    custom string parity:schema = "VisibilityAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S036_Xform" (
+)
+{
+    custom string parity:schema = "Xform"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S037_XformCommonAPI" (
+)
+{
+    custom string parity:schema = "XformCommonAPI"
+    custom token parity:kind = "nonApplied"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S038_Xformable" (
+)
+{
+    custom string parity:schema = "Xformable"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdGeom"
+}
+
+def Xform "S039_BoundableLightBase" (
+)
+{
+    custom string parity:schema = "BoundableLightBase"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdLux"
+}
+
+def CylinderLight "S040_CylinderLight" (
+)
+{
+    custom string parity:schema = "CylinderLight"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def DiskLight "S041_DiskLight" (
+)
+{
+    custom string parity:schema = "DiskLight"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def DistantLight "S042_DistantLight" (
+)
+{
+    custom string parity:schema = "DistantLight"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def DomeLight "S043_DomeLight" (
+)
+{
+    custom string parity:schema = "DomeLight"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def DomeLight_1 "S044_DomeLight_1" (
+)
+{
+    custom string parity:schema = "DomeLight_1"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def GeometryLight "S045_GeometryLight" (
+)
+{
+    custom string parity:schema = "GeometryLight"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def Xform "S046_LightAPI" (
+)
+{
+    custom string parity:schema = "LightAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdLux"
+}
+
+def LightFilter "S047_LightFilter" (
+)
+{
+    custom string parity:schema = "LightFilter"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def Xform "S048_LightListAPI" (
+)
+{
+    custom string parity:schema = "LightListAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdLux"
+}
+
+def Xform "S049_ListAPI" (
+)
+{
+    custom string parity:schema = "ListAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdLux"
+}
+
+def Xform "S050_MeshLightAPI" (
+)
+{
+    custom string parity:schema = "MeshLightAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdLux"
+}
+
+def Xform "S051_NonboundableLightBase" (
+)
+{
+    custom string parity:schema = "NonboundableLightBase"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdLux"
+}
+
+def PluginLight "S052_PluginLight" (
+)
+{
+    custom string parity:schema = "PluginLight"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def PluginLightFilter "S053_PluginLightFilter" (
+)
+{
+    custom string parity:schema = "PluginLightFilter"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def PortalLight "S054_PortalLight" (
+)
+{
+    custom string parity:schema = "PortalLight"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def RectLight "S055_RectLight" (
+)
+{
+    custom string parity:schema = "RectLight"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def Xform "S056_ShadowAPI" (
+)
+{
+    custom string parity:schema = "ShadowAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdLux"
+}
+
+def Xform "S057_ShapingAPI" (
+)
+{
+    custom string parity:schema = "ShapingAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdLux"
+}
+
+def SphereLight "S058_SphereLight" (
+)
+{
+    custom string parity:schema = "SphereLight"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdLux"
+}
+
+def Xform "S059_VolumeLightAPI" (
+)
+{
+    custom string parity:schema = "VolumeLightAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdLux"
+}
+
+def Xform "S060_AssetPreviewsAPI" (
+    prepend apiSchemas = ["AssetPreviewsAPI"]
+)
+{
+    custom string parity:schema = "AssetPreviewsAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdMedia"
+}
+
+def SpatialAudio "S061_SpatialAudio" (
+)
+{
+    custom string parity:schema = "SpatialAudio"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdMedia"
+}
+
+def Xform "S062_MaterialXConfigAPI" (
+)
+{
+    custom string parity:schema = "MaterialXConfigAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdMtlx"
+}
+
+def Xform "S063_PhysicsArticulationRootAPI" (
+)
+{
+    custom string parity:schema = "PhysicsArticulationRootAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdPhysics"
+}
+
+def Xform "S064_PhysicsCollisionAPI" (
+)
+{
+    custom string parity:schema = "PhysicsCollisionAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdPhysics"
+}
+
+def PhysicsCollisionGroup "S065_PhysicsCollisionGroup" (
+)
+{
+    custom string parity:schema = "PhysicsCollisionGroup"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdPhysics"
+}
+
+def PhysicsDistanceJoint "S066_PhysicsDistanceJoint" (
+)
+{
+    custom string parity:schema = "PhysicsDistanceJoint"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdPhysics"
+}
+
+def Xform "S067_PhysicsDriveAPI" (
+    prepend apiSchemas = ["PhysicsDriveAPI:fixture"]
+)
+{
+    custom string parity:schema = "PhysicsDriveAPI"
+    custom token parity:kind = "multipleApply"
+    custom string parity:domain = "usdPhysics"
+}
+
+def Xform "S068_PhysicsFilteredPairsAPI" (
+)
+{
+    custom string parity:schema = "PhysicsFilteredPairsAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdPhysics"
+}
+
+def PhysicsFixedJoint "S069_PhysicsFixedJoint" (
+)
+{
+    custom string parity:schema = "PhysicsFixedJoint"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdPhysics"
+}
+
+def PhysicsJoint "S070_PhysicsJoint" (
+)
+{
+    custom string parity:schema = "PhysicsJoint"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdPhysics"
+}
+
+def Xform "S071_PhysicsLimitAPI" (
+    prepend apiSchemas = ["PhysicsLimitAPI:fixture"]
+)
+{
+    custom string parity:schema = "PhysicsLimitAPI"
+    custom token parity:kind = "multipleApply"
+    custom string parity:domain = "usdPhysics"
+}
+
+def Xform "S072_PhysicsMassAPI" (
+)
+{
+    custom string parity:schema = "PhysicsMassAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdPhysics"
+}
+
+def Xform "S073_PhysicsMaterialAPI" (
+)
+{
+    custom string parity:schema = "PhysicsMaterialAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdPhysics"
+}
+
+def Xform "S074_PhysicsMeshCollisionAPI" (
+)
+{
+    custom string parity:schema = "PhysicsMeshCollisionAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdPhysics"
+}
+
+def PhysicsPrismaticJoint "S075_PhysicsPrismaticJoint" (
+)
+{
+    custom string parity:schema = "PhysicsPrismaticJoint"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdPhysics"
+}
+
+def PhysicsRevoluteJoint "S076_PhysicsRevoluteJoint" (
+)
+{
+    custom string parity:schema = "PhysicsRevoluteJoint"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdPhysics"
+}
+
+def Xform "S077_PhysicsRigidBodyAPI" (
+)
+{
+    custom string parity:schema = "PhysicsRigidBodyAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdPhysics"
+}
+
+def PhysicsScene "S078_PhysicsScene" (
+)
+{
+    custom string parity:schema = "PhysicsScene"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdPhysics"
+}
+
+def PhysicsSphericalJoint "S079_PhysicsSphericalJoint" (
+)
+{
+    custom string parity:schema = "PhysicsSphericalJoint"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdPhysics"
+}
+
+def Xform "S080_ConnectableAPI" (
+)
+{
+    custom string parity:schema = "ConnectableAPI"
+    custom token parity:kind = "nonApplied"
+    custom string parity:domain = "usdShade"
+}
+
+def Xform "S081_CoordSysAPI" (
+    prepend apiSchemas = ["CoordSysAPI:fixture"]
+)
+{
+    custom string parity:schema = "CoordSysAPI"
+    custom token parity:kind = "multipleApply"
+    custom string parity:domain = "usdShade"
+}
+
+def Material "S082_Material" (
+)
+{
+    custom string parity:schema = "Material"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdShade"
+}
+
+def Xform "S083_MaterialBindingAPI" (
+)
+{
+    custom string parity:schema = "MaterialBindingAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdShade"
+}
+
+def Xform "S084_NodeDefAPI" (
+    prepend apiSchemas = ["NodeDefAPI"]
+)
+{
+    custom string parity:schema = "NodeDefAPI"
+    custom token parity:kind = "singleApply"
+    custom string parity:domain = "usdShade"
+}
+
+def NodeGraph "S085_NodeGraph" (
+)
+{
+    custom string parity:schema = "NodeGraph"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdShade"
+}
+
+def Shader "S086_Shader" (
+)
+{
+    custom string parity:schema = "Shader"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdShade"
+}
+
+def BlendShape "S087_BlendShape" (
+)
+{
+    custom string parity:schema = "BlendShape"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdSkel"
+}
+
+def SkelAnimation "S088_SkelAnimation" (
+)
+{
+    custom string parity:schema = "SkelAnimation"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdSkel"
+}
+
+def Xform "S089_SkelBindingAPI" (
+)
+{
+    custom string parity:schema = "SkelBindingAPI"
+    custom token parity:kind = "abstract"
+    custom string parity:domain = "usdSkel"
+}
+
+def SkelRoot "S090_SkelRoot" (
+)
+{
+    custom string parity:schema = "SkelRoot"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdSkel"
+}
+
+def Skeleton "S091_Skeleton" (
+)
+{
+    custom string parity:schema = "Skeleton"
+    custom token parity:kind = "concrete"
+    custom string parity:domain = "usdSkel"
+}
