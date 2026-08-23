@@ -36,6 +36,7 @@
 #include <set>
 #include <sstream>
 #include <iomanip>
+#include <atomic>
 #include <thread>
 #include <unordered_set>
 
@@ -3582,99 +3583,117 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
     ::tinyusdz::next::TaskArena task_arena(mesh_workers);
 
-    size_t next_mesh = 0;
-    bool mesh_budget_hit = false;
-    while (next_mesh < mesh_count && !mesh_budget_hit) {
-      std::vector<size_t> batch;
-      batch.reserve(std::min(mesh_workers, mesh_count - next_mesh));
-      while (batch.size() < mesh_workers && next_mesh < mesh_count) {
-        const UsdPrim& mesh_prim = extracted.meshes[next_mesh].prim;
-        // Cumulative budget guard: skip the rest of the geometry rather than
-        // let a scene of many individually-small meshes OOM the process.
-        if (BudgetWouldExceed(
-                BuildGeometryInfo(mesh_prim, GeometryKind::Mesh, -1)
-                    .estimated_resident_bytes,
-                "mesh conversion")) {
-          mesh_budget_hit = true;
+    // Dynamic work distribution: instead of fixed-size batch waves (where one
+    // oversized mesh idled the other workers until the wave barrier), all
+    // mesh indices are pushed through a single arena.Run() pass and claimed
+    // via an atomic cursor. Each output writes into its own slot, and the
+    // serial merge below walks slots in prim order -- so results stay
+    // byte-identical to the previous batched scheduler regardless of which
+    // worker ran what.
+    //
+    // Per-item geometry size estimates are computed up front (one serial
+    // pass) so the budget gate inside each task no longer re-walks the prim's
+    // authored arrays on the hot path.
+    std::vector<size_t> mesh_estimates(mesh_count);
+    for (size_t i = 0; i < mesh_count; ++i) {
+      mesh_estimates[i] =
+          BuildGeometryInfo(extracted.meshes[i].prim, GeometryKind::Mesh, -1)
+              .estimated_resident_bytes;
+    }
+
+    std::vector<RenderMesh> mesh_out(mesh_count);
+    std::vector<uint8_t> mesh_ok(mesh_count, 0);
+    std::atomic<bool> mesh_budget_hit{false};
+
+    task_arena.Run(mesh_count, [&](size_t mi) {
+      if (mesh_budget_hit.load(std::memory_order_relaxed)) {
+        return;
+      }
+      // Cumulative budget guard: skip the rest of the geometry rather than
+      // let a scene of many individually-small meshes OOM the process. Same
+      // "decide with real accounting, then do the work" ordering as before,
+      // just executed by whichever worker claims the item (BudgetWouldExceed
+      // is state_mu_-guarded and latches).
+      if (BudgetWouldExceed(mesh_estimates[mi], "mesh conversion")) {
+        mesh_budget_hit.store(true, std::memory_order_relaxed);
+        return;
+      }
+      mesh_ok[mi] =
+          ConvertRenderableMesh(stage, extracted.meshes[mi].prim,
+                                &mesh_out[mi]) ? 1 : 0;
+    });
+
+    const bool budget_latched = mesh_budget_hit.load(std::memory_order_relaxed);
+
+    // Serial merge in original prim order. Progress is reported here on the
+    // calling thread as items complete (the previous scheduler reported
+    // dispatch progress from the batch-fill loop; both are advisory).
+    for (size_t mi = 0; mi < mesh_count; ++mi) {
+      if (!mesh_ok[mi]) {
+        if (budget_latched) {
+          // Remaining geometry was skipped by the memory budget.
           break;
         }
-        if (config_.progress_callback) {
-          float p = mesh_progress_start +
-                    (mesh_progress_end - mesh_progress_start) * next_mesh /
-                        std::max<size_t>(mesh_count, 1);
-          config_.progress_callback(p,
-                                    "Converting mesh: " + mesh_prim.GetName());
-        }
-        batch.push_back(next_mesh);
-        ++next_mesh;
+        AddWarning("Failed to convert renderable mesh prim: " +
+                            extracted.meshes[mi].prim.GetPath().str());
+        continue;
       }
-      if (batch.empty()) break;
-
-      std::vector<RenderMesh> batch_mesh(batch.size());
-      std::vector<uint8_t> batch_ok(batch.size(), 0);
-      task_arena.Run(batch.size(), [&](size_t bi) {
-        const UsdPrim& batch_prim = extracted.meshes[batch[bi]].prim;
-        batch_ok[bi] = ConvertRenderableMesh(stage, batch_prim,
-                                             &batch_mesh[bi]) ? 1 : 0;
-      });
-
-      for (size_t bi = 0; bi < batch.size(); ++bi) {
-        const UsdPrim& mesh_prim = extracted.meshes[batch[bi]].prim;
-        RenderMesh& mesh = batch_mesh[bi];
-        const bool converted = batch_ok[bi] != 0;
-        if (converted && mesh.has_alloc_failure()) {
-          // ConvertGeomPrimitive does not run ConvertMesh's alloc check.
-          AddWarning("Out of memory converting prim '" +
-                              mesh_prim.GetPath().str() +
-                              "'; the prim was skipped");
-          continue;
-        }
-        if (converted) {
-          const bool analytic = mesh_prim.GetTypeName() != "Mesh";
-          if (!config_.mesh.retain_geometry &&
-              !(analytic && config_.mesh.retain_analytic_geometry)) {
-            // Retain only the small inputs still required by the later material
-            // binding and UV-selection passes. This bounds conversion memory by
-            // one source mesh instead of accumulating the whole render scene.
-            ReleaseMeshGeometry(&mesh, true,
-                                config_.mesh.retain_triangulation);
-          }
-          // Release chunk-allocation slack before retaining: thousands of small
-          // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
-          mesh.compact();
-          int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
-          result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
-          result.scene.meshes.push_back(std::move(mesh));
-          AssignNodeDataId(&result.scene, mesh_prim.GetPath().str(), mesh_id);
-        } else {
-          AddWarning("Failed to convert renderable mesh prim: " +
-                              mesh_prim.GetPath().str());
-        }
+      if (config_.progress_callback) {
+        float p = mesh_progress_start +
+                  (mesh_progress_end - mesh_progress_start) * mi /
+                      std::max<size_t>(mesh_count, 1);
+        config_.progress_callback(p,
+                                  "Converting mesh: " +
+                                      extracted.meshes[mi].prim.GetName());
       }
+
+      const UsdPrim& mesh_prim = extracted.meshes[mi].prim;
+      RenderMesh& mesh = mesh_out[mi];
+      if (mesh.has_alloc_failure()) {
+        // ConvertGeomPrimitive does not run ConvertMesh's alloc check.
+        AddWarning("Out of memory converting prim '" +
+                            mesh_prim.GetPath().str() +
+                            "'; the prim was skipped");
+        continue;
+      }
+      const bool analytic = mesh_prim.GetTypeName() != "Mesh";
+      if (!config_.mesh.retain_geometry &&
+          !(analytic && config_.mesh.retain_analytic_geometry)) {
+        // Retain only the small inputs still required by the later material
+        // binding and UV-selection passes. This bounds conversion memory by
+        // one source mesh instead of accumulating the whole render scene.
+        ReleaseMeshGeometry(&mesh, true,
+                            config_.mesh.retain_triangulation);
+      }
+      // Release chunk-allocation slack before retaining: thousands of small
+      // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
+      mesh.compact();
+      int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
+      result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
+      result.scene.meshes.push_back(std::move(mesh));
+      AssignNodeDataId(&result.scene, mesh_prim.GetPath().str(), mesh_id);
     }
 
     // Points and Curves conversion is as independent per-prim as mesh
     // conversion (verified: ConvertPoints/ConvertCurves touch no converter
     // state beyond warnings_/last_error_, already funneled through
-    // AddWarning()/SetLastError() under state_mu_), so batch them across the
-    // same worker pool. Bookkeeping (id assignment, *_by_path, node linking,
-    // compact/release) stays serial and in original record order.
-    for (size_t batch_start = 0; batch_start < extracted.points.size();
-         batch_start += mesh_workers) {
-      const size_t batch_end =
-          std::min(batch_start + mesh_workers, extracted.points.size());
-      const size_t n = batch_end - batch_start;
-      std::vector<RenderPoints> batch_points(n);
-      std::vector<uint8_t> batch_ok(n, 0);
-      task_arena.Run(n, [&](size_t bi) {
-        batch_ok[bi] = ConvertPoints(stage,
-                                     extracted.points[batch_start + bi].prim,
-                                     &batch_points[bi]) ? 1 : 0;
+    // AddWarning()/SetLastError() under state_mu_), so run them across the
+    // same worker pool with dynamic index distribution (single Run pass; no
+    // fixed-size batch waves). Bookkeeping (id assignment, *_by_path, node
+    // linking, compact/release) stays serial and in original record order.
+    {
+      const size_t n_points = extracted.points.size();
+      std::vector<RenderPoints> points_out(n_points);
+      std::vector<uint8_t> points_ok(n_points, 0);
+      task_arena.Run(n_points, [&](size_t bi) {
+        points_ok[bi] = ConvertPoints(stage,
+                                      extracted.points[bi].prim,
+                                      &points_out[bi]) ? 1 : 0;
       });
-      for (size_t bi = 0; bi < n; ++bi) {
-        const auto& rec = extracted.points[batch_start + bi];
-        RenderPoints& points = batch_points[bi];
-        if (batch_ok[bi]) {
+      for (size_t bi = 0; bi < n_points; ++bi) {
+        const auto& rec = extracted.points[bi];
+        RenderPoints& points = points_out[bi];
+        if (points_ok[bi]) {
           if (points.has_alloc_failure()) {
             AddWarning("Out of memory converting Points '" + rec.path +
                                 "'; the prim was skipped");
@@ -3691,22 +3710,18 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
     }
 
-    for (size_t batch_start = 0; batch_start < extracted.curves.size();
-         batch_start += mesh_workers) {
-      const size_t batch_end =
-          std::min(batch_start + mesh_workers, extracted.curves.size());
-      const size_t n = batch_end - batch_start;
-      std::vector<RenderCurves> batch_curves(n);
-      std::vector<uint8_t> batch_ok(n, 0);
-      task_arena.Run(n, [&](size_t bi) {
-        batch_ok[bi] = ConvertCurves(
-                           extracted.curves[batch_start + bi].prim,
-                           &batch_curves[bi]) ? 1 : 0;
+    {
+      const size_t n_curves = extracted.curves.size();
+      std::vector<RenderCurves> curves_out(n_curves);
+      std::vector<uint8_t> curves_ok(n_curves, 0);
+      task_arena.Run(n_curves, [&](size_t bi) {
+        curves_ok[bi] =
+            ConvertCurves(extracted.curves[bi].prim, &curves_out[bi]) ? 1 : 0;
       });
-      for (size_t bi = 0; bi < n; ++bi) {
-        const auto& rec = extracted.curves[batch_start + bi];
-        RenderCurves& curves = batch_curves[bi];
-        if (batch_ok[bi]) {
+      for (size_t bi = 0; bi < n_curves; ++bi) {
+        const auto& rec = extracted.curves[bi];
+        RenderCurves& curves = curves_out[bi];
+        if (curves_ok[bi]) {
           if (curves.has_alloc_failure()) {
             AddWarning("Out of memory converting curves '" + rec.path +
                                 "'; the prim was skipped");

@@ -4055,6 +4055,30 @@ if(TINYUSDZ_BUILD_TESTS)
     target_include_directories(bench-parse-opt PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME bench-parse-opt COMMAND bench-parse-opt --quick)
     set_tests_properties(bench-parse-opt PROPERTIES LABELS "benchmark")
+
+    # Render-conversion benchmark: Stage -> raster/RT renderable mesh.
+    # Report-only (no timing gate): prints median conversion time plus a
+    # deterministic scene checksum for serial-vs-parallel byte-identity A/B
+    # checks. When the next-core backend is enabled, a combined binary also
+    # measures the tydra::next pipeline on the same input.
+    add_executable(bench-render-convert tests/feat/render-convert/perf-render-convert.cc)
+    add_sanitizers(bench-render-convert)
+    target_link_libraries(bench-render-convert PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    target_include_directories(bench-render-convert PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME bench-render-convert COMMAND bench-render-convert --iters 1 --prims 64)
+    set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark")
+
+    if(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE AND TARGET tinyusdz_next AND TARGET tydra_next)
+      add_executable(bench-render-convert-next tests/feat/render-convert/perf-render-convert.cc)
+      add_sanitizers(bench-render-convert-next)
+      target_link_libraries(bench-render-convert-next PRIVATE
+        ${TINYUSDZ_TARGET_STATIC} tinyusdz_next tydra_next)
+      target_include_directories(bench-render-convert-next PRIVATE
+        ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/next)
+      target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_NEXT=1)
+      add_test(NAME bench-render-convert-next COMMAND bench-render-convert-next --iters 1 --prims 64)
+      set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark")
+    endif()
   endif()
 
   #

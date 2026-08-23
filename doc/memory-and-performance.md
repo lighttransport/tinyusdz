@@ -81,6 +81,9 @@ File on Disk (.usdc / .usda / .usdz)
     v
 [Stage 3] Tydra ConvertToRenderScene → RenderScene object
     ├── ConvertMesh: points, normals, texcoords, tangents, indices
+    │   (per-mesh geometry runs on a worker pool when
+    │    TINYUSDZ_ENABLE_THREAD is ON and scene_config.num_threads != 1;
+    │    output is byte-identical to the serial path)
     ├── Texture loading: image decode into buffers[]
     ├── Material conversion
     └── Skeleton/animation conversion
@@ -249,6 +252,10 @@ estimated peak ~600–700 MB (V1 hybrid) → ~400–450 MB (V2 deferred).
 
 | Optimization | Savings | Where |
 |-------------|---------|-------|
+| Parallel per-mesh geometry conversion (legacy Tydra) | ~2x on 16 workers for many-mesh scenes; byte-identical output | `render-data.cc` (`ConvertDeferredMeshes`), `task-arena.hh`, `render-data-material.cc` (collect mode) |
+| Dynamic work distribution (tydra-next) | removes fixed-batch wave stalls on mixed-size meshes (~3.5x vs serial when `TINYUSDZ_NEXT_ENABLE_THREAD=ON`) | `tydra/next/render-converter.cc` |
+| Instance-registry descendant lookup | O(instances × meshes) → O(log meshes) | `render-data.cc` |
+| MikkTSpace Fast/Hybrid zero-copy inputs | one full vertex-array copy per mesh | `render-data-mesh.cc`, `fast-mikktspace.hh` |
 | mmap file loading | ~file size heap | `tusdcat`, `tinyusdz.cc` |
 | MMap zero-copy V2 (deferred reads) | ~120+ MB on large meshes; Stage arrays → sentinels | `mmap-array-ref.hh`, `crate-reader.cc`, `usdc-reader.cc`, `stage.cc`, `render-data.cc` |
 | Tangent quantization (10_10_10_2 / Fp16x4) | 83% / 67% tangent storage | `render-data.cc`, `tangent-quantize.hh` |

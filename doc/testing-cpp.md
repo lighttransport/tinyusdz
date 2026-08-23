@@ -264,6 +264,8 @@ CMake registers these tests when the corresponding targets are built (most in th
 | `feat-subdiv` | Feature test (tinysubdiv) | `build/feat-subdiv` |
 | `feat-subdiv-verify` | Feature test (only when `TINYUSDZ_TSD_VERIFY_WITH_OSD`, label `osd-verify`) | `build/feat-subdiv-verify` |
 | `bench-parse-opt` | Benchmark target (label `benchmark`) | `build/bench-parse-opt --quick` |
+| `bench-render-convert` | Stage→renderable-mesh conversion benchmark (label `benchmark`) | `build/bench-render-convert --iters 1 --prims 64` |
+| `bench-render-convert-next` | Same, + tydra-next pipeline (only when `TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON`) | `build/bench-render-convert-next` |
 | `unit-test-tinyusdz` | Acutest unit suite | `build/unit-test-tinyusdz` |
 | `mcp-test` | MCP server unit test (only when `TINYUSDZ_WITH_MCP_SERVER`) | `build/mcp-test` |
 
@@ -399,6 +401,36 @@ node tests/compare-usda.js --detailed-diff \
 
 - `ctest` runs `bench-parse-opt --quick` to keep suite wall time short.
 - Manual benchmark runs can still use the default full profile via `./build/bench-parse-opt`.
+
+### Render-conversion benchmark (`bench-render-convert`)
+
+`tests/feat/render-convert/perf-render-convert.cc` measures Stage →
+raster/RT-renderable mesh conversion for both pipelines:
+
+- legacy `tydra::RenderSceneConverter::ConvertToRenderScene` (default target),
+- tydra-next `tydra::next::RenderSceneConverter::Convert` (when built with
+  `PERFRC_ENABLE_NEXT`: the `bench-render-convert-next` target, or the
+  `bench_tydra_render` target in the standalone `src/next` tree).
+
+It generates a deterministic synthetic multi-mesh scene (`--prims N`, mixed
+sizes; ~1.5M tris at the default 2048) or loads `--scene <file>`, runs
+`--iters` conversions and prints the median wall time plus a stable FNV-1a
+scene checksum. The checksum is the byte-identity gate: serial vs parallel
+runs of the same build must print the same hash.
+
+```bash
+# A/B: parallel vs serial conversion (hashes must match)
+./build/bench-render-convert --prims 2048 --legacy-threads 0 --json
+./build/bench-render-convert --prims 2048 --legacy-threads 1 --json
+
+# tydra-next with explicit worker count
+./build/bench-render-convert-next --prims 2048 --threads 8
+```
+
+Report-only: never fails on timings. Threading follows the repo-wide
+`TINYUSDZ_ENABLE_THREAD` / `TINYUSDZ_NEXT_ENABLE_THREAD` CMake options
+(default OFF = fully serial); without them the tool still runs and reports,
+just single-threaded.
 
 ## Fixture Coverage
 

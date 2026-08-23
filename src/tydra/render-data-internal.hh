@@ -198,6 +198,45 @@ class SkelRootSkeletonResolver {
 // Scene traversal visitor for mesh and material conversion.
 // Defined in render-data-material.cc, used in render-data.cc.
 // -----------------------------------------------------------------------
+
+//
+// One deferred geometry conversion. Filled by MeshVisitor when running in
+// collect mode (MeshVisitorEnv::work_items != nullptr): material resolution
+// still happens inline in traversal order (serial), but the expensive
+// geometry conversion is recorded here and executed later -- in parallel on
+// a worker pool for non-skinned prims, then merged back in original order.
+//
+struct MeshWorkItem {
+  enum class Kind {
+    Mesh,
+    Cube,
+    Sphere,
+    Cylinder,
+    Cone,
+    Capsule,
+    Plane,
+  };
+
+  Kind kind{Kind::Mesh};
+  Path abs_path;
+  const char *type_name{"mesh"};  // lower-case name used by progress messages
+
+  // Stage-owned prim pointer per kind. Valid for the whole conversion; the
+  // Stage is immutable during ConvertToRenderScene.
+  const void *prim{nullptr};
+
+  // Resolved material binding info (material ids already assigned).
+  MaterialPath material_path;
+  std::map<std::string, MaterialPath> subset_material_path_map;
+  std::vector<const GeomSubset *> material_subsets;
+  std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
+
+  // When true the item must be converted on the calling thread during the
+  // ordered merge (skinned meshes: skeleton registration has to stay serial
+  // and traversal-ordered), or when the whole conversion runs serially.
+  bool convert_serially{false};
+};
+
 struct MeshVisitorEnv {
   RenderSceneConverter *converter{nullptr};
   const RenderSceneConverterEnv *env{nullptr};
@@ -212,6 +251,17 @@ struct MeshVisitorEnv {
   const PathPrimMap<Skeleton> *allSkeletons{nullptr};
   const PathPrimMap<SkelRoot> *allSkelRoots{nullptr};
   const PathPrimMap<SkelAnimation> *allAnimations{nullptr};
+
+  // When non-null, the visitor runs in COLLECT mode: geometry conversion is
+  // deferred. Per-prim inputs are appended here in traversal order; the
+  // caller (RenderSceneConverter::ConvertDeferredMeshes) converts and merges
+  // them afterwards. Materials are still converted inline (serially) so the
+  // materialMap is complete before any deferred geometry conversion starts.
+  std::vector<MeshWorkItem> *work_items{nullptr};
+
+  // When true, all collected items are tagged convert_serially regardless of
+  // skinning (used when the caller decides to run the merge single-threaded).
+  bool force_serial_conversion{false};
 
   // Conversion timing/counters. Nanoseconds are accumulated here to keep
   // timing code local to the visitor hot path and reported once by the caller.

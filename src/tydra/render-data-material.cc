@@ -5739,6 +5739,33 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       }
       DCOUT("# of blendshapes : " << blendshapes.size());
 
+      // Skinned meshes must not run on workers (skeleton registration has to
+      // stay serial + traversal-ordered), so they are tagged and converted by
+      // the main thread inside the ordered merge phase instead.
+      const bool skinned = pmesh->skeleton.has_value() ||
+                           pmesh->has_primvar("skel:jointIndices") ||
+                           pmesh->has_primvar("skel:jointWeights") ||
+                           pmesh->has_primvar("skel:joints") ||
+                           pmesh->has_primvar("skel:geomBindTransform");
+
+      if (visitorEnv->work_items) {
+        // Collect mode: record the fully-resolved inputs for deferred
+        // geometry conversion. Materials have already been converted above,
+        // so materialMap is complete before any worker runs.
+        MeshWorkItem wi;
+        wi.kind = MeshWorkItem::Kind::Mesh;
+        wi.type_name = "mesh";
+        wi.abs_path = abs_path;
+        wi.prim = pmesh;
+        wi.material_path = material_path;
+        wi.subset_material_path_map = subset_material_path_map;
+        wi.material_subsets = material_subsets;
+        wi.blendshapes = std::move(blendshapes);
+        wi.convert_serially = skinned || visitorEnv->force_serial_conversion;
+        visitorEnv->work_items->push_back(std::move(wi));
+        return true;  // continue traversal
+      }
+
       RenderMesh rmesh;
 
       const auto mesh_start = TydraPerfClock::now();
@@ -5834,6 +5861,18 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       }
     }
 
+    if (visitorEnv->work_items) {
+      // Collect mode: defer cube geometry conversion (see GeomMesh branch).
+      MeshWorkItem wi;
+      wi.kind = MeshWorkItem::Kind::Cube;
+      wi.type_name = "cube";
+      wi.abs_path = abs_path;
+      wi.prim = pcube;
+      wi.material_path = material_path;
+      visitorEnv->work_items->push_back(std::move(wi));
+      return true;  // continue traversal
+    }
+
     RenderMesh rmesh;
     std::vector<const tinyusdz::GeomSubset *> material_subsets;  // Cubes don't have subsets
     std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;  // Cubes don't have blendshapes
@@ -5921,6 +5960,18 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       }
     }
 
+    if (visitorEnv->work_items) {
+      // Collect mode: defer sphere geometry conversion (see GeomMesh branch).
+      MeshWorkItem wi;
+      wi.kind = MeshWorkItem::Kind::Sphere;
+      wi.type_name = "sphere";
+      wi.abs_path = abs_path;
+      wi.prim = psphere;
+      wi.material_path = material_path;
+      visitorEnv->work_items->push_back(std::move(wi));
+      return true;  // continue traversal
+    }
+
     RenderMesh rmesh;
     std::vector<const tinyusdz::GeomSubset *> material_subsets;  // Spheres don't have subsets
     std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;  // Spheres don't have blendshapes
@@ -5972,7 +6023,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   }
 
   // Helper lambda for parametric primitive conversion (Cylinder, Cone, Capsule, Plane)
-  auto convertParamPrim = [&](auto *pprim, const char *primTypeName, auto convertFunc) -> bool {
+  auto convertParamPrim = [&](auto *pprim, const char *primTypeName,
+                              MeshWorkItem::Kind wi_kind, auto convertFunc) -> bool {
     DCOUT(primTypeName << ": " << abs_path);
 
     MaterialPath material_path;
@@ -5995,6 +6047,19 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         material_path.material_path = bound_material_path.full_path_name();
       }
+    }
+
+    if (visitorEnv->work_items) {
+      // Collect mode: defer parametric geometry conversion (see GeomMesh
+      // branch).
+      MeshWorkItem wi;
+      wi.kind = wi_kind;
+      wi.type_name = primTypeName;
+      wi.abs_path = abs_path;
+      wi.prim = pprim;
+      wi.material_path = material_path;
+      visitorEnv->work_items->push_back(std::move(wi));
+      return true;  // continue traversal
     }
 
     RenderMesh rmesh;
@@ -6041,28 +6106,32 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
   // Handle GeomCylinder primitives
   if (const tinyusdz::GeomCylinder *pcyl = prim.as<tinyusdz::GeomCylinder>()) {
-    if (!convertParamPrim(pcyl, "cylinder", &RenderSceneConverter::ConvertCylinder)) {
+    if (!convertParamPrim(pcyl, "cylinder", MeshWorkItem::Kind::Cylinder,
+                          &RenderSceneConverter::ConvertCylinder)) {
       return false;
     }
   }
 
   // Handle GeomCone primitives
   if (const tinyusdz::GeomCone *pcone = prim.as<tinyusdz::GeomCone>()) {
-    if (!convertParamPrim(pcone, "cone", &RenderSceneConverter::ConvertCone)) {
+    if (!convertParamPrim(pcone, "cone", MeshWorkItem::Kind::Cone,
+                          &RenderSceneConverter::ConvertCone)) {
       return false;
     }
   }
 
   // Handle GeomCapsule primitives
   if (const tinyusdz::GeomCapsule *pcap = prim.as<tinyusdz::GeomCapsule>()) {
-    if (!convertParamPrim(pcap, "capsule", &RenderSceneConverter::ConvertCapsule)) {
+    if (!convertParamPrim(pcap, "capsule", MeshWorkItem::Kind::Capsule,
+                          &RenderSceneConverter::ConvertCapsule)) {
       return false;
     }
   }
 
   // Handle GeomPlane primitives
   if (const tinyusdz::GeomPlane *pplane = prim.as<tinyusdz::GeomPlane>()) {
-    if (!convertParamPrim(pplane, "plane", &RenderSceneConverter::ConvertPlane)) {
+    if (!convertParamPrim(pplane, "plane", MeshWorkItem::Kind::Plane,
+                          &RenderSceneConverter::ConvertPlane)) {
       return false;
     }
   }

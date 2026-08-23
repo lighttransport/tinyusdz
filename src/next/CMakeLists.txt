@@ -647,6 +647,19 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(benchmark_next PRIVATE tinyusdz_next)
 
+    # Render-conversion benchmark (tydra-next pipeline only; this standalone
+    # tree cannot build the legacy tydra converter).
+    # Report-only: prints timings and a deterministic scene checksum used to
+    # verify byte-identical output across serial/parallel A/B builds.
+    add_executable(bench_tydra_render
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/feat/render-convert/perf-render-convert.cc
+    )
+    target_link_libraries(bench_tydra_render PRIVATE tydra_next tinyusdz_next)
+    target_include_directories(bench_tydra_render PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_definitions(bench_tydra_render PRIVATE
+        PERFRC_ENABLE_NEXT=1 PERFRC_ENABLE_LEGACY=0)
+
     # Register tests with ctest
     enable_testing()
 
@@ -722,6 +735,10 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_bench_tydra_render COMMAND bench_tydra_render
+        --iters 1 --prims 64
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_bench_tydra_render PROPERTIES LABELS "benchmark")
 
     set(TINYUSDZ_NEXT_SMOKE_TESTS
         next_test_tinyusdz
