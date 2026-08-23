@@ -26,6 +26,16 @@ int main() {
     std::fprintf(stderr, "pinhole/orthographic camera enabled depth of field\n");
     return 1;
   }
+  const tusdview::RtCameraLens autoMeters =
+      tusdview::MakeAutoRtCameraLens(0.72f, 4.0f, 1.0);
+  const tusdview::RtCameraLens autoCentimeters =
+      tusdview::MakeAutoRtCameraLens(72.0f, 4.0f, 0.01);
+  if (!autoMeters.enabled() || !autoCentimeters.enabled() ||
+      !Near(autoMeters.apertureRadius, 0.00625f) ||
+      !Near(autoCentimeters.apertureRadius, 0.625f)) {
+    std::fprintf(stderr, "auto-camera physical aperture scale is incorrect\n");
+    return 1;
+  }
 
   tusdview::OrbitCamera camera;
   const float boundsMin[3] = {-1.0f, -1.0f, -1.0f};

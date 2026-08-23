@@ -562,10 +562,12 @@ development source:
   --live-shader-reload --mcp-http=8080 model.usdz
 ```
 
-The default sources are `vk/shaders/raytrace.comp` for Vulkan and
-`raytracer_kernel_src.txt` for both CUDA/NVRTC and HIP/hiprtc. Packaged builds
-or alternate working copies can set an explicit path over MCP. Vulkan invokes
-`glslc`; set `TUSDVIEW_GLSLC=/absolute/path/to/glslc` when it is not on `PATH`.
+The default Vulkan source follows the active RT implementation:
+`vk/shaders/raytrace.comp` for hardware ray query and
+`vk/shaders/raytrace_swbvh.comp` for compute-BVH. CUDA/NVRTC and HIP/hiprtc
+share `raytracer_kernel_src.txt`. Packaged builds or alternate working copies
+can set an explicit path over MCP. Vulkan invokes `glslc`; set
+`TUSDVIEW_GLSLC=/absolute/path/to/glslc` when it is not on `PATH`.
 
 ```bash
 # Inspect generation, compile time, errors, watch state, and pending work.
@@ -592,11 +594,11 @@ reported in `last_error`, while the previous generation keeps rendering and all
 scene buffers, textures, acceleration structures, camera state, and accumulated
 UI state remain resident. Windowed threaded Vulkan reports `pending:true` while
 the render thread completes the swap; poll `status` before taking a comparison
-`screenshot`. Simple Vulkan scenes automatically use the compact graph-free
-variant for fast iteration (including base-color textures), while MaterialX,
-OpenPBR, and advanced semantic-texture scenes compile the full interpreter. Live
-Vulkan replacement currently requires hardware
-ray query; the compute-BVH fallback continues using its embedded shader.
+`screenshot`. Vulkan's compact variant includes OpenPBR constants, all semantic
+textures, and direct MaterialX image/tiledimage routes. Arithmetic or procedural
+MaterialX networks promote transactionally to the full interpreter.
+Both hardware ray query and compute-BVH support transactional live replacement;
+an explicit MCP source remains selected until the client changes it.
 
 CUDA/HIP source must preserve the exported `trace` entry point and its argument
 ABI; Vulkan source must preserve the descriptor/push-constant ABI of the active

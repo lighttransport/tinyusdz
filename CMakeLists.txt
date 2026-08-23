@@ -3284,6 +3284,51 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-mcp-render-batch-vk-rt
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+      add_test(
+        NAME tusdview-mcp-live-reload-vulkan
+        COMMAND ${TUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_shader_reload.py"
+                "$<TARGET_FILE:tusdview>" vulkan
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/vk/shaders/raytrace.comp"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/area-light-shadow.usda"
+        )
+      set_tests_properties(tusdview-mcp-live-reload-vulkan
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 360
+                                      LABELS "tusdview;rt;mcp;live-reload;vulkan")
+      add_test(
+        NAME tusdview-mcp-live-reload-vulkan-swbvh
+        COMMAND ${CMAKE_COMMAND} -E env TUSDVIEW_RT_FORCE_SW=1
+                ${TUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_shader_reload.py"
+                "$<TARGET_FILE:tusdview>" vulkan
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/vk/shaders/raytrace_swbvh.comp"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/area-light-shadow.usda"
+        )
+      set_tests_properties(tusdview-mcp-live-reload-vulkan-swbvh
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                                      LABELS "tusdview;rt;mcp;live-reload;vulkan;swbvh")
+      add_test(
+        NAME tusdview-mcp-live-reload-cuda
+        COMMAND ${TUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_shader_reload.py"
+                "$<TARGET_FILE:tusdview>" cuda
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/raytracer_kernel_src.txt"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/area-light-shadow.usda"
+        )
+      set_tests_properties(tusdview-mcp-live-reload-cuda
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 480
+                                      LABELS "tusdview;rt;mcp;live-reload;cuda")
+      add_test(
+        NAME tusdview-mcp-live-reload-hip
+        COMMAND ${TUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_shader_reload.py"
+                "$<TARGET_FILE:tusdview>" hip
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/raytracer_kernel_src.txt"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/area-light-shadow.usda"
+        )
+      set_tests_properties(tusdview-mcp-live-reload-hip
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 360
+                                      LABELS "tusdview;rt;mcp;live-reload;hip")
       find_program(TUSDVIEW_XVFB_RUN NAMES xvfb-run)
       if(TUSDVIEW_XVFB_RUN)
         # Same manifest through one real, persistent GLFW/OpenGL window. The
@@ -3366,11 +3411,19 @@ if(TINYUSDZ_BUILD_TESTS)
     set(_tinyusdz_semantic_backends gl vk-raster vk-rt cuda hip)
     foreach(_backend IN LISTS _tinyusdz_semantic_backends)
       set(_test_name "tusdview-texture-semantic-aov-${_backend}")
+      set(_semantic_timeout_env)
+      if(_backend STREQUAL "vk-rt")
+        # A new compact RT SPIR-V can take roughly 150 s for NVIDIA's first
+        # driver JIT.  Let that first process populate tusdview's persistent
+        # VkPipelineCache; warm launches are typically below 200 ms.
+        set(_semantic_timeout_env "TUSDVIEW_RENDER_TIMEOUT=240s")
+      endif()
       add_test(
         NAME "${_test_name}"
         COMMAND ${CMAKE_COMMAND} -E env
                 "TUSDVIEW=$<TARGET_FILE:tusdview>"
                 "TUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
+                ${_semantic_timeout_env}
                 bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
         )
       # 900 s to match the loader-parity cases below, which do comparable work.
@@ -3403,7 +3456,9 @@ if(TINYUSDZ_BUILD_TESTS)
     foreach(_backend IN LISTS _tinyusdz_semantic_rt_backends)
       set(_test_name "tusdview-texture-semantic-rt-loader-parity-${_backend}")
       set(_semantic_rt_timeout_env)
-      if(_backend STREQUAL "cuda")
+      if(_backend STREQUAL "vk-rt")
+        set(_semantic_rt_timeout_env "TUSDVIEW_RENDER_TIMEOUT=240s")
+      elseif(_backend STREQUAL "cuda")
         # CUDA initialization can stall a child viewer after a preceding CUDA
         # shard has released its context. Keep one stalled render from
         # consuming the entire aggregate parity test timeout; the matrix has

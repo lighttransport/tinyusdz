@@ -64,7 +64,7 @@ def Xform "Scene"
         def DistantLight "Key"
         {
             color3f inputs:color = (1.0, 0.93, 0.82)
-            float inputs:intensity = 3.0
+            float inputs:intensity = 24.0
             float inputs:angle = 5.0
             double3 xformOp:rotateXYZ = (-42, -32, 0)
             uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
@@ -72,10 +72,16 @@ def Xform "Scene"
         def DistantLight "Fill"
         {
             color3f inputs:color = (0.66, 0.78, 1.0)
-            float inputs:intensity = 1.2
+            float inputs:intensity = 8.0
             float inputs:angle = 8.0
             double3 xformOp:rotateXYZ = (-24, 148, 0)
             uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+        }
+        def DomeLight "World"
+        {
+            color3f inputs:color = (0.34, 0.25, 0.18)
+            float inputs:intensity = 0.35
+            float inputs:exposure = 0.0
         }
     }
 }
@@ -88,7 +94,8 @@ VK_DEVICE_ARGS=()
 COMMON=(--headless --backend vk --path-trace --pt-quality final
         --pt-max-depth "$MAX_DEPTH" --pt-rr-depth 5 --pt-seed "$SEED"
         --pt-denoise off --pt-variance 0 --pt-motion-segments 8 --no-grid --size "$SIZE"
-        --view-dir -0.62,-0.42,-0.66 --f-stop 4 --focus-distance 0.72)
+        --view-dir -0.62,-0.42,-0.66 --cam-dolly 0.78
+        --f-stop 4 --focus-distance 0.72)
 
 run_render() {
   local name="$1" spp="$2" backend="$3"
@@ -122,6 +129,7 @@ run_render() {
 import json, sys
 report = json.load(open(sys.argv[1], encoding="utf-8"))
 render = report.get("render", {})
+backend = report.get("backend", {})
 diagnostics = report.get("load_diagnostics", {})
 assert report.get("schema_version", 0) >= 2, "old render report schema"
 assert render.get("integrator") == "path", "production integrator not active"
@@ -129,6 +137,11 @@ assert render.get("target_samples") == int(sys.argv[2]), "sample target mismatch
 assert render.get("max_depth", 0) >= 1, "invalid path depth"
 assert render.get("motion_segments") == 8, "motion segment setting lost"
 assert not render.get("rt_build_incomplete", False), "incomplete RT build"
+if backend.get("device_type") == "cpu" and \
+        __import__("os").environ.get("TUSDVIEW_OPENCHESS_ALLOW_CPU") != "1":
+    raise AssertionError("OpenChess benchmark selected a CPU Vulkan device; "
+                         "select a GPU with TUSDVIEW_VK_DEVICE or explicitly "
+                         "set TUSDVIEW_OPENCHESS_ALLOW_CPU=1")
 for key in ("degraded_materials", "missing_textures", "unsupported_mtlx"):
     assert diagnostics.get(key, 0) == 0, "%s=%s" % (key, diagnostics.get(key))
 print("validated report:", sys.argv[3], render.get("samples"), "samples")

@@ -477,10 +477,12 @@ struct MaterialXGraphNodeCPU {
 struct MaterialXGraphRuntimeCPU {
   std::vector<MaterialXGraphNodeCPU> nodes;
   // OpenPBR output node indices: base, metalness, roughness, opacity,
-  // emission, normal, subsurface weight, subsurface color, subsurface radius.
-  // -1 means no graph
-  // connection for that lane.
-  int output[9]{-1, -1, -1, -1, -1, -1, -1, -1, -1};
+  // emission, normal, subsurface weight/color/radius, specular weight/color,
+  // transmission weight/color, coat weight/color/roughness, sheen
+  // weight/color/roughness, and specular IOR. -1 means no graph connection.
+  static constexpr int kOutputCount = 20;
+  int output[kOutputCount]{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+                           -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
   bool valid{false};
   bool hasImages{false};
 };
@@ -1000,6 +1002,9 @@ struct DrawScene {
   // Stage up axis ("Y" or "Z"); drives camera orbit + grid orientation. Set by
   // the loader (the Tydra path uses RenderScene.meta.upAxis directly instead).
   std::string upAxis{"Y"};
+  // Physical scale used to convert CLI-specified 35 mm-equivalent camera
+  // optics into world-space lens radii for auto-framed scenes.
+  double metersPerUnit{0.01};
 
   // Diagnostics surfaced in the GUI (skipped meshes/textures, UDIM, etc.)
   std::vector<std::string> skipped;

@@ -549,6 +549,9 @@ DrawScene BuildCheckpointPreview(const tnext::Stage& stage, double time,
                                  const std::string& cameraName) {
   DrawScene draw;
   draw.upAxis = (stage.GetUpAxis() == "Z" || stage.GetUpAxis() == "z") ? "Z" : "Y";
+  draw.metersPerUnit = stage.GetMetersPerUnit() > 0.0
+                           ? stage.GetMetersPerUnit()
+                           : 0.01;
   std::vector<PreviewBound> bounds;
   for (const tnext::UsdPrim& root : stage.GetRootPrims()) {
     if (bounds.size() >= maxBoxes) break;
@@ -5646,6 +5649,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       };
   tydn::RenderSceneConverter conv(cfg);
   draw->upAxis = (stage.GetUpAxis() == "Z" || stage.GetUpAxis() == "z") ? "Z" : "Y";
+  draw->metersPerUnit = stage.GetMetersPerUnit() > 0.0
+                            ? stage.GetMetersPerUnit()
+                            : 0.01;
 
   draw->meshes.clear();
   draw->points.clear();
