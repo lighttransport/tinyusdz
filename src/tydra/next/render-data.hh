@@ -647,6 +647,7 @@ struct OpenPBRSurfaceShader {
   ShaderParam subsurface_weight = {-1, {0, 0, 0, 0}};
   ShaderParam subsurface_color = {-1, {0.8f, 0.8f, 0.8f, 1}};
   ShaderParam subsurface_radius = {-1, {1, 1, 1, 0}};
+  ShaderParam subsurface_scale = {-1, {1, 0, 0, 0}};
 
   // Coat
   ShaderParam coat_weight = {-1, {0, 0, 0, 0}};

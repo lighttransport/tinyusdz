@@ -2513,7 +2513,7 @@ void ForEachMaterialShaderParam(RenderMaterial* mat, Fn&& fn) {
           &o.transmission_depth,
           &o.transmission_dispersion, &o.transmission_dispersion_scale,
           &o.subsurface_weight, &o.subsurface_color, &o.subsurface_radius,
-          &o.coat_weight, &o.coat_color, &o.coat_roughness,
+          &o.subsurface_scale, &o.coat_weight, &o.coat_color, &o.coat_roughness,
           &o.coat_ior, &o.coat_anisotropy, &o.coat_roughness_anisotropy,
           &o.coat_normal, &o.sheen_weight, &o.sheen_color,
           &o.sheen_roughness,
@@ -8540,19 +8540,10 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
                      &out->subsurface_weight, scene);
   ExtractShaderParam(stage, shader_prim, "subsurface_color",
                      &out->subsurface_color, scene);
-  const bool hasSubsurfaceRadius = ExtractShaderParam(
-      stage, shader_prim, "subsurface_radius", &out->subsurface_radius, scene);
-  ShaderParam subsurfaceScale;
-  SetParamFloat(&subsurfaceScale, 1.0f);
-  if (hasSubsurfaceRadius &&
-      ExtractShaderParam(stage, shader_prim, "subsurface_scale",
-                         &subsurfaceScale, scene) &&
-      out->subsurface_radius.texture_id < 0 &&
-      subsurfaceScale.texture_id < 0) {
-    out->subsurface_radius.value.x *= subsurfaceScale.value.x;
-    out->subsurface_radius.value.y *= subsurfaceScale.value.x;
-    out->subsurface_radius.value.z *= subsurfaceScale.value.x;
-  }
+  ExtractShaderParam(stage, shader_prim, "subsurface_radius",
+                     &out->subsurface_radius, scene);
+  ExtractShaderParam(stage, shader_prim, "subsurface_scale",
+                     &out->subsurface_scale, scene);
 
   // Sheen
   ExtractShaderParam(stage, shader_prim, "sheen", &out->sheen_weight, scene);
@@ -8630,10 +8621,9 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "subsurface_color",
                      &out->subsurface_color, scene);
   // OpenPBR represents the diffusion distance as a scalar radius multiplied
-  // by a per-channel radius-scale color. Collapse the two constant inputs into
-  // the renderer-neutral RGB radius consumed by every transport backend. The
-  // previous code read the scalar directly into a color ShaderParam, yielding
-  // (radius, 0, 0) and completely ignored subsurface_radius_scale.
+  // by a per-channel radius-scale color. Keep those inputs independent: all
+  // transport backends already multiply the RGB radius by the scalar scale,
+  // and retaining both lanes also preserves graph-driven radius textures.
   ShaderParam subsurfaceRadius;
   SetParamFloat(&subsurfaceRadius, 1.0f);
   ShaderParam subsurfaceRadiusScale;
@@ -8645,12 +8635,7 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
       &subsurfaceRadiusScale, scene);
   if (hasSubsurfaceRadius || hasSubsurfaceRadiusScale) {
     out->subsurface_radius = subsurfaceRadiusScale;
-    if (subsurfaceRadius.texture_id < 0 &&
-        subsurfaceRadiusScale.texture_id < 0) {
-      out->subsurface_radius.value.x *= subsurfaceRadius.value.x;
-      out->subsurface_radius.value.y *= subsurfaceRadius.value.x;
-      out->subsurface_radius.value.z *= subsurfaceRadius.value.x;
-    }
+    out->subsurface_scale = subsurfaceRadius;
   }
 
   ExtractShaderParam(stage, shader_prim, "coat_weight", &out->coat_weight, scene);

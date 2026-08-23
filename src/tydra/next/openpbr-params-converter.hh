@@ -72,6 +72,7 @@ inline bool BuildRealtimePbrMaterial(
     p.subsurface = s.subsurface_weight.value.x;
     CopyShaderParam3ToOpenPBR(s.subsurface_color, p.subsurfaceColor);
     CopyShaderParam3ToOpenPBR(s.subsurface_radius, p.subsurfaceRadius);
+    p.subsurfaceScale = s.subsurface_scale.value.x;
     p.coatWeight = s.coat_weight.value.x;
     CopyShaderParam3ToOpenPBR(s.coat_color, p.coatColor);
     p.coatRoughness = s.coat_roughness.value.x;
@@ -91,8 +92,9 @@ inline bool BuildRealtimePbrMaterial(
         &s.specular_weight, &s.specular_color, &s.specular_roughness,
         &s.specular_ior, &s.transmission_weight, &s.transmission_color,
         &s.transmission_depth, &s.subsurface_weight, &s.subsurface_color,
-        &s.subsurface_radius, &s.coat_weight, &s.coat_color,
-        &s.coat_roughness, &s.coat_ior, &s.sheen_weight, &s.sheen_color,
+        &s.subsurface_radius, &s.subsurface_scale, &s.coat_weight,
+        &s.coat_color, &s.coat_roughness, &s.coat_ior, &s.sheen_weight,
+        &s.sheen_color,
         &s.sheen_roughness, &s.thin_film_weight, &s.thin_film_thickness,
         &s.thin_film_ior, &s.emission_luminance, &s.emission_color,
         &s.opacity, &s.normal, &s.coat_normal, &s.displacement});
