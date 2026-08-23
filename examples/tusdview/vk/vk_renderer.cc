@@ -5842,6 +5842,72 @@ void VulkanRenderer::syncSceneResources(
   updateMaterialTables(materials);
 }
 
+bool VulkanRenderer::updateMaterialConstants(
+    int materialId, const DrawMaterialCPU& material, std::string* err) {
+  if (!device_ || materialId < 0 ||
+      static_cast<size_t>(materialId) >= rtMaterialsCpu_.size()) {
+    if (err) *err = "Vulkan material index is out of range";
+    return false;
+  }
+  const size_t i = static_cast<size_t>(materialId);
+  rtMaterialsCpu_[i] = material;
+  if (matColor_.size() >= (i + 1) * 12) {
+    matColor_[i * 12 + 0] = material.baseColor[0];
+    matColor_[i * 12 + 1] = material.baseColor[1];
+    matColor_[i * 12 + 2] = material.baseColor[2];
+    matColor_[i * 12 + 3] = material.alpha;
+    matColor_[i * 12 + 4] = material.metallic;
+    matColor_[i * 12 + 5] = material.roughness;
+    matColor_[i * 12 + 6] = static_cast<float>(material.alphaMode);
+    matColor_[i * 12 + 7] = material.alphaCutoff;
+    matColor_[i * 12 + 8] = material.emissive[0];
+    matColor_[i * 12 + 9] = material.emissive[1];
+    matColor_[i * 12 + 10] = material.emissive[2];
+  }
+  if (matLightRt_.size() >= (i + 1) * kVkLightRtOpenPBRFloats) {
+    PackLightRtOpenPBR(material,
+                       &matLightRt_[i * kVkLightRtOpenPBRFloats]);
+  }
+  if (std::find(pendingMaterialConstants_.begin(),
+                pendingMaterialConstants_.end(), materialId) ==
+      pendingMaterialConstants_.end()) {
+    pendingMaterialConstants_.push_back(materialId);
+  }
+  return true;
+}
+
+void VulkanRenderer::applyPendingMaterialConstants() {
+  if (pendingMaterialConstants_.empty()) return;
+
+  for (int materialId : pendingMaterialConstants_) {
+    if (materialId < 0 ||
+        static_cast<size_t>(materialId) >= rtMaterialsCpu_.size()) {
+      continue;
+    }
+    const size_t i = static_cast<size_t>(materialId);
+    if (dispMatMapped_ && i < dispMatCapacity_) {
+      PackRasterMaterialTextureParams(
+          rtMaterialsCpu_[i], static_cast<float*>(dispMatMapped_) +
+                                  i * kVkMatTexParamFloats);
+    }
+  }
+
+  auto upload = [&](VkDeviceMemory memory, const std::vector<float>& values) {
+    if (!memory || values.empty()) return;
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, memory, 0, VK_WHOLE_SIZE, 0, &mapped) ==
+            VK_SUCCESS &&
+        mapped) {
+      std::memcpy(mapped, values.data(), values.size() * sizeof(float));
+      vkUnmapMemory(device_, memory);
+    }
+  };
+  upload(rtMatMem_, matColor_);
+  upload(rtMatLightRtMem_, matLightRt_);
+  pendingMaterialConstants_.clear();
+  ++rtAccumGen_;
+}
+
 void VulkanRenderer::updateMaterialTables(
     const std::vector<DrawMaterialCPU>& materials) {
   if (!ensureRasterMaterialCapacity(materials.size())) {
@@ -12304,6 +12370,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   static const bool timeGpu = std::getenv("TUSDVIEW_TIME_GPU") != nullptr;
   const auto tw0 = std::chrono::steady_clock::now();
   vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+  // Live material edits are queued by the UI/render-thread handoff. Apply them
+  // only after this fence retires the previous consumer, then reuse the same
+  // host-visible material buffers without touching the TLAS or texture table.
+  applyPendingMaterialConstants();
   // Live reload swaps the active pipeline only after replacement creation
   // succeeds. The old pipeline can be destroyed here: this fence retires the
   // sole in-flight submission that may still reference it. Never wait inside

@@ -51,6 +51,9 @@ class HipRayTracer {
   bool build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
              std::string* err, float displacementScale = 0.0f,
              BuildProgress* progress = nullptr, bool retainForRefit = false);
+  bool updateMaterialConstants(int materialId,
+                               const DrawMaterialCPU& material,
+                               std::string* err);
   size_t triangleCount() const { return triCount_; }
   bool truncated() const { return truncated_; }
 

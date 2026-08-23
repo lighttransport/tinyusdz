@@ -324,6 +324,16 @@ class Gui {
   }
   const std::string& selectedPath() const { return selPath_; }
   int selectedMeshIndex() const { return selMeshIndex_; }
+  struct OpenPbrMaterialEdit {
+    int materialId{-1};
+    DrawLightRtOpenPBRCPU constants;
+  };
+  bool takeOpenPbrMaterialEdit(OpenPbrMaterialEdit* edit) {
+    if (!hasOpenPbrMaterialEdit_) return false;
+    if (edit) *edit = openPbrMaterialEdit_;
+    hasOpenPbrMaterialEdit_ = false;
+    return true;
+  }
   const std::vector<uint8_t>& viewVisibility() const { return viewVisible_; }
   struct TextureResidencyInfo {
     size_t residentBytes{0};
@@ -374,6 +384,7 @@ class Gui {
   void drawPayloads();
   void drawTimeline();
   void drawMaterialsPanel();
+  void drawOpenPbrMaterialPanel();
   void drawCompositionGraph();
   void drawViewport();
   void drawAboutModal();
@@ -440,6 +451,11 @@ class Gui {
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
+  int openPbrEditorMaterial_{-1};
+  int openPbrEditorSelectionMesh_{-2};
+  bool openPbrDockAttempted_{false};
+  bool hasOpenPbrMaterialEdit_{false};
+  OpenPbrMaterialEdit openPbrMaterialEdit_;
   light3d::Vec3 lastPickedFocusPoint_{0.0f, 0.0f, 0.0f};
   std::string lastPickedFocusPath_;
   bool haveLastPickedFocusPoint_{false};

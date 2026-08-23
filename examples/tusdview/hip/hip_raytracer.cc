@@ -13,6 +13,7 @@
 #include "hipew.h"
 #include "displacement_bake.hh"
 #include "log.hh"
+#include "lightrt_mtlx_bridge.hh"
 #include "rt_scene_build.hh"  // Node, Inst, HostScene, BuildHostScene (shared)
 
 #if defined(_MSC_VER)
@@ -459,6 +460,29 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
     drop(r.pointBvh); drop(r.pointChunks);
     r.pointCount = 0;
   }
+  return true;
+}
+
+bool HipRayTracer::updateMaterialConstants(
+    int materialId, const DrawMaterialCPU& material, std::string* err) {
+  if (!ready_ || materialId < 0 || materialId >= numMats_ || !dMatPbr_ ||
+      !dMatBase_ || !dMatLightRt_) {
+    if (err) *err = "HIP material index is out of range or scene is not built";
+    return false;
+  }
+  CU_OK(hipSetDevice(device_), "hipSetDevice(material update)");
+  float pbr[6], base[3], lightRt[kLightRtOpenPBRFloats];
+  PackRtMaterialConstants(material, pbr, base, lightRt);
+  void* pbrDst = reinterpret_cast<void*>(
+      dMatPbr_ + static_cast<size_t>(materialId) * sizeof(pbr));
+  void* baseDst = reinterpret_cast<void*>(
+      dMatBase_ + static_cast<size_t>(materialId) * sizeof(base));
+  void* lightRtDst = reinterpret_cast<void*>(
+      dMatLightRt_ + static_cast<size_t>(materialId) * sizeof(lightRt));
+  CU_OK(hipMemcpyHtoD(pbrDst, pbr, sizeof(pbr)), "material PBR upload");
+  CU_OK(hipMemcpyHtoD(baseDst, base, sizeof(base)), "material base upload");
+  CU_OK(hipMemcpyHtoD(lightRtDst, lightRt, sizeof(lightRt)),
+        "material OpenPBR upload");
   return true;
 }
 

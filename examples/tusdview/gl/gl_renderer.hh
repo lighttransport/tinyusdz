@@ -23,6 +23,9 @@ class GLRenderer final : public Renderer {
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
   void syncSceneResources(const std::vector<DrawMaterialCPU>& materials,
                           int textureCount) override;
+  bool updateMaterialConstants(int materialId,
+                               const DrawMaterialCPU& material,
+                               std::string* err) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
   void appendPoints(const DrawPointsCPU& points) override;
   void appendCurves(const DrawCurvesCPU& curves) override;
@@ -199,6 +202,8 @@ class GLRenderer final : public Renderer {
     MaterialXGraphRuntimeCPU materialXGraph;
     bool hasDisplacement() const { return displacementTex >= 0 || displacementConst != 0.0f; }
   };
+
+  GLMaterial makeMaterial(const DrawMaterialCPU& material) const;
 
   void destroyScene();
   void buildTessProgram();  // GL>=4.0 tessellation displacement program (best-effort)

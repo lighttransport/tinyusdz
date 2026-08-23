@@ -1646,12 +1646,8 @@ void GLRenderer::resizeTextureSlots(int textureCount) {
   glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
-                                 size_t first) {
-  if (first >= materials.size()) return;
-  materials_.reserve(materials.size());
-  for (size_t i = first; i < materials.size(); ++i) {
-    const DrawMaterialCPU& m = materials[i];
+GLRenderer::GLMaterial GLRenderer::makeMaterial(
+    const DrawMaterialCPU& m) const {
     GLMaterial gm;
     gm.baseColor[0] = m.baseColor[0];
     gm.baseColor[1] = m.baseColor[1];
@@ -1720,16 +1716,35 @@ void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
     gm.displacementTexBias = m.displacementTexBias;
     gm.materialXGraph = m.materialXGraph;
     gm.lightRtOpenPBR = m.lightRtOpenPBR;
-    materials_.push_back(gm);
+    return gm;
+}
+
+void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
+                                 size_t first) {
+  if (first >= materials.size()) return;
+  materials_.reserve(materials.size());
+  for (size_t i = first; i < materials.size(); ++i) {
+    materials_.push_back(makeMaterial(materials[i]));
   }
 }
 
 void GLRenderer::syncSceneResources(
     const std::vector<DrawMaterialCPU>& materials, int textureCount) {
   resizeTextureSlots(textureCount);
-  // Existing materials are immutable in the next loader; alpha variants and
-  // newly discovered bound materials append stable indices.
+  // Progressive loading appends stable material indices. Live constant edits
+  // use updateMaterialConstants() and do not change this streaming contract.
   appendMaterials(materials, materials_.size());
+}
+
+bool GLRenderer::updateMaterialConstants(int materialId,
+                                         const DrawMaterialCPU& material,
+                                         std::string* err) {
+  if (materialId < 0 || static_cast<size_t>(materialId) >= materials_.size()) {
+    if (err) *err = "OpenGL material index is out of range";
+    return false;
+  }
+  materials_[static_cast<size_t>(materialId)] = makeMaterial(material);
+  return true;
 }
 
 void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {

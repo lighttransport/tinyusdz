@@ -64,6 +64,13 @@ constexpr int kRasterMaterialTextureParamFloats =
 // DrawMaterialCPU semantic texture slots.
 void BakeRealtimePbrMaterial(DrawMaterialCPU* mat);
 
+// Apply a live OpenPBR constant edit without re-evaluating the retained
+// MaterialX document. Callers only expose unconnected inputs; this function
+// keeps the canonical block, legacy preview fields, and texture-free inspector
+// parameter records synchronized.
+void ApplyOpenPBRMaterialConstants(
+    DrawMaterialCPU* mat, const DrawLightRtOpenPBRCPU& constants);
+
 // Bake texture/procedural MaterialX graph outputs into the existing semantic
 // texture table when Tydra did not extract a direct slot. The retained graph
 // IR is also packed separately for descriptor-indexed runtime evaluation; this

@@ -1516,6 +1516,136 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
   mtlx_free(graphDoc);
 }
 
+static void StoreEditableParam(DrawMaterialCPU* mat,
+                               std::initializer_list<const char*> names,
+                               const float* value, int components) {
+  if (!mat || !value) return;
+  for (DrawMaterialParamCPU& param : mat->params) {
+    if (param.shader != "OpenPBRSurface" || param.texture >= 0 ||
+        param.renderTexture >= 0) {
+      continue;
+    }
+    bool match = false;
+    for (const char* name : names) {
+      if (param.name == name) {
+        match = true;
+        break;
+      }
+    }
+    if (!match) continue;
+    for (int c = 0; c < components; ++c) param.value[c] = value[c];
+  }
+}
+
+void ApplyOpenPBRMaterialConstants(
+    DrawMaterialCPU* mat, const DrawLightRtOpenPBRCPU& constants) {
+  if (!mat || !mat->hasOpenPBRSurface) return;
+
+  mat->lightRtOpenPBR = constants;
+  tinyusdz::tydra::ClampRealtimePbrMaterial(&mat->lightRtOpenPBR);
+  mat->hasLightRtOpenPBR = true;
+  mat->openPbrSpecularModel = true;
+  const DrawLightRtOpenPBRCPU& p = mat->lightRtOpenPBR;
+
+  auto copy3 = [](const float src[3], float dst[3]) {
+    dst[0] = src[0];
+    dst[1] = src[1];
+    dst[2] = src[2];
+  };
+  copy3(p.baseColor, mat->baseColor);
+  mat->metallic = p.metalness;
+  mat->roughness = p.specularRoughness;
+  copy3(p.specularColor, mat->specularColor);
+  mat->ior = p.specularIor;
+  mat->coatWeight = p.coatWeight;
+  copy3(p.coatColor, mat->coatColor);
+  mat->coatRoughness = p.coatRoughness;
+  mat->coatIor = p.coatIor;
+  mat->emissive[0] = p.emissionColor[0] * p.emission;
+  mat->emissive[1] = p.emissionColor[1] * p.emission;
+  mat->emissive[2] = p.emissionColor[2] * p.emission;
+  mat->alpha = p.opacity;
+  if (mat->opacityTex < 0) {
+    mat->alphaMode = p.opacity < 0.999f
+                         ? static_cast<int>(AlphaMode::Blend)
+                         : static_cast<int>(AlphaMode::Opaque);
+  }
+  mat->volumeDensity = p.volumeDensity;
+  copy3(p.volumeAlbedo, mat->volumeAlbedo);
+  copy3(p.volumeEmission, mat->volumeEmission);
+  mat->volumeEmissionScale = p.volumeEmissionScale;
+
+  auto scalar = [&](std::initializer_list<const char*> names, float value) {
+    StoreEditableParam(mat, names, &value, 1);
+  };
+  auto color = [&](std::initializer_list<const char*> names,
+                   const float value[3]) {
+    StoreEditableParam(mat, names, value, 3);
+  };
+  scalar({"base_weight"}, p.baseWeight);
+  color({"base_color"}, p.baseColor);
+  scalar({"base_diffuse_roughness"}, p.diffuseRoughness);
+  scalar({"base_metalness"}, p.metalness);
+  scalar({"specular_weight"}, p.specularWeight);
+  color({"specular_color"}, p.specularColor);
+  scalar({"specular_roughness", "base_roughness"}, p.specularRoughness);
+  scalar({"specular_ior"}, p.specularIor);
+  scalar({"specular_anisotropy"}, p.specularAnisotropy);
+  scalar({"specular_rotation"}, p.specularRotation);
+  scalar({"specular_roughness_anisotropy"},
+         p.specularRoughnessAnisotropy);
+  scalar({"transmission_weight"}, p.transmission);
+  color({"transmission_color"}, p.transmissionColor);
+  scalar({"transmission_depth"}, p.transmissionDepth);
+  color({"transmission_scatter"}, p.transmissionScatter);
+  scalar({"transmission_scatter_anisotropy"},
+         p.transmissionScatterAnisotropy);
+  scalar({"transmission_dispersion"}, p.transmissionDispersion);
+  scalar({"transmission_dispersion_abbe_number"},
+         p.transmissionDispersionAbbeNumber);
+  scalar({"transmission_dispersion_scale"}, p.transmissionDispersionScale);
+  scalar({"subsurface_weight"}, p.subsurface);
+  color({"subsurface_color"}, p.subsurfaceColor);
+  bool hasRadiusScaleParam = false;
+  for (const DrawMaterialParamCPU& param : mat->params) {
+    if (param.shader == "OpenPBRSurface" &&
+        param.name == "subsurface_radius_scale" && param.texture < 0 &&
+        param.renderTexture < 0) {
+      hasRadiusScaleParam = true;
+      break;
+    }
+  }
+  const float radius = (p.subsurfaceRadius[0] + p.subsurfaceRadius[1] +
+                        p.subsurfaceRadius[2]) /
+                       3.0f;
+  scalar({"subsurface_radius"}, hasRadiusScaleParam ? 1.0f : radius);
+  if (hasRadiusScaleParam)
+    color({"subsurface_radius_scale"}, p.subsurfaceRadius);
+  scalar({"subsurface_scale"}, p.subsurfaceScale);
+  scalar({"subsurface_anisotropy"}, p.subsurfaceAnisotropy);
+  scalar({"subsurface_scatter_anisotropy"},
+         p.subsurfaceScatterAnisotropy);
+  scalar({"coat_weight"}, p.coatWeight);
+  color({"coat_color"}, p.coatColor);
+  scalar({"coat_roughness"}, p.coatRoughness);
+  scalar({"coat_ior"}, p.coatIor);
+  scalar({"coat_anisotropy"}, p.coatAnisotropy);
+  scalar({"coat_rotation"}, p.coatRotation);
+  scalar({"coat_affect_color"}, p.coatAffectColor);
+  scalar({"coat_affect_roughness"}, p.coatAffectRoughness);
+  scalar({"coat_roughness_anisotropy"}, p.coatRoughnessAnisotropy);
+  scalar({"coat_darkening"}, p.coatDarkening);
+  scalar({"sheen_weight", "fuzz_weight"}, p.sheenWeight);
+  color({"sheen_color", "fuzz_color"}, p.sheenColor);
+  scalar({"sheen_roughness", "fuzz_roughness"}, p.sheenRoughness);
+  scalar({"thin_film_weight"}, p.thinFilmWeight);
+  scalar({"thin_film_thickness"}, p.thinFilmThicknessNm);
+  scalar({"thin_film_ior"}, p.thinFilmIor);
+  scalar({"emission_luminance"}, p.emission);
+  color({"emission_color"}, p.emissionColor);
+  scalar({"geometry_opacity", "opacity"}, p.opacity);
+}
+
 void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
   if (!mat) return;
   DrawLightRtOpenPBRCPU p;

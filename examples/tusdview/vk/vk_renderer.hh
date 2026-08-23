@@ -62,6 +62,9 @@ class VulkanRenderer final : public Renderer {
   // was dropped, and interactively loaded scenes rendered untextured.
   void syncSceneResources(const std::vector<DrawMaterialCPU>& materials,
                           int textureCount) override;
+  bool updateMaterialConstants(int materialId,
+                               const DrawMaterialCPU& material,
+                               std::string* err) override;
   void setLights(const std::vector<DrawLightCPU>& lights,
                  size_t meshCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
@@ -434,6 +437,7 @@ class VulkanRenderer final : public Renderer {
   // Shared by beginScene and syncSceneResources: (re)pack the per-material CPU
   // tables and (re)allocate + refresh the material descriptor sets.
   void updateMaterialTables(const std::vector<DrawMaterialCPU>& materials);
+  void applyPendingMaterialConstants();
   bool ensureRasterMaterialCapacity(size_t materialCount);
   // Grow the per-texture-slot arrays to `textureCount`, leaving already
   // populated slots untouched (std::vector::resize only fills NEW entries).
@@ -996,6 +1000,7 @@ class VulkanRenderer final : public Renderer {
   // raster uploads images immediately, while ray query consumes decoded RGBA8
   // texels and semantic material slots from storage buffers.
   std::vector<DrawMaterialCPU> rtMaterialsCpu_;
+  std::vector<int> pendingMaterialConstants_;
   std::vector<DrawTextureCPU> rtTexturesCpu_;
   std::vector<DrawLightCPU> rtLightsCpu_;
 

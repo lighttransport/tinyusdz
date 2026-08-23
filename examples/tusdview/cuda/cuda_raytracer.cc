@@ -23,6 +23,7 @@
 #include "cuew.h"
 #include "displacement_bake.hh"
 #include "log.hh"
+#include "lightrt_mtlx_bridge.hh"
 #include "rt_scene_build.hh"  // Node, Inst, HostScene, BuildHostScene (shared)
 
 #if defined(_MSC_VER)
@@ -703,6 +704,30 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
     }
   }
   if (progress) progress->phase = 4;  // done
+  return true;
+}
+
+bool CudaRayTracer::updateMaterialConstants(
+    int materialId, const DrawMaterialCPU& material, std::string* err) {
+  if (!ctx_ || materialId < 0 || materialId >= numMats_ || !dMatPbr_ ||
+      !dMatBase_ || !dMatLightRt_) {
+    if (err) *err = "CUDA material index is out of range or scene is not built";
+    return false;
+  }
+  CU_OK(cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_)),
+        "cuCtxSetCurrent(material update)");
+  float pbr[6], base[3], lightRt[kLightRtOpenPBRFloats];
+  PackRtMaterialConstants(material, pbr, base, lightRt);
+  const CUdeviceptr pbrDst = static_cast<CUdeviceptr>(dMatPbr_) +
+                             static_cast<size_t>(materialId) * sizeof(pbr);
+  const CUdeviceptr baseDst = static_cast<CUdeviceptr>(dMatBase_) +
+                              static_cast<size_t>(materialId) * sizeof(base);
+  const CUdeviceptr lightRtDst = static_cast<CUdeviceptr>(dMatLightRt_) +
+      static_cast<size_t>(materialId) * sizeof(lightRt);
+  CU_OK(cuMemcpyHtoD(pbrDst, pbr, sizeof(pbr)), "material PBR upload");
+  CU_OK(cuMemcpyHtoD(baseDst, base, sizeof(base)), "material base upload");
+  CU_OK(cuMemcpyHtoD(lightRtDst, lightRt, sizeof(lightRt)),
+        "material OpenPBR upload");
   return true;
 }
 

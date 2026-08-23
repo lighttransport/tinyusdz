@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -295,6 +296,9 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   selPrim_ = nullptr;
   selPath_.clear();
   selMeshIndex_ = -1;
+  openPbrEditorMaterial_ = -1;
+  openPbrEditorSelectionMesh_ = -2;
+  hasOpenPbrMaterialEdit_ = false;
   lastPickedFocusPath_.clear();
   haveLastPickedFocusPoint_ = false;
   selectionList_.clear();
@@ -332,6 +336,7 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawStats();
   drawPayloads();
   drawMaterialsPanel();
+  drawOpenPbrMaterialPanel();
   drawCompositionGraph();
   drawViewport();
   drawTimeline();
@@ -516,6 +521,7 @@ void Gui::buildDefaultLayout(unsigned int dockId) {
   ImGui::DockBuilderDockWindow("Stage", rightBottom);
   ImGui::DockBuilderDockWindow("Composition Graph", rightBottom);
   ImGui::DockBuilderDockWindow("Materials", rightBottom);
+  ImGui::DockBuilderDockWindow("OpenPBR Material", rightBottom);
   ImGui::DockBuilderDockWindow("Payloads", rightBottom);
   ImGui::DockBuilderDockWindow("Viewport", center);
   ImGui::DockBuilderDockWindow("Timeline", centerBottom);
@@ -720,6 +726,15 @@ void Gui::drawDockspaceAndMenu() {
         const char* modes[] = {"Off", "Auto", "On"};
         if (ImGui::Combo("Denoise", &denoise, modes, 3))
           pathTrace_.denoise = static_cast<PathTraceDenoise>(denoise);
+        if (ImGui::DragFloat("Firefly clamp", &pathTrace_.fireflyClamp, 0.1f,
+                             0.0f, 64.0f, "%.1f")) {
+          pathTrace_.sanitize();
+        }
+        if (ImGui::IsItemHovered()) {
+          ImGui::SetTooltip(
+              "Robust local outlier threshold; lower is stronger.\n"
+              "0 disables; scene-linear EXR output is never clamped.");
+        }
         ImGui::TextDisabled("%s profile, seed %u",
                             PathTraceQualityLabel(pathTrace_.quality),
                             pathTrace_.seed);
@@ -2897,6 +2912,257 @@ void Gui::drawPayloads() {
                                                  : d.assetPath.c_str());
     }
     ImGui::EndTable();
+  }
+  ImGui::End();
+}
+
+void Gui::drawOpenPbrMaterialPanel() {
+  // Existing users already have a saved ImGui layout with no entry for this
+  // newly-added window. Adopt the Materials tab's dock on first appearance so
+  // the editor never opens as a large viewport-obscuring floating window.
+  if (!openPbrDockAttempted_) {
+    ImGuiWindow* materialsWindow = ImGui::FindWindowByName("Materials");
+    if (materialsWindow && materialsWindow->DockId != 0) {
+      ImGui::SetNextWindowDockID(materialsWindow->DockId, ImGuiCond_Always);
+      openPbrDockAttempted_ = true;
+    }
+  }
+  ImGui::Begin("OpenPBR Material");
+  if (!draw_ || draw_->materials.empty()) {
+    ImGui::TextDisabled("No scene materials.");
+    ImGui::End();
+    return;
+  }
+
+  // Follow a newly selected mesh once, while still allowing the material combo
+  // to be changed independently afterward.
+  if (openPbrEditorSelectionMesh_ != selMeshIndex_) {
+    openPbrEditorSelectionMesh_ = selMeshIndex_;
+    if (selMeshIndex_ >= 0 &&
+        static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+      for (const DrawSubmesh& submesh :
+           draw_->meshes[static_cast<size_t>(selMeshIndex_)].submeshes) {
+        if (submesh.materialId >= 0 &&
+            static_cast<size_t>(submesh.materialId) < draw_->materials.size() &&
+            draw_->materials[static_cast<size_t>(submesh.materialId)]
+                .hasOpenPBRSurface) {
+          openPbrEditorMaterial_ = submesh.materialId;
+          break;
+        }
+      }
+    }
+  }
+  auto validOpenPbr = [&](int id) {
+    return id >= 0 && static_cast<size_t>(id) < draw_->materials.size() &&
+           draw_->materials[static_cast<size_t>(id)].hasOpenPBRSurface;
+  };
+  if (!validOpenPbr(openPbrEditorMaterial_)) {
+    openPbrEditorMaterial_ = -1;
+    for (size_t i = 0; i < draw_->materials.size(); ++i) {
+      if (draw_->materials[i].hasOpenPBRSurface) {
+        openPbrEditorMaterial_ = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  if (openPbrEditorMaterial_ < 0) {
+    ImGui::TextDisabled("This scene has no OpenPBRSurface materials.");
+    ImGui::End();
+    return;
+  }
+
+  const DrawMaterialCPU& mat =
+      draw_->materials[static_cast<size_t>(openPbrEditorMaterial_)];
+  const char* preview = mat.displayName.empty()
+                            ? (mat.name.empty() ? "OpenPBR material"
+                                                : mat.name.c_str())
+                            : mat.displayName.c_str();
+  if (ImGui::BeginCombo("Material", preview)) {
+    for (size_t i = 0; i < draw_->materials.size(); ++i) {
+      const DrawMaterialCPU& candidate = draw_->materials[i];
+      if (!candidate.hasOpenPBRSurface) continue;
+      std::string label = candidate.displayName.empty()
+                              ? (candidate.name.empty()
+                                     ? "Material " + std::to_string(i)
+                                     : candidate.name)
+                              : candidate.displayName;
+      label += "##openpbr_" + std::to_string(i);
+      const bool selected = static_cast<int>(i) == openPbrEditorMaterial_;
+      if (ImGui::Selectable(label.c_str(), selected))
+        openPbrEditorMaterial_ = static_cast<int>(i);
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+
+  const DrawMaterialCPU& editedMat =
+      draw_->materials[static_cast<size_t>(openPbrEditorMaterial_)];
+  DrawLightRtOpenPBRCPU p = editedMat.lightRtOpenPBR;
+  bool changed = false;
+  auto connected = [&](std::initializer_list<const char*> names, int route,
+                       int directTexture) {
+    if (directTexture >= 0) return true;
+    for (const DrawMaterialParamCPU& param : editedMat.params) {
+      if (param.shader != "OpenPBRSurface" ||
+          (param.texture < 0 && param.renderTexture < 0)) {
+        continue;
+      }
+      for (const char* name : names)
+        if (param.name == name) return true;
+    }
+    return route >= 0 && route < MaterialXGraphRuntimeCPU::kOutputCount &&
+           editedMat.materialXGraph.valid &&
+           editedMat.materialXGraph.output[route] >= 0;
+  };
+  auto disabledHint = [](bool disabled) {
+    if (disabled &&
+        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("Connected input; edit the MaterialX graph or texture source.");
+    }
+  };
+  auto slider = [&](const char* label, float* value, float lo, float hi,
+                    bool disabled) {
+    ImGui::BeginDisabled(disabled);
+    const bool edited = ImGui::SliderFloat(label, value, lo, hi, "%.3f");
+    ImGui::EndDisabled();
+    disabledHint(disabled);
+    changed |= edited;
+  };
+  auto drag = [&](const char* label, float* value, float speed, float lo,
+                  float hi, bool disabled) {
+    ImGui::BeginDisabled(disabled);
+    const bool edited = ImGui::DragFloat(label, value, speed, lo, hi, "%.3f");
+    ImGui::EndDisabled();
+    disabledHint(disabled);
+    changed |= edited;
+  };
+  auto color = [&](const char* label, float value[3], bool disabled) {
+    ImGui::BeginDisabled(disabled);
+    const bool edited = ImGui::ColorEdit3(label, value,
+                                          ImGuiColorEditFlags_Float |
+                                              ImGuiColorEditFlags_HDR);
+    ImGui::EndDisabled();
+    disabledHint(disabled);
+    changed |= edited;
+  };
+
+  ImGui::TextDisabled("Constant inputs update the active renderer live.");
+  if (ImGui::CollapsingHeader("Base", ImGuiTreeNodeFlags_DefaultOpen)) {
+    slider("Weight##base", &p.baseWeight, 0.0f, 1.0f,
+           connected({"base_weight"}, -1, -1));
+    color("Color##base", p.baseColor,
+          connected({"base_color"}, 0, editedMat.baseColorTex));
+    slider("Diffuse roughness", &p.diffuseRoughness, 0.0f, 1.0f,
+           connected({"base_diffuse_roughness"}, -1, -1));
+    slider("Metalness", &p.metalness, 0.0f, 1.0f,
+           connected({"base_metalness"}, 1, editedMat.metallicTex));
+  }
+  if (ImGui::CollapsingHeader("Specular", ImGuiTreeNodeFlags_DefaultOpen)) {
+    slider("Weight##specular", &p.specularWeight, 0.0f, 1.0f,
+           connected({"specular_weight"}, 9, -1));
+    color("Color##specular", p.specularColor,
+          connected({"specular_color"}, 10, editedMat.specularColorTex));
+    slider("Roughness##specular", &p.specularRoughness, 0.0f, 1.0f,
+           connected({"specular_roughness", "base_roughness"}, 2,
+                     editedMat.roughnessTex));
+    drag("IOR##specular", &p.specularIor, 0.01f, 1.0f, 4.0f,
+         connected({"specular_ior"}, 19, -1));
+    slider("Anisotropy##specular", &p.specularAnisotropy, -1.0f, 1.0f,
+           connected({"specular_anisotropy"}, -1, -1));
+    slider("Rotation##specular", &p.specularRotation, 0.0f, 1.0f,
+           connected({"specular_rotation"}, -1, -1));
+    slider("Roughness anisotropy##specular",
+           &p.specularRoughnessAnisotropy, -1.0f, 1.0f,
+           connected({"specular_roughness_anisotropy"}, -1, -1));
+  }
+  if (ImGui::CollapsingHeader("Transmission", ImGuiTreeNodeFlags_DefaultOpen)) {
+    slider("Weight##transmission", &p.transmission, 0.0f, 1.0f,
+           connected({"transmission_weight"}, 11, -1));
+    color("Color##transmission", p.transmissionColor,
+          connected({"transmission_color"}, 12, -1));
+    drag("Depth##transmission", &p.transmissionDepth, 0.01f, 0.0f, 1000.0f,
+         connected({"transmission_depth"}, -1, -1));
+    color("Scatter", p.transmissionScatter,
+          connected({"transmission_scatter"}, -1, -1));
+    slider("Scatter anisotropy", &p.transmissionScatterAnisotropy, -1.0f,
+           1.0f, connected({"transmission_scatter_anisotropy"}, -1, -1));
+    drag("Dispersion", &p.transmissionDispersion, 0.01f, 0.0f, 10.0f,
+         connected({"transmission_dispersion"}, -1, -1));
+    drag("Abbe number", &p.transmissionDispersionAbbeNumber, 0.1f, 0.0f,
+         1000.0f,
+         connected({"transmission_dispersion_abbe_number"}, -1, -1));
+    drag("Dispersion scale", &p.transmissionDispersionScale, 0.01f, 0.0f,
+         100.0f, connected({"transmission_dispersion_scale"}, -1, -1));
+  }
+  if (ImGui::CollapsingHeader("Subsurface", ImGuiTreeNodeFlags_DefaultOpen)) {
+    slider("Weight##subsurface", &p.subsurface, 0.0f, 1.0f,
+           connected({"subsurface_weight"}, 6, -1));
+    color("Color##subsurface", p.subsurfaceColor,
+          connected({"subsurface_color"}, 7, -1));
+    const bool radiusConnected = connected(
+        {"subsurface_radius", "subsurface_radius_scale"}, 8, -1);
+    ImGui::BeginDisabled(radiusConnected);
+    changed |= ImGui::DragFloat3("Radius", p.subsurfaceRadius, 0.01f, 0.0f,
+                                 1000.0f, "%.3f");
+    ImGui::EndDisabled();
+    disabledHint(radiusConnected);
+    drag("Scale##subsurface", &p.subsurfaceScale, 0.01f, 0.0f, 1000.0f,
+         connected({"subsurface_scale"}, -1, -1));
+    slider("Anisotropy##subsurface", &p.subsurfaceAnisotropy, -1.0f, 1.0f,
+           connected({"subsurface_anisotropy"}, -1, -1));
+    slider("Scatter anisotropy##subsurface",
+           &p.subsurfaceScatterAnisotropy, -1.0f, 1.0f,
+           connected({"subsurface_scatter_anisotropy"}, -1, -1));
+  }
+  if (ImGui::CollapsingHeader("Coat and fuzz")) {
+    slider("Weight##coat", &p.coatWeight, 0.0f, 1.0f,
+           connected({"coat_weight"}, 13, editedMat.coatWeightTex));
+    color("Color##coat", p.coatColor,
+          connected({"coat_color"}, 14, editedMat.coatColorTex));
+    slider("Roughness##coat", &p.coatRoughness, 0.0f, 1.0f,
+           connected({"coat_roughness"}, 15, editedMat.coatRoughnessTex));
+    drag("IOR##coat", &p.coatIor, 0.01f, 1.0f, 4.0f,
+         connected({"coat_ior"}, -1, -1));
+    slider("Anisotropy##coat", &p.coatAnisotropy, -1.0f, 1.0f,
+           connected({"coat_anisotropy"}, -1, -1));
+    slider("Rotation##coat", &p.coatRotation, 0.0f, 1.0f,
+           connected({"coat_rotation"}, -1, -1));
+    slider("Affect color", &p.coatAffectColor, 0.0f, 1.0f,
+           connected({"coat_affect_color"}, -1, -1));
+    slider("Affect roughness", &p.coatAffectRoughness, 0.0f, 1.0f,
+           connected({"coat_affect_roughness"}, -1, -1));
+    slider("Roughness anisotropy##coat", &p.coatRoughnessAnisotropy, -1.0f,
+           1.0f, connected({"coat_roughness_anisotropy"}, -1, -1));
+    slider("Darkening", &p.coatDarkening, 0.0f, 1.0f,
+           connected({"coat_darkening"}, -1, -1));
+    slider("Weight##fuzz", &p.sheenWeight, 0.0f, 1.0f,
+           connected({"fuzz_weight", "sheen_weight"}, 16, -1));
+    color("Color##fuzz", p.sheenColor,
+          connected({"fuzz_color", "sheen_color"}, 17, -1));
+    slider("Roughness##fuzz", &p.sheenRoughness, 0.0f, 1.0f,
+           connected({"fuzz_roughness", "sheen_roughness"}, 18, -1));
+  }
+  if (ImGui::CollapsingHeader("Emission, film, and opacity")) {
+    drag("Emission luminance", &p.emission, 0.01f, 0.0f, 100000.0f,
+         connected({"emission_luminance"}, -1, -1));
+    color("Emission color", p.emissionColor,
+          connected({"emission_color"}, 4, editedMat.emissiveTex));
+    slider("Thin-film weight", &p.thinFilmWeight, 0.0f, 1.0f,
+           connected({"thin_film_weight"}, -1, -1));
+    drag("Thin-film thickness (nm)", &p.thinFilmThicknessNm, 1.0f, 0.0f,
+         5000.0f, connected({"thin_film_thickness"}, -1, -1));
+    drag("Thin-film IOR", &p.thinFilmIor, 0.01f, 1.0f, 4.0f,
+         connected({"thin_film_ior"}, -1, -1));
+    slider("Opacity", &p.opacity, 0.0f, 1.0f,
+           connected({"geometry_opacity", "opacity"}, 3,
+                     editedMat.opacityTex));
+  }
+
+  if (changed) {
+    tinyusdz::tydra::ClampRealtimePbrMaterial(&p);
+    openPbrMaterialEdit_.materialId = openPbrEditorMaterial_;
+    openPbrMaterialEdit_.constants = p;
+    hasOpenPbrMaterialEdit_ = true;
   }
   ImGui::End();
 }

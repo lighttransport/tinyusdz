@@ -640,6 +640,8 @@ class App
   std::string cpuBuildErr_;
   BuildProgress cpuBuildProgress_;
   bool renderCpuViewport();
+  bool hasPendingOpenPbrEdit_{false};
+  Gui::OpenPbrMaterialEdit pendingOpenPbrEdit_;
 
   // --- Runtime backend switch (View menu Render Technique submenu / keybinding) ---
   // Ground truth: activeTechnique_ decomposes into backend_ (which Renderer

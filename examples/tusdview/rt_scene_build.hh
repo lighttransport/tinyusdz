@@ -29,6 +29,8 @@ constexpr int kMaxRtLinkedLights = 32;
 // raster/RT backends may pass their own texture slot id.
 void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
                        float* dst);
+void PackRtMaterialConstants(const DrawMaterialCPU& material, float* pbr,
+                             float* base, float* lightRt);
 uint32_t RtLightCollectionMaskForMesh(const std::vector<DrawLightCPU>& lights,
                                       int meshIndex, bool shadow);
 
@@ -189,6 +191,10 @@ struct HostScene {
   size_t triCount = 0, instCount = 0, blasNodeCount = 0, tlasNodeCount = 0;
   bool truncated = false;
 };
+
+bool UpdateHostMaterialConstants(HostScene* scene, int materialId,
+                                 const DrawMaterialCPU& material,
+                                 std::string* err);
 
 // Refit support: enough of the build's mapping to re-pose an existing
 // HostScene in place when only VERTEX DATA changed (skin/morph re-pose; same

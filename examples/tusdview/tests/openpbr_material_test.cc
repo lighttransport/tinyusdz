@@ -531,6 +531,50 @@ int main() {
     return 1;
   }
 
+  // The live editor updates the canonical block and the legacy renderer
+  // fallbacks together, while leaving texture-connected inspector params
+  // alone. This is the backend-neutral contract used by GL/Vulkan/CUDA/HIP.
+  tusdview::DrawMaterialCPU liveMat = mat;
+  float connectedBaseParam = -1.0f;
+  for (const tusdview::DrawMaterialParamCPU& param : liveMat.params) {
+    if (param.shader == "OpenPBRSurface" && param.name == "base_color" &&
+        (param.texture >= 0 || param.renderTexture >= 0)) {
+      connectedBaseParam = param.value[0];
+    }
+  }
+  tusdview::DrawLightRtOpenPBRCPU live = liveMat.lightRtOpenPBR;
+  live.baseWeight = 0.37f;
+  live.transmission = 0.61f;
+  live.subsurface = 0.42f;
+  live.specularRoughness = 0.18f;
+  live.emission = 2.0f;
+  live.emissionColor[0] = 0.25f;
+  live.emissionColor[1] = 0.5f;
+  live.emissionColor[2] = 0.75f;
+  live.opacity = 0.65f;
+  tusdview::ApplyOpenPBRMaterialConstants(&liveMat, live);
+  if (!Near(liveMat.lightRtOpenPBR.baseWeight, 0.37f) ||
+      !Near(liveMat.lightRtOpenPBR.transmission, 0.61f) ||
+      !Near(liveMat.lightRtOpenPBR.subsurface, 0.42f) ||
+      !Near(liveMat.roughness, 0.18f) || !Near(liveMat.emissive[0], 0.5f) ||
+      !Near(liveMat.emissive[1], 1.0f) || !Near(liveMat.emissive[2], 1.5f) ||
+      !Near(liveMat.alpha, 0.65f) ||
+      liveMat.alphaMode != static_cast<int>(tusdview::AlphaMode::Blend)) {
+    std::fprintf(stderr, "live OpenPBR constants were not synchronized\n");
+    return 1;
+  }
+  if (connectedBaseParam >= 0.0f) {
+    for (const tusdview::DrawMaterialParamCPU& param : liveMat.params) {
+      if (param.shader == "OpenPBRSurface" && param.name == "base_color" &&
+          (param.texture >= 0 || param.renderTexture >= 0) &&
+          !Near(param.value[0], connectedBaseParam)) {
+        std::fprintf(stderr,
+                     "live OpenPBR edit rewrote a connected shader input\n");
+        return 1;
+      }
+    }
+  }
+
   const tusdview::DrawMaterialCPU& graphMat = draw.materials[1];
   if (!graphMat.hasLightRtOpenPBR || graphMat.lightRtOpenPBR.hasTextureInputs) {
     std::fprintf(stderr, "MaterialX graph material was not baked as constants\n");

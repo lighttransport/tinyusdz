@@ -30,6 +30,8 @@ expect_failure "--pt-motion-segments must be a positive integer" \
   --pt-motion-segments 0
 expect_failure "--pt-variance must be a finite non-negative number" \
   --pt-variance nan
+expect_failure "--pt-firefly-clamp must be a finite non-negative number" \
+  --pt-firefly-clamp -1
 expect_failure "--pt-denoise must be off, auto, or on" --pt-denoise maybe
 expect_failure "--f-stop must be a finite positive number" --f-stop 0
 expect_failure "--focus-distance must be a finite positive number" \
@@ -46,7 +48,8 @@ help="$("$TUSDVIEW" --help 2>&1)" || {
   exit 1
 }
 for flag in --path-trace --pt-quality --pt-samples --pt-max-depth \
-            --pt-rr-depth --pt-denoise --pt-motion-segments --pt-seed \
+            --pt-rr-depth --pt-denoise --pt-firefly-clamp \
+            --pt-motion-segments --pt-seed \
             --linear-output --f-stop --focus-distance --live-shader-reload; do
   grep -Fq -- "$flag" <<<"$help" || {
     echo "FAIL: $flag is missing from help"
