@@ -11,7 +11,7 @@ TinyUSDZ supports the full USD lighting schema (UsdLux) including parsing, recon
 | `src/prim-property-tables.hh` | Property table macros for light attribute binding |
 | `src/prim-reconstruct-lightprim.cc` | Deserialization of light prims from USD |
 | `src/tydra/render-data.hh` | `RenderLight` struct for rendering pipelines |
-| `src/tydra/render-light-converter.cc` | `Convert*Light()` functions (Tydra conversion) |
+| `src/tydra/render-data-anim.cc` | `Convert*Light()` functions (Tydra conversion) |
 
 ---
 
@@ -193,7 +193,7 @@ struct RenderLight {
 ### Conversion Functions
 
 Each light type has a dedicated `RenderSceneConverter` method (declared in
-`src/tydra/render-data-converter.hh`, defined in `src/tydra/render-light-converter.cc`):
+`src/tydra/render-data-converter.hh`, defined in `src/tydra/render-data-anim.cc`):
 
 ```cpp
 bool ConvertSphereLight(env, abs_path, light, rlight_out);
