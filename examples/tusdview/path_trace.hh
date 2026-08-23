@@ -27,6 +27,10 @@ struct PathTraceSettings {
   uint32_t motionSegments{2};
   uint32_t seed{1};
   float varianceThreshold{0.02f};
+  // Display-side robust-deviation threshold for isolated luminance samples.
+  // Zero disables suppression. Scene-linear EXR output always retains the
+  // unbiased samples.
+  float fireflyClamp{8.0f};
 
   static PathTraceSettings Interactive() { return PathTraceSettings{}; }
 
@@ -53,6 +57,8 @@ struct PathTraceSettings {
     motionSegments = std::max(1u, std::min(motionSegments, 64u));
     minSamples = std::max(1u, minSamples);
     varianceThreshold = std::max(0.0f, varianceThreshold);
+    if (!std::isfinite(fireflyClamp)) fireflyClamp = 8.0f;
+    fireflyClamp = std::max(0.0f, std::min(fireflyClamp, 1024.0f));
   }
 };
 

@@ -123,6 +123,12 @@ displays it with an ImGui docking UI.
   evaluated by the real-time preview backends. Volume output is preserved and
   evaluated through a homogeneous realtime fallback, with the same packed
   material values available to raster and ray-tracing paths.
+- **Live OpenPBR material editor** — the dedicated dock panel follows the
+  selected mesh, exposes constant base/specular/transmission/subsurface/coat/
+  fuzz/film/emission/opacity inputs, and rerenders on every adjustment. Vulkan,
+  CUDA, and HIP update material buffers without rebuilding geometry or BVHs;
+  texture- and nodegraph-connected controls are disabled and identified. The
+  overrides are session-local and do not modify the source USD.
 - **Authored USD lighting** on both raster backends: up to 16 supported direct
   lights are evaluated in stage order with diffuse/specular multipliers,
   shaping cones, and per-mesh `collection:lightLink` masks, alongside
@@ -188,8 +194,10 @@ displays it with an ImGui docking UI.
   also exposes live enable, focus-distance, 50 mm-equivalent F-stop, and exact
   stage-unit aperture-radius controls.
   Interactive and final presets expose sample/depth/seed controls; final uses a
-  built-in variance-guided, row-parallel à-trous filter with robust firefly
-  rejection. All three GPU backends can stop at coarse checkpoints after
+  built-in variance-guided, row-parallel à-trous filter. Robust display-side
+  firefly rejection also works with denoising disabled and is adjustable with
+  `--pt-firefly-clamp` (lower is stronger, `0` disables it). All three GPU
+  backends can stop at coarse checkpoints after
   scene-linear convergence; `--pt-variance 0` keeps the maximum-throughput exact
   sample-count path. `--linear-output image.exr` writes the
   unfiltered scene-linear half-float accumulation independently from the

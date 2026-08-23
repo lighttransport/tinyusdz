@@ -326,6 +326,7 @@ int main(int argc, char** argv) {
   std::optional<unsigned> ptMaxSssEvents;
   std::optional<unsigned> ptMaxVolumeEvents;
   std::optional<float> ptVariance;
+  std::optional<float> ptFireflyClamp;
   tusdview::PathTraceDenoise ptDenoise = tusdview::PathTraceDenoise::Auto;
   bool ptDenoiseExplicit = false;
   float fStopOverride = 0.0f;
@@ -907,6 +908,13 @@ int main(int argc, char** argv) {
         LOGE("--pt-variance must be a finite non-negative number"); return 1;
       }
       ptVariance = v;
+    } if (std::strcmp(argv[i], "--pt-firefly-clamp") == 0) {
+      float v = 0.0f;
+      if (i + 1 >= argc || !ParseFiniteNonNegativeFloat(argv[++i], &v)) {
+        LOGE("--pt-firefly-clamp must be a finite non-negative number");
+        return 1;
+      }
+      ptFireflyClamp = v;
     } if (std::strcmp(argv[i], "--pt-denoise") == 0 && i + 1 < argc) {
       const char* d = argv[++i];
       ptDenoiseExplicit = true;
@@ -1083,6 +1091,8 @@ int main(int argc, char** argv) {
           "  --pt-samples N  Target samples (0 = continuous interactive).\n"
           "  --pt-max-depth N / --pt-rr-depth N  Path and roulette depths.\n"
           "  --pt-variance X  Adaptive convergence threshold (0 disables).\n"
+          "  --pt-firefly-clamp X  Robust local firefly threshold (default 8, "
+          "lower is stronger, 0 disables; EXR is unaffected).\n"
           "  --pt-denoise off|auto|on  Built-in edge-aware denoising policy.\n"
           "  --pt-motion-segments N  Stratified shutter snapshots.\n"
           "  --pt-seed N  Deterministic sampling seed.\n"
@@ -1493,6 +1503,7 @@ int main(int argc, char** argv) {
     if (ptMaxVolumeEvents)
       pathTraceSettings.maxVolumeEvents = *ptMaxVolumeEvents;
     if (ptVariance) pathTraceSettings.varianceThreshold = *ptVariance;
+    if (ptFireflyClamp) pathTraceSettings.fireflyClamp = *ptFireflyClamp;
     if (ptDenoiseExplicit) pathTraceSettings.denoise = ptDenoise;
     pathTraceSettings.sanitize();
     if (!wantCuda && !wantHip) wantRt = true;

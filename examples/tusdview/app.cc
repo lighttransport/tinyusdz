@@ -38,6 +38,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "log.hh"
+#include "lightrt_mtlx_bridge.hh"
 #include "mesh_build.hh"
 #include "next_scene_loader.hh"
 #include "next/tinyusdz-next.hh"  // tnext::Stage (per-frame --next morph weights)
@@ -672,6 +673,7 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"max_depth", pathTrace_.maxDepth},
       {"russian_roulette_depth", pathTrace_.russianRouletteDepth},
       {"variance_threshold", pathTrace_.varianceThreshold},
+      {"firefly_clamp", pathTrace_.fireflyClamp},
       {"denoise", PathTraceDenoiseLabel(pathTrace_.denoise)},
       {"motion_segments", pathTrace_.motionSegments},
       {"max_subsurface_events", pathTrace_.maxSubsurfaceEvents},
@@ -1166,11 +1168,90 @@ bool WriteLinearExr(const std::string& path, const std::vector<float>& rgba,
   return true;
 }
 
-std::vector<float> AtrousDenoise(const std::vector<float>& input, int w, int h,
-                                 int iterations) {
+std::vector<float> SuppressPathFireflies(const std::vector<float>& input, int w,
+                                         int h, float relativeLimit) {
   if (w <= 0 || h <= 0 || input.size() < static_cast<size_t>(w) * h * 4u)
     return input;
-  std::vector<float> src = input;
+  if (!(relativeLimit > 0.0f) || !std::isfinite(relativeLimit)) return input;
+  std::vector<float> output = input;
+  const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
+  auto luminance = [](const float* p) {
+    return p[0] * 0.2126f + p[1] * 0.7152f + p[2] * 0.0722f;
+  };
+  auto parallelRows = [&](const auto& fn) {
+    unsigned workers = pixelCount >= 128u * 128u
+                           ? std::max(1u, std::thread::hardware_concurrency())
+                           : 1u;
+    workers = std::min(workers, 8u);
+    workers = std::min(workers, static_cast<unsigned>(h));
+    if (workers <= 1u) {
+      fn(0, h);
+      return;
+    }
+    std::vector<std::thread> threads;
+    threads.reserve(workers);
+    for (unsigned worker = 0; worker < workers; ++worker) {
+      const int y0 = h * static_cast<int>(worker) / static_cast<int>(workers);
+      const int y1 =
+          h * static_cast<int>(worker + 1u) / static_cast<int>(workers);
+      threads.emplace_back(fn, y0, y1);
+    }
+    for (std::thread& thread : threads) thread.join();
+  };
+
+  // Clamp only isolated, extreme samples. This is intentionally display-side:
+  // the linear EXR remains an unbiased accumulation, while a preview or PNG is
+  // not dominated by one unresolved GGX/transmission/subsurface path.
+  parallelRows([&](int y0, int y1) {
+    for (int y = y0; y < y1; ++y) {
+      for (int x = 0; x < w; ++x) {
+        std::array<float, 9> neighborhood{};
+        size_t n = 0;
+        for (int ky = -1; ky <= 1; ++ky) {
+          const int sy = std::max(0, std::min(h - 1, y + ky));
+          for (int kx = -1; kx <= 1; ++kx) {
+            const int sx = std::max(0, std::min(w - 1, x + kx));
+            const size_t i = (static_cast<size_t>(sy) * w + sx) * 4u;
+            neighborhood[n++] = std::max(0.0f, luminance(&input[i]));
+          }
+        }
+        std::sort(neighborhood.begin(), neighborhood.end());
+        const size_t i = (static_cast<size_t>(y) * w + x) * 4u;
+        const float center = std::max(0.0f, luminance(&input[i]));
+        const float median = neighborhood[4];
+        std::array<float, 9> deviations{};
+        for (size_t sample = 0; sample < neighborhood.size(); ++sample) {
+          deviations[sample] = std::fabs(neighborhood[sample] - median);
+        }
+        std::sort(deviations.begin(), deviations.end());
+        // Median absolute deviation distinguishes a real highlight edge (the
+        // neighborhood has structure) from an isolated high-energy path (all
+        // neighbors agree except the center). A small signal-relative floor
+        // avoids overreacting to quantization/numerical noise in flat regions.
+        const float robustDeviation =
+            deviations[4] + 0.005f + 0.02f * median;
+        const float limit = median + relativeLimit * robustDeviation;
+        const float scale = center > limit ? limit / center : 1.0f;
+        for (int c = 0; c < 3; ++c) {
+          const float value = std::isfinite(input[i + static_cast<size_t>(c)])
+                                  ? input[i + static_cast<size_t>(c)]
+                                  : 0.0f;
+          output[i + static_cast<size_t>(c)] =
+              std::max(0.0f, value) * scale;
+        }
+        output[i + 3] = 1.0f;
+      }
+    }
+  });
+  return output;
+}
+
+std::vector<float> AtrousDenoise(const std::vector<float>& input, int w, int h,
+                                 int iterations, float fireflyClamp) {
+  if (w <= 0 || h <= 0 || input.size() < static_cast<size_t>(w) * h * 4u)
+    return input;
+  std::vector<float> src =
+      SuppressPathFireflies(input, w, h, fireflyClamp);
   std::vector<float> dst(src.size());
   const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
   std::vector<float> variance(pixelCount, 0.0f);
@@ -1201,38 +1282,6 @@ std::vector<float> AtrousDenoise(const std::vector<float>& input, int w, int h,
     }
     for (std::thread& thread : threads) thread.join();
   };
-
-  // Clamp only isolated, extreme samples. This is intentionally display-side:
-  // the linear EXR remains an unbiased accumulation, while an eight-sample
-  // preview is not dominated by a single unresolved GGX firefly.
-  parallelRows([&](int y0, int y1) {
-    for (int y = y0; y < y1; ++y) {
-      for (int x = 0; x < w; ++x) {
-        std::array<float, 9> neighborhood{};
-        size_t n = 0;
-        for (int ky = -1; ky <= 1; ++ky) {
-          const int sy = std::max(0, std::min(h - 1, y + ky));
-          for (int kx = -1; kx <= 1; ++kx) {
-            const int sx = std::max(0, std::min(w - 1, x + kx));
-            const size_t i = (static_cast<size_t>(sy) * w + sx) * 4u;
-            neighborhood[n++] = std::max(0.0f, luminance(&input[i]));
-          }
-        }
-        std::sort(neighborhood.begin(), neighborhood.end());
-        const size_t i = (static_cast<size_t>(y) * w + x) * 4u;
-        const float center = std::max(0.0f, luminance(&input[i]));
-        const float limit = neighborhood[4] * 8.0f + 0.25f;
-        const float scale = center > limit ? limit / center : 1.0f;
-        for (int c = 0; c < 3; ++c) {
-          const float value = std::isfinite(input[i + static_cast<size_t>(c)])
-                                  ? input[i + static_cast<size_t>(c)]
-                                  : 0.0f;
-          src[i + static_cast<size_t>(c)] = std::max(0.0f, value) * scale;
-        }
-        src[i + 3] = 1.0f;
-      }
-    }
-  });
 
   // Estimate local signal variance once from the robust input. The variance
   // widens the range kernel in noisy regions but keeps fine chess-piece edges
@@ -1329,6 +1378,21 @@ std::vector<uint8_t> ToneMapPathDisplay(const std::vector<float>& linear,
 bool ShouldDenoise(const PathTraceSettings& settings, uint32_t samples) {
   return settings.denoise == PathTraceDenoise::On ||
          (settings.denoise == PathTraceDenoise::Auto && samples >= 8u);
+}
+
+std::vector<float> PreparePathDisplay(const std::vector<float>& linear, int w,
+                                      int h,
+                                      const PathTraceSettings& settings,
+                                      uint32_t samples) {
+  if (ShouldDenoise(settings, samples)) {
+    return AtrousDenoise(linear, w, h, 5, settings.fireflyClamp);
+  }
+  // CUDA/HIP interactive previews trace one fresh sample per frame. Avoid an
+  // 18-element robust sort per pixel (and worker startup) when there is no
+  // accumulated image to clean yet; batch captures and converged displays take
+  // the suppression path below.
+  if (samples <= 1u) return linear;
+  return SuppressPathFireflies(linear, w, h, settings.fireflyClamp);
 }
 
 void App::getRequestedWindowSize(int* width, int* height) const {
@@ -4893,9 +4957,10 @@ bool App::renderHipViewport() {
                        sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
                        &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
                        pathTrace_.enabled ? &linear : nullptr)) {
-    if (pathTrace_.enabled && ShouldDenoise(pathTrace_, 1u))
-      rgba = ToneMapPathDisplay(AtrousDenoise(linear, w, h, 5), w, h,
-                                camera_.exposure());
+    if (pathTrace_.enabled)
+      rgba = ToneMapPathDisplay(
+          PreparePathDisplay(linear, w, h, pathTrace_, 1u), w, h,
+          camera_.exposure());
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
     LOGW("HIP ray trace failed: %s", cerr.c_str());
@@ -5011,9 +5076,10 @@ bool App::renderCudaViewport() {
                         sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
                         &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
                         pathTrace_.enabled ? &linear : nullptr)) {
-    if (pathTrace_.enabled && ShouldDenoise(pathTrace_, 1u))
-      rgba = ToneMapPathDisplay(AtrousDenoise(linear, w, h, 5), w, h,
-                                camera_.exposure());
+    if (pathTrace_.enabled)
+      rgba = ToneMapPathDisplay(
+          PreparePathDisplay(linear, w, h, pathTrace_, 1u), w, h,
+          camera_.exposure());
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
     LOGW("CUDA ray trace failed: %s", cerr.c_str());
@@ -6170,10 +6236,63 @@ int App::run(const std::string& initialFile, int maxFrames,
     const bool hasTechniqueRequest = gui_.hasTechniqueRequest();
     const RenderTechnique requestedTechnique = gui_.requestedTechnique();
     const bool wantToggleCpuRt = gui_.wantToggleCpuRt();
+    Gui::OpenPbrMaterialEdit openPbrEdit;
+    if (gui_.takeOpenPbrMaterialEdit(&openPbrEdit)) {
+      pendingOpenPbrEdit_ = openPbrEdit;
+      hasPendingOpenPbrEdit_ = true;
+    }
     animLoop_ = gui_.loopPlayback();
     animSpeed_ = gui_.playSpeed();
     tessQuality_ = gui_.tessellationQuality();
     gui_.clearActions();
+
+    const bool tracerBuildActive =
+        (hipBuildStarted_ && !hipBuildDone_.load(std::memory_order_acquire)) ||
+        (cudaBuildStarted_ && !cudaBuildDone_.load(std::memory_order_acquire)) ||
+        (cpuBuildStarted_ && !cpuBuildDone_.load(std::memory_order_acquire));
+    if (hasPendingOpenPbrEdit_ && !tracerBuildActive) {
+      if (pendingOpenPbrEdit_.materialId < 0 ||
+          static_cast<size_t>(pendingOpenPbrEdit_.materialId) >=
+              draw_.materials.size()) {
+        hasPendingOpenPbrEdit_ = false;
+      } else {
+        const int materialId = pendingOpenPbrEdit_.materialId;
+        DrawMaterialCPU& material =
+            draw_.materials[static_cast<size_t>(materialId)];
+        ApplyOpenPBRMaterialConstants(&material,
+                                      pendingOpenPbrEdit_.constants);
+        const DrawMaterialCPU materialCopy = material;
+        const uint64_t rendererGeneration = rendererGeneration_;
+        postGpu([this, rendererGeneration, materialId, materialCopy] {
+          if (!renderer_ || rendererGeneration != rendererGeneration_) return;
+          std::string err;
+          if (!renderer_->updateMaterialConstants(materialId, materialCopy,
+                                                  &err) &&
+              !err.empty()) {
+            LOGW("live OpenPBR renderer update: %s", err.c_str());
+          }
+        });
+        std::string editErr;
+        if (cudaInteractiveBuilt_ &&
+            !cudaTracer_.updateMaterialConstants(materialId, material,
+                                                 &editErr)) {
+          LOGW("live OpenPBR CUDA update: %s", editErr.c_str());
+        }
+        editErr.clear();
+        if (hipInteractiveBuilt_ &&
+            !hipTracer_.updateMaterialConstants(materialId, material,
+                                                &editErr)) {
+          LOGW("live OpenPBR HIP update: %s", editErr.c_str());
+        }
+        editErr.clear();
+        if (cpuInteractiveBuilt_ &&
+            !cpuTracer_.updateMaterialConstants(materialId, material,
+                                                &editErr)) {
+          LOGW("live OpenPBR CPU update: %s", editErr.c_str());
+        }
+        hasPendingOpenPbrEdit_ = false;
+      }
+    }
 
     // Queue only -- see the apply site at the top of the next iteration.
     if (hasTechniqueRequest) {
@@ -6675,10 +6794,8 @@ int App::run(const std::string& initialFile, int maxFrames,
         reportCaptureHeight_ = h;
         std::string werr;
         if (pathTrace_.enabled) {
-          const std::vector<float> display =
-              ShouldDenoise(pathTrace_, pathTraceRenderedSamples_)
-                  ? AtrousDenoise(linear, w, h, 5)
-                  : linear;
+          const std::vector<float> display = PreparePathDisplay(
+              linear, w, h, pathTrace_, pathTraceRenderedSamples_);
           rgba = ToneMapPathDisplay(display, w, h, camera_.exposure());
         }
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
@@ -6766,10 +6883,8 @@ int App::run(const std::string& initialFile, int maxFrames,
         reportCaptureHeight_ = h;
         std::string werr;
         if (pathTrace_.enabled) {
-          const std::vector<float> display =
-              ShouldDenoise(pathTrace_, pathTraceRenderedSamples_)
-                  ? AtrousDenoise(linear, w, h, 5)
-                  : linear;
+          const std::vector<float> display = PreparePathDisplay(
+              linear, w, h, pathTrace_, pathTraceRenderedSamples_);
           rgba = ToneMapPathDisplay(display, w, h, camera_.exposure());
         }
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
@@ -6862,9 +6977,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (renderer_->captureLinearViewport(&linear, &w, &h)) {
       if (!screenshot.empty() && modeSweep_.empty()) {
         const uint32_t samples = renderer_->rayTracingAccumulatedSamples();
-        const std::vector<float> display = ShouldDenoise(pathTrace_, samples)
-                                               ? AtrousDenoise(linear, w, h, 5)
-                                               : linear;
+        const std::vector<float> display =
+            PreparePathDisplay(linear, w, h, pathTrace_, samples);
         const std::vector<uint8_t> rgba =
             ToneMapPathDisplay(display, w, h, camera_.exposure());
         wrotePathDisplay = WriteScreenshotImage(screenshot, rgba, w, h,

@@ -540,6 +540,24 @@ void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
   }
 }
 
+void PackRtMaterialConstants(const DrawMaterialCPU& material, float* pbr,
+                             float* base, float* lightRt) {
+  if (pbr) {
+    pbr[0] = material.metallic;
+    pbr[1] = material.roughness;
+    pbr[2] = material.emissive[0];
+    pbr[3] = material.emissive[1];
+    pbr[4] = material.emissive[2];
+    pbr[5] = material.alpha;
+  }
+  if (base) {
+    base[0] = material.baseColor[0];
+    base[1] = material.baseColor[1];
+    base[2] = material.baseColor[2];
+  }
+  if (lightRt) PackLightRtOpenPBR(material, lightRt);
+}
+
 uint32_t RtLightCollectionMaskForMesh(
     const std::vector<DrawLightCPU>& lights, int meshIndex, bool shadow) {
   uint32_t mask = 0u;
@@ -1816,16 +1834,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   };
   for (size_t i = 0; i < scene.materials.size(); ++i) {
     const DrawMaterialCPU& dm = scene.materials[i];
-    out->matPbr[i * 6 + 0] = dm.metallic;
-    out->matPbr[i * 6 + 1] = dm.roughness;
-    out->matPbr[i * 6 + 2] = dm.emissive[0];
-    out->matPbr[i * 6 + 3] = dm.emissive[1];
-    out->matPbr[i * 6 + 4] = dm.emissive[2];
-    out->matPbr[i * 6 + 5] = dm.alpha;
-    out->matBase[i * 3 + 0] = dm.baseColor[0];
-    out->matBase[i * 3 + 1] = dm.baseColor[1];
-    out->matBase[i * 3 + 2] = dm.baseColor[2];
-    PackLightRtOpenPBR(dm, &out->matLightRt[i * kLightRtOpenPBRFloats]);
+    PackRtMaterialConstants(dm, &out->matPbr[i * 6], &out->matBase[i * 3],
+                            &out->matLightRt[i * kLightRtOpenPBRFloats]);
     PackMaterialXGraphRuntime(
         dm, &out->matGraph[i * kRtMaterialGraphFloats],
         &textureTable.sourceToTable);
@@ -1841,6 +1851,26 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                       &out->lightParams[i * kRtLightParamFloats]);
   }
   if (recordRefit) refitOut->valid = true;
+  return true;
+}
+
+bool UpdateHostMaterialConstants(HostScene* scene, int materialId,
+                                 const DrawMaterialCPU& material,
+                                 std::string* err) {
+  if (!scene || materialId < 0 || materialId >= scene->numMats) {
+    if (err) *err = "host material index is out of range";
+    return false;
+  }
+  const size_t i = static_cast<size_t>(materialId);
+  if (scene->matPbr.size() < (i + 1) * 6 ||
+      scene->matBase.size() < (i + 1) * 3 ||
+      scene->matLightRt.size() < (i + 1) * kLightRtOpenPBRFloats) {
+    if (err) *err = "host material arrays are incomplete";
+    return false;
+  }
+  PackRtMaterialConstants(material, &scene->matPbr[i * 6],
+                          &scene->matBase[i * 3],
+                          &scene->matLightRt[i * kLightRtOpenPBRFloats]);
   return true;
 }
 

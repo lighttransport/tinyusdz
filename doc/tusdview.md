@@ -124,6 +124,10 @@ The interactive preset uses six bounces and automatic denoising policy; the
 final preset uses twelve bounces, Russian roulette after bounce five, 1024
 samples, and the built-in edge-aware à-trous filter. Override these with
 `--pt-max-depth`, `--pt-rr-depth`, `--pt-denoise off|auto|on`, and `--pt-seed`.
+Isolated high-energy display samples are rejected independently of spatial
+denoising; tune the robust local threshold with `--pt-firefly-clamp` (lower is
+stronger, `0` disables it). This keeps `--pt-denoise off` sharp while still
+removing salt-pixel fireflies.
 Headless Vulkan, CUDA, and HIP check relative scene-linear RMS change after the
 configured minimum sample count and can stop a converged image early. CUDA/HIP
 keep their normal batched-launch path between coarse checkpoints and report the
@@ -141,9 +145,23 @@ emission, transmission, IOR-aware GGX direct highlights, and stochastic
 radius-aware subsurface transport. Direct-light reservoir sampling excludes
 disabled, unlinked, and dome lights (the dome remains on the environment path),
 reducing wasted shadow rays. The display denoiser uses local variance and robust
-firefly rejection and runs rows in parallel; it never modifies the linear EXR.
+firefly rejection and runs rows in parallel; neither display filter modifies
+the linear EXR. MaterialX image/tiledimage address modes use MaterialX's
+periodic defaults and accept periodic/clamp/mirror/constant, including negative
+or tiled UVs such as the StandardShaderBall numbered floor.
 Unsupported nodes remain visible through `load_diagnostics` in the schema-v2
 JSON render report.
+
+The docked **OpenPBR Material** panel follows the selected mesh and can also be
+pointed at any OpenPBR material through its material combo. Base, specular,
+transmission, subsurface, coat/fuzz, thin-film, emission, and opacity constants
+are editable while the viewer is running. Every drag refreshes only the small
+material buffers and restarts path-trace accumulation; geometry, acceleration
+structures, and texture tables stay resident on Vulkan, CUDA, and HIP. Inputs
+driven by a texture or MaterialX nodegraph are disabled with a connection
+tooltip so a constant override cannot silently hide an authored network.
+Edits are session-local preview overrides; they do not author values back into
+the USD layer.
 
 The opt-in OpenChessSet benchmark creates a deterministic neutral key/fill rig,
 writes PNG + scene-linear EXR + JSON for each backend, rejects material/texture

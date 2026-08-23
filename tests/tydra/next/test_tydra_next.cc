@@ -1446,6 +1446,7 @@ def Xform "World"
             {
                 uniform token info:id = "ND_image_color4"
                 asset inputs:file = @mask.png@
+                string inputs:uaddressmode = "mirror"
                 color4f outputs:out
             }
 
@@ -1549,6 +1550,11 @@ def Xform "World"
   assert(opacity_tex.image_id >= 0);
   assert(static_cast<size_t>(opacity_tex.image_id) < result.scene.images.size());
   assert(result.scene.images[opacity_tex.image_id].resolved_path == "mask.png");
+  assert(opacity_tex.wrap_s == WrapMode::Mirror);
+  // MaterialX image nodedefs default to periodic, unlike UsdUVTexture's
+  // useMetadata/clamp fallback. This is required by assets that intentionally
+  // author negative or tiled texture coordinates.
+  assert(opacity_tex.wrap_t == WrapMode::Repeat);
 
   std::cout << "  RenderConverter materials: PASSED\n";
 }

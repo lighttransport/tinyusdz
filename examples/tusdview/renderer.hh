@@ -332,6 +332,15 @@ class Renderer {
   // progressive loader. Backends that do not stream may leave this as a no-op.
   virtual void syncSceneResources(
       const std::vector<DrawMaterialCPU>& /*materials*/, int /*textureCount*/) {}
+  // Rewrite one existing material's constant data without rebuilding geometry,
+  // acceleration structures, or texture tables. Used by the live OpenPBR
+  // editor; texture bindings and material indices are unchanged.
+  virtual bool updateMaterialConstants(int /*materialId*/,
+                                       const DrawMaterialCPU& /*material*/,
+                                       std::string* err) {
+    if (err) *err = "live material updates are unsupported by this backend";
+    return false;
+  }
   virtual void setLights(const std::vector<DrawLightCPU>& /*lights*/,
                          size_t /*meshCount*/) {}
   // Append one mesh (uploaded immediately). Rendered from the next frame on.

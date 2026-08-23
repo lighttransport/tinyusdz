@@ -756,10 +756,14 @@ RenderTexture::Channel ChannelFromConnection(
 }
 
 WrapMode ParseWrapMode(const std::string& token) {
-  if (token == "repeat") return WrapMode::Repeat;
+  // UsdUVTexture uses repeat/clamp/mirror/black, while MaterialX image nodes
+  // call the equivalent modes periodic/clamp/mirror/constant. Keep the
+  // translation at the RenderTexture boundary so every backend sees one
+  // canonical enum.
+  if (token == "repeat" || token == "periodic") return WrapMode::Repeat;
   if (token == "clamp") return WrapMode::Clamp;
   if (token == "mirror") return WrapMode::Mirror;
-  if (token == "black") return WrapMode::Black;
+  if (token == "black" || token == "constant") return WrapMode::Black;
   // UsdUVTexture's wrapS/wrapT fallback is "useMetadata"; with no texture
   // metadata the effective mode is clamp-to-edge (legacy tydra behavior) —
   // NOT repeat, which visibly tiles textures authored to clamp.
@@ -2228,6 +2232,21 @@ bool ExtractTextureNodeData(const Stage& stage,
   ::tinyusdz::next::AttributeEval eval(&stage);
   eval.SetTime(time_code);
 
+  std::string shader_id;
+  GetToken(texture_prim, "info:id", &shader_id);
+  const bool materialx_image =
+      shader_id == "image" || shader_id == "tiledimage" ||
+      shader_id.rfind("ND_image_", 0) == 0 ||
+      shader_id.rfind("ND_tiledimage_", 0) == 0;
+  if (materialx_image) {
+    // MaterialX image/tiledimage defaults are periodic in both directions.
+    // Do not inherit UsdUVTexture's useMetadata -> clamp fallback: production
+    // MaterialX assets commonly use coordinates outside [0,1] and rely on the
+    // nodedef default even when no address-mode input is authored.
+    out->wrap_s = "periodic";
+    out->wrap_t = "periodic";
+  }
+
   UsdPrim fileOwner;
   std::string fileAttribute;
   auto resolve_asset_input = [&](const std::string& initial,
@@ -2276,6 +2295,23 @@ bool ExtractTextureNodeData(const Stage& stage,
   }
   if (std::optional<std::string> wrap_t = eval.EvalToken(texture_prim, "inputs:wrapT")) {
     out->wrap_t = *wrap_t;
+  }
+  if (materialx_image) {
+    auto address_mode = [&](const char* name) -> std::optional<std::string> {
+      if (std::optional<std::string> value =
+              eval.EvalToken(texture_prim, name)) {
+        return value;
+      }
+      return eval.EvalString(texture_prim, name);
+    };
+    if (std::optional<std::string> mode =
+            address_mode("inputs:uaddressmode")) {
+      out->wrap_s = *mode;
+    }
+    if (std::optional<std::string> mode =
+            address_mode("inputs:vaddressmode")) {
+      out->wrap_t = *mode;
+    }
   }
   float scale[4];
   if (eval.EvalFloat4(texture_prim, "inputs:scale", scale)) {
