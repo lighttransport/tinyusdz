@@ -26,6 +26,15 @@ int main() {
     std::fprintf(stderr, "pinhole/orthographic camera enabled depth of field\n");
     return 1;
   }
+  const float pickedFocus = tusdview::RtFocusDistanceToPoint(
+      {1.0f, 2.0f, 3.0f}, {0.0f, 0.0f, -2.0f}, {5.0f, -4.0f, -7.0f});
+  if (!Near(pickedFocus, 10.0f) ||
+      tusdview::RtFocusDistanceToPoint(
+          {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f},
+          {0.0f, 0.0f, -1.0f}) != 0.0f) {
+    std::fprintf(stderr, "picked-point focus-plane distance is incorrect\n");
+    return 1;
+  }
   const tusdview::RtCameraLens autoMeters =
       tusdview::MakeAutoRtCameraLens(0.72f, 4.0f, 1.0);
   const tusdview::RtCameraLens autoCentimeters =

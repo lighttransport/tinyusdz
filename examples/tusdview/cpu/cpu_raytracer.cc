@@ -602,6 +602,14 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
     out[0] = ox * inv; out[1] = oy * inv; out[2] = oz * inv;
   };
 
+  float centerNear[3], centerFar[3];
+  unproject(0.0f, 0.0f, 0.0f, centerNear);
+  unproject(0.0f, 0.0f, 1.0f, centerFar);
+  float cameraForward[3] = {centerFar[0] - centerNear[0],
+                            centerFar[1] - centerNear[1],
+                            centerFar[2] - centerNear[2]};
+  Normalize3(cameraForward);
+
   const float lightLen = std::sqrt(lightDir[0] * lightDir[0] +
                                    lightDir[1] * lightDir[1] +
                                    lightDir[2] * lightDir[2]);
@@ -977,9 +985,14 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
 
         float rayOrg[3] = {camPos[0], camPos[1], camPos[2]};
         if (lens && lens->enabled()) {
-          const float focus[3] = {camPos[0] + dir[0] * lens->focusDistance,
-                                  camPos[1] + dir[1] * lens->focusDistance,
-                                  camPos[2] + dir[2] * lens->focusDistance};
+          const float forwardDot = std::max(
+              1.0e-4f, dir[0] * cameraForward[0] +
+                             dir[1] * cameraForward[1] +
+                             dir[2] * cameraForward[2]);
+          const float focusT = lens->focusDistance / forwardDot;
+          const float focus[3] = {camPos[0] + dir[0] * focusT,
+                                  camPos[1] + dir[1] * focusT,
+                                  camPos[2] + dir[2] * focusT};
           float up[3] = {0.0f, 1.0f, 0.0f};
           if (std::fabs(dir[1]) > 0.95f) {
             up[0] = 1.0f;

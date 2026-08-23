@@ -110,6 +110,16 @@ runtime-loaded CUDA or HIP transport kernel with `--cuda` or `--hip`:
   --screenshot hip.png --linear-output hip.exr scene.usda
 ```
 
+In an interactive run, click a renderable object and press **Focus selected**
+in the Camera panel's **Depth of field** section. A pixel pick focuses the exact
+clicked surface, including a single instance; hierarchy and marquee selections
+focus their combined bounds center. The focus-distance field remains editable
+for manual tuning. The same panel can enable/disable the thin lens, edit a
+50 mm-equivalent F-stop or the exact aperture radius in stage units, halve or
+double the aperture, and reset to an f/4 starting point. Persistent MCP clients
+can perform focus picking with a `pick` request followed by
+`viewport {"op":"focus_dof"}`.
+
 The interactive preset uses six bounces and automatic denoising policy; the
 final preset uses twelve bounces, Russian roulette after bounce five, 1024
 samples, and the built-in edge-aware à-trous filter. Override these with
@@ -154,6 +164,11 @@ Vulkan fallback by default; select an adapter with `TUSDVIEW_VK_DEVICE`, or set
 `TUSDVIEW_OPENCHESS_ALLOW_CPU=1` only for an intentional software run. The
 corresponding CTest (`tusdview-openchess-path-trace`) skips unless
 `TUSDVIEW_RUN_OPENCHESS_PATH=1` is present.
+
+`--pt-quality final` disables RT proxy LOD supplied implicitly by a large-scene
+profile. This keeps authored silhouettes and materials in final frames; pass
+`--rt-lod` explicitly only when a memory-constrained final render should accept
+bounding-box proxies. Interactive quality retains the profile's RT LOD policy.
 
 ## CUDA ray-tracing run test (verified working on NVIDIA)
 

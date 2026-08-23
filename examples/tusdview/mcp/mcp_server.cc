@@ -77,8 +77,10 @@ json MCPServer::buildToolsList() const {
       "Manipulate the camera. op=orbit|pan {dx,dy pixels} | dolly|forward|backward "
       "{amount} | fit "
       "{frame the scene} | home | isometric | front | back | right | left | top | bottom "
-      "| bookmark_save {slot} | bookmark_load {slot} | set {absolute target[3],yaw,pitch,distance}.",
-      {{"op", strProp("orbit | pan | dolly | forward | backward | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | set")},
+      "| bookmark_save {slot} | bookmark_load {slot} | focus_dof {focus the "
+      "thin lens on the picked/selected object} | set "
+      "{absolute target[3],yaw,pitch,distance}.",
+      {{"op", strProp("orbit | pan | dolly | forward | backward | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | focus_dof | set")},
        {"dx", numProp("pixels (orbit/pan)")},
        {"dy", numProp("pixels (orbit/pan)")},
        {"amount", numProp("dolly amount (+ zooms in)")},
@@ -120,7 +122,8 @@ json MCPServer::buildToolsList() const {
       "pick",
       "Pick a viewport pixel using the selection ID/depth buffer. Pass x1/y1 to "
       "pick a rectangular region; the prim owning the most depth-tested covered "
-      "pixels wins. Set select=false for a read-only query.",
+      "pixels wins. Set select=false for a read-only query. Pixel picks return "
+      "hit_distance, which is also retained as the focus_dof target when selected.",
       {{"x", numProp("viewport pixel x")},
        {"y", numProp("viewport pixel y")},
        {"x1", numProp("optional opposite region corner x")},

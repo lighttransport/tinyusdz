@@ -250,6 +250,18 @@ run_asset_pass() {
         return 1
       fi
     done
+  elif [ "$label" = "profile-final" ]; then
+    for expected in "large-scene-profile instance-heavy resolved" \
+                    "--rt-lod=off"; do
+      if ! echo "$log" | grep -Eq -- "$expected"; then
+        echo "FAIL: final path tracing retained implicit RT LOD: $expected"
+        return 1
+      fi
+    done
+    if echo "$log" | grep -Eq '\[rt-lod\].*proxy=[1-9]'; then
+      echo "FAIL: final path tracing rendered an implicit bounding-box proxy"
+      return 1
+    fi
   fi
   if [ ! -s "$out" ]; then
     echo "FAIL: no screenshot written ($label)"
@@ -307,6 +319,15 @@ rc=$?
 #    not need Caldera/Island/ALab, but exercises the preset resolver, --next,
 #    Vulkan headless rendering, raster LOD defaults, and startup diagnostics.
 run_pass profile --large-scene-profile instance-heavy
+rc=$?
+[ $rc -eq $SKIP ] && exit $SKIP
+[ $rc -ne 0 ] && exit $rc
+
+# 6) Final path-trace quality must override a profile's implicit RT LOD. The
+# generic LOD carrier is an unmaterialed AABB, so retaining it would produce
+# camera-dependent white boxes in a final render.
+run_pass profile-final --large-scene-profile instance-heavy --path-trace \
+  --pt-quality final --pt-samples 1
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc

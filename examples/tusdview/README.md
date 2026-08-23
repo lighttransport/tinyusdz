@@ -181,6 +181,12 @@ displays it with an ImGui docking UI.
   skips inactive, unlinked, and dome lights instead of spending shadow rays on
   them. USD camera optics and
   `--f-stop`/`--focus-distance` drive deterministic thin-lens depth of field.
+  After picking an object, **Camera ▸ Depth of field ▸ Focus selected** moves
+  the focal plane to the clicked surface (or to the bounds center for hierarchy
+  and marquee selections). The persistent MCP `viewport` operation exposes the
+  same action as `op=focus_dof` after `pick` or `set_focus`. The Camera panel
+  also exposes live enable, focus-distance, 50 mm-equivalent F-stop, and exact
+  stage-unit aperture-radius controls.
   Interactive and final presets expose sample/depth/seed controls; final uses a
   built-in variance-guided, row-parallel à-trous filter with robust firefly
   rejection. All three GPU backends can stop at coarse checkpoints after

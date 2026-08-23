@@ -101,7 +101,12 @@ class Gui {
     if (poseChanged) rebuildSubsetHighlight();
   }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
-  void setCameraLens(const RtCameraLens& lens) { cameraLens_ = lens; }
+  void setCameraLens(const RtCameraLens& lens) {
+    cameraLens_ = lens;
+    if (lens.apertureRadius > 0.0f) {
+      lastDofApertureRadius_ = lens.apertureRadius;
+    }
+  }
   void setPathTraceSettings(const PathTraceSettings& settings) {
     pathTrace_ = settings;
   }
@@ -303,6 +308,7 @@ class Gui {
     int viewportWidth{0};
     int viewportHeight{0};
     int coveredPixels{0};
+    float hitDistance{0.0f};
   };
   PickReport pickViewportPixel(float x, float y, bool select);
   PickReport pickViewportRegion(float x0, float y0, float x1, float y1,
@@ -342,6 +348,11 @@ class Gui {
   bool canGoSelectionForward() const;
   bool goSelectionBack();
   bool goSelectionForward();
+  // Move the thin-lens focal plane to the last clicked point on the current
+  // selection. Hierarchy/region selections fall back to their world bounds.
+  bool focusDofOnSelection(float* focusDistance = nullptr);
+  float dofFocusDistance() const { return cameraLens_.focusDistance; }
+  const RtCameraLens& cameraLens() const { return cameraLens_; }
 
  private:
   void applySelection(const std::string& absPath, int meshIndex, bool recordHistory);
@@ -373,6 +384,8 @@ class Gui {
   void cycleNavigationHelpMode();
   void drawSelectionBreadcrumbs(const char* idSuffix);
   bool framePath(const std::string& absPath);
+  bool selectedFocusPoint(light3d::Vec3* point,
+                          bool* fromViewportPick = nullptr) const;
   void handleNavigation();
   void buildHelpers();
   bool meshPurposeVisible(const std::string& purpose) const;
@@ -390,13 +403,14 @@ class Gui {
   void focusSelectionListItem(size_t index);
   void beginRegionSelection(const ImVec2& mouse);
   void updateRegionSelection(const ImVec2& mouse);
-  void finishRegionSelection(const ImVec2& imageMin, int vpW, int vpH);
+  void finishRegionSelection(const ImVec2& imageMin);
   std::vector<int> regionPickMeshes(const ImVec2& imageMin, int vpW, int vpH) const;
   bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
                                 const ImVec2& rectMax, int vpW, int vpH) const;
   int pickMesh(float px, float py, int vpW, int vpH,
                float* hitDistance = nullptr) const;
-  std::string pickCarrierPath(float px, float py, int vpW, int vpH) const;
+  std::string pickCarrierPath(float px, float py, int vpW, int vpH,
+                              float* hitDistance = nullptr) const;
   void selectAdjacentMesh(int step);
   void applyViewPreset(CameraViewPreset preset);
   void homeView();
@@ -407,6 +421,7 @@ class Gui {
   Renderer* renderer_{nullptr};
   OrbitCamera* cam_{nullptr};
   RtCameraLens cameraLens_;
+  float lastDofApertureRadius_{0.0f};
   PathTraceSettings pathTrace_;
   const LoadedScene* loaded_{nullptr};
   const DrawScene* draw_{nullptr};
@@ -425,6 +440,9 @@ class Gui {
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
+  light3d::Vec3 lastPickedFocusPoint_{0.0f, 0.0f, 0.0f};
+  std::string lastPickedFocusPath_;
+  bool haveLastPickedFocusPoint_{false};
   // When the selection is a GeomSubset, the triangle vertex indices of its faces
   // (built via the parent mesh's sourceFaceId) so the highlight outlines just the
   // subset; highlightSubsetMesh_ is that parent mesh's draw index.

@@ -94,6 +94,40 @@ void HintWrapped(const char* s) {
   ImGui::PopStyleColor();
 }
 
+bool ViewportRay(const OrbitCamera& camera, bool zeroToOneDepth, float px,
+                 float py, int viewportWidth, int viewportHeight,
+                 light3d::Vec3* origin, light3d::Vec3* direction) {
+  if (!origin || !direction || viewportWidth <= 0 || viewportHeight <= 0) {
+    return false;
+  }
+  const light3d::Mat4 invVP =
+      (camera.proj(zeroToOneDepth) * camera.view()).inverse();
+  const float ndcx =
+      2.0f * (px / static_cast<float>(viewportWidth)) - 1.0f;
+  const float ndcy =
+      1.0f - 2.0f * (py / static_cast<float>(viewportHeight));
+  auto unproject = [&](float nz) {
+    const float* m = invVP.m;
+    const float x = m[0] * ndcx + m[4] * ndcy + m[8] * nz + m[12];
+    const float y = m[1] * ndcx + m[5] * ndcy + m[9] * nz + m[13];
+    const float z = m[2] * ndcx + m[6] * ndcy + m[10] * nz + m[14];
+    const float w = m[3] * ndcx + m[7] * ndcy + m[11] * nz + m[15];
+    const float iw = w != 0.0f ? 1.0f / w : 1.0f;
+    return light3d::Vec3{x * iw, y * iw, z * iw};
+  };
+  const light3d::Vec3 nearPoint =
+      unproject(zeroToOneDepth ? 0.0f : -1.0f);
+  const light3d::Vec3 farPoint = unproject(1.0f);
+  const light3d::Vec3 ray = farPoint - nearPoint;
+  if (!std::isfinite(ray.x) || !std::isfinite(ray.y) ||
+      !std::isfinite(ray.z) || light3d::dot(ray, ray) <= 1.0e-20f) {
+    return false;
+  }
+  *origin = camera.eye();
+  *direction = light3d::normalize(ray);
+  return true;
+}
+
 std::string TinyUsdVersionString() {
   std::string v = std::to_string(tinyusdz::version_major) + "." +
                   std::to_string(tinyusdz::version_minor) + "." +
@@ -261,6 +295,8 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   selPrim_ = nullptr;
   selPath_.clear();
   selMeshIndex_ = -1;
+  lastPickedFocusPath_.clear();
+  haveLastPickedFocusPoint_ = false;
   selectionList_.clear();
   selectionHistory_.clear();
   selectionHistoryIndex_ = -1;
@@ -922,8 +958,11 @@ Gui::PickReport Gui::pickViewportPixel(float x, float y, bool select) {
       y >= static_cast<float>(viewportH_)) {
     return report;
   }
-  report.path = pickCarrierPath(x, y, viewportW_, viewportH_);
+  float hitDistance = 0.0f;
+  report.path =
+      pickCarrierPath(x, y, viewportW_, viewportH_, &hitDistance);
   if (report.path.empty()) return report;
+  report.hitDistance = hitDistance;
   for (size_t i = 0; i < draw_->curves.size(); ++i) {
     if (draw_->curves[i].absPath == report.path) {
       report.kind = "curve";
@@ -948,7 +987,17 @@ Gui::PickReport Gui::pickViewportPixel(float x, float y, bool select) {
     }
   }
   if (report.kind.empty()) report.kind = "prim";
-  if (select) selectByPath(report.path, report.meshIndex);
+  if (select) {
+    selectByPath(report.path, report.meshIndex);
+    light3d::Vec3 origin, direction;
+    if (hitDistance > 0.0f && std::isfinite(hitDistance) &&
+        ViewportRay(*cam_, renderer_->caps().usesZeroToOneDepth, x, y,
+                    viewportW_, viewportH_, &origin, &direction)) {
+      lastPickedFocusPoint_ = origin + direction * hitDistance;
+      lastPickedFocusPath_ = report.path;
+      haveLastPickedFocusPoint_ = true;
+    }
+  }
   return report;
 }
 
@@ -1083,6 +1132,11 @@ void Gui::pushSelectionHistory(const std::string& absPath) {
 }
 
 void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordHistory) {
+  // A hierarchy/history selection has no longer got the precise viewport hit
+  // associated with the previous selection. A viewport pick restores it after
+  // selectByPath() returns.
+  lastPickedFocusPath_.clear();
+  haveLastPickedFocusPoint_ = false;
   selPath_ = absPath;
   selMeshIndex_ = meshIndex;
   selPrim_ = nullptr;
@@ -1321,6 +1375,8 @@ void Gui::clearSelection() {
   selPath_.clear();
   selMeshIndex_ = -1;
   selPrim_ = nullptr;
+  lastPickedFocusPath_.clear();
+  haveLastPickedFocusPoint_ = false;
   selectionList_.clear();
   revealSelectionInHierarchy_ = false;
   inspectorCachePrim_ = nullptr;
@@ -2556,6 +2612,126 @@ void Gui::drawCameraPanel() {
     }
 
     ImGui::Separator();
+    ImGui::TextDisabled("Depth of field");
+    const double metersPerUnit =
+        draw_ && draw_->metersPerUnit > 0.0 ? draw_->metersPerUnit : 0.01;
+    auto apertureForFStop = [&](float distance, float fStop) {
+      return MakeAutoRtCameraLens(std::max(distance, 1.0e-4f), fStop,
+                                  metersPerUnit)
+          .apertureRadius;
+    };
+    bool dofEnabled = cameraLens_.enabled();
+    if (ImGui::Checkbox("Enable depth of field", &dofEnabled)) {
+      if (dofEnabled) {
+        if (!(cameraLens_.focusDistance > 0.0f)) {
+          cameraLens_.focusDistance =
+              std::max(cam_->distance(), cam_->nearPlane() * 2.0f);
+        }
+        if (!(lastDofApertureRadius_ > 0.0f)) {
+          lastDofApertureRadius_ =
+              apertureForFStop(cameraLens_.focusDistance, 4.0f);
+        }
+        cameraLens_.apertureRadius = lastDofApertureRadius_;
+      } else {
+        if (cameraLens_.apertureRadius > 0.0f) {
+          lastDofApertureRadius_ = cameraLens_.apertureRadius;
+        }
+        cameraLens_.apertureRadius = 0.0f;
+      }
+    }
+
+    float focusDistance = cameraLens_.focusDistance;
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    if (ImGui::InputFloat("Focus distance", &focusDistance, 0.0f, 0.0f,
+                          "%.5g") &&
+        std::isfinite(focusDistance) && focusDistance >= 0.0f) {
+      cameraLens_.focusDistance = focusDistance;
+    }
+
+    float equivalentFStop = cameraLens_.apertureRadius > 0.0f
+        ? static_cast<float>(0.025 /
+                             (metersPerUnit * cameraLens_.apertureRadius))
+        : 0.0f;
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    if (ImGui::InputFloat("F-stop (50 mm equiv.)", &equivalentFStop, 0.0f,
+                          0.0f, "%.4g") &&
+        std::isfinite(equivalentFStop) && equivalentFStop >= 0.0f) {
+      cameraLens_.apertureRadius = equivalentFStop > 0.0f
+          ? apertureForFStop(cameraLens_.focusDistance, equivalentFStop)
+          : 0.0f;
+      if (cameraLens_.apertureRadius > 0.0f) {
+        lastDofApertureRadius_ = cameraLens_.apertureRadius;
+      }
+    }
+
+    float apertureRadius = cameraLens_.apertureRadius;
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    if (ImGui::InputFloat("Aperture radius", &apertureRadius, 0.0f, 0.0f,
+                          "%.6g") &&
+        std::isfinite(apertureRadius) && apertureRadius >= 0.0f) {
+      cameraLens_.apertureRadius = apertureRadius;
+      if (apertureRadius > 0.0f) lastDofApertureRadius_ = apertureRadius;
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("Thin-lens radius in stage units (metersPerUnit %.6g)",
+                        metersPerUnit);
+    }
+    const bool canScaleAperture = cameraLens_.apertureRadius > 0.0f;
+    if (!canScaleAperture) ImGui::BeginDisabled();
+    if (ImGui::SmallButton("Aperture /2")) {
+      cameraLens_.apertureRadius *= 0.5f;
+      lastDofApertureRadius_ = cameraLens_.apertureRadius;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Aperture x2")) {
+      cameraLens_.apertureRadius *= 2.0f;
+      lastDofApertureRadius_ = cameraLens_.apertureRadius;
+    }
+    if (!canScaleAperture) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset f/4")) {
+      cameraLens_.focusDistance =
+          std::max(cam_->distance(), cam_->nearPlane() * 2.0f);
+      cameraLens_.apertureRadius =
+          apertureForFStop(cameraLens_.focusDistance, 4.0f);
+      lastDofApertureRadius_ = cameraLens_.apertureRadius;
+    }
+
+    light3d::Vec3 selectedPoint;
+    bool fromViewportPick = false;
+    const bool haveFocusPoint =
+        selectedFocusPoint(&selectedPoint, &fromViewportPick);
+    const light3d::Vec3 focusEye = cam_->eye();
+    const float selectedDistance = haveFocusPoint
+        ? RtFocusDistanceToPoint(focusEye, cam_->target() - focusEye,
+                                 selectedPoint)
+        : 0.0f;
+    const bool canFocus = haveFocusPoint && std::isfinite(selectedDistance) &&
+                          selectedDistance >
+                              std::max(1.0e-4f, cam_->nearPlane() * 1.001f);
+    if (!canFocus) ImGui::BeginDisabled();
+    if (ImGui::Button("Focus selected")) focusDofOnSelection();
+    if (!canFocus) ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      if (canFocus) {
+        ImGui::SetTooltip("Set focus to %.5g (%s)", selectedDistance,
+                          fromViewportPick ? "picked surface"
+                                           : "selection bounds center");
+      } else {
+        ImGui::SetTooltip("Pick a visible object or select a renderable prim");
+      }
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled(!haveFocusPoint
+                            ? "no focus target"
+                            : (fromViewportPick ? "picked surface"
+                                                : "selection bounds center"));
+    if (!cameraLens_.enabled()) {
+      HintWrapped("Depth of field is inactive. Enable it above or enter a "
+                  "positive focus distance and aperture/F-stop.");
+    }
+
+    ImGui::Separator();
     ImGui::TextDisabled("Bookmarks");
     for (int slot = 0; slot < 3; ++slot) {
       const int humanSlot = slot + 1;
@@ -3483,6 +3659,71 @@ void Gui::frameSelected() {
   if (draw_->hasBounds) {
     cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
   }
+}
+
+bool Gui::selectedFocusPoint(light3d::Vec3* point,
+                             bool* fromViewportPick) const {
+  if (fromViewportPick) *fromViewportPick = false;
+  if (!point || !draw_ || selPath_.empty()) return false;
+  if (haveLastPickedFocusPoint_ && lastPickedFocusPath_ == selPath_) {
+    *point = lastPickedFocusPoint_;
+    if (fromViewportPick) *fromViewportPick = true;
+    return true;
+  }
+
+  bool found = false;
+  light3d::Vec3 boundsMin{0.0f, 0.0f, 0.0f};
+  light3d::Vec3 boundsMax{0.0f, 0.0f, 0.0f};
+  auto includeBounds = [&](const std::string& path, const float mn[3],
+                           const float mx[3]) {
+    if (!PathIsSameOrDescendant(path, selPath_)) return;
+    for (int i = 0; i < 3; ++i) {
+      if (!std::isfinite(mn[i]) || !std::isfinite(mx[i]) || mn[i] > mx[i]) {
+        return;
+      }
+    }
+    const light3d::Vec3 lo{mn[0], mn[1], mn[2]};
+    const light3d::Vec3 hi{mx[0], mx[1], mx[2]};
+    if (!found) {
+      boundsMin = lo;
+      boundsMax = hi;
+      found = true;
+      return;
+    }
+    boundsMin.x = std::min(boundsMin.x, lo.x);
+    boundsMin.y = std::min(boundsMin.y, lo.y);
+    boundsMin.z = std::min(boundsMin.z, lo.z);
+    boundsMax.x = std::max(boundsMax.x, hi.x);
+    boundsMax.y = std::max(boundsMax.y, hi.y);
+    boundsMax.z = std::max(boundsMax.z, hi.z);
+  };
+  for (const DrawMeshCPU& mesh : draw_->meshes) {
+    includeBounds(mesh.absPath, mesh.aabbMin, mesh.aabbMax);
+  }
+  for (const DrawPointsCPU& points : draw_->points) {
+    includeBounds(points.absPath, points.aabbMin, points.aabbMax);
+  }
+  for (const DrawCurvesCPU& curves : draw_->curves) {
+    includeBounds(curves.absPath, curves.aabbMin, curves.aabbMax);
+  }
+  if (!found) return false;
+  *point = (boundsMin + boundsMax) * 0.5f;
+  return true;
+}
+
+bool Gui::focusDofOnSelection(float* focusDistance) {
+  if (focusDistance) *focusDistance = 0.0f;
+  if (!cam_) return false;
+  light3d::Vec3 point;
+  if (!selectedFocusPoint(&point)) return false;
+  const light3d::Vec3 eye = cam_->eye();
+  const float distance =
+      RtFocusDistanceToPoint(eye, cam_->target() - eye, point);
+  const float minimum = std::max(1.0e-4f, cam_->nearPlane() * 1.001f);
+  if (!std::isfinite(distance) || distance <= minimum) return false;
+  cameraLens_.focusDistance = distance;
+  if (focusDistance) *focusDistance = distance;
+  return true;
 }
 
 void Gui::frameAll() {
@@ -4441,7 +4682,9 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
   return result;
 }
 
-std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
+std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH,
+                                 float* hitDistance) const {
+  if (hitDistance) *hitDistance = 0.0f;
   if (!draw_ || !cam_ || !renderer_ || vpW <= 0 || vpH <= 0) return {};
   // This is deliberately renderer-independent.  Both the GL and Vulkan
   // raster backends retain the same tessellated carrier data; only the depth
@@ -4644,8 +4887,13 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
         curveVisible = !project(meshPoint, meshX, meshY, meshDepth) ||
                        selectedDepth <= meshDepth + 1.0e-5f;
       }
-      if (curveVisible)
+      if (curveVisible) {
+        if (hitDistance) {
+          const float t = light3d::dot(unproject(selectedDepth) - ro, rd);
+          *hitDistance = (std::isfinite(t) && t > 0.0f) ? t : 0.0f;
+        }
         return draw_->curves[static_cast<size_t>(selectedId - 1)].absPath;
+      }
     }
   }
   auto curveHit = [&](const DrawCurvesCPU& c, float& outT) -> bool {
@@ -4840,10 +5088,20 @@ std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
   // curve path is only preferred when its bounds enter the ray before the mesh
   // hit; otherwise normal mesh picking remains authoritative.
   const bool meshHasExactDepth = meshT >= 0.0f;
-  if (!bestPath.empty() && (!meshHasExactDepth || bestT < meshT))
+  if (!bestPath.empty() && (!meshHasExactDepth || bestT < meshT)) {
+    if (hitDistance)
+      *hitDistance = (std::isfinite(bestT) && bestT > 0.0f) ? bestT : 0.0f;
     return bestPath;
-  if (mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size())
+  }
+  if (mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size()) {
+    if (hitDistance) {
+      const float t = std::fabs(meshT);
+      *hitDistance = (std::isfinite(t) && t > 0.0f) ? t : 0.0f;
+    }
     return draw_->meshes[static_cast<size_t>(mesh)].absPath;
+  }
+  if (hitDistance)
+    *hitDistance = (std::isfinite(bestT) && bestT > 0.0f) ? bestT : 0.0f;
   return bestPath;
 }
 
@@ -4926,7 +5184,7 @@ std::vector<int> Gui::regionPickMeshes(const ImVec2& imageMin, int vpW, int vpH)
   return hits;
 }
 
-void Gui::finishRegionSelection(const ImVec2& imageMin, int vpW, int vpH) {
+void Gui::finishRegionSelection(const ImVec2& imageMin) {
   if (!regionSelecting_) return;
   const bool wasDrag = regionSelectionMoved_;
   regionSelecting_ = false;
@@ -4945,13 +5203,8 @@ void Gui::finishRegionSelection(const ImVec2& imageMin, int vpW, int vpH) {
   if (!draw_) return;
   const float px = regionEnd_.x - imageMin.x;
   const float py = regionEnd_.y - imageMin.y;
-  const std::string path = pickCarrierPath(px, py, vpW, vpH);
-  if (!path.empty()) {
-    const int hit = pickMesh(px, py, vpW, vpH);
-    selectByPath(path, hit >= 0 ? hit : -1);
-  } else {
-    clearSelection();
-  }
+  const PickReport picked = pickViewportPixel(px, py, true);
+  if (picked.path.empty()) clearSelection();
 }
 
 void Gui::drawViewport() {
@@ -5180,7 +5433,7 @@ void Gui::drawViewport() {
           dl->AddRect(rmin, rmax, IM_COL32(130, 180, 255, 220), 0.0f);
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-          finishRegionSelection(imageMin, w, h);
+          finishRegionSelection(imageMin);
         }
       }
     }
