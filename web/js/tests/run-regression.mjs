@@ -193,6 +193,12 @@ async function runPhysics(results, opts) {
     TINYUSDZ_REGRESSION_OUT: opts.out,
   };
   results.push(await run(
+    'MuJoCo physics-only binding smoke test',
+    NODE,
+    ['tests/mujoco-physics-bindings.test.mjs'],
+    physicsEnv,
+  ));
+  results.push(await run(
     'USD Physics + MuJoCo simulation',
     NODE,
     ['cli/phys-sim.js', '--json'],

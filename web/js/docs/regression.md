@@ -1,11 +1,12 @@
 # Web regression gate
 
 All web/WASM regression procedures live under `web/js`. The canonical gate is
-`npm test`; it runs the assertion-based Node/WASM suites, the USD Physics
-simulation, every pinned MuJoCo Menagerie model through MJCF → USD → MJCF, the
-`urdf.html` renderer, and the real OffscreenCanvas/Web Worker renderer. The
-regular UI path uses five representative models; the CLI closure and Worker
-path cover every discovered primary Menagerie model.
+`npm test`; it runs the assertion-based Node/WASM suites, the physics-only
+MuJoCo binding smoke test, the USD Physics simulation, every pinned MuJoCo
+Menagerie model through MJCF → USD → MJCF, the `urdf.html` renderer, and the
+real OffscreenCanvas/Web Worker renderer. The regular UI path uses five
+representative models; the CLI closure and Worker path cover every discovered
+primary Menagerie model.
 
 ## Setup
 
@@ -93,6 +94,8 @@ captures the canvas itself, and rejects blank renders and page errors.
 ## Pass criteria
 
 - Every selected Node/WASM test exits zero.
+- The physics-only MuJoCo module compiles a spatial tendon and returns a
+  center-of-mass Jacobian distinct from the body-origin Jacobian.
 - The physics fixture extracts its Physics/MuJoCo annotations and completes the
   MuJoCo simulation.
 - Every discovered primary Menagerie MJCF has a successful forward conversion,
