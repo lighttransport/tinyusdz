@@ -170,9 +170,28 @@ displays it with an ImGui docking UI.
   (Vulkan ray query, CUDA) intersect real triangles, so the displacement is baked
   into the geometry before the BLAS/TLAS is built. Geometric normals are used on
   displaced surfaces so the new detail shades correctly.
-- **Runtime backend switch** — six render techniques, switchable **live, without
+- **Production path tracing** — `--path-trace` selects a separate multi-bounce
+  integrator while preserving the fast `--rt` preview. Vulkan uses hardware ray
+  query when the selected adapter exposes it; `--cuda` and `--hip` run the same
+  software-BVH transport kernel through their runtime-loaded GPU APIs. The
+  integrator evaluates the canonical OpenPBR/MaterialX graph used by
+  OpenChessSet, including textured base/metal/roughness/emission, transmission,
+  emissive hits, Russian roulette, IOR-aware GGX direct-light visibility, and a
+  radius-aware subsurface interior random walk. Direct-light reservoir sampling
+  skips inactive, unlinked, and dome lights instead of spending shadow rays on
+  them. USD camera optics and
+  `--f-stop`/`--focus-distance` drive deterministic thin-lens depth of field.
+  Interactive and final presets expose sample/depth/seed controls; final uses a
+  built-in variance-guided, row-parallel à-trous filter with robust firefly
+  rejection. All three GPU backends can stop at coarse checkpoints after
+  scene-linear convergence; `--pt-variance 0` keeps the maximum-throughput exact
+  sample-count path. `--linear-output image.exr` writes the
+  unfiltered scene-linear half-float accumulation independently from the
+  tone-mapped PNG/PPM display.
+- **Runtime backend switch** — nine render techniques, switchable **live, without
   restarting**, from **View ▸ Render Technique** (or their startup CLI flags):
-  GL Raster, Vulkan Raster, Vulkan RT, CUDA RT, HIP RT, and CPU RT. GL raster and
+  GL Raster, Vulkan Raster, Vulkan RT, CUDA RT, HIP RT, CPU RT, plus Vulkan,
+  CUDA, and HIP Path Trace. GL raster and
   Vulkan raster are window owners (switching between them tears down and rebuilds
   the renderer, then re-uploads the scene); Vulkan RT is a same-instance toggle on
   the Vulkan renderer (no reupload); CUDA RT, HIP RT, and CPU RT trace externally
@@ -490,6 +509,7 @@ Tools (`tools/list` for schemas):
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
 | `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |
 | `render_settings {mode?, grid?, adaptive_quality?, target_render_fps?}` | change resettable render state between captures without restarting the viewer; `mode:"picking"` displays the depth-tested mesh/curve/points picking-ID buffer |
+| `shader_reload {action, backend?, source?, watch?}` | inspect, explicitly recompile, or watch the active Vulkan GLSL / CUDA NVRTC / HIP hiprtc source while keeping the viewer and GPU scene alive |
 | `get_render_stats {}` | report UI/render FPS, threaded-render state, adaptive tier, render scale, and target FPS |
 | `screenshot {path}` | capture the current viewport as PNG, JPEG, or PPM (selected by extension) |
 | `mouse {type,x,y,...}` | inject viewport-local mouse movement or button events; `type` is `move` or `button`, with `button=0/1/2` and `down=true/false` |
@@ -531,6 +551,57 @@ main-thread-only), so they take effect on the next frame. The server is built by
 default (deps — `nlohmann/json` + civetweb — are vendored in `src/external`);
 disable with `-DTUSDVIEW_ENABLE_MCP=OFF`. The HTTP transport is the minimal
 "Streamable HTTP" subset (one JSON response per POST; no SSE).
+
+### Live GPU shader and kernel iteration
+
+Start one long-lived RT/path-trace viewer and let it watch the active backend's
+development source:
+
+```bash
+./build_ninja/tusdview --backend vk --rt --path-trace \
+  --live-shader-reload --mcp-http=8080 model.usdz
+```
+
+The default sources are `vk/shaders/raytrace.comp` for Vulkan and
+`raytracer_kernel_src.txt` for both CUDA/NVRTC and HIP/hiprtc. Packaged builds
+or alternate working copies can set an explicit path over MCP. Vulkan invokes
+`glslc`; set `TUSDVIEW_GLSLC=/absolute/path/to/glslc` when it is not on `PATH`.
+
+```bash
+# Inspect generation, compile time, errors, watch state, and pending work.
+curl -s -XPOST localhost:8080/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+        "name":"shader_reload","arguments":{"action":"status"}}}'
+
+# Compile once. backend may be active, vulkan, cuda, hip, or all.
+curl -s -XPOST localhost:8080/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+        "name":"shader_reload","arguments":{"action":"reload",
+        "backend":"active"}}}'
+
+# Watch a different source. Saving it triggers a compile within 250 ms.
+curl -s -XPOST localhost:8080/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+        "name":"shader_reload","arguments":{"action":"watch",
+        "backend":"vulkan","source":"/tmp/raytrace.comp","watch":true}}}'
+```
+
+Reload is transactional: tusdview creates and validates a replacement module
+and entry point before swapping it. Compilation or pipeline-creation errors are
+reported in `last_error`, while the previous generation keeps rendering and all
+scene buffers, textures, acceleration structures, camera state, and accumulated
+UI state remain resident. Windowed threaded Vulkan reports `pending:true` while
+the render thread completes the swap; poll `status` before taking a comparison
+`screenshot`. Simple Vulkan scenes automatically use the compact graph-free
+variant for fast iteration (including base-color textures), while MaterialX,
+OpenPBR, and advanced semantic-texture scenes compile the full interpreter. Live
+Vulkan replacement currently requires hardware
+ray query; the compute-BVH fallback continues using its embedded shader.
+
+CUDA/HIP source must preserve the exported `trace` entry point and its argument
+ABI; Vulkan source must preserve the descriptor/push-constant ABI of the active
+pipeline. The MCP server is intentionally unauthenticated and can read local
+source paths, so expose it only to trusted local clients.
 
 For render regressions, `tests/tusdview/mcp_render_batch.py` consumes a JSON
 manifest and keeps one tusdview process alive for all compatible cases. Each

@@ -18,6 +18,7 @@ Usage:
                                                   exit 2 if the image can't be read
   asset_fingerprint.py compare <a> <b> <tol>   -> exit 0 match / 1 mismatch
                                                   prints the L1 distance
+  asset_fingerprint.py metrics <a> <b>         -> JSON image-quality metrics
 
 Supports binary PPM (P6, maxval 255) natively; PNG/other via Pillow if present.
 """
@@ -25,6 +26,8 @@ Supports binary PPM (P6, maxval 255) natively; PNG/other via Pillow if present.
 import struct
 import sys
 import zlib
+import json
+import math
 
 GRID = 12       # GRID x GRID cells
 LEVELS = 16     # per-channel quantization (4 bits / nibble)
@@ -290,6 +293,43 @@ def hamming_distance(a, b):
     return dist
 
 
+def image_metrics(path_a, path_b):
+    """Return display-space error metrics for equally-sized RGB images.
+
+    SSIM is the standard global form rather than a tiled/windowed variant. It is
+    deliberately dependency-free and stable enough for cross-backend renderer
+    regression gates; the accompanying normalized RMSE and relative mean error
+    keep a globally similar but locally broken render from passing alone.
+    """
+    a = _read_image(path_a)
+    b = _read_image(path_b)
+    if a is None or b is None or a[0:2] != b[0:2]:
+        return None
+    pa, pb = a[2], b[2]
+    if len(pa) != len(pb) or not pa:
+        return None
+    n = len(pa)
+    mse = sum((int(x) - int(y)) ** 2 for x, y in zip(pa, pb)) / n
+    mean_a = sum(pa) / n
+    mean_b = sum(pb) / n
+    var_a = sum((x - mean_a) ** 2 for x in pa) / n
+    var_b = sum((x - mean_b) ** 2 for x in pb) / n
+    covariance = sum((x - mean_a) * (y - mean_b)
+                     for x, y in zip(pa, pb)) / n
+    c1 = (0.01 * 255.0) ** 2
+    c2 = (0.03 * 255.0) ** 2
+    ssim = ((2.0 * mean_a * mean_b + c1) * (2.0 * covariance + c2) /
+            ((mean_a * mean_a + mean_b * mean_b + c1) *
+             (var_a + var_b + c2)))
+    return {
+        "width": a[0],
+        "height": a[1],
+        "normalized_rmse": math.sqrt(mse) / 255.0,
+        "relative_mean_error": abs(mean_a - mean_b) / max(mean_a, 1.0),
+        "ssim": ssim,
+    }
+
+
 def main(argv):
     if len(argv) >= 3 and argv[1] == "hash":
         fp = fingerprint(argv[2])
@@ -319,6 +359,13 @@ def main(argv):
         if d < 0:
             return 1
         return 0 if d <= tol else 1
+    if len(argv) >= 4 and argv[1] == "metrics":
+        metrics = image_metrics(argv[2], argv[3])
+        if metrics is None:
+            sys.stderr.write("cannot compare images (unreadable or size mismatch)\n")
+            return 2
+        sys.stdout.write(json.dumps(metrics, sort_keys=True) + "\n")
+        return 0
     sys.stderr.write(__doc__)
     return 2
 

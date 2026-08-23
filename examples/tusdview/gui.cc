@@ -649,6 +649,44 @@ void Gui::drawDockspaceAndMenu() {
         item(RenderTechnique::CudaRT, cudaAvailable_);
         item(RenderTechnique::HipRT, hipAvailable_);
         item(RenderTechnique::CpuRT, true);  // always available, no device to probe
+        ImGui::Separator();
+        item(RenderTechnique::VulkanPathTrace,
+             vulkanCompiled && vulkanRtAvailable_ && (vkOwner ? rtAvail : true));
+        item(RenderTechnique::CudaPathTrace, cudaAvailable_);
+        item(RenderTechnique::HipPathTrace, hipAvailable_);
+        ImGui::EndMenu();
+      }
+      if (ImGui::BeginMenu("Path Trace Quality")) {
+        bool final = pathTrace_.quality == PathTraceQuality::Final;
+        if (ImGui::MenuItem("Interactive", nullptr, !final)) {
+          const bool enabled = pathTrace_.enabled;
+          pathTrace_ = PathTraceSettings::Interactive();
+          pathTrace_.enabled = enabled;
+        }
+        if (ImGui::MenuItem("Final", nullptr, final)) {
+          const bool enabled = pathTrace_.enabled;
+          pathTrace_ = PathTraceSettings::Final();
+          pathTrace_.enabled = enabled;
+        }
+        int samples = static_cast<int>(pathTrace_.targetSamples);
+        int depth = static_cast<int>(pathTrace_.maxDepth);
+        int rrDepth = static_cast<int>(pathTrace_.russianRouletteDepth);
+        int motion = static_cast<int>(pathTrace_.motionSegments);
+        if (ImGui::InputInt("Target samples", &samples))
+          pathTrace_.targetSamples = static_cast<uint32_t>(std::max(samples, 0));
+        if (ImGui::SliderInt("Max depth", &depth, 1, 64))
+          pathTrace_.maxDepth = static_cast<uint32_t>(depth);
+        if (ImGui::SliderInt("Roulette depth", &rrDepth, 0, depth))
+          pathTrace_.russianRouletteDepth = static_cast<uint32_t>(rrDepth);
+        if (ImGui::SliderInt("Motion segments", &motion, 1, 64))
+          pathTrace_.motionSegments = static_cast<uint32_t>(motion);
+        int denoise = static_cast<int>(pathTrace_.denoise);
+        const char* modes[] = {"Off", "Auto", "On"};
+        if (ImGui::Combo("Denoise", &denoise, modes, 3))
+          pathTrace_.denoise = static_cast<PathTraceDenoise>(denoise);
+        ImGui::TextDisabled("%s profile, seed %u",
+                            PathTraceQualityLabel(pathTrace_.quality),
+                            pathTrace_.seed);
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("Skinning")) {
@@ -5186,6 +5224,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[2] = eye.z;
   p.exposure = cam_->exposure();
   p.cameraLens = cameraLens_;
+  p.pathTrace = pathTrace_;
   p.mode = mode_;
   const bool pickingAov = mode_ == RenderMode::MeshId;
   // A picking-buffer view must contain only pickable, depth-tested carriers.
@@ -5313,6 +5352,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
   packet->exposure = p.exposure;
   packet->cameraLens = p.cameraLens;
+  packet->pathTrace = p.pathTrace;
   packet->mode = p.mode;
   for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
   for (int i = 0; i < 3; ++i) {

@@ -39,6 +39,10 @@ class McpHost {
   // Change resettable, per-capture state without restarting the viewer.
   virtual nlohmann::json mcpRenderSettings(const nlohmann::json& args,
                                            std::string& err) = 0;
+  // Recompile, watch, or query live Vulkan/CUDA/HIP shader modules without
+  // restarting the viewer. Implementations keep the last good module on error.
+  virtual nlohmann::json mcpShaderReload(const nlohmann::json& args,
+                                         std::string& err) = 0;
 
   // Forward an unrecognized tool name to the tinyusdz library tool dispatcher
   // (tydra::mcp::CallTool), run against a snapshot of the loaded Stage.

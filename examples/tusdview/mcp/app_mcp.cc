@@ -3,6 +3,7 @@
 // (the MCP server marshals tool calls into the render loop), so they freely read
 // the loaded scene / DrawScene and drive the camera and selection.
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -289,6 +290,103 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
               {"adaptive_quality", adaptiveQuality_},
               {"target_render_fps", adaptiveTargetFps_},
               {"render_scale", adaptiveRenderScale_}};
+}
+
+json App::mcpShaderReload(const json& args, std::string& err) {
+  finishLiveShaderReloads();
+  const std::string action = args.value("action", "status");
+  std::string backend = args.value("backend", "active");
+  const std::string source = args.value("source", std::string());
+  if (backend == "active") backend = activeLiveShaderBackend();
+  if (backend.empty() && action != "status") {
+    err = "shader_reload: no active GPU RT/path-trace backend";
+    return json::object();
+  }
+  if (backend != "vulkan" && backend != "cuda" && backend != "hip" &&
+      backend != "all" && !(backend.empty() && action == "status")) {
+    err = "shader_reload: backend must be active, vulkan, cuda, hip, or all";
+    return json::object();
+  }
+  if (!source.empty() && backend == "all") {
+    err = "shader_reload: source cannot be shared with backend=all";
+    return json::object();
+  }
+
+  auto stateJson = [&](const char* name, const LiveShaderState& state) {
+    uint64_t generation = state.successes;
+    double runtimeCompileMs = state.lastCompileMs;
+    if (std::strcmp(name, "cuda") == 0) {
+      generation = cudaTracer_.kernelGeneration();
+      if (cudaTracer_.lastKernelCompileMs() > 0.0)
+        runtimeCompileMs = cudaTracer_.lastKernelCompileMs();
+    } else if (std::strcmp(name, "hip") == 0) {
+      generation = hipTracer_.kernelGeneration();
+      if (hipTracer_.lastKernelCompileMs() > 0.0)
+        runtimeCompileMs = hipTracer_.lastKernelCompileMs();
+    }
+    return json{{"backend", name},
+                {"source", state.source},
+                {"watch", state.watch},
+                {"pending", static_cast<bool>(state.pending)},
+                {"attempts", state.attempts},
+                {"successes", state.successes},
+                {"generation", generation},
+                {"last_compile_ms", runtimeCompileMs},
+                {"last_error", state.lastError}};
+  };
+  auto allStatus = [&]() {
+    return json{{"active_backend", activeLiveShaderBackend()},
+                {"transactional", true},
+                {"poll_interval_ms", 250},
+                {"backends", json::array({
+                     stateJson("vulkan", liveVulkanShader_),
+                     stateJson("cuda", liveCudaKernel_),
+                     stateJson("hip", liveHipKernel_)})}};
+  };
+
+  if (action == "status") return allStatus();
+  if (action == "watch") {
+    if (!args.contains("watch") || !args["watch"].is_boolean()) {
+      err = "shader_reload: action=watch requires boolean watch";
+      return json::object();
+    }
+    const bool enabled = args["watch"].get<bool>();
+    auto configure = [&](LiveShaderState* state) {
+      if (!source.empty()) state->source = source;
+      state->watch = enabled;
+      state->haveTimestamp = false;
+      if (enabled && !state->source.empty()) {
+        std::error_code ec;
+        state->timestamp =
+            std::filesystem::last_write_time(state->source, ec);
+        state->haveTimestamp = !ec;
+        if (ec) state->lastError = "watch cannot stat source: " + state->source;
+      }
+    };
+    if (backend == "all" || backend == "vulkan") configure(&liveVulkanShader_);
+    if (backend == "all" || backend == "cuda") configure(&liveCudaKernel_);
+    if (backend == "all" || backend == "hip") configure(&liveHipKernel_);
+    return allStatus();
+  }
+  if (action != "reload") {
+    err = "shader_reload: action must be status, reload, or watch";
+    return json::object();
+  }
+
+  if (backend != "all") {
+    if (!reloadLiveShader(backend, source, &err)) return allStatus();
+    return allStatus();
+  }
+  std::string failures;
+  for (const char* name : {"vulkan", "cuda", "hip"}) {
+    std::string oneError;
+    if (!reloadLiveShader(name, std::string(), &oneError)) {
+      if (!failures.empty()) failures += "; ";
+      failures += std::string(name) + ": " + oneError;
+    }
+  }
+  if (!failures.empty()) err = failures;
+  return allStatus();
 }
 
 json App::mcpRenderStats(const json&, std::string&) {

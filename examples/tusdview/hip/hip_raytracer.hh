@@ -18,6 +18,7 @@
 
 #include "gpu_scene.hh"
 #include "rt_camera.hh"
+#include "path_trace.hh"
 #include "rt_scene_build.hh"  // BuildProgress, HostScene, RefitMap
 
 namespace tusdview {
@@ -35,6 +36,12 @@ class HipRayTracer {
   // once; subsequent calls are no-ops returning the cached result.
   bool init(std::string* err);
   bool initialized() const { return ready_; }
+  // hiprtc counterpart of CudaRayTracer::reloadKernel. The scene stays live and
+  // the old module is retained unless compilation and entry-point validation
+  // both succeed.
+  bool reloadKernel(const std::string& sourcePath, std::string* err);
+  uint64_t kernelGeneration() const { return kernelGeneration_; }
+  double lastKernelCompileMs() const { return lastKernelCompileMs_; }
   void setTextureBudgetBytes(size_t bytes) { textureBudgetBytes_ = bytes; }
 
   // Flatten `scene` into world-space triangles, build a BVH, and upload to the
@@ -62,7 +69,10 @@ class HipRayTracer {
              int renderMode,
              float depthScale, const float sceneMin[3], const float sceneExtent[3],
              int w, int h, std::vector<uint8_t>* rgba, std::string* err,
-             int spp = 1, const RtCameraLens* lens = nullptr);
+             int spp = 1, const RtCameraLens* lens = nullptr,
+             const PathTraceSettings* pathTrace = nullptr,
+             std::vector<float>* linearRgba = nullptr,
+             uint32_t* renderedSamples = nullptr);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
@@ -74,6 +84,8 @@ class HipRayTracer {
   void* module_{nullptr};    // hipModule_t
   void* kernel_{nullptr};    // hipFunction_t (trace)
   int device_{0};
+  uint64_t kernelGeneration_{0};
+  double lastKernelCompileMs_{0.0};
 
   // Device buffers (hipDeviceptr_t stored as uintptr_t).
   uintptr_t dTris_{0};       // float[9] positions per tri

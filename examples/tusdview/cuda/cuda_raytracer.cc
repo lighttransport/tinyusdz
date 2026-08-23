@@ -43,6 +43,7 @@ struct Cam {
   float sceneExtent[4];
   float vp[16];        // world->clip (wireframe edge projection)
   float lens[4];       // focus distance, aperture radius, enabled, reserved
+  float pathLimits[4]; // SSS events, volume events, motion segments, variance
 };
 
 // Trace kernel source, shared with the HIP backend (compiled at runtime by
@@ -58,6 +59,21 @@ static const char* kKernelSrc = GetEmbeddedKernelSource().c_str();
 #else
 #include "raytracer_kernel.inc"
 #endif
+
+// raytracer_kernel_src.txt also serves as the source of C++ raw-string chunks:
+// three `)CUDA" ... R"CUDA(` boundaries keep each MSVC literal below C2026's
+// size limit. The C++ compiler removes those wrappers from kKernelSrc; do the
+// equivalent when a developer asks NVRTC to compile the on-disk file directly.
+void NormalizeKernelSource(std::string* source) {
+  constexpr const char* close = ")CUDA\"";
+  constexpr const char* open = "R\"CUDA(";
+  for (size_t at = source->find(close); at != std::string::npos;
+       at = source->find(close, at)) {
+    const size_t next = source->find(open, at + std::strlen(close));
+    if (next == std::string::npos) break;
+    source->erase(at, next + std::strlen(open) - at);
+  }
+}
 
 char CachePathSeparator() {
 #if defined(_WIN32)
@@ -339,6 +355,7 @@ bool CudaRayTracer::init(std::string* err) {
       std::find(supported.begin(), supported.end(), 90) != supported.end()) {
     compileArch = 90;
   }
+  compileArch_ = compileArch;
 
   const std::string cacheDirectory =
       cacheDirectory_.empty() ? DefaultCudaCacheDirectory() : cacheDirectory_;
@@ -362,6 +379,7 @@ bool CudaRayTracer::init(std::string* err) {
   std::string ptx;
   if (!cachePath.empty() && ReadCacheFile(cachePath, &ptx)) {
     if (loadModule(ptx)) {
+      kernelGeneration_ = 1;
       LOGI("CUDA kernel cache hit: %s", cachePath.c_str());
       return true;
     }
@@ -409,6 +427,7 @@ bool CudaRayTracer::init(std::string* err) {
     freeRuntime();
     return false;
   }
+  kernelGeneration_ = 1;
   if (!cachePath.empty()) {
     std::string warning;
     if (WriteCacheFile(cachePath, ptx, &warning)) {
@@ -417,6 +436,85 @@ bool CudaRayTracer::init(std::string* err) {
       LOGW("CUDA kernel cache write skipped: %s", warning.c_str());
     }
   }
+  return true;
+}
+
+bool CudaRayTracer::reloadKernel(const std::string& sourcePath,
+                                 std::string* err) {
+  if (!ctx_ || !module_ || compileArch_ <= 0) {
+    if (err) *err = "CUDA runtime must be initialized before kernel reload";
+    return false;
+  }
+  std::string source;
+  if (!ReadCacheFile(sourcePath, &source)) {
+    if (err) *err = "cannot read CUDA kernel source: " + sourcePath;
+    return false;
+  }
+  NormalizeKernelSource(&source);
+  cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
+  const auto started = std::chrono::steady_clock::now();
+  nvrtcProgram program = nullptr;
+  if (nvrtcCreateProgram(&program, source.c_str(), sourcePath.c_str(), 0,
+                         nullptr, nullptr) != NVRTC_SUCCESS) {
+    if (err) *err = "nvrtcCreateProgram failed for " + sourcePath;
+    return false;
+  }
+  const std::string arch =
+      "--gpu-architecture=compute_" + std::to_string(compileArch_);
+  const char* options[] = {arch.c_str(), "--use_fast_math"};
+  const nvrtcResult compileResult = nvrtcCompileProgram(program, 2, options);
+  if (compileResult != NVRTC_SUCCESS) {
+    size_t logSize = 0;
+    nvrtcGetProgramLogSize(program, &logSize);
+    std::string log(logSize, '\0');
+    if (logSize) nvrtcGetProgramLog(program, log.data());
+    if (!log.empty() && log.back() == '\0') log.pop_back();
+    nvrtcDestroyProgram(&program);
+    if (err) *err = "NVRTC live compile failed:\n" + log;
+    return false;
+  }
+  size_t ptxSize = 0;
+  if (nvrtcGetPTXSize(program, &ptxSize) != NVRTC_SUCCESS || ptxSize == 0) {
+    nvrtcDestroyProgram(&program);
+    if (err) *err = "NVRTC live compile produced no PTX";
+    return false;
+  }
+  std::string ptx(ptxSize, '\0');
+  if (nvrtcGetPTX(program, ptx.data()) != NVRTC_SUCCESS) {
+    nvrtcDestroyProgram(&program);
+    if (err) *err = "NVRTC live PTX extraction failed";
+    return false;
+  }
+  nvrtcDestroyProgram(&program);
+
+  CUmodule replacement = nullptr;
+  if (cuModuleLoadData(&replacement, ptx.c_str()) != CUDA_SUCCESS) {
+    if (err) *err = "CUDA driver rejected live-compiled PTX";
+    return false;
+  }
+  CUfunction replacementKernel = nullptr;
+  if (cuModuleGetFunction(&replacementKernel, replacement, "trace") !=
+      CUDA_SUCCESS) {
+    cuModuleUnload(replacement);
+    if (err) *err = "live CUDA module has no trace entry point";
+    return false;
+  }
+  if (cuCtxSynchronize() != CUDA_SUCCESS) {
+    cuModuleUnload(replacement);
+    if (err) *err = "CUDA synchronization failed before kernel swap";
+    return false;
+  }
+  CUmodule previous = reinterpret_cast<CUmodule>(module_);
+  module_ = replacement;
+  kernel_ = replacementKernel;
+  cuModuleUnload(previous);
+  ++kernelGeneration_;
+  lastKernelCompileMs_ = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - started)
+                             .count();
+  LOGI("CUDA kernel live reload committed: generation %llu, %.1f ms (%s)",
+       static_cast<unsigned long long>(kernelGeneration_),
+       lastKernelCompileMs_, sourcePath.c_str());
   return true;
 }
 
@@ -615,7 +713,10 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           int renderMode, float depthScale, const float sceneMin[3],
                           const float sceneExtent[3], int w, int h,
                           std::vector<uint8_t>* rgba, std::string* err, int spp,
-                          const RtCameraLens* lens) {
+                          const RtCameraLens* lens,
+                          const PathTraceSettings* pathTrace,
+                          std::vector<float>* linearRgba,
+                          uint32_t* renderedSamples) {
   if (!ctx_ || (!dTris_ && pointCount_ == 0)) { if (err) *err = "CUDA scene not built"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   const size_t bytes = size_t(w) * h * 4;
@@ -627,7 +728,8 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     outCap_ = bytes;
   }
   // Supersample accumulator (float per channel), only for spp > 1.
-  const size_t accumBytes = (spp > 1) ? bytes * sizeof(float) : 0;
+  const bool productionPath = pathTrace && pathTrace->enabled;
+  const size_t accumBytes = (spp > 1 || productionPath) ? bytes * sizeof(float) : 0;
   if (accumBytes && accumCap_ < accumBytes) {
     if (dAccum_) cuMemFree(static_cast<CUdeviceptr>(dAccum_));
     CUdeviceptr p;
@@ -652,6 +754,16 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     cam.lens[1] = lens->apertureRadius;
     cam.lens[2] = 1.0f;
   }
+  if (pathTrace && pathTrace->enabled) {
+    cam.lens[3] = static_cast<float>(
+        0x800000u | (pathTrace->maxDepth & 255u) |
+        ((pathTrace->russianRouletteDepth & 255u) << 8u) |
+        ((pathTrace->seed & 127u) << 16u));
+    cam.pathLimits[0] = static_cast<float>(pathTrace->maxSubsurfaceEvents);
+    cam.pathLimits[1] = static_cast<float>(pathTrace->maxVolumeEvents);
+    cam.pathLimits[2] = static_cast<float>(pathTrace->motionSegments);
+    cam.pathLimits[3] = pathTrace->varianceThreshold;
+  }
   CUdeviceptr dT = triCount_ ? dTris_ : 0,
               dN = triCount_ ? dNrms_ : 0, dC = triCount_ ? dCols_ : 0,
               dG = triCount_ ? dGeo_ : 0, dM = triCount_ ? dMat_ : 0,
@@ -674,7 +786,8 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   int numTextures = numTextures_;
   int numVols = numVols_;
   const int samples = spp < 1 ? 1 : spp;
-  CUdeviceptr dAcc = (samples > 1) ? dAccum_ : 0;
+  if (renderedSamples) *renderedSamples = static_cast<uint32_t>(samples);
+  CUdeviceptr dAcc = (samples > 1 || productionPath) ? dAccum_ : 0;
   int sampleIdx = 0;
   int numSamples = samples;
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,backMats,matPbr,matBase,
@@ -806,9 +919,17 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     return true;
   }
   // Launch one kernel per Halton-jittered sample; the kernel accumulates on the
-  // device (float per channel, same math as the old host loop -- byte-identical)
-  // and resolves into the RGBA8 output on the last sample. One synchronize + one
-  // readback for the whole frame instead of one per sample.
+  // device. Normally this is one synchronize + one readback for the whole
+  // frame. Production renders optionally checkpoint at a coarse interval so a
+  // converged CUDA render can stop before its maximum sample budget.
+  int completedSamples = samples;
+  std::vector<float> convergencePrevious;
+  std::vector<float> convergenceCurrent;
+  const bool adaptive = productionPath && linearRgba && pathTrace &&
+                        pathTrace->varianceThreshold > 0.0f &&
+                        samples > static_cast<int>(pathTrace->minSamples);
+  const int convergenceInterval =
+      std::max(8, static_cast<int>(pathTrace ? pathTrace->minSamples / 4u : 8u));
   for (int s = 0; s < samples; ++s) {
     float jx, jy;
     RtPixelJitter(s, samples, &jx, &jy);
@@ -818,10 +939,52 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
                          nullptr, args, nullptr),
           "cuLaunchKernel");
+    const int completed = s + 1;
+    if (adaptive && completed >= static_cast<int>(pathTrace->minSamples) &&
+        completed % convergenceInterval == 0) {
+      CU_OK(cuCtxSynchronize(), "cuCtxSynchronize convergence");
+      convergenceCurrent.resize(size_t(w) * size_t(h) * 4u);
+      CU_OK(cuMemcpyDtoH(convergenceCurrent.data(),
+                         static_cast<CUdeviceptr>(dAccum_),
+                         convergenceCurrent.size() * sizeof(float)),
+            "cuMemcpyDtoH convergence");
+      const float inv = 1.0f / static_cast<float>(completed);
+      for (size_t i = 0; i < convergenceCurrent.size(); i += 4) {
+        convergenceCurrent[i] *= inv;
+        convergenceCurrent[i + 1] *= inv;
+        convergenceCurrent[i + 2] *= inv;
+        convergenceCurrent[i + 3] = 1.0f;
+      }
+      const double change =
+          PathTraceRelativeChange(convergenceCurrent, convergencePrevious);
+      convergencePrevious.swap(convergenceCurrent);
+      if (change <= static_cast<double>(pathTrace->varianceThreshold)) {
+        completedSamples = completed;
+        LOGI("CUDA path trace converged at %d samples "
+             "(relative RMS %.6f <= %.6f)",
+             completed, change, pathTrace->varianceThreshold);
+        break;
+      }
+    }
   }
   CU_OK(cuCtxSynchronize(), "cuCtxSynchronize");
   CU_OK(cuMemcpyDtoH(rgba->data(), static_cast<CUdeviceptr>(dOut_), bytes),
         "cuMemcpyDtoH");
+  if (linearRgba && pathTrace && pathTrace->enabled) {
+    linearRgba->resize(size_t(w) * size_t(h) * 4u);
+    CU_OK(cuMemcpyDtoH(linearRgba->data(), static_cast<CUdeviceptr>(dAccum_),
+                       linearRgba->size() * sizeof(float)),
+          "cuMemcpyDtoH(linear accumulation)");
+    const float inv = 1.0f / static_cast<float>(completedSamples);
+    for (size_t i = 0; i < linearRgba->size(); i += 4) {
+      (*linearRgba)[i] *= inv;
+      (*linearRgba)[i + 1] *= inv;
+      (*linearRgba)[i + 2] *= inv;
+      (*linearRgba)[i + 3] = 1.0f;
+    }
+  }
+  if (renderedSamples)
+    *renderedSamples = static_cast<uint32_t>(completedSamples);
   return true;
 }
 

@@ -3129,6 +3129,15 @@ if(TINYUSDZ_BUILD_TESTS)
       )
 
     add_test(
+      NAME tusdview-cli-path-trace-options
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cli-path-trace-options.sh"
+              "$<TARGET_FILE:tusdview>"
+      )
+    set_tests_properties(tusdview-cli-path-trace-options PROPERTIES
+                         LABELS "tusdview;rt;path-trace")
+
+    add_test(
       NAME tusdview-cli-window-size
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cli-window-size.sh"
@@ -3551,6 +3560,16 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-openchess-materials PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 240
                          LABELS "tusdview;rt;materialx;openpbr")
+
+    add_test(
+      NAME tusdview-openchess-path-trace
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-openchess-path-trace.sh"
+      )
+    set_tests_properties(tusdview-openchess-path-trace PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 3600
+                         LABELS "tusdview;rt;path-trace;materialx;openpbr;gpu")
 
     # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
     # both put the stand-in on top of the geometry it stands in for (intent-vfx's
