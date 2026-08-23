@@ -59,6 +59,9 @@ Preparation scripts also expose checkout/build boundaries:
 
 ```bash
 scripts/prepare-mujoco-wasm.sh --checkout-only
+# First configure/build may fetch MuJoCo's pinned CMake dependencies.
+scripts/prepare-mujoco-wasm.sh --build-only
+# Rebuild without Git or CMake FetchContent network access once cached.
 scripts/prepare-mujoco-wasm.sh --build-only --offline
 scripts/prepare-usd-assets.sh --checkout-only
 ```
@@ -70,6 +73,11 @@ gated behind `MUJOCO_WASM_EMIT_TSD` (default OFF) because the typings codegen
 shells out to `tsc --outFile`, which TypeScript 5.x removed. Point the
 physics tests at the built artifacts with
 `MUJOCO_WASM_DIR=<cache>/mujoco/wasm/dist`.
+
+`--offline` requires both the pinned MuJoCo checkout and its CMake
+FetchContent dependencies to have been populated by an earlier online build.
+It disables Git updates and configures CMake with
+`FETCHCONTENT_FULLY_DISCONNECTED=ON`.
 
 Use `scripts/verify.sh doctor --profile full` to check required host tools and
 print the manifest digest and cache location. Each action writes a JSON report
