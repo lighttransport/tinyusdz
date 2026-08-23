@@ -15,12 +15,45 @@
 
 #include <array>
 #include <map>
+#include <mutex>
+#include <string>
 
 #include "render-data.hh"
 #include "image-types.hh"
 
 namespace tinyusdz {
 namespace tydra {
+
+struct MeshVisitorEnv;
+
+//
+// Thread-local diagnostic capture for parallel conversion phases.
+//
+// When a capture is installed (RenderSceneConverter::SetDiagCapture), the
+// converter's PushError/PushWarn/AddWarning/PushInfo funnel their text into
+// the capture buffers instead of the converter-wide strings. The parallel
+// mesh-conversion driver installs one capture per worker slot and merges the
+// buffers in original prim order afterwards, so warning/error CONTENT stays
+// deterministic regardless of worker scheduling.
+//
+struct DiagCapture {
+  std::string *err{nullptr};
+  std::string *warn{nullptr};
+  std::string *info{nullptr};
+
+  bool active() const {
+    return err || warn || info;
+  }
+};
+
+namespace detail {
+
+inline DiagCapture *&DiagCaptureTls() {
+  thread_local DiagCapture *tls = nullptr;
+  return tls;
+}
+
+}  // namespace detail
 
 ///
 /// Texture image loader callback
@@ -525,6 +558,29 @@ struct RenderSceneConverterConfig {
   // (one RenderInstance per visible instance; geometry is shared via mesh_id,
   // not duplicated). See RenderSceneConverter::ExpandPointInstancer.
   bool expand_point_instancers{true};
+
+  //
+  // Worker threads for parallel per-mesh geometry conversion during
+  // ConvertToRenderScene (non-streaming).
+  //
+  //   0 = auto: use hardware_concurrency() capped at 16 on desktop/native
+  //       builds; serial (1) on WASM/single-thread runtimes or when
+  //       TINYUSDZ_NO_THREADS is defined.
+  //   1 = force the fully serial path (identical to pre-parallel behavior;
+  //       useful for deterministic tests and memory-constrained hosts).
+  //   N = cap workers at N.
+  //
+  // Conversion output is byte-identical regardless of the thread count:
+  // materials are converted in traversal order before geometry, geometry runs
+  // into per-slot outputs, and meshes/nodes/ids are merged back in original
+  // prim order. Only diagnostic (error/warning) TEXT interleaving may vary
+  // with thread count; scene data does not.
+  //
+  // Skinned meshes (those authoring skel:* joint data or a skeleton
+  // relationship) always convert on the calling thread to keep skeleton
+  // registration order deterministic.
+  //
+  int num_threads{0};
 };
 
 //
@@ -705,7 +761,9 @@ struct DefaultVertexInput {
     if (idx < opacities.size()) {
       output.opacity = opacities[idx];
     } else {
-      output.opacity = 0.0f;  // FIXME: Use 1.0?
+      // Missing opacity means opaque (USD displayOpacity default is 1.0, and
+      // RenderMesh::displayOpacity defaults to 1.0 as well).
+      output.opacity = 1.0f;
     }
 #endif
   }
@@ -913,12 +971,20 @@ class RenderSceneConverter {
   const std::string &GetWarning() const { return _warn; }
   const std::string &GetError() const { return _err; }
   const std::string &GetTimingInfo() const { return _timing_info; }
-  void AddWarning(const std::string &msg) { _warn += msg + "\n"; }
-  void ClearError() { _err.clear(); }
 
   // Append a warning line. Public so free-function prim visitors (which hold a
   // RenderSceneConverter*) can record non-fatal degradations.
-  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
+  void AddWarning(const std::string &msg) {
+    const DiagCapture *cap = detail::DiagCaptureTls();
+    if (cap && cap->warn) {
+      (*cap->warn) += msg + "\n";
+    } else {
+      _warn += msg + "\n";
+    }
+  }
+  void ClearError() { _err.clear(); }
+
+  void PushWarn(const std::string &msg) { AddWarning(msg); }
 
   // Prim path <-> index for corresponding array
   // e.g. meshMap: primPath/index to `meshes`.
@@ -1412,6 +1478,40 @@ class RenderSceneConverter {
       const Material **material, std::string *err);
 
  private:
+  //
+  // Parallel mesh-conversion support.
+  //
+
+  // Install a thread-local diagnostic capture (see DiagCapture). Returns the
+  // previously installed capture so callers can nest/restore.
+  DiagCapture *SetDiagCapture(DiagCapture *capture) {
+    DiagCapture *&tls = detail::DiagCaptureTls();
+    DiagCapture *prev = tls;
+    tls = capture;
+    return prev;
+  }
+
+  // Mutex guarding the memoization caches below and the skeletons array
+  // during parallel geometry conversion. Contention is negligible: the
+  // guarded sections are O(1) lookups plus rare first-time inserts.
+  mutable std::mutex _cache_mu;
+
+  /// Convert one deferred geometry work item into `dst`. Dispatches to
+  /// ConvertMesh / ConvertCube / ... based on item.kind. Errors/warnings are
+  /// captured via the TLS diag capture installed by the caller.
+  bool ConvertMeshWorkItem(const RenderSceneConverterEnv &env,
+                           const struct MeshWorkItem &item, RenderMesh *dst);
+
+  /// Run deferred geometry items (filled by MeshVisitor in collect mode) on a
+  /// TaskArena, then merge results into meshes/meshMap bookkeeping in
+  /// original traversal order. Items tagged convert_serially run inline
+  /// during the merge. Serial-safe: output is byte-identical to converting
+  /// every item inline.
+  bool ConvertDeferredMeshes(const RenderSceneConverterEnv &env,
+                             const std::vector<struct MeshWorkItem> &items,
+                             size_t num_workers, MeshVisitorEnv *menv,
+                             std::string *err);
+
   ///
   /// Convert variability of vertex data to 'vertex' or 'facevarying'.
   ///
@@ -1501,8 +1601,22 @@ class RenderSceneConverter {
   ///
   bool IsMeshMergeable(const RenderMesh &mesh) const;
 
-  void PushInfo(const std::string &msg) { _info += msg + "\n"; }
-  void PushError(const std::string &msg) { _err += msg + "\n"; }
+  void PushInfo(const std::string &msg) {
+    const DiagCapture *cap = detail::DiagCaptureTls();
+    if (cap && cap->info) {
+      (*cap->info) += msg + "\n";
+    } else {
+      _info += msg + "\n";
+    }
+  }
+  void PushError(const std::string &msg) {
+    const DiagCapture *cap = detail::DiagCaptureTls();
+    if (cap && cap->err) {
+      (*cap->err) += msg + "\n";
+    } else {
+      _err += msg + "\n";
+    }
+  }
 
   ///
   /// Call progress callback if set.
