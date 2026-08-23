@@ -156,6 +156,18 @@ json MCPServer::buildToolsList() const {
        {"adaptive_quality", {{"type", "boolean"}, {"description", "enable adaptive Vulkan quality"}}},
        {"target_render_fps", numProp("adaptive render FPS floor")},
        {"camera", strProp("named USD camera to resolve on the next load")}}));
+  tools.push_back(tool(
+      "shader_reload",
+      "Live GPU shader development in the persistent viewer. action=status | "
+      "reload | watch; backend=active|vulkan|cuda|hip|all. Reload compiles and "
+      "transactionally swaps a module, keeping the last good shader on error. "
+      "Watch polls the source every 250 ms; use screenshot for visual feedback.",
+      {{"action", strProp("status | reload | watch")},
+       {"backend", strProp("active | vulkan | cuda | hip | all")},
+       {"source", strProp("optional local GLSL or shared CUDA/HIP kernel path")},
+       {"watch", {{"type", "boolean"},
+                  {"description", "enable or disable file watching"}}}},
+      json::array({"action"})));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
@@ -239,7 +251,13 @@ json MCPServer::runTool(const std::string& name, const json& args, std::string& 
     }
     queue_.push_back(cmd);
   }
-  if (fut.wait_for(std::chrono::seconds(30)) != std::future_status::ready) {
+  // Runtime compiler cold starts (especially NVRTC on a large transport kernel)
+  // can exceed the ordinary interactive tool deadline. Keep other MCP calls
+  // bounded at 30 seconds while allowing an explicit shader iteration to finish
+  // and return its compiler diagnostics.
+  const auto timeout = name == "shader_reload" ? std::chrono::seconds(180)
+                                                : std::chrono::seconds(30);
+  if (fut.wait_for(timeout) != std::future_status::ready) {
     err = "tool call timed out";
     return json::object();
   }
@@ -293,6 +311,8 @@ void MCPServer::drain() {
         payload = host_->mcpSkinning(cmd->args, err);
       } else if (t == "render_settings") {
         payload = host_->mcpRenderSettings(cmd->args, err);
+      } else if (t == "shader_reload") {
+        payload = host_->mcpShaderReload(cmd->args, err);
       } else {
         // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
         payload = host_->mcpCallLibraryTool(t, cmd->args, err);

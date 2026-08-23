@@ -18,6 +18,7 @@
 #include <string>
 
 #include "gpu_scene.hh"
+#include "path_trace.hh"
 #include "scene_validation.hh"
 #include "rt_camera.hh"
 #include "rt_lod.hh"  // RtLodCamera (view-dependent RT LOD)
@@ -51,8 +52,27 @@ inline bool TextureMipDimensions(int width, int height, int mipLevels,
 // no overlay; VulkanRT is Renderer::setRayTracing() inside the owner's normal
 // renderFrame(); CudaRT/HipRT/CpuRT trace externally and composite via
 // uploadViewportImage() on top of whichever owner (GL or Vulkan) is active.
-enum class RenderTechnique { GLRaster, VulkanRaster, VulkanRT, CudaRT, HipRT, CpuRT };
-enum class OverlayKind { None, VulkanRT, CudaRT, HipRT, CpuRT };
+enum class RenderTechnique {
+  GLRaster,
+  VulkanRaster,
+  VulkanRT,
+  CudaRT,
+  HipRT,
+  CpuRT,
+  VulkanPathTrace,
+  CudaPathTrace,
+  HipPathTrace
+};
+enum class OverlayKind {
+  None,
+  VulkanRT,
+  CudaRT,
+  HipRT,
+  CpuRT,
+  VulkanPathTrace,
+  CudaPathTrace,
+  HipPathTrace
+};
 
 // GLRaster/VulkanRaster/VulkanRT mandate a specific window owner; CudaRT/
 // HipRT/CpuRT are owner-agnostic overlays that run on top of whichever owner
@@ -65,6 +85,7 @@ inline bool TechniqueRequiresOwner(RenderTechnique t, Backend* owner) {
       return true;
     case RenderTechnique::VulkanRaster:
     case RenderTechnique::VulkanRT:
+    case RenderTechnique::VulkanPathTrace:
       if (owner) *owner = Backend::Vulkan;
       return true;
     default:
@@ -77,6 +98,9 @@ inline OverlayKind OverlayForTechnique(RenderTechnique t) {
     case RenderTechnique::CudaRT: return OverlayKind::CudaRT;
     case RenderTechnique::HipRT: return OverlayKind::HipRT;
     case RenderTechnique::CpuRT: return OverlayKind::CpuRT;
+    case RenderTechnique::VulkanPathTrace: return OverlayKind::VulkanPathTrace;
+    case RenderTechnique::CudaPathTrace: return OverlayKind::CudaPathTrace;
+    case RenderTechnique::HipPathTrace: return OverlayKind::HipPathTrace;
     default: return OverlayKind::None;
   }
 }
@@ -88,6 +112,9 @@ inline const char* RenderTechniqueLabel(RenderTechnique t) {
     case RenderTechnique::CudaRT: return "CUDA RT";
     case RenderTechnique::HipRT: return "HIP RT";
     case RenderTechnique::CpuRT: return "CPU RT";
+    case RenderTechnique::VulkanPathTrace: return "Vulkan Path Trace";
+    case RenderTechnique::CudaPathTrace: return "CUDA Path Trace";
+    case RenderTechnique::HipPathTrace: return "HIP Path Trace";
   }
   return "?";
 }
@@ -185,6 +212,7 @@ struct RenderFrameParams {
   float cameraPos[3]{0, 0, 0};
   float exposure{0.0f};  // photographic exposure in stops (linear multiplier 2^x)
   RtCameraLens cameraLens;
+  PathTraceSettings pathTrace;
   RenderMode mode{RenderMode::Shaded};
   // Wireframe overlay state, cycled with the 'v' key (GL backend):
   //   0 = off (shaded fill only)
@@ -542,6 +570,14 @@ class Renderer {
     (void)h;
     return false;
   }
+  // Read the unfiltered scene-linear accumulation as top-down RGBA32F. The
+  // returned values are averages, not radiance sums.
+  virtual bool captureLinearViewport(std::vector<float>* rgba, int* w, int* h) {
+    (void)rgba;
+    (void)w;
+    (void)h;
+    return false;
+  }
 
   // Ask the next present() to grab the composited window (back buffer) so it can
   // be retrieved with captureWindow() afterwards. No-op if unsupported.
@@ -576,6 +612,19 @@ class Renderer {
   // when rayTracingAvailable() is false. Defaults to true: only backends that
   // actually have a non-hardware RT technique need to override this.
   virtual bool rayTracingIsHardware() const { return true; }
+  // Transactionally replace the active hardware ray-query compute pipeline
+  // from a SPIR-V module. The old pipeline remains live on validation/creation
+  // failure. Intended for persistent-process shader development.
+  virtual bool reloadRayTracingShader(const uint32_t* /*words*/,
+                                      size_t /*wordCount*/,
+                                      std::string* err) {
+    if (err) *err = "live Vulkan shader reload is unsupported by this backend";
+    return false;
+  }
+  // The Vulkan backend selects a compact graph-free shader for simple scenes.
+  // Live compilation mirrors that selection to avoid paying the full MaterialX
+  // driver-JIT cost when its ABI-compatible interpreter is not in use.
+  virtual bool rayTracingUsesFullShader() const { return true; }
   // Switch the active technique between rasterization (false) and ray tracing
   // (true). No-op / ignored when ray tracing is unavailable. Both techniques
   // consume the same uploaded scene, so toggling needs no reload.

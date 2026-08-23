@@ -7,10 +7,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <limits>
 
 #include "hipew.h"
 #include "displacement_bake.hh"
+#include "log.hh"
 #include "rt_scene_build.hh"  // Node, Inst, HostScene, BuildHostScene (shared)
 
 #if defined(_MSC_VER)
@@ -31,6 +33,7 @@ struct Cam {
   float sceneExtent[4];
   float vp[16];        // world->clip (wireframe edge projection)
   float lens[4];       // focus distance, aperture radius, enabled, reserved
+  float pathLimits[4]; // SSS events, volume events, motion segments, variance
 };
 
 // Trace kernel source, shared with the CUDA backend (compiled at runtime by
@@ -46,6 +49,17 @@ static const char* kKernelSrc = GetEmbeddedKernelSource().c_str();
 #else
 #include "raytracer_kernel.inc"
 #endif
+
+void NormalizeKernelSource(std::string* source) {
+  constexpr const char* close = ")CUDA\"";
+  constexpr const char* open = "R\"CUDA(";
+  for (size_t at = source->find(close); at != std::string::npos;
+       at = source->find(close, at)) {
+    const size_t next = source->find(open, at + std::strlen(close));
+    if (next == std::string::npos) break;
+    source->erase(at, next + std::strlen(open) - at);
+  }
+}
 
 #define CU_OK(call, what)                                          \
   do {                                                             \
@@ -148,6 +162,96 @@ bool HipRayTracer::init(std::string* err) {
   CU_OK(hipModuleGetFunction(&fn, mod, "trace"), "hipModuleGetFunction(trace)");
   kernel_ = fn;
   ready_ = true;
+  kernelGeneration_ = 1;
+  return true;
+}
+
+bool HipRayTracer::reloadKernel(const std::string& sourcePath,
+                                std::string* err) {
+  if (!ready_ || !module_ || !kernel_) {
+    if (err) *err = "HIP runtime must be initialized before kernel reload";
+    return false;
+  }
+  std::ifstream input(sourcePath, std::ios::binary);
+  if (!input) {
+    if (err) *err = "cannot read HIP kernel source: " + sourcePath;
+    return false;
+  }
+  input.seekg(0, std::ios::end);
+  const std::streamoff sourceSize = input.tellg();
+  if (sourceSize <= 0 || sourceSize > 64 * 1024 * 1024) {
+    if (err) *err = "invalid HIP kernel source size";
+    return false;
+  }
+  input.seekg(0, std::ios::beg);
+  std::string source(static_cast<size_t>(sourceSize), '\0');
+  if (!input.read(source.data(), sourceSize)) {
+    if (err) *err = "failed reading HIP kernel source";
+    return false;
+  }
+  NormalizeKernelSource(&source);
+  CU_OK(hipSetDevice(device_), "hipSetDevice live reload");
+  const auto started = std::chrono::steady_clock::now();
+  hiprtcProgram program = nullptr;
+  if (hiprtcCreateProgram(&program, source.c_str(), sourcePath.c_str(), 0,
+                          nullptr, nullptr) != HIPRTC_SUCCESS) {
+    if (err) *err = "hiprtcCreateProgram failed for " + sourcePath;
+    return false;
+  }
+  const char* options[] = {"-ffast-math"};
+  const hiprtcResult compileResult = hiprtcCompileProgram(program, 1, options);
+  if (compileResult != HIPRTC_SUCCESS) {
+    size_t logSize = 0;
+    hiprtcGetProgramLogSize(program, &logSize);
+    std::string log(logSize, '\0');
+    if (logSize) hiprtcGetProgramLog(program, log.data());
+    if (!log.empty() && log.back() == '\0') log.pop_back();
+    hiprtcDestroyProgram(&program);
+    if (err) *err = "hiprtc live compile failed:\n" + log;
+    return false;
+  }
+  size_t codeSize = 0;
+  if (hiprtcGetCodeSize(program, &codeSize) != HIPRTC_SUCCESS || codeSize == 0) {
+    hiprtcDestroyProgram(&program);
+    if (err) *err = "hiprtc live compile produced no code object";
+    return false;
+  }
+  std::string code(codeSize, '\0');
+  if (hiprtcGetCode(program, code.data()) != HIPRTC_SUCCESS) {
+    hiprtcDestroyProgram(&program);
+    if (err) *err = "hiprtc live code extraction failed";
+    return false;
+  }
+  hiprtcDestroyProgram(&program);
+
+  hipModule_t replacement = nullptr;
+  if (hipModuleLoadData(&replacement, code.data()) != hipSuccess) {
+    if (err) *err = "HIP runtime rejected live-compiled code object";
+    return false;
+  }
+  hipFunction_t replacementKernel = nullptr;
+  if (hipModuleGetFunction(&replacementKernel, replacement, "trace") !=
+      hipSuccess) {
+    hipModuleUnload(replacement);
+    if (err) *err = "live HIP module has no trace entry point";
+    return false;
+  }
+  if (hipDeviceSynchronize() != hipSuccess) {
+    hipModuleUnload(replacement);
+    if (err) *err = "HIP synchronization failed before kernel swap";
+    return false;
+  }
+  hipModule_t previous = reinterpret_cast<hipModule_t>(module_);
+  module_ = replacement;
+  kernel_ = replacementKernel;
+  hipModuleUnload(previous);
+  ++kernelGeneration_;
+  lastKernelCompileMs_ = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - started)
+                             .count();
+  LOGI("HIP kernel live reload committed: generation %llu, %.1f ms (%s)",
+       static_cast<unsigned long long>(kernelGeneration_),
+       lastKernelCompileMs_, sourcePath.c_str());
   return true;
 }
 
@@ -387,7 +491,10 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           int renderMode, float depthScale, const float sceneMin[3],
                           const float sceneExtent[3], int w, int h,
                           std::vector<uint8_t>* rgba, std::string* err, int spp,
-                          const RtCameraLens* lens) {
+                          const RtCameraLens* lens,
+                          const PathTraceSettings* pathTrace,
+                          std::vector<float>* linearRgba,
+                          uint32_t* renderedSamples) {
   if (!ready_ || !dTris_) { if (err) *err = "HIP scene not built"; return false; }
   CU_OK(hipSetDevice(device_), "hipSetDevice");
   const size_t bytes = size_t(w) * h * 4;
@@ -399,7 +506,8 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     outCap_ = bytes;
   }
   // Supersample accumulator (float per channel), only for spp > 1.
-  const size_t accumBytes = (spp > 1) ? bytes * sizeof(float) : 0;
+  const bool productionPath = pathTrace && pathTrace->enabled;
+  const size_t accumBytes = (spp > 1 || productionPath) ? bytes * sizeof(float) : 0;
   if (accumBytes && accumCap_ < accumBytes) {
     if (dAccum_) hipFree(reinterpret_cast<void*>(dAccum_));
     void* p = nullptr;
@@ -423,6 +531,16 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     cam.lens[0] = lens->focusDistance;
     cam.lens[1] = lens->apertureRadius;
     cam.lens[2] = 1.0f;
+  }
+  if (pathTrace && pathTrace->enabled) {
+    cam.lens[3] = static_cast<float>(
+        0x800000u | (pathTrace->maxDepth & 255u) |
+        ((pathTrace->russianRouletteDepth & 255u) << 8u) |
+        ((pathTrace->seed & 127u) << 16u));
+    cam.pathLimits[0] = static_cast<float>(pathTrace->maxSubsurfaceEvents);
+    cam.pathLimits[1] = static_cast<float>(pathTrace->maxVolumeEvents);
+    cam.pathLimits[2] = static_cast<float>(pathTrace->motionSegments);
+    cam.pathLimits[3] = pathTrace->varianceThreshold;
   }
   void* dT = reinterpret_cast<void*>(dTris_), *dN = reinterpret_cast<void*>(dNrms_),
         *dC = reinterpret_cast<void*>(dCols_), *dG = reinterpret_cast<void*>(dGeo_),
@@ -455,7 +573,9 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   int numTextures = numTextures_;
   int numVols = numVols_;
   const int samples = spp < 1 ? 1 : spp;
-  void* dAcc = (samples > 1) ? reinterpret_cast<void*>(dAccum_) : nullptr;
+  if (renderedSamples) *renderedSamples = static_cast<uint32_t>(samples);
+  void* dAcc = (samples > 1 || productionPath)
+                   ? reinterpret_cast<void*>(dAccum_) : nullptr;
   int sampleIdx = 0;
   int numSamples = samples;
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,backMats,matPbr,matBase,
@@ -597,6 +717,14 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   // per-pass sync exists only for that timing; the untimed path syncs once.
   const bool rtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
   double traceMsTotal = 0.0;
+  int completedSamples = samples;
+  std::vector<float> convergencePrevious;
+  std::vector<float> convergenceCurrent;
+  const bool adaptive = productionPath && linearRgba && pathTrace &&
+                        pathTrace->varianceThreshold > 0.0f &&
+                        samples > static_cast<int>(pathTrace->minSamples);
+  const int convergenceInterval =
+      std::max(8, static_cast<int>(pathTrace ? pathTrace->minSamples / 4u : 8u));
   for (int s = 0; s < samples; ++s) {
     float jx, jy;
     RtPixelJitter(s, samples, &jx, &jy);
@@ -615,15 +743,59 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
       std::fprintf(stderr, "[hip_raytracer] trace pass %d/%d: %.1f ms (%dx%d)\n",
                    s + 1, samples, ms, w, h);
     }
+    const int completed = s + 1;
+    if (adaptive && completed >= static_cast<int>(pathTrace->minSamples) &&
+        completed % convergenceInterval == 0) {
+      if (!rtTiming)
+        CU_OK(hipDeviceSynchronize(), "hipDeviceSynchronize convergence");
+      convergenceCurrent.resize(size_t(w) * size_t(h) * 4u);
+      CU_OK(hipMemcpyDtoH(convergenceCurrent.data(),
+                          reinterpret_cast<void*>(dAccum_),
+                          convergenceCurrent.size() * sizeof(float)),
+            "hipMemcpyDtoH convergence");
+      const float inv = 1.0f / static_cast<float>(completed);
+      for (size_t i = 0; i < convergenceCurrent.size(); i += 4) {
+        convergenceCurrent[i] *= inv;
+        convergenceCurrent[i + 1] *= inv;
+        convergenceCurrent[i + 2] *= inv;
+        convergenceCurrent[i + 3] = 1.0f;
+      }
+      const double change =
+          PathTraceRelativeChange(convergenceCurrent, convergencePrevious);
+      convergencePrevious.swap(convergenceCurrent);
+      if (change <= static_cast<double>(pathTrace->varianceThreshold)) {
+        completedSamples = completed;
+        LOGI("HIP path trace converged at %d samples "
+             "(relative RMS %.6f <= %.6f)",
+             completed, change, pathTrace->varianceThreshold);
+        break;
+      }
+    }
   }
   CU_OK(hipDeviceSynchronize(), "hipDeviceSynchronize");
   CU_OK(hipMemcpyDtoH(rgba->data(), reinterpret_cast<void*>(dOut_), bytes),
         "hipMemcpyDtoH");
+  if (linearRgba && pathTrace && pathTrace->enabled) {
+    linearRgba->resize(size_t(w) * size_t(h) * 4u);
+    CU_OK(hipMemcpyDtoH(linearRgba->data(), reinterpret_cast<void*>(dAccum_),
+                        linearRgba->size() * sizeof(float)),
+          "hipMemcpyDtoH(linear accumulation)");
+    const float inv = 1.0f / static_cast<float>(completedSamples);
+    for (size_t i = 0; i < linearRgba->size(); i += 4) {
+      (*linearRgba)[i] *= inv;
+      (*linearRgba)[i + 1] *= inv;
+      (*linearRgba)[i + 2] *= inv;
+      (*linearRgba)[i + 3] = 1.0f;
+    }
+  }
   if (rtTiming) {
     std::fprintf(stderr,
                  "[hip_raytracer] %d pass(es): %.1f ms total, %.1f ms/pass (%dx%d)\n",
-                 samples, traceMsTotal, traceMsTotal / double(samples), w, h);
+                 completedSamples, traceMsTotal,
+                 traceMsTotal / double(completedSamples), w, h);
   }
+  if (renderedSamples)
+    *renderedSamples = static_cast<uint32_t>(completedSamples);
   return true;
 }
 

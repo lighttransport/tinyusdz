@@ -90,6 +90,68 @@ backend (`examples/tusdview/vk/`); the separate LightRT GPU trace used by
 `tusdrender -vk/-vkr` also renders correctly on this GPU after its geometry/setup
 fixes — see [`doc/tusdrender.md`](tusdrender.md).
 
+## Production path tracing
+
+`--path-trace` is the production multi-bounce mode; the existing `--rt` remains
+the low-latency preview. It defaults to Vulkan hardware ray query and can use the
+runtime-loaded CUDA or HIP transport kernel with `--cuda` or `--hip`:
+
+```sh
+# Hardware Vulkan RT, final preset, thin-lens DOF, display PNG + linear HDR EXR.
+./build_ninja/tusdview --headless --backend vk --path-trace \
+  --pt-quality final --pt-samples 1024 --pt-seed 1 \
+  --f-stop 4 --focus-distance 0.72 --size 512x512 --no-grid \
+  --screenshot chess.png --linear-output chess.exr scene.usda
+
+# The same material and transport kernel on NVIDIA CUDA or AMD HIP.
+./build_ninja/tusdview --headless --cuda --path-trace --pt-samples 256 \
+  --screenshot cuda.png --linear-output cuda.exr scene.usda
+./build_ninja/tusdview --headless --hip --path-trace --pt-samples 256 \
+  --screenshot hip.png --linear-output hip.exr scene.usda
+```
+
+The interactive preset uses six bounces and automatic denoising policy; the
+final preset uses twelve bounces, Russian roulette after bounce five, 1024
+samples, and the built-in edge-aware à-trous filter. Override these with
+`--pt-max-depth`, `--pt-rr-depth`, `--pt-denoise off|auto|on`, and `--pt-seed`.
+Headless Vulkan, CUDA, and HIP check relative scene-linear RMS change after the
+configured minimum sample count and can stop a converged image early. CUDA/HIP
+keep their normal batched-launch path between coarse checkpoints and report the
+actual accepted sample count. `--pt-variance 0` disables convergence checks and
+readbacks when an exact sample count or maximum throughput is required.
+The EXR is always captured before exposure, tone mapping, and denoising; the
+ordinary screenshot is ACES-fitted and sRGB encoded. Vulkan batch renders count
+accepted accumulation samples, so a camera or TLAS invalidation does not reduce
+the requested sample count.
+
+The supported MaterialX production scope is the canonical graph/OpenPBR surface
+record used by OpenChessSet rather than arbitrary MaterialX code generation. It
+includes semantic texture transforms/UV sets, base, metalness, roughness,
+emission, transmission, IOR-aware GGX direct highlights, and stochastic
+radius-aware subsurface transport. Direct-light reservoir sampling excludes
+disabled, unlinked, and dome lights (the dome remains on the environment path),
+reducing wasted shadow rays. The display denoiser uses local variance and robust
+firefly rejection and runs rows in parallel; it never modifies the linear EXR.
+Unsupported nodes remain visible through `load_diagnostics` in the schema-v2
+JSON render report.
+
+The opt-in OpenChessSet benchmark creates a deterministic neutral key/fill rig,
+writes PNG + scene-linear EXR + JSON for each backend, rejects material/texture
+degradation, and compares normalized RMSE, relative mean error, and SSIM against
+the Vulkan reference:
+
+```sh
+TUSDVIEW_RUN_OPENCHESS_PATH=1 \
+TUSDVIEW=./build_ninja/tusdview \
+examples/tusdview/tests/run-openchess-path-trace.sh
+```
+
+Its workstation defaults are 512×512, 1024 reference spp, and 256 candidate
+spp. `TUSDVIEW_OPENCHESS_PT_SIZE`, `_REFERENCE_SPP`, `_CANDIDATE_SPP`,
+`_BACKENDS`, and `_OUT` make shorter smoke runs or persistent benchmark output
+explicit. The corresponding CTest (`tusdview-openchess-path-trace`) skips unless
+`TUSDVIEW_RUN_OPENCHESS_PATH=1` is present.
+
 ## CUDA ray-tracing run test (verified working on NVIDIA)
 
 `--cuda` traces the loaded scene's BVH on the GPU using the **CUDA driver API +
@@ -1088,6 +1150,44 @@ POST MCP requests to `http://localhost:8765/mcp`. The available tools are
 UI thread, and `get_scene_info` reports progressive load/render state. The
 interface is intended for trusted local clients and is not authenticated; it
 cannot be combined with the short-lived `--screenshot` mode.
+
+## Persistent live shader development over MCP
+
+`tusdview` can recompile its active GPU renderer without restarting or
+re-uploading the USD scene. Use `--live-shader-reload` to watch the active
+backend's default source, or call the MCP `shader_reload` tool with
+`action=status`, `reload`, or `watch`. The default files are:
+
+- Vulkan ray query: `examples/tusdview/vk/shaders/raytrace.comp` (`glslc`,
+  override with `TUSDVIEW_GLSLC`)
+- CUDA/NVRTC and HIP/hiprtc:
+  `examples/tusdview/raytracer_kernel_src.txt`
+
+```sh
+./build_ninja/tusdview --backend vk --rt --path-trace \
+  --mcp-http=8080 --live-shader-reload scene.usdz
+```
+
+An explicit MCP reload is transactional. Vulkan creates the shader module and
+replacement compute pipeline first; CUDA/HIP compile a replacement code object
+and resolve its `trace` symbol first. Only then does tusdview synchronize the
+relevant GPU work and swap handles. A bad edit therefore updates `last_error`
+but leaves the last working generation and all scene GPU allocations intact.
+The watch loop polls every 250 ms and consumes each write timestamp once, so a
+broken intermediate editor save does not cause a continuous compile loop.
+
+Threaded Vulkan swaps are queued without blocking the UI/MCP thread and initially
+return `pending:true`; poll `shader_reload {"action":"status"}` until it becomes
+false, then call `screenshot` for visual comparison. Vulkan mirrors the active
+scene's shader variant: simple scenes use the compact graph-free build for much
+lower driver-JIT latency (including base-color textures), while OpenPBR,
+MaterialX, and advanced semantic-texture scenes retain the full MaterialX-capable
+build. The compute-BVH fallback is not live-reloadable
+yet. CUDA/HIP kernels must retain the existing `trace` name and parameter ABI,
+and Vulkan edits must retain the descriptor-set and push-constant ABI.
+
+MCP accepts arbitrary local source paths and the HTTP endpoint has no
+authentication. Keep it bound to the trusted development machine/network.
 
 ## Vulkan validation layers (debugging the Vulkan/threaded paths)
 

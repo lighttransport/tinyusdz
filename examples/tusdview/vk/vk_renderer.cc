@@ -5827,6 +5827,7 @@ void VulkanRenderer::syncSceneResources(
   // append-only in the next loader, so repacking the whole table is safe.
   growTextureSlots(textureCount);
   rtMaterialsCpu_ = materials;
+  selectFullRtShaderIfNeeded(materials);
   rtTextureTableDirty_ = true;
   updateMaterialTables(materials);
 }
@@ -6064,6 +6065,7 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   destroyScene();  // resets texPool_, clears texDescs_, sets whiteDesc_ = NULL
   rtTextureTableDirty_ = true;
   rtMaterialsCpu_ = materials;
+  selectFullRtShaderIfNeeded(materials);
   rtTexturesCpu_.resize(textureCount > 0 ? static_cast<size_t>(textureCount) : 0);
 
   // Default white texture descriptor + one white slot per texture (filled lazily).
@@ -9665,6 +9667,20 @@ void VulkanRenderer::rebuildTlas() {
   ++rtAccumGen_;  // geometry changed -> restart progressive accumulation
 }
 
+static bool MaterialsNeedFullRtShader(
+    const std::vector<DrawMaterialCPU>& materials) {
+  return std::any_of(materials.begin(), materials.end(),
+                     [](const DrawMaterialCPU& m) {
+    // The compact graph-free module handles Preview-style scalar material plus
+    // a base-color texture. Upgrade only when the scene needs the MaterialX /
+    // OpenPBR interpreter or semantic texture lanes absent from that fast path.
+    return !m.materialXGraph.nodes.empty() || m.hasLightRtOpenPBR ||
+           m.metallicTex >= 0 || m.roughnessTex >= 0 ||
+           m.normalTex >= 0 || m.opacityTex >= 0 ||
+           m.emissiveTex >= 0 || m.coatNormalTex >= 0;
+  });
+}
+
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
   constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
@@ -9751,17 +9767,9 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &rtPipelineLayout_),
            "rt pipeline layout");
 
-  const bool hasMaterialXGraphs = std::any_of(
-      rtMaterialsCpu_.begin(), rtMaterialsCpu_.end(), [](const DrawMaterialCPU& m) {
-        // The compact graph-free module intentionally handles only the common
-        // untextured Preview-style material. Keep textured/OpenPBR materials on
-        // the full module so the fast startup variant never silently drops
-        // authored lobes or semantic texture slots.
-        return !m.materialXGraph.nodes.empty() || m.hasLightRtOpenPBR ||
-               m.baseColorTex >= 0 || m.metallicTex >= 0 ||
-               m.roughnessTex >= 0 || m.normalTex >= 0 || m.opacityTex >= 0 ||
-               m.emissiveTex >= 0 || m.coatNormalTex >= 0;
-      });
+  const bool hasMaterialXGraphs =
+      MaterialsNeedFullRtShader(rtMaterialsCpu_);
+  rtUsesFullShader_ = hasMaterialXGraphs;
 #if defined(TUSDVIEW_HAVE_FAST_RT_SHADER) && TUSDVIEW_HAVE_FAST_RT_SHADER
   const void* rtShaderCode = hasMaterialXGraphs
                                   ? static_cast<const void*>(raytrace_comp_spv)
@@ -9880,6 +9888,33 @@ bool VulkanRenderer::createRtResources(std::string* err) {
 #else
   (void)err;
   return false;
+#endif
+}
+
+void VulkanRenderer::selectFullRtShaderIfNeeded(
+    const std::vector<DrawMaterialCPU>& materials) {
+#if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
+  if (rtUsesFullShader_ || !MaterialsNeedFullRtShader(materials) ||
+      rtPipeline_ == VK_NULL_HANDLE ||
+      rtTechnique_ != RtTechnique::kHardware) {
+    return;
+  }
+  const size_t bytes = sizeof(raytrace_comp_spv);
+  if ((bytes & 3u) != 0u) {
+    LOGW("cannot select full Vulkan RT shader: embedded SPIR-V size is invalid");
+    return;
+  }
+  std::vector<uint32_t> words(bytes / sizeof(uint32_t));
+  std::memcpy(words.data(), raytrace_comp_spv, bytes);
+  std::string error;
+  if (!reloadRayTracingShader(words.data(), words.size(), &error)) {
+    LOGW("cannot select full Vulkan RT shader: %s", error.c_str());
+    return;
+  }
+  rtUsesFullShader_ = true;
+  LOGI("Vulkan RT selected full MaterialX/textured shader for loaded scene");
+#else
+  (void)materials;
 #endif
 }
 
@@ -10439,7 +10474,8 @@ void VulkanRenderer::createRtImage() {
                         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                         &rtImage_, &rtImageMem_, &rtImageView_))
     return;
-  if (!makeStorageImage(VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT,
+  if (!makeStorageImage(VK_FORMAT_R32G32B32A32_SFLOAT,
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                         &accumImage_, &accumImageMem_, &accumImageView_)) {
     // Accumulation image failed; do not leave the rt image half-created.
     if (rtImageView_) {
@@ -10545,6 +10581,15 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.pointParams[0] = rtPointCount_;
   pc.pointParams[1] = rtPointNodeCount_;
   pc.pointParams[2] = rtPointChunkCount_;
+  pc.pointParams[3] = pathTrace_.enabled
+                          ? ((pathTrace_.maxDepth & 0xffu) |
+                             ((pathTrace_.russianRouletteDepth & 0xffu) << 8u) |
+                             ((pathTrace_.seed & 0x7fu) << 16u) |
+                             ((std::min(pathTrace_.maxSubsurfaceEvents, 255u) &
+                               0xffu)
+                              << 23u) |
+                             0x80000000u)
+                          : 0u;
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
@@ -10728,6 +10773,138 @@ void VulkanRenderer::setRayTracing(bool enable) {
     rtTextureTableDirty_ = true;
     tlasDirty_ = true;  // build AS/BVH lazily before the next trace
   }
+}
+
+bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
+                                             size_t wordCount,
+                                             std::string* err) {
+#if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
+  LOGI("Vulkan RT live reload: validating %zu-byte SPIR-V",
+       wordCount * sizeof(uint32_t));
+  if (!words || wordCount < 5u || words[0] != 0x07230203u) {
+    if (err) *err = "invalid or empty SPIR-V module";
+    return false;
+  }
+  if (rtTechnique_ != RtTechnique::kHardware ||
+      rtPipelineLayout_ == VK_NULL_HANDLE || rtPipeline_ == VK_NULL_HANDLE) {
+    if (err)
+      *err = "hardware Vulkan ray query must be active before live reload";
+    return false;
+  }
+  VkShaderModule shader = createShader(words, wordCount * sizeof(uint32_t));
+  if (shader == VK_NULL_HANDLE) {
+    if (err) *err = "vkCreateShaderModule rejected the compiled SPIR-V";
+    return false;
+  }
+  VkComputePipelineCreateInfo info{};
+  info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+  info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+  info.stage.module = shader;
+  info.stage.pName = "main";
+  info.layout = rtPipelineLayout_;
+  // Reuse the same persistent driver cache as startup pipeline creation. This
+  // matters both for an automatic graph-free -> full-MaterialX upgrade and for
+  // repeated edits: NVIDIA can otherwise spend tens of seconds re-JITing this
+  // large compute shader even when most generated code is unchanged.
+  VkPhysicalDeviceProperties props{};
+  vkGetPhysicalDeviceProperties(phys_, &props);
+  const size_t shaderBytes = wordCount * sizeof(uint32_t);
+  const std::string cachePath =
+      RtPipelineCachePath(props, words, shaderBytes);
+  std::vector<uint8_t> cacheBlob;
+  if (!cachePath.empty()) {
+    std::ifstream input(cachePath, std::ios::binary);
+    if (input) {
+      input.seekg(0, std::ios::end);
+      const std::streamoff size = input.tellg();
+      if (size > 0) {
+        input.seekg(0, std::ios::beg);
+        cacheBlob.resize(static_cast<size_t>(size));
+        if (!input.read(reinterpret_cast<char*>(cacheBlob.data()), size))
+          cacheBlob.clear();
+      }
+    }
+  }
+  VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+  VkPipelineCacheCreateInfo cacheInfo{};
+  cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+  cacheInfo.initialDataSize = cacheBlob.size();
+  cacheInfo.pInitialData = cacheBlob.empty() ? nullptr : cacheBlob.data();
+  if (vkCreatePipelineCache(device_, &cacheInfo, nullptr, &pipelineCache) !=
+      VK_SUCCESS) {
+    pipelineCache = VK_NULL_HANDLE;
+  }
+  VkPipeline replacement = VK_NULL_HANDLE;
+  const VkResult result = vkCreateComputePipelines(
+      device_, pipelineCache, 1, &info, nullptr, &replacement);
+  vkDestroyShaderModule(device_, shader, nullptr);
+  if (result != VK_SUCCESS || replacement == VK_NULL_HANDLE) {
+    if (pipelineCache)
+      vkDestroyPipelineCache(device_, pipelineCache, nullptr);
+    if (err) {
+      *err = "vkCreateComputePipelines rejected live shader (VkResult " +
+             std::to_string(static_cast<int>(result)) + ")";
+    }
+    return false;
+  }
+  if (pipelineCache && !cachePath.empty()) {
+    size_t size = 0;
+    if (vkGetPipelineCacheData(device_, pipelineCache, &size, nullptr) ==
+            VK_SUCCESS &&
+        size > 0) {
+      std::vector<uint8_t> data(size);
+      if (vkGetPipelineCacheData(device_, pipelineCache, &size, data.data()) ==
+          VK_SUCCESS) {
+        std::error_code ec;
+        std::filesystem::create_directories(
+            std::filesystem::path(cachePath).parent_path(), ec);
+        const std::string temporary =
+            cachePath + ".tmp" + std::to_string(
+                static_cast<unsigned long long>(
+                    std::chrono::steady_clock::now().time_since_epoch().count()));
+        {
+          std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+          if (output)
+            output.write(reinterpret_cast<const char*>(data.data()),
+                         static_cast<std::streamsize>(size));
+        }
+        std::filesystem::rename(temporary, cachePath, ec);
+        if (ec) std::filesystem::remove(temporary, ec);
+      }
+    }
+  }
+  if (pipelineCache)
+    vkDestroyPipelineCache(device_, pipelineCache, nullptr);
+  LOGI("Vulkan RT live reload: replacement pipeline created; retiring prior frame");
+  // The replacement was fully validated before touching the active pipeline.
+  // Retire the old object only after all previously submitted command buffers
+  // have completed; scene descriptors and acceleration structures stay intact.
+  // There is one frame in flight. Wait for its render fence instead of
+  // vkDeviceWaitIdle: the latter also waits for window-system presentation and
+  // can stall indefinitely under Xvfb/PRIME even though all shader-using command
+  // buffers have retired. The fence is the precise lifetime boundary needed for
+  // replacing the compute pipeline.
+  const VkResult idle = vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE,
+                                        UINT64_MAX);
+  if (idle != VK_SUCCESS) {
+    vkDestroyPipeline(device_, replacement, nullptr);
+    if (err) *err = "Vulkan frame fence wait failed during shader swap";
+    return false;
+  }
+  VkPipeline old = rtPipeline_;
+  rtPipeline_ = replacement;
+  vkDestroyPipeline(device_, old, nullptr);
+  ++rtAccumGen_;
+  LOGI("Vulkan RT shader live reload committed (%zu-byte SPIR-V)",
+       wordCount * sizeof(uint32_t));
+  return true;
+#else
+  (void)words;
+  (void)wordCount;
+  if (err) *err = "Vulkan RT shader support was not compiled";
+  return false;
+#endif
 }
 
 void VulkanRenderer::setLodCamera(const RtLodCamera& cam, bool reselect) {
@@ -11133,6 +11310,14 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   if (params.proj) std::memcpy(proj_, params.proj, sizeof(proj_));
   for (int i = 0; i < 3; ++i) cameraPos_[i] = params.cameraPos[i];
   exposure_ = params.exposure;
+  if (pathTrace_.enabled != params.pathTrace.enabled ||
+      pathTrace_.maxDepth != params.pathTrace.maxDepth ||
+      pathTrace_.russianRouletteDepth !=
+          params.pathTrace.russianRouletteDepth ||
+      pathTrace_.seed != params.pathTrace.seed) {
+    ++rtAccumGen_;
+  }
+  pathTrace_ = params.pathTrace;
   if (cameraLens_.focusDistance != params.cameraLens.focusDistance ||
       cameraLens_.apertureRadius != params.cameraLens.apertureRadius) {
     cameraLens_ = params.cameraLens;
@@ -13044,6 +13229,83 @@ bool VulkanRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h)
   *w = vpW_;
   *h = vpH_;
   return true;  // colorFormat_ is R8G8B8A8_UNORM, top-down (Y-flipped viewport)
+}
+
+bool VulkanRenderer::captureLinearViewport(std::vector<float>* rgba, int* w,
+                                           int* h) {
+  if (!device_ || !accumImage_ || !rgba || !w || !h || vpW_ < 1 || vpH_ < 1)
+    return false;
+  vkDeviceWaitIdle(device_);
+  const VkDeviceSize bytes = static_cast<VkDeviceSize>(vpW_) *
+                             static_cast<VkDeviceSize>(vpH_) * 4u * sizeof(float);
+  VkBuffer buf = VK_NULL_HANDLE;
+  VkDeviceMemory mem = VK_NULL_HANDLE;
+  VkBufferCreateInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bi.size = bytes;
+  bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  if (vkCreateBuffer(device_, &bi, nullptr, &buf) != VK_SUCCESS) return false;
+  VkMemoryRequirements req{};
+  vkGetBufferMemoryRequirements(device_, buf, &req);
+  VkMemoryAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  ai.allocationSize = req.size;
+  ai.memoryTypeIndex = findMemoryType(
+      req.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (vkAllocateMemory(device_, &ai, nullptr, &mem) != VK_SUCCESS ||
+      vkBindBufferMemory(device_, buf, mem, 0) != VK_SUCCESS) {
+    if (mem) vkFreeMemory(device_, mem, nullptr);
+    vkDestroyBuffer(device_, buf, nullptr);
+    return false;
+  }
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier barrier{};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+  barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = accumImage_;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.layerCount = 1;
+  barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                       1, &barrier);
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = {static_cast<uint32_t>(vpW_),
+                        static_cast<uint32_t>(vpH_), 1u};
+  vkCmdCopyImageToBuffer(cb, accumImage_, VK_IMAGE_LAYOUT_GENERAL, buf, 1,
+                         &region);
+  endOneShot(cb);
+  void* mapped = nullptr;
+  if (vkMapMemory(device_, mem, 0, bytes, 0, &mapped) != VK_SUCCESS || !mapped) {
+    vkDestroyBuffer(device_, buf, nullptr);
+    vkFreeMemory(device_, mem, nullptr);
+    return false;
+  }
+  rgba->resize(static_cast<size_t>(vpW_) * static_cast<size_t>(vpH_) * 4u);
+  std::memcpy(rgba->data(), mapped, static_cast<size_t>(bytes));
+  vkUnmapMemory(device_, mem);
+  const float inv = 1.0f /
+      static_cast<float>(std::max(rayTracingAccumulatedSamples(), 1u));
+  for (size_t i = 0; i < rgba->size(); i += 4) {
+    (*rgba)[i] *= inv;
+    (*rgba)[i + 1] *= inv;
+    (*rgba)[i + 2] *= inv;
+    (*rgba)[i + 3] = 1.0f;
+  }
+  vkDestroyBuffer(device_, buf, nullptr);
+  vkFreeMemory(device_, mem, nullptr);
+  *w = vpW_;
+  *h = vpH_;
+  return true;
 }
 
 bool VulkanRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {

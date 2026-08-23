@@ -177,6 +177,42 @@ bool ParseWindowSize(const char* text, int* width, int* height) {
   return true;
 }
 
+bool ParseUnsigned(const char* text, unsigned* value) {
+  if (!text || !value || text[0] == '\0' || text[0] == '-') return false;
+  char* end = nullptr;
+  const unsigned long parsed = std::strtoul(text, &end, 10);
+  if (!end || end == text || *end != '\0' ||
+      parsed > static_cast<unsigned long>(UINT32_MAX)) {
+    return false;
+  }
+  *value = static_cast<unsigned>(parsed);
+  return true;
+}
+
+bool ParseFinitePositiveFloat(const char* text, float* value) {
+  if (!text || !value || text[0] == '\0') return false;
+  char* end = nullptr;
+  const float parsed = std::strtof(text, &end);
+  if (!end || end == text || *end != '\0' || !std::isfinite(parsed) ||
+      parsed <= 0.0f) {
+    return false;
+  }
+  *value = parsed;
+  return true;
+}
+
+bool ParseFiniteNonNegativeFloat(const char* text, float* value) {
+  if (!text || !value || text[0] == '\0') return false;
+  char* end = nullptr;
+  const float parsed = std::strtof(text, &end);
+  if (!end || end == text || *end != '\0' || !std::isfinite(parsed) ||
+      parsed < 0.0f) {
+    return false;
+  }
+  *value = parsed;
+  return true;
+}
+
 // Host memory the budget tree may plan against: MemAvailable, capped at the
 // 32 GiB the policy targets (planning against a 256 GiB workstation's full RAM
 // would size the stage/geometry limits far past anything sensible). Falls back
@@ -209,6 +245,7 @@ int main(int argc, char** argv) {
   std::optional<std::string> configPath;
   std::string file;
   std::string screenshot;
+  std::string linearOutput;
   std::string renderReport;
   int checkpointEvery = 0;
   std::string checkpointPattern;
@@ -278,6 +315,21 @@ int main(int argc, char** argv) {
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   bool wantCpuRt = false;     // --cpu-rt: CPU (lightrt_c) ray tracer
   int rtSamples = 1;          // --rt-samples: AA supersamples for RT paths
+  bool wantPathTrace = false;
+  tusdview::PathTraceSettings pathTraceSettings;
+  bool ptFinal = false;
+  std::optional<unsigned> ptSamples;
+  std::optional<unsigned> ptMaxDepth;
+  std::optional<unsigned> ptRrDepth;
+  std::optional<unsigned> ptMotionSegments;
+  std::optional<unsigned> ptSeed;
+  std::optional<unsigned> ptMaxSssEvents;
+  std::optional<unsigned> ptMaxVolumeEvents;
+  std::optional<float> ptVariance;
+  tusdview::PathTraceDenoise ptDenoise = tusdview::PathTraceDenoise::Auto;
+  bool ptDenoiseExplicit = false;
+  float fStopOverride = 0.0f;
+  float focusDistanceOverride = 0.0f;
   long long rtMaxInstances = 16000000;  // --max-instances: CUDA/HIP instance cap (0=off)
   bool lodStream = false;     // --lod-stream: view-dependent district LOD (needs --next)
   double lodMaxMem = 0.0;     // --max-mem GiB: host budget for --lod-stream (0=auto)
@@ -292,6 +344,7 @@ int main(int argc, char** argv) {
   std::string wantSelect;  // --select <prim path>
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
+  bool liveShaderWatch = false;  // poll active GPU shader/kernel source
   int streamHttpPort = 0;     // WebSocket stream server port (0 = off)
   std::string streamCodec = "png";   // idle-refinement codec: png|qoi
   int streamMotionRes = 1280;        // motion-frame long-edge cap (px)
@@ -799,6 +852,85 @@ int main(int argc, char** argv) {
       playAnim = true;
     } if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
+    } if (std::strcmp(argv[i], "--path-trace") == 0) {
+      wantPathTrace = true;
+    } if (std::strcmp(argv[i], "--pt-quality") == 0 && i + 1 < argc) {
+      const char* q = argv[++i];
+      if (std::strcmp(q, "final") == 0) ptFinal = true;
+      else if (std::strcmp(q, "interactive") == 0) ptFinal = false;
+      else { LOGE("--pt-quality must be interactive or final"); return 1; }
+    } if (std::strcmp(argv[i], "--pt-samples") == 0) {
+      unsigned v = 0;
+      if (i + 1 >= argc || !ParseUnsigned(argv[++i], &v)) {
+        LOGE("--pt-samples must be an unsigned integer"); return 1;
+      }
+      ptSamples = v;
+    } if (std::strcmp(argv[i], "--pt-max-depth") == 0) {
+      unsigned v = 0;
+      if (i + 1 >= argc || !ParseUnsigned(argv[++i], &v) || v == 0) {
+        LOGE("--pt-max-depth must be a positive integer"); return 1;
+      }
+      ptMaxDepth = v;
+    } if (std::strcmp(argv[i], "--pt-rr-depth") == 0) {
+      unsigned v = 0;
+      if (i + 1 >= argc || !ParseUnsigned(argv[++i], &v)) {
+        LOGE("--pt-rr-depth must be an unsigned integer"); return 1;
+      }
+      ptRrDepth = v;
+    } if (std::strcmp(argv[i], "--pt-motion-segments") == 0) {
+      unsigned v = 0;
+      if (i + 1 >= argc || !ParseUnsigned(argv[++i], &v) || v == 0) {
+        LOGE("--pt-motion-segments must be a positive integer"); return 1;
+      }
+      ptMotionSegments = v;
+    } if (std::strcmp(argv[i], "--pt-seed") == 0) {
+      unsigned v = 0;
+      if (i + 1 >= argc || !ParseUnsigned(argv[++i], &v)) {
+        LOGE("--pt-seed must be an unsigned integer"); return 1;
+      }
+      ptSeed = v;
+    } if (std::strcmp(argv[i], "--pt-max-sss-events") == 0) {
+      unsigned v = 0;
+      if (i + 1 >= argc || !ParseUnsigned(argv[++i], &v) || v == 0) {
+        LOGE("--pt-max-sss-events must be a positive integer"); return 1;
+      }
+      ptMaxSssEvents = v;
+    } if (std::strcmp(argv[i], "--pt-max-volume-events") == 0) {
+      unsigned v = 0;
+      if (i + 1 >= argc || !ParseUnsigned(argv[++i], &v) || v == 0) {
+        LOGE("--pt-max-volume-events must be a positive integer"); return 1;
+      }
+      ptMaxVolumeEvents = v;
+    } if (std::strcmp(argv[i], "--pt-variance") == 0) {
+      float v = 0.0f;
+      if (i + 1 >= argc || !ParseFiniteNonNegativeFloat(argv[++i], &v)) {
+        LOGE("--pt-variance must be a finite non-negative number"); return 1;
+      }
+      ptVariance = v;
+    } if (std::strcmp(argv[i], "--pt-denoise") == 0 && i + 1 < argc) {
+      const char* d = argv[++i];
+      ptDenoiseExplicit = true;
+      if (std::strcmp(d, "off") == 0) ptDenoise = tusdview::PathTraceDenoise::Off;
+      else if (std::strcmp(d, "auto") == 0) ptDenoise = tusdview::PathTraceDenoise::Auto;
+      else if (std::strcmp(d, "on") == 0) ptDenoise = tusdview::PathTraceDenoise::On;
+      else { LOGE("--pt-denoise must be off, auto, or on"); return 1; }
+    } if (std::strcmp(argv[i], "--linear-output") == 0) {
+      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
+        LOGE("--linear-output requires an EXR path"); return 1;
+      }
+      linearOutput = argv[++i];
+    } if (std::strcmp(argv[i], "--f-stop") == 0) {
+      float v = 0.0f;
+      if (i + 1 >= argc || !ParseFinitePositiveFloat(argv[++i], &v)) {
+        LOGE("--f-stop must be a finite positive number"); return 1;
+      }
+      fStopOverride = v;
+    } if (std::strcmp(argv[i], "--focus-distance") == 0) {
+      float v = 0.0f;
+      if (i + 1 >= argc || !ParseFinitePositiveFloat(argv[++i], &v)) {
+        LOGE("--focus-distance must be a finite positive number"); return 1;
+      }
+      focusDistanceOverride = v;
     } if (std::strcmp(argv[i], "--cuda") == 0) {
       wantCuda = true;
     } if (std::strcmp(argv[i], "--cuda-cache-dir") == 0) {
@@ -902,6 +1034,8 @@ int main(int argc, char** argv) {
     } if (std::strcmp(argv[i], "--mcp") == 0) {
       mcpStdio = true;
       if (mcpHttpPort == 0) mcpHttpPort = 8080;
+    } if (std::strcmp(argv[i], "--live-shader-reload") == 0) {
+      liveShaderWatch = true;
     } if (std::strncmp(argv[i], "--stream-http", 13) == 0) {
       // Optional value: `--stream-http=PORT`, `--stream-http PORT`, or bare
       // `--stream-http` (defaults to 8090). The space form consumes the next
@@ -942,6 +1076,18 @@ int main(int argc, char** argv) {
           "Also available in config as vulkan_device.\n"
           "  --rt          Use Vulkan ray tracing (ray query) when supported "
           "(implies --backend vk).\n"
+          "  --path-trace  Use the production multi-bounce integrator. Select "
+          "Vulkan by default, or combine with --cuda/--hip.\n"
+          "  --pt-quality interactive|final  Select 6-bounce interactive or "
+          "12-bounce final defaults.\n"
+          "  --pt-samples N  Target samples (0 = continuous interactive).\n"
+          "  --pt-max-depth N / --pt-rr-depth N  Path and roulette depths.\n"
+          "  --pt-variance X  Adaptive convergence threshold (0 disables).\n"
+          "  --pt-denoise off|auto|on  Built-in edge-aware denoising policy.\n"
+          "  --pt-motion-segments N  Stratified shutter snapshots.\n"
+          "  --pt-seed N  Deterministic sampling seed.\n"
+          "  --linear-output out.exr  Write unfiltered scene-linear half EXR.\n"
+          "  --f-stop F / --focus-distance D  Override USD camera lens values.\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --cuda-cache-dir PATH  Store compiled CUDA PTX in PATH (default: the "
@@ -1120,6 +1266,8 @@ int main(int argc, char** argv) {
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
           "  --mcp         Both transports.\n"
+          "  --live-shader-reload  Watch the active Vulkan/CUDA/HIP RT source and\n"
+          "                        transactionally recompile it after file saves.\n"
           "  --stream-http[=PORT]  WebSocket browser viewer streaming the window "
           "(incl. ImGui); default port 8090. Navigate/click from the browser.\n"
           "  --stream-codec png|qoi  Idle-refinement codec sent when the view is "
@@ -1317,6 +1465,44 @@ int main(int argc, char** argv) {
   if (maxAssetReadBytes > 0) {
     tinyusdz::security_policy::SetMaxAssetReadBytes(
         static_cast<size_t>(maxAssetReadBytes));
+  }
+
+  if (wantPathTrace) {
+    if (wantCpuRt) {
+      LOGE("--path-trace supports Vulkan, CUDA, and HIP; --cpu-rt remains a preview renderer");
+      return 1;
+    }
+    pathTraceSettings = ptFinal ? tusdview::PathTraceSettings::Final()
+                                : tusdview::PathTraceSettings::Interactive();
+    pathTraceSettings.enabled = true;
+    if (ptSamples) pathTraceSettings.targetSamples = *ptSamples;
+    if (ptMaxDepth) pathTraceSettings.maxDepth = *ptMaxDepth;
+    if (ptRrDepth) pathTraceSettings.russianRouletteDepth = *ptRrDepth;
+    if (ptMotionSegments) pathTraceSettings.motionSegments = *ptMotionSegments;
+    if (ptSeed) pathTraceSettings.seed = *ptSeed;
+    if (ptMaxSssEvents)
+      pathTraceSettings.maxSubsurfaceEvents = *ptMaxSssEvents;
+    if (ptMaxVolumeEvents)
+      pathTraceSettings.maxVolumeEvents = *ptMaxVolumeEvents;
+    if (ptVariance) pathTraceSettings.varianceThreshold = *ptVariance;
+    if (ptDenoiseExplicit) pathTraceSettings.denoise = ptDenoise;
+    pathTraceSettings.sanitize();
+    if (!wantCuda && !wantHip) wantRt = true;
+    if ((wantCuda || wantHip) && pathTraceSettings.targetSamples > 0)
+      rtSamples = static_cast<int>(std::min(pathTraceSettings.targetSamples,
+                                           1048576u));
+    if (headless && !wantCuda && !wantHip && maxFrames < 0 &&
+        pathTraceSettings.targetSamples > 0)
+      maxFrames = static_cast<int>(pathTraceSettings.targetSamples);
+  } else if (!linearOutput.empty()) {
+    LOGE("--linear-output requires --path-trace");
+    return 1;
+  }
+  if (!linearOutput.empty() &&
+      LowerCopy(std::filesystem::path(linearOutput).extension().string()) !=
+          ".exr") {
+    LOGE("--linear-output must use the .exr extension");
+    return 1;
   }
 
   // Ray tracing is a Vulkan technique, so --rt implies the Vulkan backend.
@@ -1661,6 +1847,7 @@ int main(int argc, char** argv) {
   app.setPlayAnimation(playAnim);
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);
+  app.setLiveShaderWatch(liveShaderWatch);
   app.setStreamHttp(streamHttpPort);
   app.setStreamCodec(streamCodec);
   app.setStreamMotionRes(streamMotionRes);
@@ -1678,6 +1865,9 @@ int main(int argc, char** argv) {
   app.setHipRt(wantHip);
   app.setCpuRt(wantCpuRt);
   app.setRtSamples(rtSamples);
+  app.setPathTraceSettings(pathTraceSettings);
+  app.setLinearOutput(linearOutput);
+  app.setLensOverrides(fStopOverride, focusDistanceOverride);
   app.setRenderReport(renderReport);
   app.setCheckpointOutput(checkpointEvery, checkpointPattern);
   app.setLargeSceneProfile(ProfileName(effectiveProfile));

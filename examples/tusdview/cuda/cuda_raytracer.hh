@@ -19,6 +19,7 @@
 
 #include "gpu_scene.hh"
 #include "rt_camera.hh"
+#include "path_trace.hh"
 
 namespace tusdview {
 
@@ -38,6 +39,12 @@ class CudaRayTracer {
   // once; subsequent calls are no-ops returning the cached result.
   bool init(std::string* err);
   bool initialized() const { return ctx_ != nullptr; }
+  // Compile `sourcePath` with NVRTC and atomically replace only the module and
+  // trace entry point. Device scene/BVH/texture buffers remain resident; a
+  // compile or module-validation failure keeps the previous kernel active.
+  bool reloadKernel(const std::string& sourcePath, std::string* err);
+  uint64_t kernelGeneration() const { return kernelGeneration_; }
+  double lastKernelCompileMs() const { return lastKernelCompileMs_; }
   // Override the platform tusdview CUDA-kernel cache directory. An empty path
   // keeps the platform default (for example ~/.cache/tusdview/cuda on Linux).
   void setCacheDirectory(const std::string& path) { cacheDirectory_ = path; }
@@ -70,7 +77,10 @@ class CudaRayTracer {
              int renderMode,
              float depthScale, const float sceneMin[3], const float sceneExtent[3],
              int w, int h, std::vector<uint8_t>* rgba, std::string* err,
-             int spp = 1, const RtCameraLens* lens = nullptr);
+             int spp = 1, const RtCameraLens* lens = nullptr,
+             const PathTraceSettings* pathTrace = nullptr,
+             std::vector<float>* linearRgba = nullptr,
+             uint32_t* renderedSamples = nullptr);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
@@ -83,6 +93,9 @@ class CudaRayTracer {
   void* module_{nullptr};    // CUmodule
   void* kernel_{nullptr};    // CUfunction (trace)
   int device_{0};
+  int compileArch_{0};
+  uint64_t kernelGeneration_{0};
+  double lastKernelCompileMs_{0.0};
 
   // Device buffers (CUdeviceptr stored as uintptr_t).
   uintptr_t dTris_{0};       // float[9] positions per tri

@@ -1074,6 +1074,256 @@ float tracePointEllipses(vec3 o, vec3 d, out int hit, out float gaussianWeight) 
   return best;
 }
 
+// Material state used only by the production integrator. Preview shading keeps
+// its established path below, so enabling this mode cannot perturb RT goldens.
+struct PtSurface {
+  vec3 p; vec3 n; vec3 base; vec3 emission;
+  vec3 transmissionColor; vec3 subsurfaceColor; vec3 subsurfaceRadius;
+  float metallic; float roughness; float transmission; float ior;
+  float subsurface;
+};
+
+void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
+                      out PtSurface s) {
+  InstInfo ii = insts[iid];
+  MeshDesc md = meshes[ii.meshId];
+  Verts vb = Verts(md.vtxAddr);
+  Idx ib = Idx(md.idxAddr);
+  uint i0 = ib.i[uint(prim) * 3u], i1 = ib.i[uint(prim) * 3u + 1u];
+  uint i2 = ib.i[uint(prim) * 3u + 2u];
+  float w0 = 1.0 - bc.x - bc.y;
+  vec3 p0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+  vec3 p1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+  vec3 p2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+  s.p = p0 * w0 + p1 * bc.x + p2 * bc.y;
+  s.n = normalize(cross(p1 - p0, p2 - p0));
+  if (!front) s.n = -s.n;
+  s.base = vec3(0.6) * ii.tint.rgb;
+  s.emission = vec3(0.0);
+  s.transmissionColor = vec3(1.0);
+  s.subsurfaceColor = vec3(0.8);
+  s.subsurfaceRadius = vec3(1.0);
+  s.metallic = 0.0; s.roughness = 0.5; s.transmission = 0.0;
+  s.ior = 1.5; s.subsurface = 0.0;
+  uint mid = selectedMaterial(md, prim, front);
+  if (ii.useMaterial == 0u || mid == 0xffffffffu) return;
+  vec2 uv0 = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
+             fetchUV(vb, i2) * bc.y;
+  vec2 uv1 = uv0;
+  if (md.uv1Addr != 0ul) {
+    UV1s ub = UV1s(md.uv1Addr);
+    uv1 = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x +
+          fetchUV1(ub, i2) * bc.y;
+  }
+  uint tb = mid * 12u, pb = mid * 155u;
+  s.base = mat(mid, 0u).rgb;
+  vec2 buv = materialUv(mid, 0, uv0, uv1);
+  vec4 bt = sampleRtMaterialTexture(matTexIds[tb], buv, uint(max(prim, 0)),
+                                    rtTextureLod(matTexIds[tb], buv, 0.0),
+                                    vec4(1.0));
+  s.base *= bt.rgb * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                           matTexParams[pb + 38u]) +
+            vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
+                 matTexParams[pb + 42u]);
+  s.metallic = clamp(mat(mid, 1u).x, 0.0, 1.0);
+  s.roughness = clamp(mat(mid, 1u).y, 0.02, 1.0);
+  s.emission = max(mat(mid, 2u).rgb, vec3(0.0));
+  if (lrt(mid, 12u).w > 0.5) {
+    s.base *= lrt(mid, 0u).rgb * lrt(mid, 0u).w;
+    s.transmissionColor = max(lrt(mid, 2u).rgb, vec3(0.0));
+    s.transmission = clamp(lrt(mid, 2u).w, 0.0, 1.0);
+    s.subsurfaceColor = max(lrt(mid, 4u).rgb, vec3(0.0));
+    s.subsurface = clamp(lrt(mid, 4u).w, 0.0, 1.0);
+    s.subsurfaceRadius = max(lrt(mid, 5u).rgb * lrt(mid, 5u).w,
+                             vec3(1.0e-5));
+    s.emission += max(lrt(mid, 8u).rgb * lrt(mid, 8u).w, vec3(0.0));
+    s.ior = max(lrt(mid, 10u).w, 1.0001);
+  }
+  uint gb = mid * 1355u, face = uint(max(prim, 0));
+  if (gb + 9u < uint(graphRows.length())) {
+    if (graphRows[gb + 1u] >= 0.0)
+      s.base = max(evalMaterialXGraph(mid, 0, uv0, uv1, face).rgb, vec3(0.0));
+    if (graphRows[gb + 2u] >= 0.0)
+      s.metallic = clamp(evalMaterialXGraph(mid, 1, uv0, uv1, face).x, 0.0, 1.0);
+    if (graphRows[gb + 3u] >= 0.0)
+      s.roughness = clamp(evalMaterialXGraph(mid, 2, uv0, uv1, face).x, 0.02, 1.0);
+    if (graphRows[gb + 5u] >= 0.0)
+      s.emission = max(evalMaterialXGraph(mid, 4, uv0, uv1, face).rgb, vec3(0.0));
+    if (graphRows[gb + 7u] >= 0.0)
+      s.subsurface = clamp(evalMaterialXGraph(mid, 6, uv0, uv1, face).x, 0.0, 1.0);
+    if (graphRows[gb + 8u] >= 0.0)
+      s.subsurfaceColor = max(evalMaterialXGraph(mid, 7, uv0, uv1, face).rgb,
+                              vec3(0.0));
+    if (graphRows[gb + 9u] >= 0.0)
+      s.subsurfaceRadius = max(evalMaterialXGraph(mid, 8, uv0, uv1, face).rgb,
+                               vec3(1.0e-5));
+  }
+  s.base *= ii.tint.rgb;
+}
+
+vec3 ptCosineDirection(vec3 n, inout uint seed) {
+  float r = sqrt(rnd(seed)), phi = 6.28318530718 * rnd(seed);
+  vec3 t = normalize(abs(n.z) < 0.999 ? cross(vec3(0, 0, 1), n)
+                                      : cross(vec3(0, 1, 0), n));
+  vec3 b = cross(n, t);
+  return normalize(t * (r * cos(phi)) + b * (r * sin(phi)) +
+                   n * sqrt(max(0.0, 1.0 - r * r)));
+}
+
+vec3 ptEnvironment(vec3 d) {
+  vec3 env = rtDomeRadiance(d);
+  return dot(env, env) > 1.0e-12 ? env : srgbToLinear(pc.clearColor.rgb);
+}
+
+vec3 ptSampleDirect(PtSurface s, uint iid, vec3 viewDir, inout uint seed) {
+  uint count = uint(lightRows.length()) / RT_LIGHT_ROWS;
+  if (count == 0u) return vec3(0.0);
+  // Sample only authored lights that can contribute to this instance. Dome
+  // lights are already importance sampled by the environment path; including
+  // them here (as well as disabled/unlinked lights) wastes a shadow ray and
+  // increases variance.
+  uint eligible = 0u;
+  uint li = 0u;
+  for (uint candidate = 0u; candidate < count; ++candidate) {
+    int candidateType = int(light(candidate, 0u).x + 0.5);
+    bool linked = candidate >= 32u ||
+                  (insts[iid].directLightMask & (1u << candidate)) != 0u;
+    if (candidateType != 6 && light(candidate, 0u).y > 0.5 && linked) {
+      ++eligible;
+      // Reservoir sampling selects uniformly in one pass without building a
+      // per-hit light list or scanning the authored lights twice.
+      if (rnd(seed) < 1.0 / float(eligible)) li = candidate;
+    }
+  }
+  if (eligible == 0u) return vec3(0.0);
+  int lightType = int(light(li, 0u).x + 0.5);
+  vec3 toLight;
+  float maxT = 1.0e30, attenuation = 1.0;
+  if (lightType == 5) {
+    toLight = -normalize(light(li, 2u).xyz);
+  } else {
+    vec3 delta = sampleLightPosition(li, lightType, seed) - s.p;
+    float distance2 = max(dot(delta, delta), 1.0e-6);
+    maxT = sqrt(distance2);
+    toLight = delta / maxT;
+    attenuation = 1.0 / distance2;
+  }
+  float nl = max(dot(s.n, toLight), 0.0);
+  if (nl <= 0.0) return vec3(0.0);
+  for (uint chunk = 0u; chunk < tlasChunkCount(); ++chunk) {
+    rayQueryEXT shadowQuery;
+    rayQueryInitializeEXT(shadowQuery, TLAS[chunk],
+                          gl_RayFlagsTerminateOnFirstHitEXT, 0xff,
+                          s.p + s.n * 1.0e-4, 1.0e-4, toLight,
+                          max(maxT - 2.0e-4, 1.0e-4));
+    while (rayQueryProceedEXT(shadowQuery)) {
+      if (rayQueryGetIntersectionTypeEXT(shadowQuery, false) ==
+          gl_RayQueryCandidateIntersectionTriangleEXT) {
+        uint si = globalInstanceId(
+            chunk, rayQueryGetIntersectionInstanceIdEXT(shadowQuery, false));
+        int sp = rayQueryGetIntersectionPrimitiveIndexEXT(shadowQuery, false);
+        vec2 sb = rayQueryGetIntersectionBarycentricsEXT(shadowQuery, false);
+        bool sf = rayQueryGetIntersectionFrontFaceEXT(shadowQuery, false);
+        if (materialAllowsHit(si, sp, sb, sf))
+          rayQueryConfirmIntersectionEXT(shadowQuery);
+      }
+    }
+    if (rayQueryGetIntersectionTypeEXT(shadowQuery, true) !=
+        gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.0);
+  }
+  vec3 v = normalize(viewDir);
+  vec3 h = normalize(v + toLight);
+  float nv = max(dot(s.n, v), 1.0e-5);
+  float nh = max(dot(s.n, h), 0.0);
+  float vh = max(dot(v, h), 0.0);
+  float dielectricF0 = pow((s.ior - 1.0) / (s.ior + 1.0), 2.0);
+  vec3 f0 = mix(vec3(dielectricF0), s.base, s.metallic);
+  vec3 F = fresnelSchlick(vh, f0);
+  float specularScale = ggxD(nh, s.roughness) *
+                        ggxG1(nv, s.roughness) *
+                        ggxG1(nl, s.roughness) /
+                        max(4.0 * nv * nl, 1.0e-5);
+  vec3 diffuse = (vec3(1.0) - F) * s.base * (1.0 - s.metallic) *
+                 (1.0 - s.transmission) / 3.14159265359;
+  vec3 brdf = diffuse + F * specularScale;
+  return brdf * light(li, 3u).rgb * attenuation * nl * float(eligible);
+}
+
+vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
+                         uint rrDepth, uint maxSubsurfaceEvents) {
+  vec3 radiance = vec3(0.0), throughput = vec3(1.0);
+  uint subsurfaceEvents = 0u;
+  for (uint bounce = 0u; bounce < maxDepth; ++bounce) {
+    uint iid = 0u; int prim = 0; vec2 bc = vec2(0); bool front = true;
+    mat4x3 o2w; float hitT = 1.0e30;
+    if (!traceAcceptedPrimary(ro, rd, 1.0e-4, 1.0e30, iid, prim, bc,
+                              front, o2w, hitT)) {
+      radiance += throughput * ptEnvironment(rd);
+      break;
+    }
+    PtSurface s;
+    resolvePtSurface(iid, prim, bc, front, o2w, s);
+    if (dot(s.n, rd) > 0.0) s.n = -s.n;
+    radiance += throughput * s.emission;
+    // One-light next-event estimate, matching the CUDA/HIP production path.
+    // Multiplication by the light count compensates for uniform light choice;
+    // accepted cutouts participate in the visibility query.
+    radiance += throughput * ptSampleDirect(s, iid, -rd, seed);
+    float choose = rnd(seed);
+    float tp = clamp(s.transmission, 0.0, 0.95);
+    float sp = subsurfaceEvents < maxSubsurfaceEvents
+                   ? clamp(s.subsurface * (1.0 - tp), 0.0, 0.9)
+                   : 0.0;
+    float gp = clamp(mix(0.08, 0.9, s.metallic) * (1.0 - tp - sp),
+                     0.02, 0.9);
+    vec3 nextDir, weight; float side = 1.0;
+    if (choose < tp) {
+      float eta = front ? 1.0 / s.ior : s.ior;
+      nextDir = refract(rd, s.n, eta);
+      if (dot(nextDir, nextDir) < 1.0e-8) nextDir = reflect(rd, s.n);
+      nextDir = normalize(mix(nextDir, ptCosineDirection(-s.n, seed),
+                              s.roughness * s.roughness));
+      weight = s.transmissionColor;
+      side = dot(nextDir, s.n) < 0.0 ? -1.0 : 1.0;
+    } else if (choose < tp + sp) {
+      // Radius-aware stochastic interior free flight. Subsequent boundary hits
+      // continue the random walk instead of collapsing SSS into a tint lobe.
+      float radius = max(dot(s.subsurfaceRadius,
+                             vec3(0.2126, 0.7152, 0.0722)), 1.0e-5);
+      float flight = -log(max(1.0e-7, 1.0 - rnd(seed))) * radius;
+      ro = s.p - s.n * max(1.0e-4, min(flight, radius * 8.0));
+      float z = 1.0 - 2.0 * rnd(seed), a = 6.28318530718 * rnd(seed);
+      float q = sqrt(max(0.0, 1.0 - z * z));
+      nextDir = vec3(q * cos(a), q * sin(a), z);
+      weight = s.subsurfaceColor;
+      side = 0.0;
+      ++subsurfaceEvents;
+    } else if (choose < tp + sp + gp) {
+      vec3 mirrorDir = reflect(rd, s.n);
+      nextDir = normalize(mix(mirrorDir, ptCosineDirection(s.n, seed),
+                              s.roughness * s.roughness));
+      float dielectricF0 = pow((s.ior - 1.0) / (s.ior + 1.0), 2.0);
+      weight = fresnelSchlick(max(dot(-rd, s.n), 0.0),
+                              mix(vec3(dielectricF0), s.base, s.metallic));
+    } else {
+      nextDir = ptCosineDirection(s.n, seed);
+      weight = s.base * (1.0 - s.metallic);
+    }
+    throughput *= max(weight, vec3(0.0));
+    if (any(isnan(throughput)) || any(isinf(throughput)) ||
+        max(throughput.x, max(throughput.y, throughput.z)) < 1.0e-5) break;
+    if (bounce + 1u >= rrDepth) {
+      float survive = clamp(max(throughput.x,
+                                max(throughput.y, throughput.z)), 0.05, 0.95);
+      if (rnd(seed) > survive) break;
+      throughput /= survive;
+    }
+    if (side != 0.0) ro = s.p + s.n * side * 1.0e-4;
+    rd = nextDir;
+  }
+  return max(radiance, vec3(0.0));
+}
+
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy);
   ivec2 size = imageSize(outImg);
@@ -1136,6 +1386,17 @@ void main() {
   vec3 bgc = (bgMode == 0 || bgMode == 1) ? srgbToLinear(pc.clearColor.rgb)
                                           : pc.clearColor.rgb;
   vec3 outc = bgc;
+  bool productionPath = (pc.pointParams.w & 0x80000000u) != 0u && bgMode == 0;
+  if (productionPath) {
+    uint pathSeed = hashU(uint(px.x) * 1973u ^ uint(px.y) * 9277u ^
+                          (fi + 1u) * 26699u ^
+                          ((pc.pointParams.w >> 16u) & 0x7fu) ^ 0x9e3779b9u);
+    uint pathDepth = max(pc.pointParams.w & 0xffu, 1u);
+    uint rrDepth = min((pc.pointParams.w >> 8u) & 0xffu, pathDepth);
+    uint maxSubsurfaceEvents = max((pc.pointParams.w >> 23u) & 0xffu, 1u);
+    outc = traceProductionPath(origin, dir, pathSeed, pathDepth, rrDepth,
+                               maxSubsurfaceEvents);
+  }
 
   bool primaryHit = false;
   uint primaryIid = 0u;
@@ -1147,15 +1408,18 @@ void main() {
   bool primaryPoint = false;
   int pointId = -1;
   float pointWeight = 0.0;
-  float pointT = tracePointEllipses(origin, dir, pointId, pointWeight);
-  if (pointId >= 0) { primaryHit = true; primaryPoint = true; primaryT = pointT; }
+  float pointT = productionPath ? 1e30 :
+      tracePointEllipses(origin, dir, pointId, pointWeight);
+  if (!productionPath && pointId >= 0) {
+    primaryHit = true; primaryPoint = true; primaryT = pointT;
+  }
   uint triangleIid = 0u;
   int trianglePrim = 0;
   vec2 triangleBc = vec2(0.0);
   bool triangleFront = true;
   mat4x3 triangleO2w;
   float triangleT = primaryT;
-  if (traceAcceptedPrimary(origin, dir, 1e-3, primaryT,
+  if (!productionPath && traceAcceptedPrimary(origin, dir, 1e-3, primaryT,
                            triangleIid, trianglePrim, triangleBc,
                            triangleFront, triangleO2w, triangleT)) {
     primaryHit = true;
@@ -1171,7 +1435,7 @@ void main() {
   // Dome env background on miss (shaded mode only): sample the baked env cube
   // scaled by the dome's effectiveColor.
   if (int(pc.camPos.w + 0.5) == 0 &&
-      !primaryHit) {
+      !primaryHit && !productionPath) {
     uint numL = uint(lightRows.length()) / RT_LIGHT_ROWS;
     for (uint li = 0u; li < numL; ++li) {
       vec4 l0 = light(li, 0u);  // .x type, .y flags, .z mapped envmap tex

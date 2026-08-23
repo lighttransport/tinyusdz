@@ -22,6 +22,7 @@ struct FramePacket {
   float cameraPos[3]{0, 0, 0};
   float exposure{0.0f};
   RtCameraLens cameraLens;
+  PathTraceSettings pathTrace;
   RenderMode mode{RenderMode::Shaded};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
   float lightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
@@ -59,6 +60,7 @@ struct FramePacket {
     p.cameraPos[2] = cameraPos[2];
     p.exposure = exposure;
     p.cameraLens = cameraLens;
+    p.pathTrace = pathTrace;
     p.mode = mode;
     for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor[i];
     for (int i = 0; i < 3; ++i) {

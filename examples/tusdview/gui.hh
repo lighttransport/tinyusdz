@@ -102,6 +102,10 @@ class Gui {
   }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setCameraLens(const RtCameraLens& lens) { cameraLens_ = lens; }
+  void setPathTraceSettings(const PathTraceSettings& settings) {
+    pathTrace_ = settings;
+  }
+  const PathTraceSettings& pathTraceSettings() const { return pathTrace_; }
   void setBudget(LoadControl* b) { budget_ = b; }
   void setLoadOptions(LoadOptions* options) { loadOptions_ = options; }
   void setShowGrid(bool on) { showGrid_ = on; }
@@ -403,6 +407,7 @@ class Gui {
   Renderer* renderer_{nullptr};
   OrbitCamera* cam_{nullptr};
   RtCameraLens cameraLens_;
+  PathTraceSettings pathTrace_;
   const LoadedScene* loaded_{nullptr};
   const DrawScene* draw_{nullptr};
 

@@ -122,6 +122,7 @@ class VulkanRenderer final : public Renderer {
   }
   bool uploadViewportImage(const uint8_t* rgba, int w, int h) override;
   bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) override;
+  bool captureLinearViewport(std::vector<float>* rgba, int* w, int* h) override;
   bool captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) override;  // headless composite
   const RendererCaps& caps() const override { return caps_; }
   bool rayTracingAvailable() const override { return rtSupported_; }
@@ -132,6 +133,9 @@ class VulkanRenderer final : public Renderer {
   bool rayTracingIsHardware() const override {
     return rtTechnique_ == RtTechnique::kHardware;
   }
+  bool reloadRayTracingShader(const uint32_t* words, size_t wordCount,
+                              std::string* err) override;
+  bool rayTracingUsesFullShader() const override { return rtUsesFullShader_; }
   uint32_t rayTracingAccumulatedSamples() const override {
     return rtActive_ && tlas_ != VK_NULL_HANDLE ? rtAccumFrame_ + 1u : 0u;
   }
@@ -360,6 +364,8 @@ class VulkanRenderer final : public Renderer {
   // --- Ray tracing (ray query) ---
   void detectRtSupport();              // sets rtSupported_ + loads RT entrypoints
   bool createRtResources(std::string* err);  // descriptor layout/pool + pipeline
+  void selectFullRtShaderIfNeeded(
+      const std::vector<DrawMaterialCPU>& materials);
   void destroyRt();
 
   // --- Ray tracing (compute-BVH fallback, no hardware ray query needed) ---
@@ -995,6 +1001,7 @@ class VulkanRenderer final : public Renderer {
   float cameraPos_[3]{0, 0, 0};
   float exposure_{0.0f};
   RtCameraLens cameraLens_;
+  PathTraceSettings pathTrace_;
   float lightDir_[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float lightColor_[3]{1.0f, 1.0f, 1.0f};
   float clear_[4]{0.12f, 0.12f, 0.13f, 1.0f};
@@ -1187,6 +1194,7 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSet rtSet_{VK_NULL_HANDLE};
   VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline rtPipeline_{VK_NULL_HANDLE};
+  bool rtUsesFullShader_{true};
 
   // --- Compute-BVH fallback (rt_scene_build.cc HostScene, uploaded as SSBOs) ---
   // Separate pipeline/descriptor-set-layout from the hardware-RT ones above:

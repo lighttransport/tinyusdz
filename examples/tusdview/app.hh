@@ -201,6 +201,16 @@ class App
   void setCpuRt(bool on) { cpuRt_ = on; }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
+  void setPathTraceSettings(PathTraceSettings settings) {
+    settings.sanitize();
+    pathTrace_ = settings;
+    gui_.setPathTraceSettings(pathTrace_);
+  }
+  void setLinearOutput(const std::string& path) { linearOutput_ = path; }
+  void setLensOverrides(float fStop, float focusDistance) {
+    lensFStopOverride_ = fStop;
+    lensFocusOverride_ = focusDistance;
+  }
   // Write a stable machine-readable summary when run() exits.
   void setRenderReport(const std::string& path) { renderReportPath_ = path; }
   void setCheckpointOutput(int every, const std::string& pattern) {
@@ -261,6 +271,7 @@ class App
   // Embedded MCP server transports (no-op unless built with TUSDVIEW_ENABLE_MCP).
   void setMcpStdio(bool on) { mcpStdio_ = on; }
   void setMcpHttp(int port) { mcpHttpPort_ = port; }  // 0 = off
+  void setLiveShaderWatch(bool on) { liveShaderWatchRequested_ = on; }
   void setStreamHttp(int port) { streamHttpPort_ = port; }  // 0 = off
   // Idle-refinement codec for the stream: "png" (default) or "qoi". While the
   // view is moving, frames are sent as small low-quality JPEG; once the view is
@@ -303,6 +314,8 @@ class App
   nlohmann::json mcpSkinning(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpRenderSettings(const nlohmann::json& a,
                                    std::string& e) override;
+  nlohmann::json mcpShaderReload(const nlohmann::json& a,
+                                 std::string& e) override;
   nlohmann::json mcpCallLibraryTool(const std::string& name, const nlohmann::json& a,
                                     std::string& e) override;
 #endif
@@ -427,6 +440,29 @@ class App
   void finishReconvertIfReady();   // swap in completed geometry, preserve camera
   void cancelAndJoinReconvert();   // stop a running reconvert worker
   void registerParametricPrims();  // scan stage for parametric prims for adaptive tess
+  struct LiveShaderState {
+    struct PendingCommit {
+      std::atomic<bool> done{false};
+      bool ok{false};
+      double elapsedMs{0.0};
+      std::string error;
+    };
+    std::string source;
+    bool watch{false};
+    bool haveTimestamp{false};
+    std::filesystem::file_time_type timestamp{};
+    uint64_t attempts{0};
+    uint64_t successes{0};
+    double lastCompileMs{0.0};
+    std::string lastError;
+    std::shared_ptr<PendingCommit> pending;
+  };
+  void initializeLiveShaderSources();
+  void finishLiveShaderReloads();
+  void pollLiveShaderReload();
+  bool reloadLiveShader(const std::string& backend,
+                        const std::string& sourceOverride, std::string* err);
+  std::string activeLiveShaderBackend() const;
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // --- Experimental threaded GL rendering ---
@@ -653,6 +689,11 @@ class App
   void markStreamActivity();
   HipRayTracer hipTracer_;
   int rtSamples_{1};      // --rt-samples: AA samples for RT screenshot/CPU viewport
+  PathTraceSettings pathTrace_;
+  uint32_t pathTraceRenderedSamples_{0};
+  std::string linearOutput_;
+  float lensFStopOverride_{0.0f};
+  float lensFocusOverride_{0.0f};
   RtCameraLens cameraLens_;
   bool vulkanAvailable_{false};
   bool vulkanRtAvailable_{false};
@@ -826,6 +867,7 @@ class App
   std::atomic<bool> renderInitDone_{false};
   std::mutex gpuOpMutex_;
   std::queue<std::function<void()>> gpuOps_;
+  std::atomic<bool> gpuOpsPending_{false};
   std::mutex pktMutex_;
   std::condition_variable pktCv_;
   std::unique_ptr<FramePacket> pendingPacket_;
@@ -856,6 +898,11 @@ class App
   int mcpHttpPort_{0};
   std::uint64_t windowGeneration_{0};
   std::uint64_t rendererGeneration_{0};
+  bool liveShaderWatchRequested_{false};
+  std::chrono::steady_clock::time_point liveShaderNextPoll_{};
+  LiveShaderState liveVulkanShader_;
+  LiveShaderState liveCudaKernel_;
+  LiveShaderState liveHipKernel_;
 
   // WebSocket image-streaming server (browser remote view + navigation).
   int streamHttpPort_{0};

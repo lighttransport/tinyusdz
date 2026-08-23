@@ -469,13 +469,27 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   if (renderReportPath_.empty()) return;
   using json = nlohmann::json;
   json report = json::object();
-  report["schema_version"] = 1;
+  report["schema_version"] = 2;
   report["status"] = exitCode == 0 ? (draw_.empty() ? "no_scene" : "ok")
                                     : "error";
   report["exit_code"] = exitCode;
   report["scene"] = scenePath;
   report["profile"] = largeSceneProfile_;
   report["camera"] = cameraName_.empty() ? "auto" : cameraName_;
+  report["camera_lens"] = {
+      {"depth_of_field", cameraLens_.enabled()},
+      {"focus_distance", cameraLens_.focusDistance},
+      {"aperture_radius", cameraLens_.apertureRadius}};
+  const LoadDiagnostics diagnostics =
+      CategorizeLoadWarnings(loaded_.warn, draw_.skipped);
+  report["load_diagnostics"] = {
+      {"degraded_materials", diagnostics.degraded_material},
+      {"missing_textures", diagnostics.missing_texture},
+      {"unsupported_mtlx", diagnostics.unsupported_mtlx},
+      {"unsupported_lobes", diagnostics.unsupported_lobes},
+      {"skipped", diagnostics.skipped},
+      {"other", diagnostics.other},
+      {"actionable", diagnostics.actionable()}};
   report["backend"] = json::object();
   if (renderer_) {
     const RendererCaps& caps = renderer_->caps();
@@ -649,8 +663,24 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   const bool rtBuildIncomplete =
       renderer_ && renderer_->rayTracingBuildIncomplete();
   report["render"] = {
-      {"samples", vkAccumulatedSamples > 0 ? vkAccumulatedSamples
-                                           : static_cast<uint32_t>(rtSamples_)},
+      {"integrator", pathTrace_.enabled ? "path" : "preview"},
+      {"quality", PathTraceQualityLabel(pathTrace_.quality)},
+      {"target_samples", pathTrace_.targetSamples},
+      {"min_samples", pathTrace_.minSamples},
+      {"max_depth", pathTrace_.maxDepth},
+      {"russian_roulette_depth", pathTrace_.russianRouletteDepth},
+      {"variance_threshold", pathTrace_.varianceThreshold},
+      {"denoise", PathTraceDenoiseLabel(pathTrace_.denoise)},
+      {"motion_segments", pathTrace_.motionSegments},
+      {"max_subsurface_events", pathTrace_.maxSubsurfaceEvents},
+      {"max_volume_events", pathTrace_.maxVolumeEvents},
+      {"seed", pathTrace_.seed},
+      {"linear_output", linearOutput_},
+      {"samples", vkAccumulatedSamples > 0
+                      ? vkAccumulatedSamples
+                      : (pathTraceRenderedSamples_ > 0
+                             ? pathTraceRenderedSamples_
+                             : static_cast<uint32_t>(rtSamples_))},
       {"rt_initialization_ms",
        renderer_ ? renderer_->rayTracingInitializationMs() : 0.0},
       {"tlas_chunks", renderer_ ? renderer_->rayTracingTlasChunks() : 0u},
@@ -955,6 +985,108 @@ bool LoadUsdMaybeAutoSubdivision(
   }
   return ok;
 }
+
+std::string ShellQuote(const std::string& value) {
+#if defined(_WIN32)
+  std::string quoted = "\"";
+  for (char c : value) {
+    if (c == '"') quoted += '\\';
+    quoted += c;
+  }
+  return quoted + "\"";
+#else
+  std::string quoted = "'";
+  for (char c : value) {
+    if (c == '\'') quoted += "'\\''";
+    else quoted += c;
+  }
+  return quoted + "'";
+#endif
+}
+
+bool CompileLiveVulkanShader(const std::string& source,
+                             bool fullMaterialShader,
+                             std::vector<uint32_t>* spirv,
+                             std::string* err) {
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(source, ec) || ec) {
+    if (err) *err = "Vulkan shader source does not exist: " + source;
+    return false;
+  }
+  const char* compilerEnv = std::getenv("TUSDVIEW_GLSLC");
+  const std::string compiler =
+      compilerEnv && *compilerEnv ? compilerEnv : "glslc";
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  const std::filesystem::path base =
+      std::filesystem::temp_directory_path(ec) /
+      ("tusdview-live-shader-" + std::to_string(stamp));
+  if (ec) {
+    if (err) *err = "cannot resolve temporary directory for glslc";
+    return false;
+  }
+  const std::string output = base.string() + ".spv";
+  const std::string logPath = base.string() + ".log";
+  const std::string include =
+      std::filesystem::path(source).parent_path().string();
+  const std::string variantDefines = fullMaterialShader
+      ? std::string()
+      : " -DTUSDVIEW_RT_FAST_MATERIAL=1"
+        " -DTUSDVIEW_RT_DISABLE_MTLX=1"
+        " -DTUSDVIEW_RT_DISABLE_DEBUG_RAYS=1";
+  const std::string command =
+      ShellQuote(compiler) + " --target-env=vulkan1.2 "
+      "-fshader-stage=compute" + variantDefines + " -I" +
+      ShellQuote(include) + " " +
+      ShellQuote(source) + " -o " + ShellQuote(output) + " >" +
+      ShellQuote(logPath) + " 2>&1";
+  const int result = std::system(command.c_str());
+  std::string compilerLog;
+  {
+    std::ifstream log(logPath, std::ios::binary);
+    if (log) {
+      log.seekg(0, std::ios::end);
+      const std::streamoff size = log.tellg();
+      if (size > 0 && size < 4 * 1024 * 1024) {
+        log.seekg(0, std::ios::beg);
+        compilerLog.resize(static_cast<size_t>(size));
+        log.read(compilerLog.data(), size);
+      }
+    }
+  }
+  std::filesystem::remove(logPath, ec);
+  if (result != 0) {
+    std::filesystem::remove(output, ec);
+    if (err) {
+      *err = "glslc live compile failed";
+      if (!compilerLog.empty()) *err += ":\n" + compilerLog;
+    }
+    return false;
+  }
+  std::ifstream binary(output, std::ios::binary);
+  if (!binary) {
+    if (err) *err = "glslc produced no SPIR-V output";
+    return false;
+  }
+  binary.seekg(0, std::ios::end);
+  const std::streamoff bytes = binary.tellg();
+  if (bytes < 20 || bytes > 64 * 1024 * 1024 || (bytes & 3) != 0) {
+    std::filesystem::remove(output, ec);
+    if (err) *err = "glslc produced an invalid SPIR-V size";
+    return false;
+  }
+  binary.seekg(0, std::ios::beg);
+  spirv->resize(static_cast<size_t>(bytes) / sizeof(uint32_t));
+  const bool read = static_cast<bool>(binary.read(
+      reinterpret_cast<char*>(spirv->data()), bytes));
+  binary.close();
+  std::filesystem::remove(output, ec);
+  if (!read || spirv->empty() || (*spirv)[0] != 0x07230203u) {
+    spirv->clear();
+    if (err) *err = "glslc output is not a SPIR-V module";
+    return false;
+  }
+  return true;
+}
 }  // anonymous namespace
 
 // In namespace tusdview (declared in app.hh) so the MCP screenshot tool can reuse it.
@@ -991,6 +1123,202 @@ bool WriteScreenshotImage(const std::string& path,
     return false;
   }
   return true;
+}
+
+bool WriteLinearExr(const std::string& path, const std::vector<float>& rgba,
+                    int w, int h, std::string* err) {
+  if (LowerExtension(path) != "exr") {
+    if (err) *err = "linear output must use the .exr extension";
+    return false;
+  }
+  const size_t sampleCount = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
+  if (w <= 0 || h <= 0 || rgba.size() < sampleCount) {
+    if (err) *err = "invalid linear RGBA buffer";
+    return false;
+  }
+  tinyusdz::Image img;
+  img.uri = path;
+  img.width = w;
+  img.height = h;
+  img.channels = 4;
+  img.bpp = 32;
+  img.format = tinyusdz::Image::PixelFormat::Float;
+  img.data.resize(sampleCount * sizeof(float));
+  std::memcpy(img.data.data(), rgba.data(), img.data.size());
+  tinyusdz::image::WriteOption opt;
+  opt.format = tinyusdz::image::WriteImageFormat::EXR;
+  opt.half = true;
+  auto ret = tinyusdz::image::WriteImageToFile(path, img, opt);
+  if (!ret) {
+    if (err) *err = ret.error();
+    return false;
+  }
+  return true;
+}
+
+std::vector<float> AtrousDenoise(const std::vector<float>& input, int w, int h,
+                                 int iterations) {
+  if (w <= 0 || h <= 0 || input.size() < static_cast<size_t>(w) * h * 4u)
+    return input;
+  std::vector<float> src = input;
+  std::vector<float> dst(src.size());
+  const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
+  std::vector<float> variance(pixelCount, 0.0f);
+  const float kernel[5] = {1.0f, 4.0f, 6.0f, 4.0f, 1.0f};
+  auto luminance = [](const float* p) {
+    return p[0] * 0.2126f + p[1] * 0.7152f + p[2] * 0.0722f;
+  };
+  // The denoiser is a batch/export operation and is independent per row. Keep
+  // it from becoming the tail of a GPU render at UHD resolutions while
+  // avoiding thread startup overhead for thumbnails and unit-test images.
+  auto parallelRows = [&](const auto& fn) {
+    unsigned workers = pixelCount >= 128u * 128u
+                           ? std::max(1u, std::thread::hardware_concurrency())
+                           : 1u;
+    workers = std::min(workers, 8u);
+    workers = std::min(workers, static_cast<unsigned>(h));
+    if (workers <= 1u) {
+      fn(0, h);
+      return;
+    }
+    std::vector<std::thread> threads;
+    threads.reserve(workers);
+    for (unsigned worker = 0; worker < workers; ++worker) {
+      const int y0 = h * static_cast<int>(worker) / static_cast<int>(workers);
+      const int y1 =
+          h * static_cast<int>(worker + 1u) / static_cast<int>(workers);
+      threads.emplace_back(fn, y0, y1);
+    }
+    for (std::thread& thread : threads) thread.join();
+  };
+
+  // Clamp only isolated, extreme samples. This is intentionally display-side:
+  // the linear EXR remains an unbiased accumulation, while an eight-sample
+  // preview is not dominated by a single unresolved GGX firefly.
+  parallelRows([&](int y0, int y1) {
+    for (int y = y0; y < y1; ++y) {
+      for (int x = 0; x < w; ++x) {
+        std::array<float, 9> neighborhood{};
+        size_t n = 0;
+        for (int ky = -1; ky <= 1; ++ky) {
+          const int sy = std::max(0, std::min(h - 1, y + ky));
+          for (int kx = -1; kx <= 1; ++kx) {
+            const int sx = std::max(0, std::min(w - 1, x + kx));
+            const size_t i = (static_cast<size_t>(sy) * w + sx) * 4u;
+            neighborhood[n++] = std::max(0.0f, luminance(&input[i]));
+          }
+        }
+        std::sort(neighborhood.begin(), neighborhood.end());
+        const size_t i = (static_cast<size_t>(y) * w + x) * 4u;
+        const float center = std::max(0.0f, luminance(&input[i]));
+        const float limit = neighborhood[4] * 8.0f + 0.25f;
+        const float scale = center > limit ? limit / center : 1.0f;
+        for (int c = 0; c < 3; ++c) {
+          const float value = std::isfinite(input[i + static_cast<size_t>(c)])
+                                  ? input[i + static_cast<size_t>(c)]
+                                  : 0.0f;
+          src[i + static_cast<size_t>(c)] = std::max(0.0f, value) * scale;
+        }
+        src[i + 3] = 1.0f;
+      }
+    }
+  });
+
+  // Estimate local signal variance once from the robust input. The variance
+  // widens the range kernel in noisy regions but keeps fine chess-piece edges
+  // sharp where neighboring samples are already consistent.
+  parallelRows([&](int y0, int y1) {
+    for (int y = y0; y < y1; ++y) {
+      for (int x = 0; x < w; ++x) {
+        float sum = 0.0f, sum2 = 0.0f;
+        for (int ky = -1; ky <= 1; ++ky) {
+          const int sy = std::max(0, std::min(h - 1, y + ky));
+          for (int kx = -1; kx <= 1; ++kx) {
+            const int sx = std::max(0, std::min(w - 1, x + kx));
+            const size_t i = (static_cast<size_t>(sy) * w + sx) * 4u;
+            const float l = luminance(&src[i]);
+            sum += l;
+            sum2 += l * l;
+          }
+        }
+        const float mean = sum * (1.0f / 9.0f);
+        variance[static_cast<size_t>(y) * w + x] =
+            std::max(0.0f, sum2 * (1.0f / 9.0f) - mean * mean);
+      }
+    }
+  });
+
+  for (int pass = 0; pass < iterations; ++pass) {
+    const int step = 1 << pass;
+    parallelRows([&](int y0, int y1) {
+    for (int y = y0; y < y1; ++y) {
+      for (int x = 0; x < w; ++x) {
+        const size_t centerIndex = (static_cast<size_t>(y) * w + x) * 4u;
+        const float centerLum = luminance(&src[centerIndex]);
+        const float sigma = std::sqrt(
+            variance[static_cast<size_t>(y) * w + x]);
+        const float phiLum = 0.01f + 2.0f * sigma + 0.08f * centerLum;
+        float sum[3] = {0.0f, 0.0f, 0.0f};
+        float weightSum = 0.0f;
+        for (int ky = -2; ky <= 2; ++ky) {
+          const int sy = std::max(0, std::min(h - 1, y + ky * step));
+          for (int kx = -2; kx <= 2; ++kx) {
+            const int sx = std::max(0, std::min(w - 1, x + kx * step));
+            const size_t sampleIndex =
+                (static_cast<size_t>(sy) * w + sx) * 4u;
+            const float dl =
+                std::fabs(luminance(&src[sampleIndex]) - centerLum);
+            const float dr = src[sampleIndex] - src[centerIndex];
+            const float dg = src[sampleIndex + 1] - src[centerIndex + 1];
+            const float db = src[sampleIndex + 2] - src[centerIndex + 2];
+            const float colorDistance =
+                (dr * dr + dg * dg + db * db) /
+                (0.01f + centerLum * centerLum);
+            const float range =
+                std::exp(-dl / phiLum - 0.08f * colorDistance);
+            const float weight = kernel[kx + 2] * kernel[ky + 2] * range;
+            for (int c = 0; c < 3; ++c)
+              sum[c] += src[sampleIndex + static_cast<size_t>(c)] * weight;
+            weightSum += weight;
+          }
+        }
+        for (int c = 0; c < 3; ++c)
+          dst[centerIndex + static_cast<size_t>(c)] = sum[c] / weightSum;
+        dst[centerIndex + 3] = 1.0f;
+      }
+    }
+    });
+    src.swap(dst);
+  }
+  return src;
+}
+
+std::vector<uint8_t> ToneMapPathDisplay(const std::vector<float>& linear,
+                                        int w, int h, float exposure) {
+  std::vector<uint8_t> rgba(static_cast<size_t>(w) * h * 4u, 255u);
+  const float gain = std::exp2(exposure);
+  auto aces = [](float x) {
+    const float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
+    return std::max(0.0f, std::min(1.0f, (x * (a * x + b)) /
+                                           (x * (c * x + d) + e)));
+  };
+  auto srgb = [](float x) {
+    return x <= 0.0031308f ? 12.92f * x
+                           : 1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f;
+  };
+  for (size_t i = 0; i < rgba.size(); i += 4) {
+    for (int c = 0; c < 3; ++c) {
+      const float mapped = srgb(aces(std::max(0.0f, linear[i + c]) * gain));
+      rgba[i + static_cast<size_t>(c)] = static_cast<uint8_t>(
+          std::lround(std::max(0.0f, std::min(1.0f, mapped)) * 255.0f));
+    }
+  }
+  return rgba;
+}
+
+bool ShouldDenoise(const PathTraceSettings& settings, uint32_t samples) {
+  return settings.denoise == PathTraceDenoise::On ||
+         (settings.denoise == PathTraceDenoise::Auto && samples >= 8u);
 }
 
 void App::getRequestedWindowSize(int* width, int* height) const {
@@ -2131,6 +2459,17 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     }
   }
   gui_.setScene(&loaded_, &draw_);
+  if (lensFocusOverride_ > 0.0f)
+    cameraLens_.focusDistance = lensFocusOverride_;
+  if (lensFStopOverride_ > 0.0f)
+    cameraLens_.apertureRadius = 50.0f / (20.0f * lensFStopOverride_);
+  if (pathTrace_.enabled &&
+      (lensFocusOverride_ > 0.0f || lensFStopOverride_ > 0.0f)) {
+    if (!(cameraLens_.focusDistance > 0.0f))
+      cameraLens_.focusDistance = std::max(camera_.distance(), 1.0e-3f);
+    if (!(cameraLens_.apertureRadius > 0.0f))
+      cameraLens_.apertureRadius = 50.0f / (20.0f * 2.8f);
+  }
   gui_.setCameraLens(cameraLens_);
   gui_.setNextStage(nextStageSnapshot_.get());
   {
@@ -4004,8 +4343,15 @@ static std::uint64_t FrameSceneKey(const FramePacket& p) {
 
 void App::postGpu(std::function<void()> op) {
   if (!renderThreadActive_) { op(); return; }  // inline on the single-threaded path
-  std::lock_guard<std::mutex> lk(gpuOpMutex_);
-  gpuOps_.push(std::move(op));
+  {
+    std::lock_guard<std::mutex> lk(gpuOpMutex_);
+    gpuOps_.push(std::move(op));
+    gpuOpsPending_.store(true, std::memory_order_release);
+  }
+  // GPU operations are independent of frame packets. Wake the render thread
+  // immediately so shader swaps and streaming uploads do not inherit the next
+  // packet's latency (or wait behind a temporarily idle UI producer).
+  pktCv_.notify_one();
 }
 
 void App::drainGpuOps() {
@@ -4013,7 +4359,10 @@ void App::drainGpuOps() {
     std::function<void()> op;
     {
       std::lock_guard<std::mutex> lk(gpuOpMutex_);
-      if (gpuOps_.empty()) break;
+      if (gpuOps_.empty()) {
+        gpuOpsPending_.store(false, std::memory_order_release);
+        break;
+      }
       op = std::move(gpuOps_.front());
       gpuOps_.pop();
     }
@@ -4079,7 +4428,9 @@ void App::renderThreadMain() {
     {
       std::unique_lock<std::mutex> lk(pktMutex_);
       pktCv_.wait_for(lk, std::chrono::milliseconds(4), [&] {
-        return pendingPacket_ != nullptr || !renderRunning_.load();
+        return pendingPacket_ != nullptr ||
+               gpuOpsPending_.load(std::memory_order_acquire) ||
+               !renderRunning_.load();
       });
       if (pendingPacket_) pkt = std::move(pendingPacket_);
     }
@@ -4184,38 +4535,50 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
   const bool ownerMandated = TechniqueRequiresOwner(t, &newOwner);
   const Backend targetOwner = ownerMandated ? newOwner : backend_;
   const OverlayKind targetOverlay = OverlayForTechnique(t);
+  const bool targetVulkanRt = targetOverlay == OverlayKind::VulkanRT ||
+                              targetOverlay == OverlayKind::VulkanPathTrace;
+  const bool targetCudaRt = targetOverlay == OverlayKind::CudaRT ||
+                            targetOverlay == OverlayKind::CudaPathTrace;
+  const bool targetHipRt = targetOverlay == OverlayKind::HipRT ||
+                           targetOverlay == OverlayKind::HipPathTrace;
+  const bool targetPath = targetOverlay == OverlayKind::VulkanPathTrace ||
+                          targetOverlay == OverlayKind::CudaPathTrace ||
+                          targetOverlay == OverlayKind::HipPathTrace;
 
   if (targetOwner == backend_) {
     // Same window owner: only the overlay changes. Exactly one of
     // {VulkanRT, CudaRT, HipRT, CpuRT} (or none) is live at a time, so
     // entering one first turns off whichever was active.
-    if (targetOverlay == OverlayKind::VulkanRT) {
+    if (targetVulkanRt) {
       if (!renderer_ || !renderer_->rayTracingAvailable()) {
         LOGW("Vulkan ray tracing is unavailable; staying on %s.",
              RenderTechniqueLabel(activeTechnique_));
         return false;
       }
-    } else if (targetOverlay == OverlayKind::CudaRT && cudaProbe_ == ProbeState::Unavailable) {
+    } else if (targetCudaRt && cudaProbe_ == ProbeState::Unavailable) {
       LOGW("CUDA ray tracing is unavailable on this machine; staying on %s.",
            RenderTechniqueLabel(activeTechnique_));
       return false;
-    } else if (targetOverlay == OverlayKind::HipRT && hipProbe_ == ProbeState::Unavailable) {
+    } else if (targetHipRt && hipProbe_ == ProbeState::Unavailable) {
       LOGW("HIP ray tracing is unavailable on this machine; staying on %s.",
            RenderTechniqueLabel(activeTechnique_));
       return false;
     }
-    if (activeOverlay_ == OverlayKind::VulkanRT && targetOverlay != OverlayKind::VulkanRT) {
+    if ((activeOverlay_ == OverlayKind::VulkanRT ||
+         activeOverlay_ == OverlayKind::VulkanPathTrace) && !targetVulkanRt) {
       if (renderer_) renderer_->setRayTracing(false);
     }
-    hipInteractive_ = (targetOverlay == OverlayKind::HipRT);
-    cudaInteractive_ = (targetOverlay == OverlayKind::CudaRT);
+    hipInteractive_ = targetHipRt;
+    cudaInteractive_ = targetCudaRt;
     cpuInteractive_ = (targetOverlay == OverlayKind::CpuRT);
     // Leaving the tracers that pose draw_ in place: hand draw_ back to
     // everyone else in its rest pose (see restoreNextDrawRestPose).
     if (!hipInteractive_ && !cudaInteractive_ && !cpuInteractive_) {
       restoreNextDrawRestPose();
     }
-    if (targetOverlay == OverlayKind::VulkanRT) renderer_->setRayTracing(true);
+    pathTrace_.enabled = targetPath;
+    gui_.setPathTraceSettings(pathTrace_);
+    if (targetVulkanRt) renderer_->setRayTracing(true);
     activeOverlay_ = targetOverlay;
     previousTechnique_ = activeTechnique_;
     activeTechnique_ = t;
@@ -4303,7 +4666,8 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
     resultOverlay = targetOverlay;
   }
 
-  if (resultOverlay == OverlayKind::VulkanRT) {
+  if (resultOverlay == OverlayKind::VulkanRT ||
+      resultOverlay == OverlayKind::VulkanPathTrace) {
     if (renderer_->rayTracingAvailable()) {
       renderer_->setRayTracing(true);
     } else {
@@ -4312,8 +4676,10 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
       resultTechnique = RenderTechnique::VulkanRaster;
     }
   }
-  hipInteractive_ = (resultOverlay == OverlayKind::HipRT);
-  cudaInteractive_ = (resultOverlay == OverlayKind::CudaRT);
+  hipInteractive_ = (resultOverlay == OverlayKind::HipRT ||
+                     resultOverlay == OverlayKind::HipPathTrace);
+  cudaInteractive_ = (resultOverlay == OverlayKind::CudaRT ||
+                      resultOverlay == OverlayKind::CudaPathTrace);
   cpuInteractive_ = (resultOverlay == OverlayKind::CpuRT);
   if (!hipInteractive_ && !cudaInteractive_ && !cpuInteractive_) {
     restoreNextDrawRestPose();
@@ -4321,6 +4687,10 @@ bool App::applyTechniqueSwitch(RenderTechnique t) {
   previousTechnique_ = activeTechnique_;
   activeOverlay_ = resultOverlay;
   activeTechnique_ = resultTechnique;
+  pathTrace_.enabled = resultOverlay == OverlayKind::VulkanPathTrace ||
+                       resultOverlay == OverlayKind::CudaPathTrace ||
+                       resultOverlay == OverlayKind::HipPathTrace;
+  gui_.setPathTraceSettings(pathTrace_);
   // renderer_ is a brand-new object after an owner change; Gui still holds the
   // pointer it was given by gui_.frame() earlier THIS frame and would use it
   // again in renderViewportScene() below (use-after-free -- observed as
@@ -4484,11 +4854,16 @@ bool App::renderHipViewport() {
   }
 
   std::vector<uint8_t> rgba;
+  std::vector<float> linear;
   std::string cerr;
   // spp=1: single sample for interactive frame rate (no supersampled AA).
   if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                        sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
-                       &cameraLens_)) {
+                       &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
+                       pathTrace_.enabled ? &linear : nullptr)) {
+    if (pathTrace_.enabled && ShouldDenoise(pathTrace_, 1u))
+      rgba = ToneMapPathDisplay(AtrousDenoise(linear, w, h, 5), w, h,
+                                camera_.exposure());
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
     LOGW("HIP ray trace failed: %s", cerr.c_str());
@@ -4598,10 +4973,15 @@ bool App::renderCudaViewport() {
   }
 
   std::vector<uint8_t> rgba;
+  std::vector<float> linear;
   std::string cerr;
   if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                         sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
-                        &cameraLens_)) {
+                        &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
+                        pathTrace_.enabled ? &linear : nullptr)) {
+    if (pathTrace_.enabled && ShouldDenoise(pathTrace_, 1u))
+      rgba = ToneMapPathDisplay(AtrousDenoise(linear, w, h, 5), w, h,
+                                camera_.exposure());
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
     LOGW("CUDA ray trace failed: %s", cerr.c_str());
@@ -4910,6 +5290,206 @@ void App::applyNavCommand(const StreamNav& c) {
 //         rt=<off|hardware|software> rt_available=<0|1> gpu="<name>"
 // New keys append before gpu=; the gpu= value is quoted and last because it is
 // the only field that can contain spaces.
+std::string App::activeLiveShaderBackend() const {
+  switch (activeTechnique_) {
+    case RenderTechnique::VulkanRT:
+    case RenderTechnique::VulkanPathTrace: return "vulkan";
+    case RenderTechnique::CudaRT:
+    case RenderTechnique::CudaPathTrace: return "cuda";
+    case RenderTechnique::HipRT:
+    case RenderTechnique::HipPathTrace: return "hip";
+    default: return std::string();
+  }
+}
+
+void App::initializeLiveShaderSources() {
+  if (liveVulkanShader_.source.empty())
+    liveVulkanShader_.source = TUSDVIEW_DEFAULT_VK_SHADER_SOURCE;
+  if (liveCudaKernel_.source.empty())
+    liveCudaKernel_.source = TUSDVIEW_DEFAULT_GPU_KERNEL_SOURCE;
+  if (liveHipKernel_.source.empty())
+    liveHipKernel_.source = TUSDVIEW_DEFAULT_GPU_KERNEL_SOURCE;
+  if (liveShaderWatchRequested_) {
+    const std::string active = activeLiveShaderBackend();
+    if (active == "vulkan") liveVulkanShader_.watch = true;
+    else if (active == "cuda") liveCudaKernel_.watch = true;
+    else if (active == "hip") liveHipKernel_.watch = true;
+    else LOGW("live shader watch requested without an active GPU RT technique");
+  }
+}
+
+bool App::reloadLiveShader(const std::string& requestedBackend,
+                           const std::string& sourceOverride,
+                           std::string* err) {
+  finishLiveShaderReloads();
+  const std::string backend = requestedBackend == "active"
+                                  ? activeLiveShaderBackend()
+                                  : requestedBackend;
+  LiveShaderState* state = nullptr;
+  if (backend == "vulkan") state = &liveVulkanShader_;
+  else if (backend == "cuda") state = &liveCudaKernel_;
+  else if (backend == "hip") state = &liveHipKernel_;
+  else {
+    if (err) *err = "shader reload backend must be active, vulkan, cuda, or hip";
+    return false;
+  }
+  if (!sourceOverride.empty()) state->source = sourceOverride;
+  if (state->source.empty()) {
+    if (err) *err = "no live shader source configured for " + backend;
+    return false;
+  }
+  if (state->pending) {
+    if (err) *err = backend + " shader reload is still pending";
+    return false;
+  }
+  ++state->attempts;
+  state->lastError.clear();
+  const auto started = std::chrono::steady_clock::now();
+  bool ok = false;
+  std::string localError;
+  if (backend == "vulkan") {
+    if (!renderer_ || backend_ != Backend::Vulkan) {
+      localError = "the persistent viewer is not owned by Vulkan";
+    } else {
+      std::vector<uint32_t> spirv;
+      if (CompileLiveVulkanShader(state->source,
+                                  renderer_->rayTracingUsesFullShader(),
+                                  &spirv, &localError)) {
+        if (renderThreadActive_) {
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+          // Never wait here: the UI thread may be between packet construction
+          // and submission while the render thread is waiting for that packet.
+          // The render-thread operation publishes its result atomically and the
+          // next UI tick commits the status counters/error text.
+          auto pending = std::make_shared<LiveShaderState::PendingCommit>();
+          state->pending = pending;
+          postGpu([this, spirv = std::move(spirv), pending,
+                   started]() mutable {
+            pending->ok = renderer_->reloadRayTracingShader(
+                spirv.data(), spirv.size(), &pending->error);
+            pending->elapsedMs =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - started)
+                    .count();
+            pending->done.store(true, std::memory_order_release);
+          });
+          LOGI("Vulkan live shader reload queued on render thread");
+          return true;
+#endif
+        } else {
+          ok = renderer_->reloadRayTracingShader(spirv.data(), spirv.size(),
+                                                 &localError);
+        }
+      }
+    }
+  } else if (backend == "cuda") {
+    if (cudaBuildStarted_ && !cudaBuildDone_.load(std::memory_order_acquire)) {
+      localError = "CUDA scene build is in progress; retry after it completes";
+    } else if (!cudaTracer_.initialized() && !cudaTracer_.init(&localError)) {
+      // init reports the unavailable runtime/compiler/device.
+    } else {
+      ok = cudaTracer_.reloadKernel(state->source, &localError);
+    }
+  } else {
+    if (hipBuildStarted_ && !hipBuildDone_.load(std::memory_order_acquire)) {
+      localError = "HIP scene build is in progress; retry after it completes";
+    } else if (!hipTracer_.initialized() && !hipTracer_.init(&localError)) {
+      // init reports the unavailable runtime/compiler/device.
+    } else {
+      ok = hipTracer_.reloadKernel(state->source, &localError);
+    }
+  }
+  state->lastCompileMs = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - started)
+                             .count();
+  if (ok) {
+    ++state->successes;
+    std::error_code timestampError;
+    state->timestamp =
+        std::filesystem::last_write_time(state->source, timestampError);
+    state->haveTimestamp = !timestampError;
+    LOGI("%s live shader reload succeeded in %.1f ms", backend.c_str(),
+         state->lastCompileMs);
+    return true;
+  }
+  state->lastError = localError.empty() ? "unknown live reload error" : localError;
+  LOGW("%s live shader reload failed; keeping last good module: %s",
+       backend.c_str(), state->lastError.c_str());
+  if (err) *err = state->lastError;
+  return false;
+}
+
+void App::finishLiveShaderReloads() {
+  struct PendingState {
+    const char* backend;
+    LiveShaderState* state;
+  } states[] = {{"vulkan", &liveVulkanShader_},
+                {"cuda", &liveCudaKernel_},
+                {"hip", &liveHipKernel_}};
+  for (const PendingState& item : states) {
+    LiveShaderState& state = *item.state;
+    if (!state.pending ||
+        !state.pending->done.load(std::memory_order_acquire)) {
+      continue;
+    }
+    const std::shared_ptr<LiveShaderState::PendingCommit> result = state.pending;
+    state.pending.reset();
+    state.lastCompileMs = result->elapsedMs;
+    if (result->ok) {
+      ++state.successes;
+      state.lastError.clear();
+      std::error_code timestampError;
+      state.timestamp =
+          std::filesystem::last_write_time(state.source, timestampError);
+      state.haveTimestamp = !timestampError;
+      LOGI("%s live shader reload succeeded in %.1f ms", item.backend,
+           state.lastCompileMs);
+    } else {
+      state.lastError = result->error.empty()
+                            ? "unknown live reload error"
+                            : result->error;
+      LOGW("%s live shader reload failed; keeping last good module: %s",
+           item.backend, state.lastError.c_str());
+    }
+  }
+}
+
+void App::pollLiveShaderReload() {
+  finishLiveShaderReloads();
+  const auto now = std::chrono::steady_clock::now();
+  if (now < liveShaderNextPoll_) return;
+  liveShaderNextPoll_ = now + std::chrono::milliseconds(250);
+  struct Watched {
+    const char* backend;
+    LiveShaderState* state;
+  } watched[] = {{"vulkan", &liveVulkanShader_},
+                 {"cuda", &liveCudaKernel_},
+                 {"hip", &liveHipKernel_}};
+  for (const Watched& item : watched) {
+    LiveShaderState& state = *item.state;
+    if (!state.watch || state.source.empty()) continue;
+    std::error_code ec;
+    const auto timestamp =
+        std::filesystem::last_write_time(state.source, ec);
+    if (ec) {
+      state.lastError = "watch cannot stat source: " + state.source;
+      continue;
+    }
+    if (!state.haveTimestamp) {
+      state.timestamp = timestamp;
+      state.haveTimestamp = true;
+      continue;
+    }
+    if (timestamp == state.timestamp) continue;
+    // Consume the timestamp before compiling. A broken intermediate save keeps
+    // the last good module and waits for the editor's next write, avoiding a
+    // compile-failure loop every 250 ms.
+    state.timestamp = timestamp;
+    std::string reloadError;
+    reloadLiveShader(item.backend, std::string(), &reloadError);
+  }
+}
+
 // Write the current viewport under --mode-sweep. Mirrors the end-of-run capture
 // path (including the threaded-GL case, where the render thread owns the
 // context and leaves the pixels in renderCapture_).
@@ -4999,12 +5579,20 @@ int App::run(const std::string& initialFile, int maxFrames,
   // Windowed --cpu-rt: same shape, driven by CpuRayTracer. Headless CPU RT uses
   // the one-shot screenshot path after the frame loop, like CUDA/HIP.
   cpuInteractive_ = cpuRt_ && !headless_;
-  if (cudaInteractive_) activeOverlay_ = OverlayKind::CudaRT;
-  else if (hipInteractive_) activeOverlay_ = OverlayKind::HipRT;
+  if (cudaInteractive_)
+    activeOverlay_ = pathTrace_.enabled ? OverlayKind::CudaPathTrace
+                                        : OverlayKind::CudaRT;
+  else if (hipInteractive_)
+    activeOverlay_ = pathTrace_.enabled ? OverlayKind::HipPathTrace
+                                        : OverlayKind::HipRT;
   else if (cpuInteractive_) activeOverlay_ = OverlayKind::CpuRT;
   if (cudaInteractive_ || hipInteractive_ || cpuInteractive_) {
-    activeTechnique_ = cudaInteractive_ ? RenderTechnique::CudaRT
-                       : hipInteractive_ ? RenderTechnique::HipRT
+    activeTechnique_ = cudaInteractive_
+                           ? (pathTrace_.enabled ? RenderTechnique::CudaPathTrace
+                                                 : RenderTechnique::CudaRT)
+                       : hipInteractive_
+                           ? (pathTrace_.enabled ? RenderTechnique::HipPathTrace
+                                                 : RenderTechnique::HipRT)
                                          : RenderTechnique::CpuRT;
     previousTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
                                                     : RenderTechnique::VulkanRaster;
@@ -5130,9 +5718,14 @@ int App::run(const std::string& initialFile, int maxFrames,
     // above (before the renderer existed); don't clobber that here.
     if (!cudaInteractive_ && !hipInteractive_ && !cpuInteractive_) {
       activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                    : (rtPath_ ? RenderTechnique::VulkanRT
+                                                    : (rtPath_ ? (pathTrace_.enabled
+                                                        ? RenderTechnique::VulkanPathTrace
+                                                        : RenderTechnique::VulkanRT)
                                                                : RenderTechnique::VulkanRaster);
-      activeOverlay_ = rtPath_ ? OverlayKind::VulkanRT : OverlayKind::None;
+      activeOverlay_ = rtPath_ ? (pathTrace_.enabled
+                                      ? OverlayKind::VulkanPathTrace
+                                      : OverlayKind::VulkanRT)
+                              : OverlayKind::None;
       previousTechnique_ = activeTechnique_;
     }
   } else
@@ -5163,9 +5756,14 @@ int App::run(const std::string& initialFile, int maxFrames,
     // above (before the renderer existed); don't clobber that here.
     if (!cudaInteractive_ && !hipInteractive_ && !cpuInteractive_) {
       activeTechnique_ = (backend_ == Backend::GL) ? RenderTechnique::GLRaster
-                                                    : (rtPath_ ? RenderTechnique::VulkanRT
+                                                    : (rtPath_ ? (pathTrace_.enabled
+                                                        ? RenderTechnique::VulkanPathTrace
+                                                        : RenderTechnique::VulkanRT)
                                                                : RenderTechnique::VulkanRaster);
-      activeOverlay_ = rtPath_ ? OverlayKind::VulkanRT : OverlayKind::None;
+      activeOverlay_ = rtPath_ ? (pathTrace_.enabled
+                                      ? OverlayKind::VulkanPathTrace
+                                      : OverlayKind::VulkanRT)
+                              : OverlayKind::None;
       previousTechnique_ = activeTechnique_;
     }
 
@@ -5221,6 +5819,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   // a worker (UI responsiveness). Any fixed-frame-count run (headless or windowed
   // --frames/--screenshot) culls synchronously so screenshots stay deterministic.
   gui_.setCullAsync(maxFrames < 0);
+  initializeLiveShaderSources();
 
 #if defined(TUSDVIEW_HAVE_MCP)
   // Start the embedded MCP server (tool calls are drained on the main thread).
@@ -5252,6 +5851,8 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
 
   int frameCount = 0;
+  std::vector<float> pathConvergencePrevious;
+  uint32_t pathConvergenceLastSample = 0;
   if (!modeSweep_.empty()) setRenderMode(modeSweep_[0].second);
   bool running = true;
   while (running) {
@@ -5336,7 +5937,9 @@ int App::run(const std::string& initialFile, int maxFrames,
     // vertices (poseNextDrawForTracer leaves it posed after an RT build).
     gui_.setDrawIsPosed(std::isfinite(nextTracerPosedTime_) &&
                         (activeOverlay_ == OverlayKind::CudaRT ||
+                         activeOverlay_ == OverlayKind::CudaPathTrace ||
                          activeOverlay_ == OverlayKind::HipRT ||
+                         activeOverlay_ == OverlayKind::HipPathTrace ||
                          activeOverlay_ == OverlayKind::CpuRT));
     gui_.setTimeline(tl);
     Gui::SkinningInfo si;
@@ -5485,6 +6088,8 @@ int App::run(const std::string& initialFile, int maxFrames,
                        renderThreadActive_);
 
     gui_.frame(renderer_.get(), &camera_);
+    pathTrace_ = gui_.pathTraceSettings();
+    pathTrace_.sanitize();
     ensureWireAuxReady();
 
     // View-dependent RT LOD: re-classify the instance set when the camera settles.
@@ -5752,6 +6357,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 #if defined(TUSDVIEW_HAVE_MCP)
     if (mcp_) mcp_->drain();  // run queued MCP tool calls on the main thread
 #endif
+    pollLiveShaderReload();
     if (cancelLoad) loadCtrl_.cancel.store(true);
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
     if (open && !headless_) openFileDialog();
@@ -5795,7 +6401,48 @@ int App::run(const std::string& initialFile, int maxFrames,
 
     if (quitAfterFullPresent_) running = false;
 
-    if (maxFrames >= 0 && ++frameCount >= maxFrames) {
+    if (maxFrames >= 0) ++frameCount;
+    bool fixedFrameBudgetReached = maxFrames >= 0 && frameCount >= maxFrames;
+    if (maxFrames >= 0 && headless_ && pathTrace_.enabled && !cudaRt_ &&
+        !hipRt_ && pathTrace_.targetSamples > 0) {
+      // The first RT frame may establish the auto-fit camera or finish a TLAS
+      // rebuild, both of which correctly invalidate accumulation. A production
+      // sample target describes accepted samples, not UI loop iterations, so
+      // keep submitting until the stable accumulation reaches the requested
+      // count. The guard prevents an unexpected perpetual invalidation from
+      // turning a batch render into an infinite process.
+      const uint32_t accepted =
+          renderer_ ? renderer_->rayTracingAccumulatedSamples() : 0u;
+      fixedFrameBudgetReached = accepted >= pathTrace_.targetSamples;
+      const uint32_t convergenceInterval =
+          std::max(8u, pathTrace_.minSamples / 4u);
+      if (!fixedFrameBudgetReached && pathTrace_.varianceThreshold > 0.0f &&
+          accepted >= pathTrace_.minSamples &&
+          accepted >= pathConvergenceLastSample + convergenceInterval) {
+        std::vector<float> current;
+        int convergenceW = 0, convergenceH = 0;
+        if (renderer_->captureLinearViewport(&current, &convergenceW,
+                                             &convergenceH)) {
+          const double change =
+              PathTraceRelativeChange(current, pathConvergencePrevious);
+          pathConvergencePrevious = std::move(current);
+          pathConvergenceLastSample = accepted;
+          if (change <= static_cast<double>(pathTrace_.varianceThreshold)) {
+            LOGI("path trace converged at %u samples (relative RMS %.6f <= %.6f)",
+                 accepted, change, pathTrace_.varianceThreshold);
+            fixedFrameBudgetReached = true;
+          }
+        }
+      }
+      if (!fixedFrameBudgetReached &&
+          frameCount >= maxFrames + 64) {
+        LOGW("path trace stopped after repeated accumulation invalidation "
+             "(%u/%u accepted samples)", accepted,
+             pathTrace_.targetSamples);
+        fixedFrameBudgetReached = true;
+      }
+    }
+    if (fixedFrameBudgetReached) {
       // --mode-sweep: one load, many AOVs. Capture the mode that just finished
       // its full frame budget, then switch and give the next mode the SAME
       // budget, so every image sees as many frames as it would have in its own
@@ -5960,18 +6607,35 @@ int App::run(const std::string& initialFile, int maxFrames,
         }
       }
       std::vector<uint8_t> rgba;
+      std::vector<float> linear;
+      pathTraceRenderedSamples_ = 0;
       if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                             sceneExtent, w, h, &rgba, &cerr, rtSamples_,
-                            &cameraLens_)) {
+                            &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
+                            pathTrace_.enabled ? &linear : nullptr,
+                            pathTrace_.enabled ? &pathTraceRenderedSamples_ : nullptr)) {
         reportCaptureWidth_ = w;
         reportCaptureHeight_ = h;
         std::string werr;
+        if (pathTrace_.enabled) {
+          const std::vector<float> display =
+              ShouldDenoise(pathTrace_, pathTraceRenderedSamples_)
+                  ? AtrousDenoise(linear, w, h, 5)
+                  : linear;
+          rgba = ToneMapPathDisplay(display, w, h, camera_.exposure());
+        }
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("CUDA RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
                cudaTracer_.triangleCount(),
                cudaTracer_.truncated() ? ", truncated" : "", cudaTracer_.deviceName());
         } else {
           LOGW("CUDA RT screenshot write failed: %s", werr.c_str());
+        }
+        if (!linearOutput_.empty()) {
+          if (WriteLinearExr(linearOutput_, linear, w, h, &werr))
+            LOGI("CUDA path trace wrote linear EXR %s", linearOutput_.c_str());
+          else
+            LOGW("CUDA linear EXR write failed: %s", werr.c_str());
         }
       } else {
         LOGW("CUDA ray trace failed: %s", cerr.c_str());
@@ -6034,18 +6698,35 @@ int App::run(const std::string& initialFile, int maxFrames,
         }
       }
       std::vector<uint8_t> rgba;
+      std::vector<float> linear;
+      pathTraceRenderedSamples_ = 0;
       if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                            sceneExtent, w, h, &rgba, &cerr, rtSamples_,
-                           &cameraLens_)) {
+                           &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
+                           pathTrace_.enabled ? &linear : nullptr,
+                           pathTrace_.enabled ? &pathTraceRenderedSamples_ : nullptr)) {
         reportCaptureWidth_ = w;
         reportCaptureHeight_ = h;
         std::string werr;
+        if (pathTrace_.enabled) {
+          const std::vector<float> display =
+              ShouldDenoise(pathTrace_, pathTraceRenderedSamples_)
+                  ? AtrousDenoise(linear, w, h, 5)
+                  : linear;
+          rgba = ToneMapPathDisplay(display, w, h, camera_.exposure());
+        }
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("HIP RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
                hipTracer_.triangleCount(),
                hipTracer_.truncated() ? ", truncated" : "", hipTracer_.deviceName());
         } else {
           LOGW("HIP RT screenshot write failed: %s", werr.c_str());
+        }
+        if (!linearOutput_.empty()) {
+          if (WriteLinearExr(linearOutput_, linear, w, h, &werr))
+            LOGI("HIP path trace wrote linear EXR %s", linearOutput_.c_str());
+          else
+            LOGW("HIP linear EXR write failed: %s", werr.c_str());
         }
       } else {
         LOGW("HIP ray trace failed: %s", cerr.c_str());
@@ -6115,7 +6796,40 @@ int App::run(const std::string& initialFile, int maxFrames,
     return finishRun(0);
   }
 
-  if (modeSweep_.empty()) shot(screenshot, /*window=*/false);
+  bool wrotePathDisplay = false;
+  if (pathTrace_.enabled && renderer_ &&
+      (!screenshot.empty() || !linearOutput_.empty())) {
+    std::vector<float> linear;
+    int w = 0, h = 0;
+    std::string linearErr;
+    if (renderer_->captureLinearViewport(&linear, &w, &h)) {
+      if (!screenshot.empty() && modeSweep_.empty()) {
+        const uint32_t samples = renderer_->rayTracingAccumulatedSamples();
+        const std::vector<float> display = ShouldDenoise(pathTrace_, samples)
+                                               ? AtrousDenoise(linear, w, h, 5)
+                                               : linear;
+        const std::vector<uint8_t> rgba =
+            ToneMapPathDisplay(display, w, h, camera_.exposure());
+        wrotePathDisplay = WriteScreenshotImage(screenshot, rgba, w, h,
+                                                &linearErr);
+        if (wrotePathDisplay)
+          LOGI("wrote path-traced display %s (%dx%d, %u spp)",
+               screenshot.c_str(), w, h, samples);
+      }
+      if (!linearOutput_.empty() &&
+          WriteLinearExr(linearOutput_, linear, w, h, &linearErr)) {
+        LOGI("Vulkan path trace wrote linear EXR %s (%dx%d)",
+             linearOutput_.c_str(), w, h);
+      } else if (!linearOutput_.empty()) {
+        LOGW("Vulkan linear EXR write failed: %s", linearErr.c_str());
+      }
+    } else {
+      linearErr = "linear accumulation capture unavailable";
+      LOGW("Vulkan linear EXR write failed: %s", linearErr.c_str());
+    }
+  }
+  if (modeSweep_.empty() && !wrotePathDisplay)
+    shot(screenshot, /*window=*/false);
   shot(windowShot_, /*window=*/true);
   return finishRun(0);
 }

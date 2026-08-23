@@ -524,6 +524,13 @@ target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${COMMON_DIR}/glad/include
     ${COMMON_DIR}/imgui)
 
+# Source defaults used only by the opt-in persistent-process live-reload loop.
+# They are compile-time development hints; packaged builds may override every
+# path through the MCP shader_reload tool.
+target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
+    TUSDVIEW_DEFAULT_VK_SHADER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/raytrace.comp"
+    TUSDVIEW_DEFAULT_GPU_KERNEL_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/raytracer_kernel_src.txt")
+
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     ${TINYUSDZ_TARGET_STATIC}
     glfw
