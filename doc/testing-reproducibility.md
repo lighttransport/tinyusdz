@@ -63,6 +63,14 @@ scripts/prepare-mujoco-wasm.sh --build-only --offline
 scripts/prepare-usd-assets.sh --checkout-only
 ```
 
+`scripts/prepare-mujoco-wasm.sh` checks out and builds the pinned manifest
+ref into the verification cache. The pinned MuJoCo ref carries one local
+patch, merged on the fork's `tinyusdz` branch: emscripten's `--emit-tsd` is
+gated behind `MUJOCO_WASM_EMIT_TSD` (default OFF) because the typings codegen
+shells out to `tsc --outFile`, which TypeScript 5.x removed. Point the
+physics tests at the built artifacts with
+`MUJOCO_WASM_DIR=<cache>/mujoco/wasm/dist`.
+
 Use `scripts/verify.sh doctor --profile full` to check required host tools and
 print the manifest digest and cache location. Each action writes a JSON report
 under `<cache>/reports/`.
