@@ -8,7 +8,7 @@
   "repositories": {
     "mujoco": {
       "url": "https://github.com/lighttransport/mujoco.git",
-      "ref": "bf2a1d642a45b372e43b6f9f6f220d649db22446"
+      "ref": "218b47349dae718ae2c73ab1f90afbcae1f440fa"
     },
     "menagerie": {
       "url": "https://github.com/google-deepmind/mujoco_menagerie.git",
