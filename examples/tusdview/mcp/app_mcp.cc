@@ -522,6 +522,13 @@ json App::mcpViewport(const json& args, std::string& err) {
       err = "bookmark_load: slot is empty";
       return json::object();
     }
+  } else if (op == "focus_dof") {
+    float distance = 0.0f;
+    if (!gui_.focusDofOnSelection(&distance)) {
+      err = "focus_dof: pick an object or select a renderable prim in front "
+            "of the camera first";
+      return json::object();
+    }
   } else if (op == "set") {
     light3d::Vec3 tgt = camera_.target();
     if (args.contains("target") && args["target"].is_array() &&
@@ -535,7 +542,7 @@ json App::mcpViewport(const json& args, std::string& err) {
                      args.value("distance", camera_.distance()));
   } else {
     err = "viewport: unknown op '" + op +
-          "' (orbit|pan|dolly|forward|backward|fit|home|isometric|front|back|right|left|top|bottom|bookmark_save|bookmark_load|set)";
+          "' (orbit|pan|dolly|forward|backward|fit|home|isometric|front|back|right|left|top|bottom|bookmark_save|bookmark_load|focus_dof|set)";
     return json::object();
   }
   // Return the resulting camera state.
@@ -545,7 +552,8 @@ json App::mcpViewport(const json& args, std::string& err) {
               {"distance", camera_.distance()},
               {"eye", vec3json(camera_.eye())},
               {"near", camera_.nearPlane()},
-              {"far", camera_.farPlane()}};
+              {"far", camera_.farPlane()},
+              {"focus_distance", gui_.dofFocusDistance()}};
 }
 
 json App::mcpScreenshot(const json& args, std::string& err) {
@@ -727,6 +735,7 @@ json App::mcpPick(const json& args, std::string& err) {
               {"viewport_width", report.viewportWidth},
               {"viewport_height", report.viewportHeight},
               {"covered_pixels", report.coveredPixels},
+              {"hit_distance", report.hitDistance},
               {"selected", args.value("select", true) && !report.path.empty()}};
 }
 

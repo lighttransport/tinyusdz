@@ -2358,6 +2358,11 @@ def Xform "Scene"
     )
     {
     }
+    def "OpenPBRMat" (
+        references = @materials/test.mtlx@</MaterialX/Materials/M_OpenPBR>
+    )
+    {
+    }
 }
 )";
   const char* mtlx = R"(<?xml version="1.0"?>
@@ -2396,6 +2401,19 @@ def Xform "Scene"
   </standard_surface>
   <surfacematerial name="M_Test" type="material">
     <input name="surfaceshader" type="surfaceshader" nodename="Test" />
+  </surfacematerial>
+  <open_pbr_surface name="OpenPBRTest" type="surfaceshader">
+    <input name="base_weight" type="float" value="0" />
+    <input name="transmission_weight" type="float" value="1" />
+    <input name="transmission_color" type="color3" value="0.942, 1, 0.9884" />
+    <input name="geometry_opacity" type="float" value="0.35" />
+    <input name="subsurface_weight" type="float" value="0.75" />
+    <input name="subsurface_color" type="color3" value="1, 0.22, 0.493" />
+    <input name="subsurface_radius_scale" type="color3" value="1, 0, 0.068" />
+    <input name="subsurface_radius" type="float" value="0.0325" />
+  </open_pbr_surface>
+  <surfacematerial name="M_OpenPBR" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="OpenPBRTest" />
   </surfacematerial>
 </materialx>
 )";
@@ -2465,6 +2483,31 @@ def Xform "Scene"
   assert(render_material.openpbr->specular_roughness.is_texture());
   assert(render_material.openpbr->normal.is_texture());
   assert(!render_material.default_fallback);
+
+  const auto openpbr_it =
+      result.scene.material_by_path.find("/Scene/OpenPBRMat");
+  assert(openpbr_it != result.scene.material_by_path.end());
+  const RenderMaterial& openpbr_material =
+      result.scene.materials[static_cast<size_t>(openpbr_it->second)];
+  assert(openpbr_material.shader_type ==
+         RenderMaterial::ShaderType::OpenPBR);
+  assert(openpbr_material.openpbr);
+  assert(!openpbr_material.default_fallback);
+  assert(std::fabs(openpbr_material.openpbr->transmission_weight.value.x -
+                   1.0f) < 1.0e-6f);
+  assert(std::fabs(openpbr_material.openpbr->transmission_color.value.x -
+                   0.942f) < 1.0e-6f);
+  assert(std::fabs(openpbr_material.openpbr->opacity.value.x - 0.35f) <
+         1.0e-6f);
+  assert(openpbr_material.alpha_mode == RenderMaterial::AlphaMode::Blend);
+  assert(std::fabs(openpbr_material.openpbr->subsurface_weight.value.x -
+                   0.75f) < 1.0e-6f);
+  assert(std::fabs(openpbr_material.openpbr->subsurface_radius.value.x -
+                   0.0325f) < 1.0e-6f);
+  assert(std::fabs(openpbr_material.openpbr->subsurface_radius.value.y) <
+         1.0e-6f);
+  assert(std::fabs(openpbr_material.openpbr->subsurface_radius.value.z -
+                   0.00221f) < 1.0e-6f);
 
   auto texture_for = [&](const char* asset) -> const RenderTexture& {
     for (const RenderTexture& texture : result.scene.textures) {

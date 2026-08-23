@@ -1544,9 +1544,10 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
                       uint rrDepth, uint maxSubsurfaceEvents) {
   vec3 result = vec3(0.0), throughput = vec3(1.0);
   bool inSubsurface = false, previousDelta = true;
-  vec3 sigma = vec3(1.0), scatterAlbedo = vec3(1.0);
+  float sigma = 1.0; vec3 scatterAlbedo = vec3(1.0);
   float scatterG = 0.0, previousBsdfPdf = 0.0;
   uint subsurfaceEvents = 0u;
+  uint transparentEvents = 0u;
   float mediumIor[4]; vec3 mediumSigma[4]; vec3 mediumEmission[4];
   int mediumInstance[4]; int mediumDepth = 0, heroChannel = -1;
   for (int level = 0; level < 4; ++level) {
@@ -1573,17 +1574,32 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
       result += throughput * mediumEmission[mediumDepth] * integral;
       throughput *= tr;
     }
+    if (!inSubsurface && transparentEvents < 16u) {
+      int alphaMid = triMat[tri];
+      float alphaMode = alphaMid >= 0
+          ? mat(alphaMid, 1u).z
+          : (insts[iid].tint.a < 1.0 ? 2.0 : 0.0);
+      if (alphaMode > 1.5) {
+        float opacity = swOpacityAtHit(iid, tri, bc, alphaMode);
+        if (opacity < 1.0 && swRandom(seed) >= opacity) {
+          ro += rd * (hitT + 1.0e-4);
+          ++transparentEvents;
+          bounce = bounce == 0u ? 0xffffffffu : bounce - 1u;
+          continue;
+        }
+      }
+    }
     if (inSubsurface) {
-      float majorant = max(max(sigma.x, sigma.y), max(sigma.z, 1.0e-5));
-      float flight = -log(max(1.0e-7, 1.0 - swRandom(seed))) / majorant;
-      float travel = min(flight, hitT);
-      throughput *= exp(-sigma * travel);
-      if (flight < hitT && subsurfaceEvents < maxSubsurfaceEvents) {
+      float flight = -log(max(1.0e-7, 1.0 - swRandom(seed))) /
+                     max(sigma, 1.0e-5);
+      if (flight < hitT && subsurfaceEvents < maxSubsurfaceEvents &&
+          bounce + 2u < maxDepth) {
         throughput *= scatterAlbedo;
         ro += rd * flight; rd = swPtHg(rd, scatterG, seed);
         ++subsurfaceEvents; continue;
       }
-      ro += rd * (hitT + 1.0e-4); inSubsurface = false; continue;
+      ro += rd * (hitT + 1.0e-4); inSubsurface = false;
+      continue;
     }
     SwPtSurface s; swResolvePtSurface(iid, tri, bc, front, s);
     if (dot(s.n, rd) > 0.0) { s.n = -s.n; s.coatN = -s.coatN; }
@@ -1598,13 +1614,16 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
                     (1.0 - s.subsurface);
     vec3 sheenC = s.sheenColor * s.sheenWeight * (1.0 - s.metallic) *
                   (1.0 - s.transmission);
-    vec3 transmissionC = s.transmissionColor * s.transmission *
+    vec3 interfaceTransmission = s.transmissionDepth > 0.0
+        ? vec3(1.0) : s.transmissionColor;
+    vec3 transmissionC = interfaceTransmission * s.transmission *
                          (1.0 - s.metallic);
     transmissionC *= vec3(1.0) -
         swPtFresnel(max(dot(s.n, -rd), 0.0), f0);
     float entry = (subsurfaceEvents < maxSubsurfaceEvents ? s.subsurface : 0.0) *
                   (1.0 - s.metallic) * (1.0 - s.transmission);
-    vec3 subsurfaceC = vec3(entry);
+    vec3 subsurfaceC = (vec3(1.0) -
+        swPtFresnel(max(dot(s.n, -rd), 0.0), f0)) * entry;
     float cr = (s.coatIor - 1.0) / (s.coatIor + 1.0);
     vec3 coatF0 = s.coatColor * cr * cr;
     vec3 coatC = coatF0 * s.coatWeight;
@@ -1656,12 +1675,19 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
       if (!tir) {
         if (front && mediumDepth < 3) {
           ++mediumDepth; mediumIor[mediumDepth] = materialIor;
-          float depth = max(s.transmissionDepth, 1.0e-4);
-          vec3 colorAbsorption = max(vec3(0.0), vec3(1.0) -
-              clamp(s.transmissionColor, vec3(0.0), vec3(1.0))) / depth;
-          mediumSigma[mediumDepth] = colorAbsorption +
-              s.transmissionScatter + s.volumeDensity *
+          vec3 extinction = s.volumeDensity *
               max(vec3(0.0), vec3(1.0) - s.volumeAlbedo);
+          if (s.transmissionDepth > 0.0) {
+            float depth = s.transmissionDepth;
+            vec3 muT = -log(clamp(s.transmissionColor, vec3(1.0e-6),
+                                  vec3(1.0))) / depth;
+            vec3 muS = max(s.transmissionScatter, vec3(0.0)) / depth;
+            vec3 muA = muT - muS;
+            float minA = min(muA.x, min(muA.y, muA.z));
+            if (minA < 0.0) muA -= vec3(minA);
+            extinction += muA + muS;
+          }
+          mediumSigma[mediumDepth] = extinction;
           mediumEmission[mediumDepth] = s.volumeEmission;
           mediumInstance[mediumDepth] = iid;
         } else if (!front && mediumDepth > 0) {
@@ -1675,9 +1701,18 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
     } else if ((xi -= ws) < 0.0) {
       float prob = ws / sum;
       weight = subsurfaceC / max(prob, 1.0e-6);
-      sigma = 1.0 / max(s.subsurfaceRadius, vec3(1.0e-5));
-      scatterAlbedo = clamp(s.subsurfaceColor, vec3(0.0), vec3(0.999));
       scatterG = s.subsurfaceAnisotropy;
+      vec3 color = clamp(s.subsurfaceColor, vec3(0.0), vec3(0.999999));
+      vec3 similarity = vec3(4.09712) + vec3(4.20863) * color -
+          sqrt(vec3(9.59217) + vec3(41.6808) * color +
+               vec3(17.7126) * color * color);
+      vec3 similarity2 = similarity * similarity;
+      scatterAlbedo = clamp((vec3(1.0) - similarity2) /
+          max(vec3(1.0) - scatterG * similarity2, vec3(1.0e-6)),
+          vec3(0.0), vec3(0.999999));
+      float radius = max(s.subsurfaceRadius.x,
+                         max(s.subsurfaceRadius.y, s.subsurfaceRadius.z));
+      sigma = 1.0 / max(radius, 1.0e-5);
       ro = s.p - s.n * 1.0e-4; rd = swPtCosine(-s.n, seed);
       throughput *= weight; inSubsurface = true; previousDelta = true;
       ++subsurfaceEvents; continue;

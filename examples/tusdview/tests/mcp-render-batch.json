@@ -7,7 +7,11 @@
       "name": "red-triangle",
       "usda": "#usda 1.0\n def Mesh \"RedTriangle\" { point3f[] points = [(-1,-1,0),(1,-1,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] uniform token subdivisionScheme = \"none\" color3f[] primvars:displayColor = [(0.8,0.05,0.02)] }\n",
       "captures": [
-        {"name": "shaded-no-grid", "settings": {"mode": "shaded", "grid": false}, "viewport": {"op": "front"}},
+        {"name": "shaded-no-grid", "settings": {"mode": "shaded", "grid": false}, "viewport": {"op": "front"},
+         "actions": [
+           {"tool": "set_focus", "arguments": {"path": "/RedTriangle"}},
+           {"tool": "viewport", "arguments": {"op": "focus_dof"}}
+         ]},
         {"name": "shaded-grid", "settings": {"mode": "shaded", "grid": true}, "different_from": "shaded-no-grid"}
       ],
       "expect": {"mesh_count": 1, "triangle_count": 1}

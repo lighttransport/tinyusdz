@@ -1260,7 +1260,8 @@ int main(int argc, char** argv) {
           "  --window-shot PATH  Save the complete window, including UI.\n"
           "  --raster-lod / --rt-lod  Enable view-dependent raster or Vulkan-RT "
           "LOD (--no-rt-lod disables RT LOD for deterministic full-scene capture); "
-          "LOD; tune with --*-lod-full-px, --*-lod-cull-px, and --rt-lod-band.\n"
+          "final path-trace quality disables implicit RT LOD; tune explicit LOD "
+          "with --*-lod-full-px, --*-lod-cull-px, and --rt-lod-band.\n"
           "  --max-draw-meshes N / --max-gpu-mem G  Bound raster mesh count or "
           "geometry memory (GiB).\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
@@ -1461,6 +1462,13 @@ int main(int argc, char** argv) {
     maxGpuMemGiB = 0.0;
     if (!rasterLodExplicit) rasterLod = false;
     if (!rtLodExplicit) rtLod = false;
+  }
+  if (wantPathTrace && ptFinal && !rtLodExplicit) {
+    // Final-quality transport must never replace authored geometry with the
+    // generic AABB proxy. Besides changing silhouettes, the proxy has no
+    // authored material and therefore appears as a camera-dependent white box.
+    // An explicit --rt-lod remains available for memory-constrained renders.
+    rtLod = false;
   }
   if (maxAssetReadBytes > 0) {
     tinyusdz::security_policy::SetMaxAssetReadBytes(

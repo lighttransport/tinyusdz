@@ -93,7 +93,8 @@ VK_DEVICE_ARGS=()
 [ -z "${TUSDVIEW_VK_DEVICE:-}" ] || VK_DEVICE_ARGS=(--vk-device "$TUSDVIEW_VK_DEVICE")
 COMMON=(--headless --backend vk --path-trace --pt-quality final
         --pt-max-depth "$MAX_DEPTH" --pt-rr-depth 5 --pt-seed "$SEED"
-        --pt-denoise off --pt-variance 0 --pt-motion-segments 8 --no-grid --size "$SIZE"
+        --pt-denoise off --pt-variance 0 --pt-motion-segments 8 --no-rt-lod
+        --no-grid --size "$SIZE"
         --view-dir -0.62,-0.42,-0.66 --cam-dolly 0.78
         --f-stop 4 --focus-distance 0.72)
 

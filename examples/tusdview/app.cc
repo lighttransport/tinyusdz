@@ -6141,6 +6141,10 @@ int App::run(const std::string& initialFile, int maxFrames,
                        renderThreadActive_);
 
     gui_.frame(renderer_.get(), &camera_);
+    // Camera-panel focus edits must also reach the standalone CPU/CUDA/HIP
+    // viewport tracers and the render report; Vulkan/GL consume this same lens
+    // directly from Gui::renderViewportScene().
+    cameraLens_ = gui_.cameraLens();
     pathTrace_ = gui_.pathTraceSettings();
     pathTrace_.sanitize();
     ensureWireAuxReady();
