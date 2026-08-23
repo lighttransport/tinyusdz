@@ -137,7 +137,12 @@ class VulkanRenderer final : public Renderer {
                               std::string* err) override;
   bool rayTracingUsesFullShader() const override { return rtUsesFullShader_; }
   uint32_t rayTracingAccumulatedSamples() const override {
-    return rtActive_ && tlas_ != VK_NULL_HANDLE ? rtAccumFrame_ + 1u : 0u;
+    if (!rtActive_) return 0u;
+    const bool ready = rtTechnique_ == RtTechnique::kHardware
+                           ? tlas_ != VK_NULL_HANDLE
+                           : (rtTechnique_ == RtTechnique::kComputeBvh &&
+                              swTlasNodeCount_ > 0u && swInstCount_ > 0u);
+    return ready ? rtAccumFrame_ + 1u : 0u;
   }
   uint32_t rayTracingTlasChunks() const override { return rtTlasChunkCount_; }
   double rayTracingInitializationMs() const override { return rtInitMs_; }
@@ -1213,6 +1218,8 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory swUv1Mem_{VK_NULL_HANDLE};
   VkBuffer swMatBuf_{VK_NULL_HANDLE};    // HostScene::mat (material id/tri)
   VkDeviceMemory swMatMem_{VK_NULL_HANDLE};
+  VkBuffer swBackMatBuf_{VK_NULL_HANDLE}; // HostScene::backMat (back material/tri)
+  VkDeviceMemory swBackMatMem_{VK_NULL_HANDLE};
   VkBuffer swFaceBuf_{VK_NULL_HANDLE};   // HostScene::face (source face/tri)
   VkDeviceMemory swFaceMem_{VK_NULL_HANDLE};
   VkBuffer swBlasBuf_{VK_NULL_HANDLE};   // HostScene::blas (Node[])
@@ -1233,6 +1240,10 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSet swRtSet_{VK_NULL_HANDLE};
   VkPipelineLayout swRtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline swRtPipeline_{VK_NULL_HANDLE};
+  VkPipeline swRtPathPipeline_{VK_NULL_HANDLE};
+  // Pipelines replaced by live reload are retired after the next frame fence.
+  // This avoids waiting on a fence that newFrame() has reset but not submitted.
+  std::vector<VkPipeline> retiredRtPipelines_;
 
   // Opt-in GPU compute skinning of the RT vertex stream (skin.comp):
   // descriptor-less (push constants carry buffer device addresses). Created

@@ -4179,6 +4179,9 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
                     LoadControl* ctrl, const tinyusdz::Stage* stage,
                     const TextureRuntimeOptions& textureOptions) {
   *out = DrawScene{};
+  out->metersPerUnit = rs.meta.metersPerUnit > 0.0
+                           ? rs.meta.metersPerUnit
+                           : 0.01;
 
   // Mesh world transforms from the node hierarchy.
   std::unordered_map<int, matrix4d> meshXform;

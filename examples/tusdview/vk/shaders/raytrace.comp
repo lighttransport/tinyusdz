@@ -275,8 +275,9 @@ float shCoef(uint li, uint i) {
 vec3 rtDomeRadiance(vec3 direction) {
   uint count = uint(lightRows.length()) / RT_LIGHT_ROWS;
   for (uint li = 0u; li < count; ++li) {
-    if (int(light(li, 0u).x + 0.5) != 6 ||
-        (int(light(li, 1u).y + 0.5) & (1 << 7)) == 0) continue;
+    if (int(light(li, 0u).x + 0.5) != 6) continue;
+    if ((int(light(li, 0u).y + 0.5) & (1 << 7)) == 0)
+      return max(light(li, 4u).rgb, vec3(0.0));
     vec3 d = normalize(direction);
     float b[9];
     b[0] = 0.282095;
@@ -293,7 +294,7 @@ vec3 rtDomeRadiance(vec3 direction) {
       e += b[k] * vec3(shCoef(li, k * 3u + 0u),
                        shCoef(li, k * 3u + 1u),
                        shCoef(li, k * 3u + 2u));
-    return max(e, vec3(0.0));
+    return max(e, vec3(0.0)) * light(li, 4u).rgb;
   }
   return vec3(0.0);
 }
@@ -478,36 +479,54 @@ vec4 sampleRtMaterialTexture(int id, vec2 uv, uint face, float lod,
 // unresolved images retain their authored constant/default value.
 #if TUSDVIEW_RT_DISABLE_MTLX
 vec4 evalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
-  // Fast RT variant: this function is unreachable when graph rows are empty,
-  // but retaining the ABI-compatible stub keeps the material code identical.
-  return vec4(0.0);
+  // Compact RT variant: accept a directly connected image/tiledimage and the
+  // ubiquitous normalmap(image) pair.  These routes are already validated on
+  // the CPU before this shader is selected.  Keeping this tiny lowering here
+  // avoids instantiating the 64-node interpreter (and its very expensive
+  // driver JIT) for ordinary MaterialX texture materials.
+  const uint STRIDE = 1366u;
+  uint base = mid * STRIDE;
+  if (base + 20u >= uint(graphRows.length()) || route < 0 || route > 19)
+    return vec4(0.0);
+  int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
+  int count = int(clamp(graphRows[base], 0.0, 64.0));
+  if (wanted < 0 || wanted >= count) return vec4(0.0);
+  uint p = base + 22u + uint(wanted) * 21u;
+  int op = int(graphRows[p] + 0.5);
+  bool normalMap = op == 3;
+  if (normalMap) {
+    wanted = int(graphRows[p + 1u] + 0.5);
+    if (wanted < 0 || wanted >= count) return vec4(0.0);
+    p = base + 22u + uint(wanted) * 21u;
+    op = int(graphRows[p] + 0.5);
+  }
+  if (op != 1 && op != 2) return vec4(0.0);
+  int tex = int(graphRows[p + 16u] + 0.5);
+  vec2 graphUv = graphRows[p + 15u] > 0.5 ? uv1 : uv0;
+  graphUv = graphUv * vec2(graphRows[p + 17u], graphRows[p + 18u]) +
+            vec2(graphRows[p + 19u], graphRows[p + 20u]);
+  vec4 fallback = vec4(graphRows[p + 4u], graphRows[p + 5u],
+                       graphRows[p + 6u], graphRows[p + 7u]);
+  vec4 value = tex >= 0
+                   ? sampleRtMaterialTexture(tex, graphUv, face, 0.0, fallback)
+                   : fallback;
+  if (normalMap)
+    value = vec4(normalize(value.xyz * 2.0 - 1.0) * 0.5 + 0.5, value.w);
+  return value;
 }
 #else
 vec4 evalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
-  const uint STRIDE = 1355u;
+  const uint STRIDE = 1366u;
   uint base = mid * STRIDE;
-  if (base + 9u >= uint(graphRows.length()) || route < 0 || route > 8) return vec4(0.0);
+  if (base + 20u >= uint(graphRows.length()) || route < 0 || route > 19) return vec4(0.0);
   int count = int(clamp(graphRows[base], 0.0, 64.0));
   int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
   if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
-  bool hasForwardRef = false;
-  for (int i = 0; i < count && !hasForwardRef; ++i) {
-    uint p = base + 10u + uint(i) * 21u;
-    hasForwardRef = int(graphRows[p + 1u] + 0.5) > i ||
-                    int(graphRows[p + 2u] + 0.5) > i ||
-                    int(graphRows[p + 3u] + 0.5) > i;
-  }
-  int passCount = hasForwardRef ? count : 1;
   vec4 v[64];
-  // Keep the storage bounded to the packed ABI, but make the iteration count
-  // runtime-dependent. A literal 64x64 fixed-point nest makes NVIDIA's cold
-  // SPIR-V compiler unroll thousands of graph operations even for materials
-  // with one node; dynamic bounds preserve the same dependency semantics and
-  // materially reduce vkCreateComputePipelines time.
-  [[dont_unroll]] for (int i = 0; i < count; ++i) v[i] = vec4(0.0);
-  [[dont_unroll]] for (int pass = 0; pass < passCount; ++pass) {
-    [[dont_unroll]] for (int i = 0; i < count; ++i) {
-      uint p = base + 10u + uint(i) * 21u;
+  // The CPU packer guarantees dependency-first order. One runtime-bounded pass
+  // avoids the former fixed-point nest and its pathological driver-JIT cost.
+  [[dont_unroll]] for (int i = 0; i < count; ++i) {
+      uint p = base + 22u + uint(i) * 21u;
       int op = int(graphRows[p] + 0.5);
       int a = int(graphRows[p + 1u] + 0.5);
       int b = int(graphRows[p + 2u] + 0.5);
@@ -588,7 +607,6 @@ vec4 evalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
                          t.x * sin(a2) + t.y * cos(a2)), av.zw);
       }
       else v[i] = value;
-    }
   }
   return v[wanted];
 }
@@ -827,7 +845,7 @@ vec3 approximatePrimaryLayerColor(uint iid, int prim, vec2 bc, bool front,
       emission = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
     }
     uint face = uint(max(prim, 0));
-    uint gb = mid * 1355u;
+    uint gb = mid * 1366u;
     if (gb + 9u < uint(graphRows.length())) {
       if (graphRows[gb + 1u] >= 0.0)
         base = evalMaterialXGraph(mid, 0, uv0, uv1, face).rgb;
@@ -1077,10 +1095,20 @@ float tracePointEllipses(vec3 o, vec3 d, out int hit, out float gaussianWeight) 
 // Material state used only by the production integrator. Preview shading keeps
 // its established path below, so enabling this mode cannot perturb RT goldens.
 struct PtSurface {
-  vec3 p; vec3 n; vec3 base; vec3 emission;
+  vec3 p; vec3 n; vec3 coatN; vec3 tangent; vec3 bitangent;
+  vec3 base; vec3 emission;
   vec3 transmissionColor; vec3 subsurfaceColor; vec3 subsurfaceRadius;
+  vec3 specularColor; vec3 coatColor; vec3 sheenColor;
   float metallic; float roughness; float transmission; float ior;
-  float subsurface;
+  float subsurface; float specularWeight;
+  float coatWeight; float coatRoughness; float coatIor;
+  float sheenWeight; float sheenRoughness; float subsurfaceAnisotropy;
+  float anisotropy; float anisotropyRotation;
+  float coatAnisotropy; float coatRotation;
+  float thinFilmWeight; float thinFilmThickness; float thinFilmIor;
+  float dispersion; float dispersionAbbe;
+  vec3 transmissionScatter; float transmissionDepth;
+  vec3 volumeAlbedo; vec3 volumeEmission; float volumeDensity;
 };
 
 void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
@@ -1096,15 +1124,38 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
   vec3 p1 = o2w * vec4(fetchPos(vb, i1), 1.0);
   vec3 p2 = o2w * vec4(fetchPos(vb, i2), 1.0);
   s.p = p0 * w0 + p1 * bc.x + p2 * bc.y;
-  s.n = normalize(cross(p1 - p0, p2 - p0));
+  vec3 geometricNormal = normalize(cross(p1 - p0, p2 - p0));
+  if ((md.geometricNormal & 1u) != 0u) s.n = geometricNormal;
+  else {
+    vec3 nObj = fetchNrm(vb, i0) * w0 + fetchNrm(vb, i1) * bc.x +
+                fetchNrm(vb, i2) * bc.y;
+    mat3 normalMatrix = ii.useMaterial != 0u
+                            ? mat3(md.nrm0.xyz, md.nrm1.xyz, md.nrm2.xyz)
+                            : mat3(o2w);
+    s.n = normalize(normalMatrix * nObj);
+  }
+  if (dot(s.n, geometricNormal) < 0.0) s.n = -s.n;
   if (!front) s.n = -s.n;
   s.base = vec3(0.6) * ii.tint.rgb;
   s.emission = vec3(0.0);
   s.transmissionColor = vec3(1.0);
   s.subsurfaceColor = vec3(0.8);
   s.subsurfaceRadius = vec3(1.0);
+  s.specularColor = vec3(1.0); s.coatColor = vec3(1.0);
+  s.sheenColor = vec3(1.0);
   s.metallic = 0.0; s.roughness = 0.5; s.transmission = 0.0;
-  s.ior = 1.5; s.subsurface = 0.0;
+  s.ior = 1.5; s.subsurface = 0.0; s.specularWeight = 1.0;
+  s.coatWeight = 0.0; s.coatRoughness = 0.1; s.coatIor = 1.5;
+  s.sheenWeight = 0.0; s.sheenRoughness = 0.3;
+  s.subsurfaceAnisotropy = 0.0;
+  s.anisotropy = 0.0; s.anisotropyRotation = 0.0;
+  s.coatAnisotropy = 0.0; s.coatRotation = 0.0;
+  s.thinFilmWeight = 0.0; s.thinFilmThickness = 0.0; s.thinFilmIor = 1.5;
+  s.dispersion = 0.0; s.dispersionAbbe = 0.0;
+  s.transmissionScatter = vec3(0.0); s.transmissionDepth = 0.0;
+  s.volumeAlbedo = vec3(1.0); s.volumeEmission = vec3(0.0);
+  s.volumeDensity = 0.0;
+  s.coatN = s.n;
   uint mid = selectedMaterial(md, prim, front);
   if (ii.useMaterial == 0u || mid == 0xffffffffu) return;
   vec2 uv0 = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
@@ -1130,16 +1181,42 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
   s.emission = max(mat(mid, 2u).rgb, vec3(0.0));
   if (lrt(mid, 12u).w > 0.5) {
     s.base *= lrt(mid, 0u).rgb * lrt(mid, 0u).w;
+    s.specularColor = max(lrt(mid, 1u).rgb, vec3(0.0));
+    s.specularWeight = clamp(lrt(mid, 1u).w, 0.0, 1.0);
     s.transmissionColor = max(lrt(mid, 2u).rgb, vec3(0.0));
     s.transmission = clamp(lrt(mid, 2u).w, 0.0, 1.0);
+    s.transmissionScatter = max(lrt(mid, 3u).rgb, vec3(0.0));
+    s.transmissionDepth = max(lrt(mid, 3u).w, 0.0);
     s.subsurfaceColor = max(lrt(mid, 4u).rgb, vec3(0.0));
     s.subsurface = clamp(lrt(mid, 4u).w, 0.0, 1.0);
     s.subsurfaceRadius = max(lrt(mid, 5u).rgb * lrt(mid, 5u).w,
                              vec3(1.0e-5));
+    s.coatColor = max(lrt(mid, 6u).rgb, vec3(0.0));
+    s.coatWeight = clamp(lrt(mid, 6u).w, 0.0, 1.0);
+    s.sheenColor = max(lrt(mid, 7u).rgb, vec3(0.0));
+    s.sheenWeight = clamp(lrt(mid, 7u).w, 0.0, 1.0);
     s.emission += max(lrt(mid, 8u).rgb * lrt(mid, 8u).w, vec3(0.0));
     s.ior = max(lrt(mid, 10u).w, 1.0001);
+    s.coatRoughness = clamp(lrt(mid, 11u).x, 0.02, 1.0);
+    s.coatIor = max(lrt(mid, 11u).y, 1.0001);
+    s.sheenRoughness = clamp(lrt(mid, 11u).z, 0.02, 1.0);
+    s.subsurfaceAnisotropy = clamp(lrt(mid, 16u).x, -0.95, 0.95);
+    s.anisotropy = clamp(lrt(mid, 14u).y + 0.5 * lrt(mid, 14u).w,
+                         -0.95, 0.95);
+    s.anisotropyRotation = lrt(mid, 14u).z;
+    s.dispersion = max(lrt(mid, 15u).x * lrt(mid, 15u).z, 0.0);
+    s.dispersionAbbe = max(lrt(mid, 15u).y, 0.0);
+    s.coatAnisotropy = clamp(lrt(mid, 16u).y + 0.5 * lrt(mid, 17u).y,
+                             -0.95, 0.95);
+    s.coatRotation = lrt(mid, 16u).z;
+    s.thinFilmWeight = clamp(lrt(mid, 12u).x, 0.0, 1.0);
+    s.thinFilmThickness = max(lrt(mid, 12u).y, 0.0) * 1.0e-3;
+    s.thinFilmIor = max(lrt(mid, 12u).z, 1.0);
+    s.volumeAlbedo = max(lrt(mid, 18u).rgb, vec3(0.0));
+    s.volumeDensity = max(lrt(mid, 18u).w, 0.0);
+    s.volumeEmission = max(lrt(mid, 19u).rgb * lrt(mid, 19u).w, vec3(0.0));
   }
-  uint gb = mid * 1355u, face = uint(max(prim, 0));
+  uint gb = mid * 1366u, face = uint(max(prim, 0));
   if (gb + 9u < uint(graphRows.length())) {
     if (graphRows[gb + 1u] >= 0.0)
       s.base = max(evalMaterialXGraph(mid, 0, uv0, uv1, face).rgb, vec3(0.0));
@@ -1157,6 +1234,92 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
     if (graphRows[gb + 9u] >= 0.0)
       s.subsurfaceRadius = max(evalMaterialXGraph(mid, 8, uv0, uv1, face).rgb,
                                vec3(1.0e-5));
+    if (graphRows[gb + 10u] >= 0.0)
+      s.specularWeight = clamp(evalMaterialXGraph(mid, 9, uv0, uv1, face).x,
+                               0.0, 1.0);
+    if (graphRows[gb + 11u] >= 0.0)
+      s.specularColor = max(evalMaterialXGraph(mid, 10, uv0, uv1, face).rgb,
+                            vec3(0.0));
+    if (graphRows[gb + 12u] >= 0.0)
+      s.transmission = clamp(evalMaterialXGraph(mid, 11, uv0, uv1, face).x,
+                             0.0, 1.0);
+    if (graphRows[gb + 13u] >= 0.0)
+      s.transmissionColor = max(evalMaterialXGraph(mid, 12, uv0, uv1, face).rgb,
+                                vec3(0.0));
+    if (graphRows[gb + 14u] >= 0.0)
+      s.coatWeight = clamp(evalMaterialXGraph(mid, 13, uv0, uv1, face).x,
+                           0.0, 1.0);
+    if (graphRows[gb + 15u] >= 0.0)
+      s.coatColor = max(evalMaterialXGraph(mid, 14, uv0, uv1, face).rgb,
+                        vec3(0.0));
+    if (graphRows[gb + 16u] >= 0.0)
+      s.coatRoughness = clamp(evalMaterialXGraph(mid, 15, uv0, uv1, face).x,
+                              0.02, 1.0);
+    if (graphRows[gb + 17u] >= 0.0)
+      s.sheenWeight = clamp(evalMaterialXGraph(mid, 16, uv0, uv1, face).x,
+                            0.0, 1.0);
+    if (graphRows[gb + 18u] >= 0.0)
+      s.sheenColor = max(evalMaterialXGraph(mid, 17, uv0, uv1, face).rgb,
+                         vec3(0.0));
+    if (graphRows[gb + 19u] >= 0.0)
+      s.sheenRoughness = clamp(evalMaterialXGraph(mid, 18, uv0, uv1, face).x,
+                               0.02, 1.0);
+    if (graphRows[gb + 20u] >= 0.0)
+      s.ior = max(evalMaterialXGraph(mid, 19, uv0, uv1, face).x, 1.0001);
+  }
+  vec3 tangent;
+  vec2 d1 = fetchUV(vb, i1) - fetchUV(vb, i0);
+  vec2 d2 = fetchUV(vb, i2) - fetchUV(vb, i0);
+  float determinant = d1.x * d2.y - d1.y * d2.x;
+  tangent = abs(determinant) > 1.0e-12
+                ? normalize(((p1 - p0) * d2.y - (p2 - p0) * d1.y) /
+                            determinant)
+                : normalize(cross(abs(s.n.z) < 0.999 ? vec3(0, 0, 1)
+                                                      : vec3(0, 1, 0), s.n));
+  vec3 bitangent = normalize(cross(s.n, tangent));
+  s.tangent = tangent;
+  s.bitangent = bitangent;
+  vec3 tangentNormal = vec3(0.0, 0.0, 1.0);
+  bool hasTangentNormal = false;
+  int normalTexture = matTexIds[tb + 3u];
+  if (normalTexture >= 0) {
+    vec2 normalUv = materialUv(mid, 3, uv0, uv1);
+    vec4 nt = sampleRtMaterialTexture(
+        normalTexture, normalUv, face,
+        rtTextureLod(normalTexture, normalUv,
+                     materialUvFootprint(mid, 3, 0.0)),
+        vec4(0.5, 0.5, 1.0, 1.0));
+    nt = nt * vec4(matTexParams[pb + 44u], matTexParams[pb + 45u],
+                   matTexParams[pb + 46u], matTexParams[pb + 47u]) +
+         vec4(matTexParams[pb + 48u], matTexParams[pb + 49u],
+              matTexParams[pb + 50u], matTexParams[pb + 51u]);
+    tangentNormal = nt.xyz;
+    hasTangentNormal = true;
+  }
+  if (gb + 6u < uint(graphRows.length()) && graphRows[gb + 6u] >= 0.0) {
+    tangentNormal = evalMaterialXGraph(mid, 5, uv0, uv1, face).xyz * 2.0 - 1.0;
+    hasTangentNormal = true;
+  }
+  if (hasTangentNormal)
+    s.n = normalize(tangent * tangentNormal.x +
+                    bitangent * tangentNormal.y + s.n * tangentNormal.z);
+  s.coatN = s.n;
+  int coatNormalTexture = matTexIds[tb + 11u];
+  if (coatNormalTexture >= 0) {
+    vec2 sourceUv = int(matTexParams[pb + 146u] + 0.5) == 1 ? uv1 : uv0;
+    vec2 coatUv = vec2(
+        matTexParams[pb + 140u] * sourceUv.x +
+            matTexParams[pb + 141u] * sourceUv.y + matTexParams[pb + 142u],
+        matTexParams[pb + 143u] * sourceUv.x +
+            matTexParams[pb + 144u] * sourceUv.y + matTexParams[pb + 145u]);
+    vec4 cn = sampleRtMaterialTexture(coatNormalTexture, coatUv, face,
+        rtTextureLod(coatNormalTexture, coatUv, 0.0),
+        vec4(0.5, 0.5, 1.0, 1.0));
+    cn = cn * vec4(matTexParams[pb + 147u], matTexParams[pb + 148u],
+                   matTexParams[pb + 149u], matTexParams[pb + 150u]) +
+         vec4(matTexParams[pb + 151u], matTexParams[pb + 152u],
+              matTexParams[pb + 153u], matTexParams[pb + 154u]);
+    s.coatN = normalize(tangent * cn.x + bitangent * cn.y + s.n * cn.z);
   }
   s.base *= ii.tint.rgb;
 }
@@ -1170,9 +1333,195 @@ vec3 ptCosineDirection(vec3 n, inout uint seed) {
                    n * sqrt(max(0.0, 1.0 - r * r)));
 }
 
+vec3 ptUniformSphere(inout uint seed) {
+  float z = 1.0 - 2.0 * rnd(seed);
+  float phi = 6.28318530718 * rnd(seed);
+  float r = sqrt(max(0.0, 1.0 - z * z));
+  return vec3(r * cos(phi), r * sin(phi), z);
+}
+
+float ptLuminance(vec3 c) {
+  return max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.0);
+}
+
+void ptBasis(vec3 n, out vec3 t, out vec3 b) {
+  t = normalize(abs(n.z) < 0.999 ? cross(vec3(0.0, 0.0, 1.0), n)
+                                 : cross(vec3(0.0, 1.0, 0.0), n));
+  b = cross(n, t);
+}
+
+void ptRotatedBasis(vec3 n, float rotation, out vec3 t, out vec3 b) {
+  vec3 t0, b0; ptBasis(n, t0, b0);
+  float a = radians(rotation);
+  t = t0 * cos(a) + b0 * sin(a);
+  b = -t0 * sin(a) + b0 * cos(a);
+}
+
+// Sample the isotropic GGX distribution used by ggxD and return the matching
+// reflected-direction PDF. The old mirror/cosine blend had no matching PDF and
+// therefore changed energy as roughness or lobe weights changed.
+vec3 ptSampleGgx(vec3 n, vec3 v, float roughness, float anisotropy,
+                 float rotation, inout uint seed, out float pdf) {
+  float alpha = max(roughness * roughness, 0.002);
+  float ax = max(alpha * (1.0 + anisotropy), 0.001);
+  float ay = max(alpha * (1.0 - anisotropy), 0.001);
+  float u1 = rnd(seed), u2 = rnd(seed);
+  float phi = atan(ay / ax * tan(6.28318530718 * u2));
+  if (u2 > 0.25 && u2 <= 0.75) phi += 3.14159265359;
+  else if (u2 > 0.75) phi += 6.28318530718;
+  float cp = cos(phi), sp = sin(phi);
+  float alpha2 = 1.0 / (cp * cp / (ax * ax) + sp * sp / (ay * ay));
+  float cosTheta = sqrt(max((1.0 - u1) /
+                            (1.0 + (alpha2 - 1.0) * u1), 0.0));
+  float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+  vec3 t, b; ptRotatedBasis(n, rotation, t, b);
+  vec3 h = normalize(t * (sinTheta * cp) + b * (sinTheta * sp) +
+                     n * cosTheta);
+  if (dot(h, v) < 0.0) h = -h;
+  vec3 l = reflect(-v, h);
+  float nh = max(dot(n, h), 0.0), vh = max(dot(v, h), 1.0e-6);
+  pdf = ggxDAniso(nh, dot(h, t), dot(h, b), roughness, anisotropy) * nh /
+        max(4.0 * vh, 1.0e-6);
+  return normalize(l);
+}
+
+float ptGgxDirectionPdf(vec3 n, vec3 v, vec3 l, float roughness,
+                        float anisotropy, float rotation) {
+  if (dot(n, l) <= 0.0) return 0.0;
+  vec3 h = normalize(v + l);
+  float nh = max(dot(n, h), 0.0), vh = max(dot(v, h), 1.0e-6);
+  vec3 t, b; ptRotatedBasis(n, rotation, t, b);
+  return ggxDAniso(nh, dot(h, t), dot(h, b), roughness, anisotropy) * nh /
+         max(4.0 * vh, 1.0e-6);
+}
+
+float ptPowerHeuristic(float a, float b) {
+  float aa = a * a, bb = b * b;
+  return aa / max(aa + bb, 1.0e-20);
+}
+
+vec3 ptEvaluateReflection(PtSurface s, vec3 v, vec3 l,
+                          vec3 diffuseCoefficient, vec3 f0,
+                          vec3 sheenCoefficient, vec3 coatF0,
+                          float coatWeight, float diffuseProbability,
+                          float glossyProbability, float coatProbability,
+                          out float pdf) {
+  float nl = max(dot(s.n, l), 0.0), nv = max(dot(s.n, v), 1.0e-6);
+  if (nl <= 0.0) { pdf = 0.0; return vec3(0.0); }
+  vec3 h = normalize(v + l);
+  float nh = max(dot(s.n, h), 0.0), vh = max(dot(v, h), 0.0);
+  vec3 F = fresnelSchlick(vh, f0);
+  vec3 t, b; ptRotatedBasis(s.n, s.anisotropyRotation, t, b);
+  vec3 glossy = F * ggxDAniso(nh, dot(h, t), dot(h, b), s.roughness,
+                              s.anisotropy) *
+                ggxG1Aniso(nv, dot(v, t), dot(v, b), s.roughness,
+                           s.anisotropy) *
+                ggxG1Aniso(nl, dot(l, t), dot(l, b), s.roughness,
+                           s.anisotropy) / max(4.0 * nv * nl, 1.0e-6);
+  vec3 coatH = normalize(v + l), ct, cb;
+  ptRotatedBasis(s.coatN, s.coatRotation, ct, cb);
+  float coatNl = max(dot(s.coatN, l), 0.0);
+  float coatNv = max(dot(s.coatN, v), 1.0e-6);
+  float coatNh = max(dot(s.coatN, coatH), 0.0);
+  vec3 coatF = fresnelSchlick(max(dot(v, coatH), 0.0), coatF0);
+  vec3 coat = coatF * coatWeight *
+              ggxDAniso(coatNh, dot(coatH, ct), dot(coatH, cb),
+                        s.coatRoughness, s.coatAnisotropy) *
+              ggxG1Aniso(coatNv, dot(v, ct), dot(v, cb), s.coatRoughness,
+                         s.coatAnisotropy) *
+              ggxG1Aniso(max(coatNl, 1.0e-6), dot(l, ct), dot(l, cb),
+                         s.coatRoughness, s.coatAnisotropy) /
+              max(4.0 * coatNv * max(coatNl, 1.0e-6), 1.0e-6);
+  vec3 sheen = sheenCoefficient *
+               (0.5 + 0.5 * s.sheenRoughness) *
+               pow(1.0 - nl, 5.0) / 3.14159265359;
+  pdf = diffuseProbability * nl / 3.14159265359 +
+        glossyProbability * ptGgxDirectionPdf(
+            s.n, v, l, s.roughness, s.anisotropy, s.anisotropyRotation) +
+        coatProbability * ptGgxDirectionPdf(
+            s.coatN, v, l, s.coatRoughness, s.coatAnisotropy, s.coatRotation);
+  return (vec3(1.0) - F) * diffuseCoefficient / 3.14159265359 +
+         sheen + glossy + coat;
+}
+
+vec3 ptSampleHg(vec3 forward, float g, inout uint seed) {
+  g = clamp(g, -0.95, 0.95);
+  float u = rnd(seed);
+  float cosTheta;
+  if (abs(g) < 1.0e-3) cosTheta = 1.0 - 2.0 * u;
+  else {
+    float q = (1.0 - g * g) / (1.0 - g + 2.0 * g * u);
+    cosTheta = (1.0 + g * g - q * q) / (2.0 * g);
+  }
+  cosTheta = clamp(cosTheta, -1.0, 1.0);
+  float phi = 6.28318530718 * rnd(seed);
+  float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+  vec3 t, b; forward = normalize(forward); ptBasis(forward, t, b);
+  return normalize(t * (sinTheta * cos(phi)) +
+                   b * (sinTheta * sin(phi)) + forward * cosTheta);
+}
+
+// Three-channel hero-wavelength Cauchy model. OpenPBR's Abbe number controls
+// n(F)-n(C); dispersion scales that physically meaningful separation instead
+// of tinting throughput without changing the refracted direction.
+float ptSpectralIor(float iorD, float abbe, float dispersion, int channel) {
+  if (dispersion <= 0.0 || abbe <= 0.0) return iorD;
+  const float lambdaC = 0.6562725;
+  const float lambdaD = 0.5875618;
+  const float lambdaF = 0.4861327;
+  float delta = (iorD - 1.0) / max(abbe, 1.0) * dispersion;
+  float invC = 1.0 / (lambdaC * lambdaC);
+  float invD = 1.0 / (lambdaD * lambdaD);
+  float invF = 1.0 / (lambdaF * lambdaF);
+  float B = delta / max(invF - invC, 1.0e-6);
+  float A = iorD - B * invD;
+  float lambda = channel == 0 ? lambdaC : (channel == 1 ? lambdaD : lambdaF);
+  return max(A + B / (lambda * lambda), 1.0001);
+}
+
 vec3 ptEnvironment(vec3 d) {
   vec3 env = rtDomeRadiance(d);
   return dot(env, env) > 1.0e-12 ? env : srgbToLinear(pc.clearColor.rgb);
+}
+
+vec3 ptEnvironmentCellDirection(int cell, vec2 jitter) {
+  int zCell = cell / 8, phiCell = cell - zCell * 8;
+  float z = -1.0 + 2.0 * (float(zCell) + jitter.y) / 4.0;
+  float phi = 6.28318530718 * (float(phiCell) + jitter.x) / 8.0;
+  float r = sqrt(max(0.0, 1.0 - z * z));
+  return vec3(r * cos(phi), r * sin(phi), z);
+}
+
+float ptEnvironmentCellWeight(int cell) {
+  return max(ptLuminance(ptEnvironment(
+      ptEnvironmentCellDirection(cell, vec2(0.5)))), 1.0e-6);
+}
+
+vec3 ptSampleEnvironment(inout uint seed, out float pdf) {
+  float total = 0.0; int selected = 0;
+  [[dont_unroll]] for (int cell = 0; cell < 32; ++cell) {
+    float w = ptEnvironmentCellWeight(cell); total += w;
+    if (rnd(seed) < w / total) selected = cell;
+  }
+  float selectedWeight = ptEnvironmentCellWeight(selected);
+  // Each z/phi cell spans exactly 4*pi/32 steradians.
+  pdf = selectedWeight / max(total, 1.0e-20) *
+        2.5464790894703255;  // 32 / (4*pi)
+  return ptEnvironmentCellDirection(selected, vec2(rnd(seed), rnd(seed)));
+}
+
+float ptEnvironmentPdf(vec3 direction) {
+  direction = normalize(direction);
+  float phi = atan(direction.y, direction.x);
+  if (phi < 0.0) phi += 6.28318530718;
+  int px = min(int(phi * (8.0 / 6.28318530718)), 7);
+  int pz = clamp(int((direction.z + 1.0) * 2.0), 0, 3);
+  int selected = pz * 8 + px;
+  float total = 0.0;
+  [[dont_unroll]] for (int cell = 0; cell < 32; ++cell)
+    total += ptEnvironmentCellWeight(cell);
+  return ptEnvironmentCellWeight(selected) / max(total, 1.0e-20) *
+         2.5464790894703255;
 }
 
 vec3 ptSampleDirect(PtSurface s, uint iid, vec3 viewDir, inout uint seed) {
@@ -1182,35 +1531,66 @@ vec3 ptSampleDirect(PtSurface s, uint iid, vec3 viewDir, inout uint seed) {
   // lights are already importance sampled by the environment path; including
   // them here (as well as disabled/unlinked lights) wastes a shadow ray and
   // increases variance.
-  uint eligible = 0u;
+  float eligiblePower = 0.0;
   uint li = 0u;
   for (uint candidate = 0u; candidate < count; ++candidate) {
     int candidateType = int(light(candidate, 0u).x + 0.5);
     bool linked = candidate >= 32u ||
                   (insts[iid].directLightMask & (1u << candidate)) != 0u;
-    if (candidateType != 6 && light(candidate, 0u).y > 0.5 && linked) {
-      ++eligible;
-      // Reservoir sampling selects uniformly in one pass without building a
-      // per-hit light list or scanning the authored lights twice.
-      if (rnd(seed) < 1.0 / float(eligible)) li = candidate;
+    float area = light(candidate, 5u).w > 1.0e-7
+                     ? light(candidate, 5u).w : 1.0;
+    float power = ptLuminance(light(candidate, 3u).rgb) * area;
+    if (candidateType != 6 && linked && power > 1.0e-8) {
+      eligiblePower += power;
+      // Weighted reservoir sampling avoids spending equal shadow rays on a
+      // dim fill and a dominant key while retaining a single bounded scan.
+      if (rnd(seed) < power / eligiblePower) li = candidate;
     }
   }
-  if (eligible == 0u) return vec3(0.0);
+  if (eligiblePower <= 0.0) return vec3(0.0);
   int lightType = int(light(li, 0u).x + 0.5);
+  float lightArea = light(li, 5u).w > 1.0e-7 ? light(li, 5u).w : 1.0;
+  float selectedPower = ptLuminance(light(li, 3u).rgb) * lightArea;
+  float selectionPdf = selectedPower / eligiblePower;
   vec3 toLight;
-  float maxT = 1.0e30, attenuation = 1.0;
+  float maxT = 1.0e30, attenuation = 1.0, emitterCosine = 1.0;
   if (lightType == 5) {
     toLight = -normalize(light(li, 2u).xyz);
   } else {
-    vec3 delta = sampleLightPosition(li, lightType, seed) - s.p;
+    vec3 lightPosition = sampleLightPosition(li, lightType, seed);
+    vec3 delta = lightPosition - s.p;
     float distance2 = max(dot(delta, delta), 1.0e-6);
     maxT = sqrt(distance2);
     toLight = delta / maxT;
     attenuation = 1.0 / distance2;
+    vec3 center = light(li, 1u).xyz;
+    vec3 axisZ = normalize(light(li, 12u).xyz);
+    if (lightType == 1)
+      emitterCosine = abs(dot(normalize(lightPosition - center), -toLight));
+    else if (lightType == 2 || lightType == 3 || lightType == 8)
+      emitterCosine = abs(dot(axisZ, -toLight));
+    else if (lightType == 4) {
+      vec3 fromCenter = lightPosition - center;
+      vec3 radial = fromCenter - axisZ * dot(fromCenter, axisZ);
+      emitterCosine = abs(dot(normalize(radial), -toLight));
+    }
   }
   float nl = max(dot(s.n, toLight), 0.0);
-  if (nl <= 0.0) return vec3(0.0);
-  for (uint chunk = 0u; chunk < tlasChunkCount(); ++chunk) {
+  int flags = int(light(li, 0u).y + 0.5);
+  float shape = 1.0;
+  if ((flags & 4) != 0 && lightType != 5) {
+    float coneCos = dot(normalize(light(li, 2u).xyz), -toLight);
+    float angle = clamp(light(li, 6u).x, 0.0, 180.0);
+    float softness = clamp(light(li, 6u).y, 0.0, 1.0);
+    float outer = cos(radians(angle));
+    float inner = cos(radians(angle * (1.0 - softness)));
+    shape = smoothstep(outer, max(inner, outer + 1.0e-5), coneCos) *
+            pow(max(coneCos, 0.0), max(light(li, 6u).z, 0.0));
+  }
+  shape *= rtIesFactor(li, -toLight);
+  if (nl <= 0.0 || emitterCosine <= 0.0 || shape <= 0.0)
+    return vec3(0.0);
+  for (uint chunk = 0u; (flags & 2) != 0 && chunk < tlasChunkCount(); ++chunk) {
     rayQueryEXT shadowQuery;
     rayQueryInitializeEXT(shadowQuery, TLAS[chunk],
                           gl_RayFlagsTerminateOnFirstHitEXT, 0xff,
@@ -1224,7 +1604,10 @@ vec3 ptSampleDirect(PtSurface s, uint iid, vec3 viewDir, inout uint seed) {
         int sp = rayQueryGetIntersectionPrimitiveIndexEXT(shadowQuery, false);
         vec2 sb = rayQueryGetIntersectionBarycentricsEXT(shadowQuery, false);
         bool sf = rayQueryGetIntersectionFrontFaceEXT(shadowQuery, false);
-        if (materialAllowsHit(si, sp, sb, sf))
+        bool shadowLinked = li < 32u
+            ? (insts[si].shadowLightMask & (1u << li)) != 0u
+            : (flags & (1 << 6)) != 0;
+        if (shadowLinked && materialAllowsHit(si, sp, sb, sf))
           rayQueryConfirmIntersectionEXT(shadowQuery);
       }
     }
@@ -1232,34 +1615,85 @@ vec3 ptSampleDirect(PtSurface s, uint iid, vec3 viewDir, inout uint seed) {
         gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.0);
   }
   vec3 v = normalize(viewDir);
-  vec3 h = normalize(v + toLight);
-  float nv = max(dot(s.n, v), 1.0e-5);
-  float nh = max(dot(s.n, h), 0.0);
-  float vh = max(dot(v, h), 0.0);
   float dielectricF0 = pow((s.ior - 1.0) / (s.ior + 1.0), 2.0);
-  vec3 f0 = mix(vec3(dielectricF0), s.base, s.metallic);
-  vec3 F = fresnelSchlick(vh, f0);
-  float specularScale = ggxD(nh, s.roughness) *
-                        ggxG1(nv, s.roughness) *
-                        ggxG1(nl, s.roughness) /
-                        max(4.0 * nv * nl, 1.0e-5);
-  vec3 diffuse = (vec3(1.0) - F) * s.base * (1.0 - s.metallic) *
-                 (1.0 - s.transmission) / 3.14159265359;
-  vec3 brdf = diffuse + F * specularScale;
-  return brdf * light(li, 3u).rgb * attenuation * nl * float(eligible);
+  vec3 dielectric = s.specularColor * dielectricF0 * s.specularWeight;
+  vec3 f0 = mix(dielectric, s.base, s.metallic);
+  f0 = applyThinFilm(f0, max(dot(s.n, v), 0.0), s.thinFilmWeight,
+                     s.thinFilmThickness, s.thinFilmIor);
+  vec3 diffuse = s.base * (1.0 - s.metallic) *
+                 (1.0 - s.transmission) * (1.0 - s.subsurface);
+  vec3 sheen = s.sheenColor * s.sheenWeight * (1.0 - s.metallic) *
+               (1.0 - s.transmission);
+  float coatDielectric = pow((s.coatIor - 1.0) / (s.coatIor + 1.0), 2.0);
+  vec3 coatF0 = s.coatColor * coatDielectric;
+  float ignoredPdf = 0.0;
+  vec3 brdf = ptEvaluateReflection(s, v, toLight, diffuse, f0, sheen,
+                                   coatF0, s.coatWeight,
+                                   0.0, 0.0, 0.0, ignoredPdf);
+  float areaFactor = lightType >= 1 && lightType <= 4
+                         ? max(light(li, 5u).w, 1.0e-7) : 1.0;
+  return brdf * light(li, 3u).rgb *
+         (attenuation * areaFactor * emitterCosine * shape * nl /
+          max(selectionPdf, 1.0e-8));
 }
 
 vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
                          uint rrDepth, uint maxSubsurfaceEvents) {
   vec3 radiance = vec3(0.0), throughput = vec3(1.0);
   uint subsurfaceEvents = 0u;
+  bool inSubsurface = false;
+  vec3 subsurfaceSigma = vec3(1.0), subsurfaceAlbedo = vec3(1.0);
+  float subsurfaceG = 0.0;
+  float previousBsdfPdf = 0.0, previousEnvironmentPdf = 0.0;
+  bool previousDelta = true;
+  float mediumIor[4]; vec3 mediumSigma[4]; vec3 mediumEmission[4];
+  int mediumInstance[4]; int mediumDepth = 0; int heroChannel = -1;
+  mediumIor[0] = 1.0; mediumSigma[0] = vec3(0.0);
+  mediumEmission[0] = vec3(0.0); mediumInstance[0] = -1;
   for (uint bounce = 0u; bounce < maxDepth; ++bounce) {
     uint iid = 0u; int prim = 0; vec2 bc = vec2(0); bool front = true;
     mat4x3 o2w; float hitT = 1.0e30;
     if (!traceAcceptedPrimary(ro, rd, 1.0e-4, 1.0e30, iid, prim, bc,
                               front, o2w, hitT)) {
-      radiance += throughput * ptEnvironment(rd);
+      if (!inSubsurface) {
+        float mis = previousDelta
+                        ? 1.0
+                        : ptPowerHeuristic(previousBsdfPdf,
+                                           previousEnvironmentPdf);
+        radiance += throughput * ptEnvironment(rd) * mis;
+      }
       break;
+    }
+    if (!inSubsurface && mediumDepth > 0) {
+      vec3 segmentTr = exp(-mediumSigma[mediumDepth] * hitT);
+      vec3 sigma = mediumSigma[mediumDepth];
+      vec3 integral = vec3(
+          sigma.x > 1.0e-6 ? (1.0 - segmentTr.x) / sigma.x : hitT,
+          sigma.y > 1.0e-6 ? (1.0 - segmentTr.y) / sigma.y : hitT,
+          sigma.z > 1.0e-6 ? (1.0 - segmentTr.z) / sigma.z : hitT);
+      radiance += throughput * mediumEmission[mediumDepth] * integral;
+      throughput *= segmentTr;
+    }
+    // Boundary-aware homogeneous random walk.  Free flights terminate at the
+    // actual next surface instead of moving an unchecked distance through thin
+    // geometry.  This keeps radius-dependent scattering inside the object and
+    // applies colored Beer attenuation before a scatter or exit event.
+    if (inSubsurface) {
+      float majorant = max(max(subsurfaceSigma.x, subsurfaceSigma.y),
+                           max(subsurfaceSigma.z, 1.0e-5));
+      float flight = -log(max(1.0e-7, 1.0 - rnd(seed))) / majorant;
+      float travel = min(flight, hitT);
+      throughput *= exp(-subsurfaceSigma * travel);
+      if (flight < hitT && subsurfaceEvents < maxSubsurfaceEvents) {
+        throughput *= subsurfaceAlbedo;
+        ro += rd * flight;
+        rd = ptSampleHg(rd, subsurfaceG, seed);
+        ++subsurfaceEvents;
+        continue;
+      }
+      ro += rd * (hitT + 1.0e-4);
+      inSubsurface = false;
+      continue;
     }
     PtSurface s;
     resolvePtSurface(iid, prim, bc, front, o2w, s);
@@ -1269,45 +1703,162 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
     // Multiplication by the light count compensates for uniform light choice;
     // accepted cutouts participate in the visibility query.
     radiance += throughput * ptSampleDirect(s, iid, -rd, seed);
-    float choose = rnd(seed);
-    float tp = clamp(s.transmission, 0.0, 0.95);
-    float sp = subsurfaceEvents < maxSubsurfaceEvents
-                   ? clamp(s.subsurface * (1.0 - tp), 0.0, 0.9)
-                   : 0.0;
-    float gp = clamp(mix(0.08, 0.9, s.metallic) * (1.0 - tp - sp),
-                     0.02, 0.9);
+    float dielectricF0 = pow((s.ior - 1.0) / (s.ior + 1.0), 2.0);
+    vec3 dielectric = s.specularColor * dielectricF0 * s.specularWeight;
+    vec3 f0 = mix(dielectric, s.base, s.metallic);
+    f0 = applyThinFilm(f0, max(dot(s.n, -rd), 0.0), s.thinFilmWeight,
+                       s.thinFilmThickness, s.thinFilmIor);
+    vec3 diffuseCoefficient = s.base * (1.0 - s.metallic) *
+                              (1.0 - s.transmission) *
+                              (1.0 - s.subsurface);
+    vec3 sheenCoefficient = s.sheenColor * s.sheenWeight *
+                            (1.0 - s.metallic) * (1.0 - s.transmission);
+    vec3 transmissionCoefficient = s.transmissionColor * s.transmission *
+                                   (1.0 - s.metallic);
+    vec3 interfaceF = fresnelSchlick(max(dot(s.n, -rd), 0.0), f0);
+    transmissionCoefficient *= vec3(1.0) - interfaceF;
+    // subsurfaceColor is the random walk's single-scatter albedo. Applying it
+    // at entry as well would square the color at the first collision.
+    vec3 subsurfaceCoefficient = vec3(
+        (subsurfaceEvents < maxSubsurfaceEvents ? s.subsurface : 0.0) *
+        (1.0 - s.metallic) * (1.0 - s.transmission));
+    float coatF0 = pow((s.coatIor - 1.0) / (s.coatIor + 1.0), 2.0);
+    vec3 coatF0Color = s.coatColor * coatF0;
+    vec3 coatCoefficient = coatF0Color * s.coatWeight;
+    float diffuseEnergy = ptLuminance(diffuseCoefficient) +
+                          ptLuminance(sheenCoefficient);
+    float transmissionEnergy = ptLuminance(transmissionCoefficient);
+    float subsurfaceEnergy = ptLuminance(subsurfaceCoefficient);
+    float glossyEnergy = ptLuminance(f0);
+    float coatEnergy = ptLuminance(coatCoefficient);
+    float energySum = diffuseEnergy + transmissionEnergy + subsurfaceEnergy +
+                      glossyEnergy + coatEnergy;
+    if (energySum <= 1.0e-7) break;
+    float diffuseProbability = diffuseEnergy / energySum;
+    float glossyProbability = glossyEnergy / energySum;
+    float coatProbability = coatEnergy / energySum;
+
+    // Explicit environment next-event sampling from a luminance-weighted,
+    // equal-solid-angle z/phi distribution. The coarse 32-cell CDF follows
+    // bright dome regions without another descriptor and remains unbiased for
+    // the full-resolution environment evaluated below. MIS prevents the
+    // corresponding BSDF miss path from being counted twice.
+    float environmentPdf = 0.0;
+    vec3 environmentDirection = ptSampleEnvironment(seed, environmentPdf);
+    float environmentNoL = max(dot(s.n, environmentDirection), 0.0);
+    if (environmentNoL > 0.0) {
+      float reflectionPdf = 0.0;
+      vec3 reflection = ptEvaluateReflection(
+          s, -rd, environmentDirection, diffuseCoefficient, f0,
+          sheenCoefficient, coatF0Color, s.coatWeight,
+          diffuseProbability, glossyProbability,
+          coatProbability, reflectionPdf);
+      uint ei = 0u; int ep = -1; vec2 eb = vec2(0.0); bool ef = true;
+      mat4x3 ew; float et = 1.0e30;
+      bool blocked = traceAcceptedPrimary(s.p + s.n * 1.0e-4,
+                                          environmentDirection, 1.0e-4,
+                                          1.0e30, ei, ep, eb, ef, ew, et);
+      if (!blocked) {
+        float mis = ptPowerHeuristic(environmentPdf, reflectionPdf);
+        radiance += throughput * reflection * environmentNoL *
+                    ptEnvironment(environmentDirection) *
+                    (mis / environmentPdf);
+      }
+    }
+    float choose = rnd(seed) * energySum;
     vec3 nextDir, weight; float side = 1.0;
-    if (choose < tp) {
-      float eta = front ? 1.0 / s.ior : s.ior;
+    bool reflectionSample = false;
+    if ((choose -= transmissionEnergy) < 0.0) {
+      float probability = transmissionEnergy / energySum;
+      if (heroChannel < 0 && s.dispersion > 0.0 && s.dispersionAbbe > 0.0) {
+        heroChannel = min(int(rnd(seed) * 3.0), 2);
+        vec3 hero = heroChannel == 0 ? vec3(3.0, 0.0, 0.0)
+                  : heroChannel == 1 ? vec3(0.0, 3.0, 0.0)
+                                     : vec3(0.0, 0.0, 3.0);
+        transmissionCoefficient *= hero;
+      }
+      float materialIor = ptSpectralIor(
+          s.ior, s.dispersionAbbe, s.dispersion,
+          heroChannel < 0 ? 1 : heroChannel);
+      float outsideIor = mediumIor[mediumDepth];
+      float insideIor = materialIor;
+      if (!front && mediumDepth > 0) {
+        insideIor = mediumIor[mediumDepth];
+        outsideIor = mediumIor[max(mediumDepth - 1, 0)];
+      }
+      float eta = insideIor > 0.0 ? outsideIor / insideIor : 1.0;
       nextDir = refract(rd, s.n, eta);
-      if (dot(nextDir, nextDir) < 1.0e-8) nextDir = reflect(rd, s.n);
-      nextDir = normalize(mix(nextDir, ptCosineDirection(-s.n, seed),
-                              s.roughness * s.roughness));
-      weight = s.transmissionColor;
+      bool totalInternalReflection = dot(nextDir, nextDir) < 1.0e-8;
+      if (totalInternalReflection) nextDir = reflect(rd, s.n);
+      weight = transmissionCoefficient / max(probability, 1.0e-6);
       side = dot(nextDir, s.n) < 0.0 ? -1.0 : 1.0;
-    } else if (choose < tp + sp) {
-      // Radius-aware stochastic interior free flight. Subsequent boundary hits
-      // continue the random walk instead of collapsing SSS into a tint lobe.
-      float radius = max(dot(s.subsurfaceRadius,
-                             vec3(0.2126, 0.7152, 0.0722)), 1.0e-5);
-      float flight = -log(max(1.0e-7, 1.0 - rnd(seed))) * radius;
-      ro = s.p - s.n * max(1.0e-4, min(flight, radius * 8.0));
-      float z = 1.0 - 2.0 * rnd(seed), a = 6.28318530718 * rnd(seed);
-      float q = sqrt(max(0.0, 1.0 - z * z));
-      nextDir = vec3(q * cos(a), q * sin(a), z);
-      weight = s.subsurfaceColor;
-      side = 0.0;
+      if (!totalInternalReflection) {
+        if (front && mediumDepth < 3) {
+          ++mediumDepth;
+          mediumIor[mediumDepth] = materialIor;
+          float depth = max(s.transmissionDepth, 1.0e-4);
+          vec3 colorAbsorption = max(vec3(0.0), vec3(1.0) -
+                                    clamp(s.transmissionColor, vec3(0.0),
+                                          vec3(1.0))) / depth;
+          mediumSigma[mediumDepth] = colorAbsorption + s.transmissionScatter +
+              s.volumeDensity * max(vec3(0.0), vec3(1.0) - s.volumeAlbedo);
+          mediumEmission[mediumDepth] = s.volumeEmission;
+          mediumInstance[mediumDepth] = int(iid);
+        } else if (!front && mediumDepth > 0) {
+          int matched = mediumDepth;
+          for (int level = mediumDepth; level > 0; --level)
+            if (mediumInstance[level] == int(iid)) { matched = level; break; }
+          mediumDepth = max(matched - 1, 0);
+        }
+      }
+      previousDelta = true;
+    } else if ((choose -= subsurfaceEnergy) < 0.0) {
+      float probability = subsurfaceEnergy / energySum;
+      weight = subsurfaceCoefficient / max(probability, 1.0e-6);
+      subsurfaceSigma = 1.0 / max(s.subsurfaceRadius, vec3(1.0e-5));
+      subsurfaceAlbedo = clamp(s.subsurfaceColor, vec3(0.0), vec3(0.999));
+      subsurfaceG = s.subsurfaceAnisotropy;
+      ro = s.p - s.n * 1.0e-4;
+      rd = ptCosineDirection(-s.n, seed);
+      throughput *= max(weight, vec3(0.0));
+      inSubsurface = true;
+      previousDelta = true;
       ++subsurfaceEvents;
-    } else if (choose < tp + sp + gp) {
-      vec3 mirrorDir = reflect(rd, s.n);
-      nextDir = normalize(mix(mirrorDir, ptCosineDirection(s.n, seed),
-                              s.roughness * s.roughness));
-      float dielectricF0 = pow((s.ior - 1.0) / (s.ior + 1.0), 2.0);
-      weight = fresnelSchlick(max(dot(-rd, s.n), 0.0),
-                              mix(vec3(dielectricF0), s.base, s.metallic));
+      continue;
+    } else if ((choose -= coatEnergy) < 0.0) {
+      float pdf;
+      vec3 v = -rd;
+      nextDir = ptSampleGgx(s.coatN, v, s.coatRoughness,
+                            s.coatAnisotropy, s.coatRotation, seed, pdf);
+      float nl = max(dot(s.coatN, nextDir), 0.0);
+      if (nl <= 0.0 || pdf <= 1.0e-8) break;
+      reflectionSample = true; previousDelta = false;
+    } else if ((choose -= glossyEnergy) < 0.0) {
+      float pdf;
+      vec3 v = -rd;
+      nextDir = ptSampleGgx(s.n, v, s.roughness, s.anisotropy,
+                            s.anisotropyRotation, seed, pdf);
+      float nl = max(dot(s.n, nextDir), 0.0);
+      if (nl <= 0.0 || pdf <= 1.0e-8) break;
+      reflectionSample = true; previousDelta = false;
     } else {
       nextDir = ptCosineDirection(s.n, seed);
-      weight = s.base * (1.0 - s.metallic);
+      reflectionSample = true; previousDelta = false;
+    }
+    if (reflectionSample) {
+      float mixturePdf = 0.0;
+      vec3 reflection = ptEvaluateReflection(
+          s, -rd, nextDir, diffuseCoefficient, f0, sheenCoefficient,
+          coatF0Color, s.coatWeight, diffuseProbability,
+          glossyProbability, coatProbability, mixturePdf);
+      float nl = max(dot(s.n, nextDir), 0.0);
+      if (mixturePdf <= 1.0e-8 || nl <= 0.0) break;
+      weight = reflection * (nl / mixturePdf);
+      previousBsdfPdf = mixturePdf;
+      previousEnvironmentPdf = ptEnvironmentPdf(nextDir);
+    } else {
+      previousBsdfPdf = 0.0;
+      previousEnvironmentPdf = 0.0;
     }
     throughput *= max(weight, vec3(0.0));
     if (any(isnan(throughput)) || any(isinf(throughput)) ||
@@ -1573,6 +2124,12 @@ void main() {
     float alpha = 1.0, metallic = 0.0, roughness = 0.5;
     float alphaMode = 0.0, alphaCutoff = 0.5;
     vec3 emissive = vec3(0.0);
+    float occlusion = 1.0;
+    float coatWeight = 0.0, coatRoughness = 0.1;
+    vec3 coatColor = vec3(1.0);
+    float specIor = 1.5;
+    vec3 specularColor = vec3(1.0);
+    bool previewSpec = false, openPbrSpec = false;
     uint sourceFace = md.faceAddr != 0ul
                           ? Faces(md.faceAddr).fc[uint(prim)]
                           : uint(max(prim, 0));
@@ -1584,13 +2141,215 @@ void main() {
       alphaMode = mat(mid, 1u).z;
       alphaCutoff = mat(mid, 1u).w;
       emissive = max(mat(mid, 2u).rgb, vec3(0.0));
+      if (lrt(mid, 12u).w > 0.5) {
+        metallic = clamp(lrt(mid, 10u).x, 0.0, 1.0);
+        roughness = clamp(lrt(mid, 10u).z, 0.02, 1.0);
+        alpha = clamp(lrt(mid, 9u).w, 0.0, 1.0);
+        emissive = max(lrt(mid, 8u).rgb * lrt(mid, 8u).w, vec3(0.0));
+        coatColor = max(lrt(mid, 6u).rgb, vec3(0.0));
+        coatWeight = clamp(lrt(mid, 6u).w, 0.0, 1.0);
+        coatRoughness = clamp(lrt(mid, 11u).x, 0.02, 1.0);
+        specIor = max(lrt(mid, 10u).w, 1.0);
+        specularColor = max(lrt(mid, 1u).rgb, vec3(0.0));
+      }
       uint tb = mid * 12u;
+      uint pb = mid * 155u;
+      previewSpec = matTexParams[pb + 131u] > 0.5;
+      openPbrSpec = matTexParams[pb + 139u] > 0.5;
       int tex = matTexIds[tb];
       if (tex >= 0) {
         vec2 tuv = materialUv(mid, 0, uv0h, uv1h);
-        base *= sampleRtMaterialTexture(tex, tuv, sourceFace,
-                                        rtTextureLod(tex, tuv, 0.0),
-                                        vec4(1.0)).rgb;
+        vec4 bt = sampleRtMaterialTexture(tex, tuv, sourceFace,
+                                          rtTextureLod(tex, tuv, 0.0),
+                                          vec4(1.0));
+        bt = bt * vec4(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                       matTexParams[pb + 38u], matTexParams[pb + 39u]) +
+             vec4(matTexParams[pb + 40u], matTexParams[pb + 41u],
+                  matTexParams[pb + 42u], matTexParams[pb + 43u]);
+        base *= bt.rgb;
+        alpha *= bt.a;
+      }
+
+      int metallicTex = matTexIds[tb + 1u];
+      if (metallicTex >= 0) {
+        vec2 tuv = materialUv(mid, 1, uv0h, uv1h);
+        vec4 value = sampleRtMaterialTexture(
+            metallicTex, tuv, sourceFace, rtTextureLod(metallicTex, tuv, 0.0),
+            vec4(1.0));
+        metallic = clamp(metallic *
+            (texChannel(value, int(matTexParams[pb + 60u] + 0.5)) *
+                 matTexParams[pb + 61u] + matTexParams[pb + 62u]), 0.0, 1.0);
+      }
+      int roughnessTex = matTexIds[tb + 2u];
+      if (roughnessTex >= 0) {
+        vec2 tuv = materialUv(mid, 2, uv0h, uv1h);
+        vec4 value = sampleRtMaterialTexture(
+            roughnessTex, tuv, sourceFace,
+            rtTextureLod(roughnessTex, tuv, 0.0), vec4(1.0));
+        roughness = clamp(roughness *
+            (texChannel(value, int(matTexParams[pb + 63u] + 0.5)) *
+                 matTexParams[pb + 64u] + matTexParams[pb + 65u]), 0.02, 1.0);
+      }
+      int emissiveTex = matTexIds[tb + 4u];
+      if (emissiveTex >= 0) {
+        vec2 tuv = materialUv(mid, 4, uv0h, uv1h);
+        vec4 value = sampleRtMaterialTexture(
+            emissiveTex, tuv, sourceFace, rtTextureLod(emissiveTex, tuv, 0.0),
+            vec4(1.0));
+        value = value * vec4(matTexParams[pb + 52u], matTexParams[pb + 53u],
+                             matTexParams[pb + 54u], matTexParams[pb + 55u]) +
+                vec4(matTexParams[pb + 56u], matTexParams[pb + 57u],
+                     matTexParams[pb + 58u], matTexParams[pb + 59u]);
+        emissive *= value.rgb;
+      }
+      int opacityTex = matTexIds[tb + 5u];
+      if (opacityTex >= 0) {
+        vec2 tuv = materialUv(mid, 5, uv0h, uv1h);
+        vec4 value = sampleRtMaterialTexture(
+            opacityTex, tuv, sourceFace, rtTextureLod(opacityTex, tuv, 0.0),
+            vec4(1.0));
+        alpha *= texChannel(value, int(matTexParams[pb + 66u] + 0.5)) *
+                     matTexParams[pb + 67u] + matTexParams[pb + 68u];
+      }
+      int occlusionTex = matTexIds[tb + 6u];
+      if (occlusionTex >= 0) {
+        vec2 tuv = materialUv(mid, 12, uv0h, uv1h);
+        vec4 value = sampleRtMaterialTexture(
+            occlusionTex, tuv, sourceFace,
+            rtTextureLod(occlusionTex, tuv, 0.0), vec4(1.0));
+        occlusion = clamp(
+            texChannel(value, int(matTexParams[pb + 96u] + 0.5)) *
+                matTexParams[pb + 70u] + matTexParams[pb + 71u], 0.0, 1.0);
+      }
+      int coatWeightTex = matTexIds[tb + 7u];
+      if (coatWeightTex >= 0) {
+        vec2 tuv = materialUv(mid, 13, uv0h, uv1h);
+        vec4 value = sampleRtMaterialTexture(
+            coatWeightTex, tuv, sourceFace,
+            rtTextureLod(coatWeightTex, tuv, 0.0), vec4(1.0));
+        int channel = int(matTexParams[pb + 97u] + 0.5);
+        coatWeight = clamp(coatWeight *
+            (texChannel(value, channel) *
+                 matTexParams[pb + 100u + uint(channel)] +
+             matTexParams[pb + 104u + uint(channel)]), 0.0, 1.0);
+      }
+      int coatColorTex = matTexIds[tb + 8u];
+      if (coatColorTex >= 0) {
+        vec2 tuv = materialUv(mid, 14, uv0h, uv1h);
+        vec4 value = sampleRtMaterialTexture(
+            coatColorTex, tuv, sourceFace,
+            rtTextureLod(coatColorTex, tuv, 0.0), vec4(1.0));
+        coatColor *= value.rgb * vec3(matTexParams[pb + 108u],
+                                      matTexParams[pb + 109u],
+                                      matTexParams[pb + 110u]) +
+                     vec3(matTexParams[pb + 112u], matTexParams[pb + 113u],
+                          matTexParams[pb + 114u]);
+      }
+      int coatRoughnessTex = matTexIds[tb + 9u];
+      if (coatRoughnessTex >= 0) {
+        vec2 tuv = materialUv(mid, 15, uv0h, uv1h);
+        vec4 value = sampleRtMaterialTexture(
+            coatRoughnessTex, tuv, sourceFace,
+            rtTextureLod(coatRoughnessTex, tuv, 0.0), vec4(1.0));
+        int channel = int(matTexParams[pb + 98u] + 0.5);
+        coatRoughness = clamp(coatRoughness *
+            (texChannel(value, channel) *
+                 matTexParams[pb + 116u + uint(channel)] +
+             matTexParams[pb + 120u + uint(channel)]), 0.02, 1.0);
+      }
+      int specularTex = matTexIds[tb + 10u];
+      if (specularTex >= 0) {
+        vec2 sourceUv = matTexParams[pb + 130u] > 0.5 ? uv1h : uv0h;
+        vec2 tuv = vec2(
+            matTexParams[pb + 124u] * sourceUv.x +
+                matTexParams[pb + 125u] * sourceUv.y + matTexParams[pb + 126u],
+            matTexParams[pb + 127u] * sourceUv.x +
+                matTexParams[pb + 128u] * sourceUv.y + matTexParams[pb + 129u]);
+        vec4 value = sampleRtMaterialTexture(
+            specularTex, tuv, sourceFace, rtTextureLod(specularTex, tuv, 0.0),
+            vec4(1.0));
+        specularColor *= value.rgb * vec3(matTexParams[pb + 132u],
+                                          matTexParams[pb + 133u],
+                                          matTexParams[pb + 134u]) +
+                         vec3(matTexParams[pb + 136u], matTexParams[pb + 137u],
+                              matTexParams[pb + 138u]);
+      }
+      int normalTex = matTexIds[tb + 3u];
+      int coatNormalTex = matTexIds[tb + 11u];
+      if (normalTex >= 0 || coatNormalTex >= 0) {
+        vec3 e1 = wp1 - wp0, e2 = wp2 - wp0;
+        vec2 d1 = fetchUV(vb, i1) - fetchUV(vb, i0);
+        vec2 d2 = fetchUV(vb, i2) - fetchUV(vb, i0);
+        float determinant = d1.x * d2.y - d1.y * d2.x;
+        vec3 tangent = abs(determinant) > 1.0e-12
+                           ? normalize((e1 * d2.y - e2 * d1.y) / determinant)
+                           : normalize(cross(abs(N.z) < 0.999
+                                                 ? vec3(0.0, 0.0, 1.0)
+                                                 : vec3(0.0, 1.0, 0.0), N));
+        vec3 bitangent = normalize(cross(N, tangent));
+        if (normalTex >= 0) {
+          vec2 tuv = materialUv(mid, 3, uv0h, uv1h);
+          vec4 value = sampleRtMaterialTexture(
+              normalTex, tuv, sourceFace, rtTextureLod(normalTex, tuv, 0.0),
+              vec4(0.5, 0.5, 1.0, 1.0));
+          value = value * vec4(matTexParams[pb + 44u], matTexParams[pb + 45u],
+                               matTexParams[pb + 46u], matTexParams[pb + 47u]) +
+                  vec4(matTexParams[pb + 48u], matTexParams[pb + 49u],
+                       matTexParams[pb + 50u], matTexParams[pb + 51u]);
+          N = normalize(tangent * value.x + bitangent * value.y + N * value.z);
+          bitangent = normalize(cross(N, tangent));
+        }
+        coatN = N;
+        if (coatNormalTex >= 0) {
+          vec2 sourceUv = matTexParams[pb + 146u] > 0.5 ? uv1h : uv0h;
+          vec2 tuv = vec2(
+              matTexParams[pb + 140u] * sourceUv.x +
+                  matTexParams[pb + 141u] * sourceUv.y + matTexParams[pb + 142u],
+              matTexParams[pb + 143u] * sourceUv.x +
+                  matTexParams[pb + 144u] * sourceUv.y + matTexParams[pb + 145u]);
+          vec4 value = sampleRtMaterialTexture(
+              coatNormalTex, tuv, sourceFace,
+              rtTextureLod(coatNormalTex, tuv, 0.0),
+              vec4(0.5, 0.5, 1.0, 1.0));
+          value = value * vec4(matTexParams[pb + 147u], matTexParams[pb + 148u],
+                               matTexParams[pb + 149u], matTexParams[pb + 150u]) +
+                  vec4(matTexParams[pb + 151u], matTexParams[pb + 152u],
+                       matTexParams[pb + 153u], matTexParams[pb + 154u]);
+          coatN = normalize(tangent * value.x + bitangent * value.y + N * value.z);
+        }
+      }
+
+      uint graphBase = mid * 1366u;
+      if (graphBase + 20u < uint(graphRows.length())) {
+        if (graphRows[graphBase + 1u] >= 0.0)
+          base = evalMaterialXGraph(mid, 0, uv0h, uv1h, sourceFace).rgb;
+        if (graphRows[graphBase + 2u] >= 0.0)
+          metallic = clamp(evalMaterialXGraph(mid, 1, uv0h, uv1h,
+                                               sourceFace).x, 0.0, 1.0);
+        if (graphRows[graphBase + 3u] >= 0.0)
+          roughness = clamp(evalMaterialXGraph(mid, 2, uv0h, uv1h,
+                                                sourceFace).x, 0.02, 1.0);
+        if (graphRows[graphBase + 4u] >= 0.0)
+          alpha = clamp(evalMaterialXGraph(mid, 3, uv0h, uv1h,
+                                            sourceFace).x, 0.0, 1.0);
+        if (graphRows[graphBase + 5u] >= 0.0)
+          emissive = max(evalMaterialXGraph(mid, 4, uv0h, uv1h,
+                                             sourceFace).rgb, vec3(0.0));
+        if (graphRows[graphBase + 11u] >= 0.0)
+          specularColor = max(evalMaterialXGraph(mid, 10, uv0h, uv1h,
+                                                  sourceFace).rgb, vec3(0.0));
+        if (graphRows[graphBase + 14u] >= 0.0)
+          coatWeight = clamp(evalMaterialXGraph(mid, 13, uv0h, uv1h,
+                                                 sourceFace).x, 0.0, 1.0);
+        if (graphRows[graphBase + 15u] >= 0.0)
+          coatColor = max(evalMaterialXGraph(mid, 14, uv0h, uv1h,
+                                              sourceFace).rgb, vec3(0.0));
+        if (graphRows[graphBase + 16u] >= 0.0)
+          coatRoughness = clamp(evalMaterialXGraph(mid, 15, uv0h, uv1h,
+                                                    sourceFace).x, 0.02, 1.0);
+        if (graphRows[graphBase + 20u] >= 0.0)
+          specIor = max(evalMaterialXGraph(mid, 19, uv0h, uv1h,
+                                            sourceFace).x, 1.0);
       }
     } else {
       base = ii.tint.rgb;
@@ -1609,7 +2368,12 @@ void main() {
       materialOpacity = materialOpacity >= alphaCutoff ? 1.0 : 0.0;
     int rmode = int(pc.camPos.w + 0.5);
     vec3 V = normalize(pc.camPos.xyz - hit);
-    vec3 lit = base * 0.12 + emissive;
+    float f0 = (specIor - 1.0) / (specIor + 1.0);
+    vec3 materialF0 = mix(vec3(f0 * f0), base, metallic);
+    if (previewSpec) materialF0 = specularColor;
+    else if (openPbrSpec)
+      materialF0 = mix(vec3(f0 * f0) * specularColor, base, metallic);
+    vec3 lit = base * (0.12 * occlusion) + emissive;
     if (rmode == 0) {
       uint lightCount = uint(lightRows.length()) / RT_LIGHT_ROWS;
       for (uint li = 0u; li < lightCount; ++li) {
@@ -1660,8 +2424,7 @@ void main() {
         }
         vec3 H = normalize(V + L);
         float nh = max(dot(N, H), 0.0), nv = max(dot(N, V), 1.0e-4);
-        vec3 F = fresnelSchlick(max(dot(V, H), 0.0),
-                                mix(vec3(0.04), base, metallic));
+        vec3 F = fresnelSchlick(max(dot(V, H), 0.0), materialF0);
         vec3 spec = ggxD(nh, roughness) * ggxG1(nv, roughness) *
                     ggxG1(nl, roughness) * F /
                     max(4.0 * nv * nl, 1.0e-5);
@@ -1670,6 +2433,12 @@ void main() {
       }
       outc = mix(bgc, lit, materialOpacity);
     } else if (rmode == 2) outc = N * 0.5 + 0.5;
+    else if (rmode == 35) outc = coatN * 0.5 + 0.5;
+    else if (rmode == 36) outc = vec3(coatWeight);
+    else if (rmode == 37) outc = clamp(coatColor, 0.0, 1.0);
+    else if (rmode == 38) outc = vec3(coatRoughness);
+    else if (rmode == 39) outc = clamp(materialF0, 0.0, 1.0);
+    else if (rmode == 40) outc = vec3(f0 * f0);
     else if (rmode == 3) outc = idColor(mid);
     else if (rmode == 5) outc = vec3(fract(uv0h), 0.0);
     else if (rmode == 7) outc = base;
@@ -2047,7 +2816,7 @@ void main() {
       }
     }
     if (ii.useMaterial != 0u && mid != 0xffffffffu) {
-      uint gb = mid * 1355u;
+      uint gb = mid * 1366u;
       if (gb + 9u < uint(graphRows.length())) {
         if (graphRows[gb + 1u] >= 0.0)
           base = evalMaterialXGraph(uint(mid), 0, uv0h, uv1h, sourceFace).rgb;

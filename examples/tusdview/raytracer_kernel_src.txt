@@ -21,6 +21,8 @@ __device__ F3 cross3(F3 a, F3 b){ return mk(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.
 __device__ F3 norm3(F3 a){ float l=sqrtf(dot3(a,a)); return l>0.f?scale(a,1.f/l):a; }
 __device__ float ggxD(float nh,float r){float a=fmaxf(r*r,0.002f),a2=a*a,d=nh*nh*(a2-1.f)+1.f;return a2/fmaxf(3.14159265f*d*d,1e-6f);}
 __device__ float ggxG1(float nx,float r){float k=(r+1.f)*(r+1.f)*0.125f;return nx/fmaxf(nx*(1.f-k)+k,1e-6f);}
+__device__ float ggxDAniso(float nh,float ht,float hb,float r,float an){float a=fmaxf(r*r,.002f),ax=fmaxf(a*(1.f+an),.001f),ay=fmaxf(a*(1.f-an),.001f);float q=ht*ht/(ax*ax)+hb*hb/(ay*ay)+nh*nh;return 1.f/fmaxf(3.14159265f*ax*ay*q*q,1e-6f);}
+__device__ float ggxG1Aniso(float nv,float vt,float vb,float r,float an){float a=fmaxf(r*r,.002f),ax=fmaxf(a*(1.f+an),.001f),ay=fmaxf(a*(1.f-an),.001f);float vn2=fmaxf(nv*nv,1e-6f);float lambda=.5f*(-1.f+sqrtf(1.f+(vt*vt*ax*ax+vb*vb*ay*ay)/vn2));return 1.f/fmaxf(1.f+lambda,1e-6f);}
 __device__ F3 fresnelSchlick(float vh,F3 f0){float q=powf(1.f-fminf(fmaxf(vh,0.f),1.f),5.f);return mk(f0.x+(1.f-f0.x)*q,f0.y+(1.f-f0.y)*q,f0.z+(1.f-f0.z)*q);}
 __device__ F3 applyThinFilm(F3 f0,float cosTheta,float weight,float thickness,float ior){
   float w=fminf(fmaxf(weight,0.f),1.f); if(w<=0.f||thickness<=0.f)return f0;
@@ -115,24 +117,21 @@ __device__ F4 sampleMaterialTexture(const unsigned char* texels,
                                     float lod, F4 missing);
 
 // Compact MaterialX graph interpreter shared by CUDA and HIP. Graph blocks
-// are fixed-size and bounded; repeated passes resolve forward references
-// without recursion. Texture ids are already remapped to the resident table.
+// are fixed-size, bounded, and dependency-first. Texture ids are already
+// remapped to the resident table.
 __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
                                     float u, float v, float u1, float v1, int face,
                                  const unsigned char* texels,
                                  const TexDesc* textures, int numTextures) {
-  const int stride = 1355;
+  const int stride = 1366;
   const int base = mid * stride;
   if (!graph || mid < 0 || route < 0 || base + 7 >= 0x3fffffff) return mk4(0.f,0.f,0.f,0.f);
   int count = (int)fminf(fmaxf(graph[base], 0.f), 64.f);
   int wanted = (int)(graph[base + 1 + route] + 0.5f);
   if (count <= 0 || wanted < 0 || wanted >= count) return mk4(0.f,0.f,0.f,0.f);
   F4 values[64];
-  for (int i=0; i<64; ++i) values[i]=mk4(0.f,0.f,0.f,0.f);
-  for (int pass=0; pass<64; ++pass) {
-    for (int i=0; i<64; ++i) {
-      if (i>=count) continue;
-      const int p=base+10+i*21;
+  for (int i=0; i<count; ++i) {
+      const int p=base+22+i*21;
       const int op=(int)(graph[p]+0.5f);
       const int ia=(int)(graph[p+1]+0.5f), ib=(int)(graph[p+2]+0.5f),
                 ic=(int)(graph[p+3]+0.5f);
@@ -213,7 +212,6 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
       else if (op==38) { F3 axis=norm3(mk(b.x,b.y,b.z)); float ang=a.x*0.0174532925199433f, cs=cosf(ang), sn=sinf(ang), d=axis.x*c.x+axis.y*c.y+axis.z*c.z; F3 q=mk(c.x*cs+(axis.y*c.z-axis.z*c.y)*sn+axis.x*d*(1.f-cs),c.y*cs+(axis.z*c.x-axis.x*c.z)*sn+axis.y*d*(1.f-cs),c.z*cs+(axis.x*c.y-axis.y*c.x)*sn+axis.z*d*(1.f-cs)); values[i]=mk4(q.x,q.y,q.z,c.w); }
       else if (op==39) { float tx=a.x*graph[p+17]+graph[p+19], ty=a.y*graph[p+18]+graph[p+20], ang=graph[p+15]*0.0174532925199433f, cs=cosf(ang), sn=sinf(ang); values[i]=mk4(tx*cs-ty*sn,tx*sn+ty*cs,a.z,a.w); }
       else values[i]=fallback;
-    }
   }
   (void)face;
   return values[wanted];
@@ -358,7 +356,9 @@ __device__ F3 domeShRadiance(const float* lights, int count, F3 dir){
   if (!lights) return mk(0.f,0.f,0.f);
   for (int i=0;i<count;++i) {
     const float* lp=&lights[i*80];
-    if ((int)(lp[0]+0.5f)!=6 || !(((int)(lp[1]+0.5f))&(1<<7))) continue;
+    if ((int)(lp[0]+0.5f)!=6) continue;
+    if (!(((int)(lp[1]+0.5f))&(1<<7)))
+      return mk(fmaxf(lp[16],0.f),fmaxf(lp[17],0.f),fmaxf(lp[18],0.f));
     F3 e=mk(lp[40]*dir.x+lp[41]*dir.y+lp[42]*dir.z,
             lp[44]*dir.x+lp[45]*dir.y+lp[46]*dir.z,
             lp[48]*dir.x+lp[49]*dir.y+lp[50]*dir.z);
@@ -437,17 +437,27 @@ __device__ bool sampleGeometryLight(const float* lp, const float* tris,
                                     const Inst* insts, const int* mats,
                                     const float* matPbr, int numMats,
                                     unsigned& seed, F3* outPos, F3* outN,
-                                    F3* outEmission){
-  if (!lp || !tris || !insts || !mats || !outPos || !outN || !outEmission ||
+                                    F3* outEmission, float* outArea){
+  if (!lp || !tris || !insts || !mats || !outPos || !outN || !outEmission || !outArea ||
       fabsf(lp[52]-3.f)>0.25f || lp[54] < 1.f || lp[55] < 0.f) return false;
   int triOffset=(int)(lp[53]+0.5f), triCount=(int)(lp[54]+0.5f);
   int instId=(int)(lp[55]+0.5f);
   if (triOffset<0 || triCount<=0 || instId<0) return false;
-  int tri=triOffset+(int)(rndf(seed)*(float)triCount);
+  const Inst* I=&insts[instId];
+  int tri=-1;*outArea=0.f;
+  for(int localTri=0;localTri<triCount;++localTri){
+    int candidate=triOffset+localTri;const float* cv=&tris[candidate*9];
+    F3 c0=xfPt(I->o2w,mk(cv[0],cv[1],cv[2]));
+    F3 c1=xfPt(I->o2w,mk(cv[3],cv[4],cv[5]));
+    F3 c2=xfPt(I->o2w,mk(cv[6],cv[7],cv[8]));
+    float candidateArea=.5f*sqrtf(fmaxf(dot3(cross3(sub(c1,c0),sub(c2,c0)),cross3(sub(c1,c0),sub(c2,c0))),0.f));
+    if(candidateArea<=1e-12f)continue;*outArea+=candidateArea;
+    if(rndf(seed)<candidateArea/(*outArea))tri=candidate;
+  }
+  if(tri<0||*outArea<=1e-12f)return false;
   float su=sqrtf(rndf(seed)), bu=1.f-su, bv=rndf(seed)*su, bw=1.f-bu-bv;
   const float* tv=&tris[tri*9];
   F3 p0=mk(tv[0],tv[1],tv[2]), p1=mk(tv[3],tv[4],tv[5]), p2=mk(tv[6],tv[7],tv[8]);
-  const Inst* I=&insts[instId];
   *outPos=xfPt(I->o2w,add(add(scale(p0,bu),scale(p1,bv)),scale(p2,bw)));
   F3 no=norm3(cross3(sub(p1,p0),sub(p2,p0)));
   *outN=norm3(xfNrm(I->w2o,no));
@@ -710,7 +720,7 @@ __device__ bool cutoutAllowsHit(
     int ch=tp?(int)(tp[66]+0.5f):0;
     opacity*=channel4(ot,ch)*(tp?tp[67]:1.f)+(tp?tp[68]:0.f);
   }
-  if (matGraph && matGraph[mid*1355+4] >= 0.f) {
+  if (matGraph && matGraph[mid*1366+4] >= 0.f) {
     opacity=evalMaterialXGraph(matGraph,mid,3,ouu,ovv,(unsigned int)ht,
                                texels,textures,numTextures).x;
   }
@@ -750,11 +760,21 @@ __device__ float traverseCutout(
   return tmax;
 }
 
-struct PtMat { F3 base, emission, transmissionColor, subsurfaceColor, radius;
-               float metal, rough, transmission, ior, subsurface; };
+struct PtMat {
+  F3 base, emission, transmissionColor, subsurfaceColor, radius;
+  F3 specularColor, coatColor, sheenColor;
+  float metal, rough, transmission, ior, subsurface, specularWeight;
+  float coatWeight, coatRoughness, coatIor, sheenWeight, sheenRoughness;
+  float subsurfaceAnisotropy;
+  float anisotropy, anisotropyRotation, coatAnisotropy, coatRotation;
+  float thinFilmWeight, thinFilmThickness, thinFilmIor;
+  float dispersion, dispersionAbbe, transmissionDepth;
+  F3 transmissionScatter, volumeAlbedo, volumeEmission; float volumeDensity;
+};
 
 __device__ F3 ptMul(F3 a,F3 b){return mk(a.x*b.x,a.y*b.y,a.z*b.z);}
 __device__ float ptMax(F3 a){return fmaxf(a.x,fmaxf(a.y,a.z));}
+__device__ float ptLum(F3 a){return fmaxf(.2126f*a.x+.7152f*a.y+.0722f*a.z,0.f);}
 __device__ F3 ptReflect(F3 d,F3 n){return sub(d,scale(n,2.f*dot3(d,n)));}
 __device__ F3 ptCosine(F3 n,unsigned& seed){
   float r=sqrtf(rndf(seed)),p=6.28318530718f*rndf(seed);
@@ -763,18 +783,91 @@ __device__ F3 ptCosine(F3 n,unsigned& seed){
   return norm3(add(add(scale(t,r*cosf(p)),scale(b,r*sinf(p))),
                    scale(n,sqrtf(fmaxf(0.f,1.f-r*r)))));
 }
+__device__ F3 ptUniformSphere(unsigned& seed){
+  float z=1.f-2.f*rndf(seed),a=6.28318530718f*rndf(seed);
+  float q=sqrtf(fmaxf(0.f,1.f-z*z));return mk(q*cosf(a),q*sinf(a),z);
+}
+__device__ void ptBasis(F3 n,F3* t,F3* b){
+  F3 a=fabsf(n.z)<.999f?mk(0.f,0.f,1.f):mk(0.f,1.f,0.f);
+  *t=norm3(cross3(a,n));*b=cross3(n,*t);
+}
+__device__ void ptRotatedBasis(F3 n,float rotation,F3* t,F3* b){F3 t0,b0;ptBasis(n,&t0,&b0);float a=rotation*.0174532925199433f;*t=add(scale(t0,cosf(a)),scale(b0,sinf(a)));*b=add(scale(t0,-sinf(a)),scale(b0,cosf(a)));}
+// Sample the same isotropic GGX NDF used by ggxD().  Returning the matching
+// reflected-direction PDF is essential: blending mirror and cosine directions
+// (the old implementation) has no tractable PDF and biased every glossy path.
+__device__ F3 ptSampleGgx(F3 n,F3 v,float rough,float anisotropy,float rotation,unsigned& seed,float* pdf){
+  float alpha=fmaxf(rough*rough,.002f),ax=fmaxf(alpha*(1.f+anisotropy),.001f),ay=fmaxf(alpha*(1.f-anisotropy),.001f);
+  float u1=rndf(seed),u2=rndf(seed);
+  float phi=atanf(ay/ax*tanf(6.28318530718f*u2));if(u2>.25f&&u2<=.75f)phi+=3.14159265359f;else if(u2>.75f)phi+=6.28318530718f;float cp=cosf(phi),sp=sinf(phi);float a2=1.f/(cp*cp/(ax*ax)+sp*sp/(ay*ay));
+  float cosTheta=sqrtf(fmaxf((1.f-u1)/(1.f+(a2-1.f)*u1),0.f));
+  float sinTheta=sqrtf(fmaxf(1.f-cosTheta*cosTheta,0.f));
+  F3 t,b;ptRotatedBasis(n,rotation,&t,&b);
+  F3 h=norm3(add(add(scale(t,sinTheta*cp),scale(b,sinTheta*sp)),scale(n,cosTheta)));
+  if(dot3(h,v)<0.f)h=scale(h,-1.f);
+  F3 l=ptReflect(scale(v,-1.f),h);
+  float nh=fmaxf(dot3(n,h),0.f),vh=fmaxf(dot3(v,h),1e-6f);
+  *pdf=ggxDAniso(nh,dot3(h,t),dot3(h,b),rough,anisotropy)*nh/fmaxf(4.f*vh,1e-6f);
+  return norm3(l);
+}
+__device__ float ptGgxDirectionPdf(F3 n,F3 v,F3 l,float rough,float anisotropy,float rotation){
+  if(dot3(n,l)<=0.f)return 0.f;F3 h=norm3(add(v,l));
+  float nh=fmaxf(dot3(n,h),0.f),vh=fmaxf(dot3(v,h),1e-6f);
+  F3 t,b;ptRotatedBasis(n,rotation,&t,&b);return ggxDAniso(nh,dot3(h,t),dot3(h,b),rough,anisotropy)*nh/fmaxf(4.f*vh,1e-6f);
+}
+__device__ float ptPowerHeuristic(float a,float b){
+  float aa=a*a,bb=b*b;return aa/fmaxf(aa+bb,1e-20f);
+}
+__device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
+    F3 diffuseC,F3 f0,F3 sheenC,F3 coatF0,float coatWeight,
+    float diffuseP,float glossyP,float coatP,
+    float* pdf){
+  float nl=fmaxf(dot3(n,l),0.f),nv=fmaxf(dot3(n,v),1e-6f);
+  if(nl<=0.f){*pdf=0.f;return mk(0.f,0.f,0.f);}F3 h=norm3(add(v,l));
+  float nh=fmaxf(dot3(n,h),0.f),vh=fmaxf(dot3(v,h),0.f);
+  F3 F=fresnelSchlick(vh,f0);F3 t,b;ptRotatedBasis(n,s.anisotropyRotation,&t,&b);
+  float gs=ggxDAniso(nh,dot3(h,t),dot3(h,b),s.rough,s.anisotropy)*ggxG1Aniso(nv,dot3(v,t),dot3(v,b),s.rough,s.anisotropy)*ggxG1Aniso(nl,dot3(l,t),dot3(l,b),s.rough,s.anisotropy)/fmaxf(4.f*nv*nl,1e-6f);
+  F3 ch=norm3(add(v,l)),ct,cb;ptRotatedBasis(coatN,s.coatRotation,&ct,&cb);float cnl=fmaxf(dot3(coatN,l),0.f),cnv=fmaxf(dot3(coatN,v),1e-6f),cnh=fmaxf(dot3(coatN,ch),0.f);F3 cF=scale(fresnelSchlick(fmaxf(dot3(v,ch),0.f),coatF0),coatWeight);
+  float cs=ggxDAniso(cnh,dot3(ch,ct),dot3(ch,cb),s.coatRoughness,s.coatAnisotropy)*ggxG1Aniso(cnv,dot3(v,ct),dot3(v,cb),s.coatRoughness,s.coatAnisotropy)*ggxG1Aniso(fmaxf(cnl,1e-6f),dot3(l,ct),dot3(l,cb),s.coatRoughness,s.coatAnisotropy)/fmaxf(4.f*cnv*fmaxf(cnl,1e-6f),1e-6f);
+  *pdf=diffuseP*nl*.31830988618f+
+       glossyP*ptGgxDirectionPdf(n,v,l,s.rough,s.anisotropy,s.anisotropyRotation)+
+       coatP*ptGgxDirectionPdf(coatN,v,l,s.coatRoughness,s.coatAnisotropy,s.coatRotation);
+  float sheenShape=(.5f+.5f*s.sheenRoughness)*powf(1.f-nl,5.f)*.31830988618f;
+  F3 diffuse=mk((1.f-F.x)*diffuseC.x*.31830988618f,(1.f-F.y)*diffuseC.y*.31830988618f,(1.f-F.z)*diffuseC.z*.31830988618f);return add(add(diffuse,scale(sheenC,sheenShape)),
+             add(scale(F,gs),scale(cF,cs)));
+}
+__device__ F3 ptSampleHg(F3 forward,float g,unsigned& seed){
+  g=fminf(fmaxf(g,-.95f),.95f);float u=rndf(seed),cosTheta;
+  if(fabsf(g)<1e-3f)cosTheta=1.f-2.f*u;
+  else{float q=(1.f-g*g)/(1.f-g+2.f*g*u);cosTheta=(1.f+g*g-q*q)/(2.f*g);}
+  cosTheta=fminf(fmaxf(cosTheta,-1.f),1.f);
+  float phi=6.28318530718f*rndf(seed),sinTheta=sqrtf(fmaxf(0.f,1.f-cosTheta*cosTheta));
+  F3 t,b;ptBasis(norm3(forward),&t,&b);
+  return norm3(add(add(scale(t,sinTheta*cosf(phi)),scale(b,sinTheta*sinf(phi))),
+                   scale(norm3(forward),cosTheta)));
+}
 
 __device__ PtMat ptResolveMaterial(
-    int tri,float bu,float bv,int hitInst,const float* cols,const int* mats,
+    int tri,float bu,float bv,int hitInst,bool front,const float* cols,
+    const int* mats,const int* backMats,
     const float* matPbr,const float* matLightRt,const float* matGraph,
     int numMats,const int* matTex,const float* matTexParam,
     const unsigned char* texels,const TexDesc* textures,int numTextures,
     const float* uvs,const float* uvs1,const Inst* insts){
   PtMat m; m.base=mk(.6f,.6f,.6f);m.emission=mk(0.f,0.f,0.f);
   m.transmissionColor=mk(1.f,1.f,1.f);m.subsurfaceColor=mk(.8f,.8f,.8f);
+  m.specularColor=mk(1.f,1.f,1.f);m.coatColor=mk(1.f,1.f,1.f);
+  m.sheenColor=mk(1.f,1.f,1.f);
   m.radius=mk(1.f,1.f,1.f);m.metal=0.f;m.rough=.5f;m.transmission=0.f;
-  m.ior=1.5f;m.subsurface=0.f;
-  int mid=mats?mats[tri]:-1; float w0=1.f-bu-bv;
+  m.ior=1.5f;m.subsurface=0.f;m.specularWeight=1.f;m.coatWeight=0.f;
+  m.coatRoughness=.1f;m.coatIor=1.5f;m.sheenWeight=0.f;
+  m.sheenRoughness=.3f;m.subsurfaceAnisotropy=0.f;
+  m.anisotropy=0.f;m.anisotropyRotation=0.f;m.coatAnisotropy=0.f;m.coatRotation=0.f;
+  m.thinFilmWeight=0.f;m.thinFilmThickness=0.f;m.thinFilmIor=1.5f;
+  m.dispersion=0.f;m.dispersionAbbe=0.f;m.transmissionDepth=0.f;
+  m.transmissionScatter=mk(0.f,0.f,0.f);m.volumeAlbedo=mk(1.f,1.f,1.f);m.volumeEmission=mk(0.f,0.f,0.f);m.volumeDensity=0.f;
+  int mid=mats?mats[tri]:-1;
+  if(!front&&backMats&&backMats[tri]>=0)mid=backMats[tri];
+  float w0=1.f-bu-bv;
   if(cols) m.base=mk(cols[tri*12]*w0+cols[tri*12+4]*bu+cols[tri*12+8]*bv,
                      cols[tri*12+1]*w0+cols[tri*12+5]*bu+cols[tri*12+9]*bv,
                      cols[tri*12+2]*w0+cols[tri*12+6]*bu+cols[tri*12+10]*bv);
@@ -784,10 +877,10 @@ __device__ PtMat ptResolveMaterial(
   if(mid>=0&&mid<numMats){
     if(matPbr){m.metal=fminf(fmaxf(matPbr[mid*6],0.f),1.f);m.rough=fminf(fmaxf(matPbr[mid*6+1],.02f),1.f);m.emission=mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]);}
     if(matLightRt){const float* p=&matLightRt[mid*80];if(p[51]>.5f){
-      m.base=scale(mk(p[0],p[1],p[2]),p[3]);m.transmissionColor=mk(p[8],p[9],p[10]);m.transmission=fminf(fmaxf(p[11],0.f),1.f);
-      m.subsurfaceColor=mk(p[16],p[17],p[18]);m.subsurface=fminf(fmaxf(p[19],0.f),1.f);m.radius=scale(mk(fmaxf(p[20],1e-5f),fmaxf(p[21],1e-5f),fmaxf(p[22],1e-5f)),fmaxf(p[23],1e-5f));m.ior=fmaxf(p[43],1.0001f);m.emission=add(m.emission,scale(mk(p[32],p[33],p[34]),fmaxf(p[35],0.f)));}}
+      m.base=scale(mk(p[0],p[1],p[2]),p[3]);m.specularColor=mk(p[4],p[5],p[6]);m.specularWeight=fminf(fmaxf(p[7],0.f),1.f);m.transmissionColor=mk(p[8],p[9],p[10]);m.transmission=fminf(fmaxf(p[11],0.f),1.f);m.transmissionScatter=mk(fmaxf(p[12],0.f),fmaxf(p[13],0.f),fmaxf(p[14],0.f));m.transmissionDepth=fmaxf(p[15],0.f);
+      m.subsurfaceColor=mk(p[16],p[17],p[18]);m.subsurface=fminf(fmaxf(p[19],0.f),1.f);m.radius=scale(mk(fmaxf(p[20],1e-5f),fmaxf(p[21],1e-5f),fmaxf(p[22],1e-5f)),fmaxf(p[23],1e-5f));m.coatColor=mk(p[24],p[25],p[26]);m.coatWeight=fminf(fmaxf(p[27],0.f),1.f);m.sheenColor=mk(p[28],p[29],p[30]);m.sheenWeight=fminf(fmaxf(p[31],0.f),1.f);m.ior=fmaxf(p[43],1.0001f);m.coatRoughness=fminf(fmaxf(p[44],.02f),1.f);m.coatIor=fmaxf(p[45],1.0001f);m.sheenRoughness=fminf(fmaxf(p[46],.02f),1.f);m.subsurfaceAnisotropy=fminf(fmaxf(p[64],-.95f),.95f);m.anisotropy=fminf(fmaxf(p[57]+.5f*p[59],-.95f),.95f);m.anisotropyRotation=p[58];m.coatAnisotropy=fminf(fmaxf(p[65]+.5f*p[69],-.95f),.95f);m.coatRotation=p[66];m.thinFilmWeight=fminf(fmaxf(p[48],0.f),1.f);m.thinFilmThickness=fmaxf(p[49],0.f)*1e-3f;m.thinFilmIor=fmaxf(p[50],1.f);m.dispersion=fmaxf(p[60]*p[62],0.f);m.dispersionAbbe=fmaxf(p[61],0.f);m.volumeAlbedo=mk(fmaxf(p[72],0.f),fmaxf(p[73],0.f),fmaxf(p[74],0.f));m.volumeDensity=fmaxf(p[75],0.f);m.volumeEmission=scale(mk(fmaxf(p[76],0.f),fmaxf(p[77],0.f),fmaxf(p[78],0.f)),fmaxf(p[79],0.f));m.emission=add(m.emission,scale(mk(p[32],p[33],p[34]),fmaxf(p[35],0.f)));}}
     if(matTex){int tid=matTex[mid*12];F4 q=sampleMaterialTexture(texels,textures,numTextures,tid,u,v,(unsigned)tri,0.f,mk4(1.f,1.f,1.f,1.f));m.base=mk(m.base.x*q.x,m.base.y*q.y,m.base.z*q.z);}
-    if(matGraph){int gb=mid*1355;if(matGraph[gb+1]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,0,u,v,u1,v1,tri,texels,textures,numTextures);m.base=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+2]>=0.f)m.metal=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+3]>=0.f)m.rough=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+5]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,4,u,v,u1,v1,tri,texels,textures,numTextures);m.emission=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+7]>=0.f)m.subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+8]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,7,u,v,u1,v1,tri,texels,textures,numTextures);m.subsurfaceColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+9]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,8,u,v,u1,v1,tri,texels,textures,numTextures);m.radius=mk(fmaxf(q.x,1e-5f),fmaxf(q.y,1e-5f),fmaxf(q.z,1e-5f));}}
+    if(matGraph){int gb=mid*1366;if(matGraph[gb+1]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,0,u,v,u1,v1,tri,texels,textures,numTextures);m.base=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+2]>=0.f)m.metal=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+3]>=0.f)m.rough=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+5]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,4,u,v,u1,v1,tri,texels,textures,numTextures);m.emission=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+7]>=0.f)m.subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+8]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,7,u,v,u1,v1,tri,texels,textures,numTextures);m.subsurfaceColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+9]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,8,u,v,u1,v1,tri,texels,textures,numTextures);m.radius=mk(fmaxf(q.x,1e-5f),fmaxf(q.y,1e-5f),fmaxf(q.z,1e-5f));}if(matGraph[gb+10]>=0.f)m.specularWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,9,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+11]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,10,u,v,u1,v1,tri,texels,textures,numTextures);m.specularColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+12]>=0.f)m.transmission=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,11,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+13]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,12,u,v,u1,v1,tri,texels,textures,numTextures);m.transmissionColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+14]>=0.f)m.coatWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,13,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+15]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,14,u,v,u1,v1,tri,texels,textures,numTextures);m.coatColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+16]>=0.f)m.coatRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,15,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+17]>=0.f)m.sheenWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,16,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+18]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,17,u,v,u1,v1,tri,texels,textures,numTextures);m.sheenColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+19]>=0.f)m.sheenRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,18,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+20]>=0.f)m.ior=fmaxf(evalMaterialXGraphUv(matGraph,mid,19,u,v,u1,v1,tri,texels,textures,numTextures).x,1.0001f);}
   }
   if(insts)m.base=ptMul(m.base,mk(insts[hitInst].tint[0],insts[hitInst].tint[1],insts[hitInst].tint[2]));
   return m;
@@ -801,6 +894,35 @@ __device__ F3 ptEnvironment(const float* lights,int count,F3 d,F3 clear){
   return dot3(e,e)>1e-12f?e:mk(srgbToLinear(clear.x),srgbToLinear(clear.y),
                                srgbToLinear(clear.z));
 }
+__device__ F3 ptEnvironmentCellDirection(int cell,float jx,float jy){
+  int zCell=cell/8,phiCell=cell-zCell*8;
+  float z=-1.f+2.f*((float)zCell+jy)/4.f;
+  float phi=6.28318530718f*((float)phiCell+jx)/8.f;
+  float r=sqrtf(fmaxf(0.f,1.f-z*z));return mk(r*cosf(phi),r*sinf(phi),z);
+}
+__device__ float ptEnvironmentCellWeight(const float* lights,int count,
+                                          F3 clear,int cell){
+  return fmaxf(ptLum(ptEnvironment(lights,count,
+      ptEnvironmentCellDirection(cell,.5f,.5f),clear)),1e-6f);
+}
+__device__ F3 ptSampleEnvironment(const float* lights,int count,F3 clear,
+                                  unsigned& seed,float* pdf){
+  float total=0.f;int selected=0;
+  for(int cell=0;cell<32;++cell){float w=ptEnvironmentCellWeight(lights,count,clear,cell);total+=w;if(rndf(seed)<w/total)selected=cell;}
+  *pdf=ptEnvironmentCellWeight(lights,count,clear,selected)/fmaxf(total,1e-20f)*2.5464790894703255f;
+  return ptEnvironmentCellDirection(selected,rndf(seed),rndf(seed));
+}
+__device__ float ptEnvironmentPdf(const float* lights,int count,F3 clear,
+                                  F3 direction){
+  direction=norm3(direction);float phi=atan2f(direction.y,direction.x);
+  if(phi<0.f)phi+=6.28318530718f;
+  int px=(int)(phi*(8.f/6.28318530718f));if(px>7)px=7;
+  int pz=(int)((direction.z+1.f)*2.f);if(pz<0)pz=0;else if(pz>3)pz=3;
+  int selected=pz*8+px;float total=0.f;
+  for(int cell=0;cell<32;++cell)total+=ptEnvironmentCellWeight(lights,count,clear,cell);
+  return ptEnvironmentCellWeight(lights,count,clear,selected)/fmaxf(total,1e-20f)*2.5464790894703255f;
+}
+__device__ float ptSpectralIor(float iorD,float abbe,float dispersion,int channel){if(dispersion<=0.f||abbe<=0.f)return iorD;float lc=.6562725f,ld=.5875618f,lf=.4861327f,delta=(iorD-1.f)/fmaxf(abbe,1.f)*dispersion;float ic=1.f/(lc*lc),id=1.f/(ld*ld),iff=1.f/(lf*lf),B=delta/fmaxf(iff-ic,1e-6f),A=iorD-B*id,lambda=channel==0?lc:(channel==1?ld:lf);return fmaxf(A+B/(lambda*lambda),1.0001f);}
 
 __device__ F3 productionPath(
     const float* tris,const float* nrms,const float* cols,const int* mats,
@@ -811,61 +933,196 @@ __device__ F3 productionPath(
     const Node* blas,const Node* tlas,const Inst* insts,F3 ro,F3 rd,F3 clear,
     unsigned seed,int maxDepth,int rrDepth,int maxSubsurfaceEvents){
   F3 L=mk(0.f,0.f,0.f),beta=mk(1.f,1.f,1.f);
-  int subsurfaceEvents=0;
+  int subsurfaceEvents=0;bool inSubsurface=false;
+  F3 subsurfaceSigma=mk(1.f,1.f,1.f),subsurfaceAlbedo=mk(1.f,1.f,1.f);
+  float subsurfaceG=0.f,previousBsdfPdf=0.f,previousEnvironmentPdf=0.f;
+  bool previousDelta=true;
+  float mediumIor[4]={1.f,1.f,1.f,1.f};F3 mediumSigma[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};F3 mediumEmission[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};int mediumInstance[4]={-1,-1,-1,-1};int mediumDepth=0,heroChannel=-1;
   for(int bounce=0;bounce<maxDepth;++bounce){
     int tri=-1,ii=-1;float bu=0.f,bv=0.f;
     float t=traverseCutout(tlas,insts,blas,tris,ro,rd,1e30f,&tri,&bu,&bv,&ii,
       cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,
       texels,textures,numTextures,uvs,uvs1,-1,false);
-    if(tri<0||ii<0){L=add(L,ptMul(beta,ptEnvironment(lightParams,numLights,rd,clear)));break;}
+    if(tri<0||ii<0){
+      if(!inSubsurface){float mis=previousDelta?1.f:ptPowerHeuristic(previousBsdfPdf,previousEnvironmentPdf);L=add(L,scale(ptMul(beta,ptEnvironment(lightParams,numLights,rd,clear)),mis));}
+      break;
+    }
+    if(!inSubsurface&&mediumDepth>0){F3 sigma=mediumSigma[mediumDepth];F3 tr=mk(expf(-sigma.x*t),expf(-sigma.y*t),expf(-sigma.z*t));F3 integral=mk(sigma.x>1e-6f?(1.f-tr.x)/sigma.x:t,sigma.y>1e-6f?(1.f-tr.y)/sigma.y:t,sigma.z>1e-6f?(1.f-tr.z)/sigma.z:t);L=add(L,ptMul(beta,ptMul(mediumEmission[mediumDepth],integral)));beta=ptMul(beta,tr);}
+    // Homogeneous boundary-aware random walk.  A sampled free flight that is
+    // shorter than the next boundary scatters inside the object; otherwise the
+    // path applies Beer attenuation to the boundary and exits along the current
+    // direction.  The previous implementation moved the origin by an unchecked
+    // distance and could start the next ray outside thin geometry.
+    if(inSubsurface){
+      float major=fmaxf(ptMax(subsurfaceSigma),1e-5f);
+      float flight=-logf(fmaxf(1e-7f,1.f-rndf(seed)))/major;
+      float travel=fminf(flight,t);
+      F3 tr=mk(expf(-subsurfaceSigma.x*travel),expf(-subsurfaceSigma.y*travel),
+               expf(-subsurfaceSigma.z*travel));
+      beta=ptMul(beta,tr);
+      if(flight<t&&subsurfaceEvents<maxSubsurfaceEvents){
+        beta=ptMul(beta,subsurfaceAlbedo);ro=add(ro,scale(rd,flight));
+        rd=ptSampleHg(rd,subsurfaceG,seed);++subsurfaceEvents;continue;
+      }
+      ro=add(ro,scale(rd,t+1e-4f));inSubsurface=false;continue;
+    }
     F3 p=add(ro,scale(rd,t));const float* tv=&tris[tri*9];
     F3 p0=xfPt(insts[ii].o2w,mk(tv[0],tv[1],tv[2]));F3 p1=xfPt(insts[ii].o2w,mk(tv[3],tv[4],tv[5]));F3 p2=xfPt(insts[ii].o2w,mk(tv[6],tv[7],tv[8]));
-    F3 n=norm3(cross3(sub(p1,p0),sub(p2,p0)));if(dot3(n,rd)>0.f)n=scale(n,-1.f);
-    PtMat m=ptResolveMaterial(tri,bu,bv,ii,cols,mats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,uvs,uvs1,insts);
+    F3 gn=norm3(cross3(sub(p1,p0),sub(p2,p0)));bool front=dot3(gn,rd)<0.f;
+    F3 n=front?gn:scale(gn,-1.f);
+    PtMat m=ptResolveMaterial(tri,bu,bv,ii,front,cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,uvs,uvs1,insts);
+    // Production paths use the authored interpolated shading normal and the
+    // same semantic/MaterialX tangent-space normal routes as preview shading.
+    // Keeping traversal on the geometric normal avoids self-intersection while
+    // retaining the intended high-frequency material response.
+    float w0=1.f-bu-bv;
+    if(nrms){const float* nv=&nrms[tri*9];
+      F3 localN=mk(nv[0]*w0+nv[3]*bu+nv[6]*bv,
+                   nv[1]*w0+nv[4]*bu+nv[7]*bv,
+                   nv[2]*w0+nv[5]*bu+nv[8]*bv);
+      F3 smooth=norm3(xfNrm(insts[ii].w2o,localN));
+      if(dot3(smooth,rd)>0.f)smooth=scale(smooth,-1.f);
+      if(dot3(smooth,gn)*dot3(n,gn)>0.f)n=smooth;
+    }
+    F3 coatN=n;int mid=mats?mats[tri]:-1;if(!front&&backMats&&backMats[tri]>=0)mid=backMats[tri];
+    if(mid>=0&&mid<numMats&&uvs){
+      const float* uv0=&uvs[tri*6];const float* uv1v=uvs1?&uvs1[tri*6]:uv0;
+      const float* tp=matTexParam?&matTexParam[mid*155]:0;
+      int uvbits=tp?(int)(tp[69]+.5f):0;
+      const float* nuv=((uvbits&8)&&uvs1)?uv1v:uv0;
+      float tu0=nuv[0],tv0=nuv[1],tu1=nuv[2],tv1=nuv[3],tu2=nuv[4],tv2=nuv[5];
+      if(tp){xformUv(tp,18,tu0,tv0,&tu0,&tv0);xformUv(tp,18,tu1,tv1,&tu1,&tv1);xformUv(tp,18,tu2,tv2,&tu2,&tv2);}
+      float du1=tu1-tu0,dv1=tv1-tv0,du2=tu2-tu0,dv2=tv2-tv0,det=du1*dv2-du2*dv1;
+      F3 tangent=fabsf(det)>1e-12f?norm3(scale(sub(scale(sub(p1,p0),dv2),scale(sub(p2,p0),dv1)),1.f/det)):
+          norm3(cross3(fabsf(n.z)<.999f?mk(0.f,0.f,1.f):mk(0.f,1.f,0.f),n));
+      F3 bitangent=norm3(cross3(n,tangent));F3 tangentNormal=mk(0.f,0.f,1.f);bool hasTangentNormal=false;
+      int normalTex=matTex?matTex[mid*12+3]:-1;
+      if(normalTex>=0){float uu=tu0*w0+tu1*bu+tu2*bv,vv=tv0*w0+tv1*bu+tv2*bv;
+        F4 nt=sampleMaterialTexture(texels,textures,numTextures,normalTex,uu,vv,(unsigned)tri,0.f,mk4(.5f,.5f,1.f,1.f));
+        tangentNormal=tp?mk(nt.x*tp[44]+tp[48],nt.y*tp[45]+tp[49],nt.z*tp[46]+tp[50]):mk(nt.x*2.f-1.f,nt.y*2.f-1.f,nt.z*2.f-1.f);hasTangentNormal=true;}
+      int gb=mid*1366;if(matGraph&&matGraph[gb+6]>=0.f){float u=uv0[0]*w0+uv0[2]*bu+uv0[4]*bv,v=uv0[1]*w0+uv0[3]*bu+uv0[5]*bv,u1=uv1v[0]*w0+uv1v[2]*bu+uv1v[4]*bv,v1=uv1v[1]*w0+uv1v[3]*bu+uv1v[5]*bv;F4 q=evalMaterialXGraphUv(matGraph,mid,5,u,v,u1,v1,tri,texels,textures,numTextures);tangentNormal=mk(q.x*2.f-1.f,q.y*2.f-1.f,q.z*2.f-1.f);hasTangentNormal=true;}
+      if(hasTangentNormal)n=norm3(add(add(scale(tangent,tangentNormal.x),scale(bitangent,tangentNormal.y)),scale(n,tangentNormal.z)));
+      coatN=n;int coatNormalTex=matTex?matTex[mid*12+11]:-1;if(coatNormalTex>=0&&tp){const float* cuv=(int)(tp[146]+.5f)==1&&uvs1?uv1v:uv0;float cu=cuv[0]*w0+cuv[2]*bu+cuv[4]*bv,cv=cuv[1]*w0+cuv[3]*bu+cuv[5]*bv;xformUv(tp,140,cu,cv,&cu,&cv);F4 cn=sampleMaterialTexture(texels,textures,numTextures,coatNormalTex,cu,cv,(unsigned)tri,0.f,mk4(.5f,.5f,1.f,1.f));F3 ctn=mk(cn.x*tp[147]+tp[151],cn.y*tp[148]+tp[152],cn.z*tp[149]+tp[153]);coatN=norm3(add(add(scale(tangent,ctn.x),scale(bitangent,ctn.y)),scale(n,ctn.z)));}
+    }
     L=add(L,ptMul(beta,m.emission));
     if(lightParams&&numLights>0){
-      int eligible=0,li=0;
+      float eligiblePower=0.f;int li=0;
       for(int candidate=0;candidate<numLights;++candidate){
         const float* cp=&lightParams[candidate*80];int ct=(int)(cp[0]+.5f);
-        bool linked=candidate>=32||((insts[ii].directLightMask&(1u<<candidate))!=0);
-        if(ct!=6&&cp[1]>.5f&&linked){++eligible;if(rndf(seed)<1.f/(float)eligible)li=candidate;}
+        int candidateFlags=(int)(cp[1]+.5f);
+        bool linked=candidate<32?((insts[ii].directLightMask&(1u<<candidate))!=0):((candidateFlags&(1<<5))!=0);
+        float area=cp[23]>1e-7f?cp[23]:1.f;
+        float power=ptLum(mk(cp[12],cp[13],cp[14]))*area;
+        if(ct!=6&&linked&&power>1e-8f){eligiblePower+=power;if(rndf(seed)<power/eligiblePower)li=candidate;}
       }
-      if(eligible>0){
+      if(eligiblePower>0.f){
         const float* lp=&lightParams[li*80];int lt=(int)(lp[0]+.5f);
-        F3 ld;float maxT=1e30f,att=1.f;
+        float lightArea=lp[23]>1e-7f?lp[23]:1.f;
+        float selectedPower=ptLum(mk(lp[12],lp[13],lp[14]))*lightArea;
+        float selectPdf=selectedPower/eligiblePower;
+        F3 ld;float maxT=1e30f,att=1.f,emitterCos=1.f,geometryArea=1.f;
+        F3 lightEmission=mk(lp[12],lp[13],lp[14]);
         if(lt==5)ld=scale(norm3(mk(lp[8],lp[9],lp[10])),-1.f);
-        else{F3 q=sampleLightPosition(lp,lt==8?3:lt,seed),v=sub(q,p);float d2=fmaxf(dot3(v,v),1e-6f);maxT=sqrtf(d2);ld=scale(v,1.f/maxT);att=1.f/d2;}
+        else{F3 q,geometryNormal=mk(0.f,0.f,0.f);
+          if(lt==7){if(!sampleGeometryLight(lp,tris,insts,mats,matPbr,numMats,seed,&q,&geometryNormal,&lightEmission,&geometryArea))continue;}
+          else q=sampleLightPosition(lp,lt==8?3:lt,seed);
+          F3 v=sub(q,p);float d2=fmaxf(dot3(v,v),1e-6f);maxT=sqrtf(d2);ld=scale(v,1.f/maxT);att=1.f/d2;
+          F3 center=mk(lp[4],lp[5],lp[6]),axisZ=norm3(mk(lp[48],lp[49],lp[50]));
+          if(lt==1)emitterCos=fabsf(dot3(norm3(sub(q,center)),scale(ld,-1.f)));
+          else if(lt==2||lt==3||lt==8)emitterCos=fabsf(dot3(axisZ,scale(ld,-1.f)));
+          else if(lt==4){F3 axial=scale(axisZ,dot3(sub(q,center),axisZ));emitterCos=fabsf(dot3(norm3(sub(sub(q,center),axial)),scale(ld,-1.f)));}
+          else if(lt==7)emitterCos=fmaxf(dot3(geometryNormal,scale(ld,-1.f)),0.f);
+          if(lt==8){F3 env=domeShRadiance(lightParams,numLights,scale(ld,-1.f));if(dot3(env,env)>1e-10f)lightEmission=env;}
+        }
         float nl=fmaxf(dot3(n,ld),0.f);
-        if(nl>0.f){
+        int lflags=(int)(lp[1]+.5f);float shape=1.f;
+        if((lflags&4)!=0&&lt!=5){float cc=dot3(norm3(mk(lp[8],lp[9],lp[10])),scale(ld,-1.f));float angle=fminf(fmaxf(lp[24],0.f),180.f)*.01745329252f,soft=fminf(fmaxf(lp[25],0.f),1.f),outer=cosf(angle),inner=cosf(angle*(1.f-soft)),u=fminf(fmaxf((cc-outer)/fmaxf(inner-outer,1e-5f),0.f),1.f);shape=u*u*(3.f-2.f*u)*powf(fmaxf(cc,0.f),fmaxf(lp[26],0.f));}
+        shape*=iesFactor(lp,scale(ld,-1.f));
+        if(nl>0.f&&emitterCos>0.f&&shape>0.f){
           int st=-1,si=-1;float su=0.f,sv=0.f;
-          traverseCutout(tlas,insts,blas,tris,add(p,scale(n,1e-4f)),ld,
-            fmaxf(maxT-2e-4f,1e-4f),&st,&su,&sv,&si,cols,mats,backMats,
-            matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,
-            textures,numTextures,uvs,uvs1,li,false);
+          if((lflags&2)!=0)traverseCutout(tlas,insts,blas,tris,add(p,scale(n,1e-4f)),ld,
+              fmaxf(maxT-2e-4f,1e-4f),&st,&su,&sv,&si,cols,mats,backMats,
+              matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,
+              textures,numTextures,uvs,uvs1,li,(lflags&(1<<6))!=0);
           if(st<0){
-            F3 v=scale(rd,-1.f),h=norm3(add(v,ld));
-            float nv=fmaxf(dot3(n,v),1e-5f),nh=fmaxf(dot3(n,h),0.f),vh=fmaxf(dot3(v,h),0.f);
+            F3 v=scale(rd,-1.f);
             float r=(m.ior-1.f)/(m.ior+1.f),dielectricF0=r*r;
-            F3 f0=mk(dielectricF0+(m.base.x-dielectricF0)*m.metal,
-                     dielectricF0+(m.base.y-dielectricF0)*m.metal,
-                     dielectricF0+(m.base.z-dielectricF0)*m.metal);
-            F3 F=fresnelSchlick(vh,f0);
-            float sg=ggxD(nh,m.rough)*ggxG1(nv,m.rough)*ggxG1(nl,m.rough)/fmaxf(4.f*nv*nl,1e-5f);
-            float diffuseScale=(1.f-m.metal)*(1.f-m.transmission)*0.31830989f;
-            F3 brdf=mk((1.f-F.x)*m.base.x*diffuseScale+F.x*sg,
-                       (1.f-F.y)*m.base.y*diffuseScale+F.y*sg,
-                       (1.f-F.z)*m.base.z*diffuseScale+F.z*sg);
-            F3 E=scale(mk(lp[12],lp[13],lp[14]),att*(float)eligible*nl);
+            F3 dielectric=scale(m.specularColor,dielectricF0*m.specularWeight);
+            F3 f0=mk(dielectric.x+(m.base.x-dielectric.x)*m.metal,
+                     dielectric.y+(m.base.y-dielectric.y)*m.metal,
+                     dielectric.z+(m.base.z-dielectric.z)*m.metal);
+            f0=applyThinFilm(f0,fmaxf(dot3(n,v),0.f),m.thinFilmWeight,m.thinFilmThickness,m.thinFilmIor);
+            F3 dc=scale(m.base,(1.f-m.metal)*(1.f-m.transmission)*(1.f-m.subsurface));F3 sc=scale(m.sheenColor,m.sheenWeight*(1.f-m.metal)*(1.f-m.transmission));float cr=(m.coatIor-1.f)/(m.coatIor+1.f);F3 coatF0=scale(m.coatColor,cr*cr);float ignored=0.f;F3 brdf=ptEvaluateReflection(m,n,coatN,v,ld,dc,f0,sc,coatF0,m.coatWeight,0.f,0.f,0.f,&ignored);
+            float areaFactor=lt==7?geometryArea:((lt>=1&&lt<=4)?fmaxf(lp[23],1e-7f):1.f);
+            F3 E=scale(lightEmission,att*areaFactor*emitterCos*shape*nl/fmaxf(selectPdf,1e-8f));
             L=add(L,ptMul(beta,ptMul(brdf,E)));
           }
         }
       }
     }
-    float xi=rndf(seed),tp=fminf(m.transmission,.95f),sp=subsurfaceEvents<maxSubsurfaceEvents?fminf(m.subsurface*(1.f-tp),.9f):0.f,gp=fminf(fmaxf((.08f+.82f*m.metal)*(1.f-tp-sp),.02f),.9f);F3 nd,w;float side=1.f;
-    if(xi<tp){float eta=1.f/m.ior,c=-dot3(n,rd),k=1.f-eta*eta*(1.f-c*c);nd=k<0.f?ptReflect(rd,n):norm3(add(scale(rd,eta),scale(n,eta*c-sqrtf(k))));nd=norm3(add(scale(nd,1.f-m.rough*m.rough),scale(ptCosine(scale(n,-1.f),seed),m.rough*m.rough)));w=m.transmissionColor;side=dot3(nd,n)<0.f?-1.f:1.f;}
-    else if(xi<tp+sp){float r=fmaxf(dot3(m.radius,mk(.2126f,.7152f,.0722f)),1e-5f),flight=-logf(fmaxf(1e-7f,1.f-rndf(seed)))*r;ro=add(p,scale(n,-fmaxf(1e-4f,fminf(flight,r*8.f))));float z=1.f-2.f*rndf(seed),a=6.28318530718f*rndf(seed),q=sqrtf(fmaxf(0.f,1.f-z*z));nd=mk(q*cosf(a),q*sinf(a),z);w=m.subsurfaceColor;side=0.f;++subsurfaceEvents;}
-    else if(xi<tp+sp+gp){F3 mir=ptReflect(rd,n);nd=norm3(add(scale(mir,1.f-m.rough*m.rough),scale(ptCosine(n,seed),m.rough*m.rough)));float r=(m.ior-1.f)/(m.ior+1.f),df0=r*r;F3 f0=mk(df0+(m.base.x-df0)*m.metal,df0+(m.base.y-df0)*m.metal,df0+(m.base.z-df0)*m.metal);w=fresnelSchlick(fmaxf(dot3(scale(rd,-1.f),n),0.f),f0);}
-    else{nd=ptCosine(n,seed);w=scale(m.base,1.f-m.metal);}
+    float dielectricR=(m.ior-1.f)/(m.ior+1.f),df0=dielectricR*dielectricR;
+    F3 dielectric=scale(m.specularColor,df0*m.specularWeight);
+    F3 f0=mk(dielectric.x+(m.base.x-dielectric.x)*m.metal,
+             dielectric.y+(m.base.y-dielectric.y)*m.metal,
+             dielectric.z+(m.base.z-dielectric.z)*m.metal);
+    f0=applyThinFilm(f0,fmaxf(dot3(n,scale(rd,-1.f)),0.f),m.thinFilmWeight,m.thinFilmThickness,m.thinFilmIor);
+    F3 diffuseC=scale(m.base,(1.f-m.metal)*(1.f-m.transmission)*(1.f-m.subsurface));
+    F3 sheenC=scale(m.sheenColor,m.sheenWeight*(1.f-m.metal)*(1.f-m.transmission));
+    F3 transmissionC=scale(m.transmissionColor,m.transmission*(1.f-m.metal));
+    F3 interfaceF=fresnelSchlick(fmaxf(dot3(n,scale(rd,-1.f)),0.f),f0);transmissionC=mk(transmissionC.x*(1.f-interfaceF.x),transmissionC.y*(1.f-interfaceF.y),transmissionC.z*(1.f-interfaceF.z));
+    float subsurfaceEntry=(subsurfaceEvents<maxSubsurfaceEvents?m.subsurface:0.f)*
+                          (1.f-m.metal)*(1.f-m.transmission);
+    F3 subsurfaceC=mk(subsurfaceEntry,subsurfaceEntry,subsurfaceEntry);
+    float coatR=(m.coatIor-1.f)/(m.coatIor+1.f);
+    F3 coatF0=scale(m.coatColor,coatR*coatR);
+    F3 coatC=scale(coatF0,m.coatWeight);
+    float wd=ptLum(diffuseC)+ptLum(sheenC),wt=ptLum(transmissionC),ws=ptLum(subsurfaceC);
+    float wg=ptLum(f0),wc=ptLum(coatC),sum=wd+wt+ws+wg+wc;
+    if(sum<=1e-7f)break;
+    float diffuseP=wd/sum,glossyP=wg/sum,coatP=wc/sum;
+    float envPdf=0.f;F3 envDir=ptSampleEnvironment(lightParams,numLights,clear,seed,&envPdf);float envNl=fmaxf(dot3(n,envDir),0.f);
+    if(envNl>0.f){
+      float reflectionPdf=0.f;F3 reflection=ptEvaluateReflection(
+          m,n,coatN,scale(rd,-1.f),envDir,diffuseC,f0,sheenC,coatF0,m.coatWeight,
+          diffuseP,glossyP,
+          coatP,&reflectionPdf);
+      int et=-1,ei=-1;float eu=0.f,ev=0.f;
+      traverseCutout(tlas,insts,blas,tris,add(p,scale(n,1e-4f)),envDir,
+          1e30f,&et,&eu,&ev,&ei,cols,mats,backMats,matPbr,matLightRt,
+          matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,
+          uvs,uvs1,-1,false);
+      if(et<0){
+        float mis=ptPowerHeuristic(envPdf,reflectionPdf);
+        F3 c=ptMul(ptMul(beta,reflection),ptEnvironment(lightParams,numLights,envDir,clear));
+        L=add(L,scale(c,envNl*mis/envPdf));}
+    }
+    float xi=rndf(seed)*sum;F3 nd,w;float side=1.f;bool reflectionSample=false;
+    if((xi-=wt)<0.f){
+      float prob=wt/sum;if(heroChannel<0&&m.dispersion>0.f&&m.dispersionAbbe>0.f){heroChannel=(int)(rndf(seed)*3.f);if(heroChannel>2)heroChannel=2;F3 hero=heroChannel==0?mk(3.f,0.f,0.f):(heroChannel==1?mk(0.f,3.f,0.f):mk(0.f,0.f,3.f));transmissionC=ptMul(transmissionC,hero);}float materialIor=ptSpectralIor(m.ior,m.dispersionAbbe,m.dispersion,heroChannel<0?1:heroChannel);float outsideIor=mediumIor[mediumDepth],insideIor=materialIor;if(!front&&mediumDepth>0){insideIor=mediumIor[mediumDepth];outsideIor=mediumIor[mediumDepth-1];}float eta=outsideIor/insideIor,c=-dot3(n,rd);
+      float k=1.f-eta*eta*(1.f-c*c);
+      nd=k<0.f?ptReflect(rd,n):norm3(add(scale(rd,eta),scale(n,eta*c-sqrtf(k))));
+      w=scale(transmissionC,1.f/fmaxf(prob,1e-6f));side=dot3(nd,n)<0.f?-1.f:1.f;if(k>=0.f){if(front&&mediumDepth<3){++mediumDepth;mediumIor[mediumDepth]=materialIor;float depth=fmaxf(m.transmissionDepth,1e-4f);F3 ca=mk(fmaxf(1.f-fminf(fmaxf(m.transmissionColor.x,0.f),1.f),0.f)/depth,fmaxf(1.f-fminf(fmaxf(m.transmissionColor.y,0.f),1.f),0.f)/depth,fmaxf(1.f-fminf(fmaxf(m.transmissionColor.z,0.f),1.f),0.f)/depth);mediumSigma[mediumDepth]=add(add(ca,m.transmissionScatter),scale(mk(fmaxf(1.f-m.volumeAlbedo.x,0.f),fmaxf(1.f-m.volumeAlbedo.y,0.f),fmaxf(1.f-m.volumeAlbedo.z,0.f)),m.volumeDensity));mediumEmission[mediumDepth]=m.volumeEmission;mediumInstance[mediumDepth]=ii;}else if(!front&&mediumDepth>0){int matched=mediumDepth;for(int level=mediumDepth;level>0;--level)if(mediumInstance[level]==ii){matched=level;break;}mediumDepth=matched-1;}}previousDelta=true;
+    }else if((xi-=ws)<0.f){
+      float prob=ws/sum;
+      w=scale(subsurfaceC,1.f/fmaxf(prob,1e-6f));
+      subsurfaceSigma=mk(1.f/fmaxf(m.radius.x,1e-5f),1.f/fmaxf(m.radius.y,1e-5f),1.f/fmaxf(m.radius.z,1e-5f));
+      subsurfaceAlbedo=m.subsurfaceColor;subsurfaceG=m.subsurfaceAnisotropy;
+      ro=add(p,scale(n,-1e-4f));rd=ptCosine(scale(n,-1.f),seed);
+      beta=ptMul(beta,w);inSubsurface=true;previousDelta=true;++subsurfaceEvents;continue;
+    }else if((xi-=wc)<0.f){
+      float pdf=0.f;F3 v=scale(rd,-1.f);
+      nd=ptSampleGgx(coatN,v,m.coatRoughness,m.coatAnisotropy,m.coatRotation,seed,&pdf);
+      float nl=fmaxf(dot3(coatN,nd),0.f);if(nl<=0.f||pdf<=1e-8f)break;reflectionSample=true;previousDelta=false;
+    }else if((xi-=wg)<0.f){
+      float pdf=0.f;F3 v=scale(rd,-1.f);
+      nd=ptSampleGgx(n,v,m.rough,m.anisotropy,m.anisotropyRotation,seed,&pdf);
+      float nl=fmaxf(dot3(n,nd),0.f);if(nl<=0.f||pdf<=1e-8f)break;reflectionSample=true;previousDelta=false;
+    }else{
+      nd=ptCosine(n,seed);reflectionSample=true;previousDelta=false;
+    }
+    if(reflectionSample){float mixturePdf=0.f;F3 reflection=ptEvaluateReflection(m,n,coatN,scale(rd,-1.f),nd,
+        diffuseC,f0,sheenC,coatF0,m.coatWeight,diffuseP,glossyP,coatP,&mixturePdf);float nl=fmaxf(dot3(n,nd),0.f);if(mixturePdf<=1e-8f||nl<=0.f)break;w=scale(reflection,nl/mixturePdf);previousBsdfPdf=mixturePdf;previousEnvironmentPdf=ptEnvironmentPdf(lightParams,numLights,clear,nd);
+    }else{previousBsdfPdf=0.f;previousEnvironmentPdf=0.f;}
     beta=ptMul(beta,w);if(ptMax(beta)<1e-5f)break;if(bounce+1>=rrDepth){float survive=fminf(fmaxf(ptMax(beta),.05f),.95f);if(rndf(seed)>survive)break;beta=scale(beta,1.f/survive);}if(side!=0.f)ro=add(p,scale(n,side*1e-4f));rd=nd;
   }
   return L;
@@ -901,7 +1158,7 @@ __device__ F3 approxPrimaryLayer(
                                  (unsigned int)ht, 0.f,
                                  mk4(1.f, 1.f, 1.f, 1.f));
     base = mk(base.x * t.x, base.y * t.y, base.z * t.z);
-    if (matGraph && matGraph[mid * 1355 + 1] >= 0.f) {
+    if (matGraph && matGraph[mid * 1366 + 1] >= 0.f) {
       F4 g = evalMaterialXGraph(matGraph, mid, 0, u, v, ht, texels,
                                 textures, numTextures);
       base = mk(g.x, g.y, g.z);
@@ -916,7 +1173,7 @@ __device__ F3 approxPrimaryLayer(
               e.z * p[54] + p[58], e.w * p[55] + p[59]);
       emission = mk(emission.x * e.x, emission.y * e.y, emission.z * e.z);
     }
-    if (matGraph && matGraph[mid * 1355 + 5] >= 0.f) {
+    if (matGraph && matGraph[mid * 1366 + 5] >= 0.f) {
       F4 g = evalMaterialXGraph(matGraph, mid, 4, u, v, ht, texels,
                                 textures, numTextures);
       emission = mk(fmaxf(g.x, 0.f), fmaxf(g.y, 0.f), fmaxf(g.z, 0.f));
@@ -1557,7 +1814,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     // output is authoritative for that lane; unconnected lanes retain the
     // regular material path above.
     if (matGraph && mid >= 0 && mid < numMats) {
-      const int gb=mid*1355;
+      const int gb=mid*1366;
       if (matGraph[gb+1]>=0.f) {
         F4 g=evalMaterialXGraphUv(matGraph,mid,0,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
         base=mk(g.x,g.y,g.z);
@@ -1695,13 +1952,14 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       if (!directLinked) continue;
       F3 Ll; float maxT=1e30f, attenuation=1.f;
       F3 emitterN=mk(0.f,0.f,0.f), emitter=mk(lp[12],lp[13],lp[14]);
+      float geometryArea=1.f;
       unsigned lightSeed=hashU((unsigned)px*1973u+(unsigned)py*9277u+
                                (unsigned)sampleIdx*26699u+(unsigned)li*104729u+31u);
       if (lt==5) Ll=scale(norm3(mk(lp[8],lp[9],lp[10])),-1.0f);
       else if (lt==7) {
         F3 lightPos;
         if (!sampleGeometryLight(lp,tris,insts,mats,matPbr,numMats,lightSeed,
-                                 &lightPos,&emitterN,&emitter)) continue;
+                                 &lightPos,&emitterN,&emitter,&geometryArea)) continue;
         F3 toL=sub(lightPos,hit);
         float dist2=fmaxf(dot3(toL,toL),1e-6f);
         maxT=sqrtf(dist2); Ll=scale(toL,1.f/maxT); attenuation=1.f/dist2;
@@ -1784,7 +2042,8 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       F3 coatBrdf=scale(coatB,ss);
       F3 brdf=add(scale(baseBrdf,nl),scale(coatBrdf,cnl));
       F3 rad=scale(lt==7?emitter:mk(lp[12],lp[13],lp[14]),
-                   attenuation*shape*shadow*iesFactor(lp,scale(Ll,-1.f)));
+                   attenuation*shape*shadow*iesFactor(lp,scale(Ll,-1.f))*
+                   (lt==7?geometryArea:1.f));
       direct3=add(direct3,mk(brdf.x*rad.x,brdf.y*rad.y,brdf.z*rad.z));
     }
     if (!hadDirect) {

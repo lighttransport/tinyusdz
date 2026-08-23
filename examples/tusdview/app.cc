@@ -499,6 +499,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
                 : (hipRt_ ? hipTracer_.deviceName() : std::string());
     report["backend"]["device"] = rtDevice.empty() ? caps.gpu_name : rtDevice;
     report["backend"]["api"] = caps.api_info;
+    report["backend"]["device_type"] =
+        (cudaRt_ || hipRt_) ? "gpu" : caps.device_type;
   }
   uint64_t residentTextureBytes = 0;
   uint64_t residentTextureSlots = 0;
@@ -1006,6 +1008,8 @@ std::string ShellQuote(const std::string& value) {
 
 bool CompileLiveVulkanShader(const std::string& source,
                              bool fullMaterialShader,
+                             bool softwareBvh,
+                             bool productionPath,
                              std::vector<uint32_t>* spirv,
                              std::string* err) {
   std::error_code ec;
@@ -1028,11 +1032,17 @@ bool CompileLiveVulkanShader(const std::string& source,
   const std::string logPath = base.string() + ".log";
   const std::string include =
       std::filesystem::path(source).parent_path().string();
-  const std::string variantDefines = fullMaterialShader
-      ? std::string()
-      : " -DTUSDVIEW_RT_FAST_MATERIAL=1"
-        " -DTUSDVIEW_RT_DISABLE_MTLX=1"
-        " -DTUSDVIEW_RT_DISABLE_DEBUG_RAYS=1";
+  std::string variantDefines;
+  if (softwareBvh) {
+    if (!fullMaterialShader)
+      variantDefines += " -DTUSDVIEW_SW_DISABLE_MTLX=1";
+    if (productionPath)
+      variantDefines += " -DTUSDVIEW_SW_PATH_ONLY=1";
+  } else if (!fullMaterialShader) {
+    variantDefines = " -DTUSDVIEW_RT_FAST_MATERIAL=1"
+                     " -DTUSDVIEW_RT_DISABLE_MTLX=1"
+                     " -DTUSDVIEW_RT_DISABLE_DEBUG_RAYS=1";
+  }
   const std::string command =
       ShellQuote(compiler) + " --target-env=vulkan1.2 "
       "-fshader-stage=compute" + variantDefines + " -I" +
@@ -2325,6 +2335,8 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   }
   // Frame the camera AFTER the GPU pose updates draw_ bounds (so an animated
   // load, e.g. --time, frames the posed geometry, matching the CPU bake path).
+  bool framedAuthoredCamera = false;
+  float framedFocalLength = 50.0f;
   if (ok && draw_.hasBounds) {
     camera_.setSceneBounds(draw_.aabbMin, draw_.aabbMax);
     const int upAxis = (draw_.upAxis == "Z") ? 2 : 1;
@@ -2342,7 +2354,9 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
                               &campose)
              : (loaded_.ok &&
                 FindLegacyCamera(loaded_.render, cameraName_, &campose)));
-    if (haveCamera) {
+    framedAuthoredCamera = haveCamera;
+    if (haveCamera) framedFocalLength = campose.focalLength;
+    if (framedAuthoredCamera) {
       // Drive the orbit rig from a scene camera. The auto-fit framing is useless
       // on vast scenes (Caldera's 8 km map frames to a sub-pixel speck); a named
       // USD camera gives a meaningful district view across raster / --rt / --cuda.
@@ -2461,14 +2475,32 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   gui_.setScene(&loaded_, &draw_);
   if (lensFocusOverride_ > 0.0f)
     cameraLens_.focusDistance = lensFocusOverride_;
-  if (lensFStopOverride_ > 0.0f)
-    cameraLens_.apertureRadius = 50.0f / (20.0f * lensFStopOverride_);
+  if (lensFStopOverride_ > 0.0f) {
+    if (framedAuthoredCamera) {
+      // Authored USD focal length is in tenths of a stage unit.
+      cameraLens_.apertureRadius =
+          framedFocalLength / (20.0f * lensFStopOverride_);
+    } else {
+      // An auto-fit camera has no authored USD focal length. Interpret the
+      // CLI f-stop as a conventional 50 mm lens and convert metres to the
+      // stage's world units. Treating the raw `50` as tenths of a stage unit
+      // made a metre-scale scene use a 0.625 m aperture at f/4.
+      const double metersPerUnit =
+          draw_.metersPerUnit > 0.0 ? draw_.metersPerUnit : 0.01;
+      cameraLens_.apertureRadius = MakeAutoRtCameraLens(
+          std::max(cameraLens_.focusDistance, camera_.distance()),
+          lensFStopOverride_, metersPerUnit).apertureRadius;
+    }
+  }
   if (pathTrace_.enabled &&
       (lensFocusOverride_ > 0.0f || lensFStopOverride_ > 0.0f)) {
     if (!(cameraLens_.focusDistance > 0.0f))
       cameraLens_.focusDistance = std::max(camera_.distance(), 1.0e-3f);
     if (!(cameraLens_.apertureRadius > 0.0f))
-      cameraLens_.apertureRadius = 50.0f / (20.0f * 2.8f);
+      cameraLens_.apertureRadius = MakeAutoRtCameraLens(
+          cameraLens_.focusDistance, 2.8f,
+          draw_.metersPerUnit > 0.0 ? draw_.metersPerUnit : 0.01)
+                                       .apertureRadius;
   }
   gui_.setCameraLens(cameraLens_);
   gui_.setNextStage(nextStageSnapshot_.get());
@@ -5303,8 +5335,13 @@ std::string App::activeLiveShaderBackend() const {
 }
 
 void App::initializeLiveShaderSources() {
-  if (liveVulkanShader_.source.empty())
-    liveVulkanShader_.source = TUSDVIEW_DEFAULT_VK_SHADER_SOURCE;
+  if (liveVulkanShader_.source.empty()) {
+    liveVulkanShader_.source =
+        renderer_ && renderer_->rayTracingActive() &&
+                !renderer_->rayTracingIsHardware()
+            ? TUSDVIEW_DEFAULT_VK_SW_SHADER_SOURCE
+            : TUSDVIEW_DEFAULT_VK_SHADER_SOURCE;
+  }
   if (liveCudaKernel_.source.empty())
     liveCudaKernel_.source = TUSDVIEW_DEFAULT_GPU_KERNEL_SOURCE;
   if (liveHipKernel_.source.empty())
@@ -5334,6 +5371,19 @@ bool App::reloadLiveShader(const std::string& requestedBackend,
     return false;
   }
   if (!sourceOverride.empty()) state->source = sourceOverride;
+  // Keep an explicit MCP source sticky, but follow live technique switches
+  // when the state still names one of tusdview's two built-in Vulkan sources.
+  if (backend == "vulkan" && sourceOverride.empty() && renderer_ &&
+      renderer_->rayTracingActive()) {
+    const bool builtInSource =
+        state->source == TUSDVIEW_DEFAULT_VK_SHADER_SOURCE ||
+        state->source == TUSDVIEW_DEFAULT_VK_SW_SHADER_SOURCE;
+    if (builtInSource) {
+      state->source = renderer_->rayTracingIsHardware()
+                          ? TUSDVIEW_DEFAULT_VK_SHADER_SOURCE
+                          : TUSDVIEW_DEFAULT_VK_SW_SHADER_SOURCE;
+    }
+  }
   if (state->source.empty()) {
     if (err) *err = "no live shader source configured for " + backend;
     return false;
@@ -5352,8 +5402,11 @@ bool App::reloadLiveShader(const std::string& requestedBackend,
       localError = "the persistent viewer is not owned by Vulkan";
     } else {
       std::vector<uint32_t> spirv;
+      const bool softwareBvh = !renderer_->rayTracingIsHardware();
       if (CompileLiveVulkanShader(state->source,
                                   renderer_->rayTracingUsesFullShader(),
+                                  softwareBvh,
+                                  softwareBvh && pathTrace_.enabled,
                                   &spirv, &localError)) {
         if (renderThreadActive_) {
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)

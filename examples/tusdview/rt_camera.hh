@@ -23,4 +23,17 @@ inline RtCameraLens MakeRtCameraLens(float focalLength,
   return lens;
 }
 
+// Auto-fit cameras have no authored USD focal length. Use a conventional
+// 50 mm equivalent and convert its physical aperture into stage units.
+inline RtCameraLens MakeAutoRtCameraLens(float focusDistance, float fStop,
+                                         double metersPerUnit) {
+  RtCameraLens lens;
+  if (focusDistance > 0.0f && fStop > 0.0f && metersPerUnit > 0.0) {
+    lens.focusDistance = focusDistance;
+    lens.apertureRadius =
+        static_cast<float>(0.025 / (metersPerUnit * double(fStop)));
+  }
+  return lens;
+}
+
 }  // namespace tusdview

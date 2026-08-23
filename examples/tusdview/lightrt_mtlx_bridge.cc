@@ -662,7 +662,7 @@ std::string OpenPBREvalInputName(const std::string& name) {
   // Standard Surface and common interchange graphs use shorter parameter
   // names. The runtime bake target is OpenPBR, so normalize these aliases at
   // the graph boundary instead of silently dropping connected inputs.
-  if (name == "roughness") return "base_roughness";
+  if (name == "roughness") return "specular_roughness";
   if (name == "metalness") return "base_metalness";
   if (name == "specular") return "specular_weight";
   if (name == "transmission") return "transmission_weight";
@@ -1238,9 +1238,62 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       else if (input == "subsurface_weight") destination = &graph.output[6];
       else if (input == "subsurface_color") destination = &graph.output[7];
       else if (input == "subsurface_radius") destination = &graph.output[8];
+      else if (input == "specular_weight") destination = &graph.output[9];
+      else if (input == "specular_color") destination = &graph.output[10];
+      else if (input == "transmission_weight") destination = &graph.output[11];
+      else if (input == "transmission_color") destination = &graph.output[12];
+      else if (input == "coat_weight") destination = &graph.output[13];
+      else if (input == "coat_color") destination = &graph.output[14];
+      else if (input == "coat_roughness") destination = &graph.output[15];
+      else if (input == "fuzz_weight" || input == "sheen_weight")
+        destination = &graph.output[16];
+      else if (input == "fuzz_color" || input == "sheen_color")
+        destination = &graph.output[17];
+      else if (input == "fuzz_roughness" || input == "sheen_roughness")
+        destination = &graph.output[18];
+      else if (input == "specular_ior") destination = &graph.output[19];
       if (destination) *destination = nodeIt->second;
     }
   }
+  // GPU interpreters execute a single bounded pass. Canonicalize the retained
+  // graph into dependency-first order here so runtime evaluation never needs
+  // the old 64x64 fixed-point fallback (a severe NVRTC/Vulkan driver-JIT cost).
+  // Cyclic MaterialX graphs are malformed and keep the caller's bake fallback.
+  std::vector<unsigned char> visit(graph.nodes.size(), 0);
+  std::vector<int> order;
+  order.reserve(graph.nodes.size());
+  std::function<bool(int)> emitDependencyFirst = [&](int index) {
+    if (index < 0 || static_cast<size_t>(index) >= graph.nodes.size()) return true;
+    unsigned char& state = visit[static_cast<size_t>(index)];
+    if (state == 2) return true;
+    if (state == 1) return false;
+    state = 1;
+    for (int input : graph.nodes[static_cast<size_t>(index)].input)
+      if (!emitDependencyFirst(input)) return false;
+    state = 2;
+    order.push_back(index);
+    return true;
+  };
+  for (size_t i = 0; i < graph.nodes.size(); ++i) {
+    if (!emitDependencyFirst(static_cast<int>(i))) {
+      if (err) *err = "MaterialX graph contains a dependency cycle";
+      return false;
+    }
+  }
+  std::vector<int> oldToNew(graph.nodes.size(), -1);
+  std::vector<MaterialXGraphNodeCPU> sorted;
+  sorted.reserve(graph.nodes.size());
+  for (int oldIndex : order) {
+    oldToNew[static_cast<size_t>(oldIndex)] = static_cast<int>(sorted.size());
+    sorted.push_back(std::move(graph.nodes[static_cast<size_t>(oldIndex)]));
+  }
+  for (MaterialXGraphNodeCPU& node : sorted) {
+    for (int& input : node.input)
+      if (input >= 0) input = oldToNew[static_cast<size_t>(input)];
+  }
+  for (int& output : graph.output)
+    if (output >= 0) output = oldToNew[static_cast<size_t>(output)];
+  graph.nodes = std::move(sorted);
   graph.valid = true;
   mat->materialXGraph = std::move(graph);
   return true;
@@ -1285,7 +1338,8 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
     const MaterialXGraphNodeCPU& source = mat->materialXGraph.nodes[static_cast<size_t>(index)];
     for (int input : source.input) markSrgb(input);
   };
-  for (int route : {0, 4, 7}) markSrgb(mat->materialXGraph.output[route]);
+  for (int route : {0, 4, 7, 10, 12, 14, 17})
+    markSrgb(mat->materialXGraph.output[route]);
 
   for (size_t nodeIndex = 0; nodeIndex < mat->materialXGraph.nodes.size();
        ++nodeIndex) {
@@ -1644,13 +1698,14 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
                                const std::vector<int>* sourceToTable) {
   if (!dst) return;
   std::fill(dst, dst + kRtMaterialGraphFloats, 0.0f);
-  for (int i = 0; i < 9; ++i) dst[1 + i] = -1.0f;
+  for (int i = 0; i < kRtMaterialGraphOutputCount; ++i) dst[1 + i] = -1.0f;
   const MaterialXGraphRuntimeCPU& graph = mat.materialXGraph;
   if (!graph.valid) return;
   const size_t count = std::min<size_t>(graph.nodes.size(),
                                         kRtMaterialGraphMaxNodes);
   dst[0] = static_cast<float>(count);
-  for (int i = 0; i < 9; ++i) dst[1 + i] = static_cast<float>(graph.output[i]);
+  for (int i = 0; i < kRtMaterialGraphOutputCount; ++i)
+    dst[1 + i] = static_cast<float>(graph.output[i]);
   for (size_t i = 0; i < count; ++i) {
     const MaterialXGraphNodeCPU& node = graph.nodes[i];
     const size_t base = kRtMaterialGraphHeaderFloats +
@@ -1678,13 +1733,14 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
 void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
   if (!dst) return;
   std::fill(dst, dst + kRtMaterialGraphFloats, 0.0f);
-  for (int i = 0; i < 9; ++i) dst[1 + i] = -1.0f;
+  for (int i = 0; i < kRtMaterialGraphOutputCount; ++i) dst[1 + i] = -1.0f;
   const MaterialXGraphRuntimeCPU& graph = mat.materialXGraph;
   if (!graph.valid) return;
   const size_t count = std::min<size_t>(graph.nodes.size(),
                                         kRtMaterialGraphMaxNodes);
   dst[0] = static_cast<float>(count);
-  for (int i = 0; i < 9; ++i) dst[1 + i] = static_cast<float>(graph.output[i]);
+  for (int i = 0; i < kRtMaterialGraphOutputCount; ++i)
+    dst[1 + i] = static_cast<float>(graph.output[i]);
   std::vector<int> textureIds;
   textureIds.reserve(kRasterMaterialGraphImageCount);
   auto isUdim = [&](const MaterialXGraphNodeCPU& node) {

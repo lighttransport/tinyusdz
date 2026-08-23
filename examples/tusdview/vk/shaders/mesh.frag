@@ -230,24 +230,22 @@ vec4 sampleGraphImage(int slot, float udimRow, vec2 uv, vec4 missing) {
 
 bool hasGraphRoute(int route) {
   int mid = max(pc.ids.x, 0);
-  uint base = uint(mid) * 1355u;
-  return route >= 0 && route < 9 && base + uint(route) + 1u < uint(mgraph.graphRows.length()) &&
+  uint base = uint(mid) * 1366u;
+  return route >= 0 && route < 20 && base + uint(route) + 1u < uint(mgraph.graphRows.length()) &&
          mgraph.graphRows[base + uint(route) + 1u] >= 0.0;
 }
 
 vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
   int mid = max(pc.ids.x, 0);
-  uint base = uint(mid) * 1355u;
+  uint base = uint(mid) * 1366u;
   if (!hasGraphRoute(route)) return vec4(0.0);
   int count = int(clamp(mgraph.graphRows[base], 0.0, 64.0));
   int wanted = int(mgraph.graphRows[base + uint(route) + 1u] + 0.5);
   if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
   vec4 v[64];
-  for (int i = 0; i < 64; ++i) v[i] = vec4(0.0);
-  for (int pass = 0; pass < 64; ++pass) {
-    for (int i = 0; i < 64; ++i) {
-      if (i >= count) continue;
-      uint p = base + 10u + uint(i) * 21u;
+  // CompileMaterialXGraphRuntime packs dependencies before their consumers.
+  for (int i = 0; i < count; ++i) {
+      uint p = base + 22u + uint(i) * 21u;
       int op = int(mgraph.graphRows[p] + 0.5);
       int a = int(mgraph.graphRows[p + 1u] + 0.5);
       int b = int(mgraph.graphRows[p + 2u] + 0.5);
@@ -322,7 +320,6 @@ vec4 evalRasterMaterialXGraph(int route, vec2 uv) {
                     av.zw);
       }
       else v[i] = value;
-    }
   }
   return v[wanted];
 }

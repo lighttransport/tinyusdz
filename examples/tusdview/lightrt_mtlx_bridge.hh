@@ -23,12 +23,15 @@ constexpr int kLightRtOpenPBRFloats =
 // 140-145 carry coat-normal UV transform, 146 its UV set, and 147-154 its
 // scale/bias vectors.
 constexpr int kRtMaterialTextureParamFloats = 155;
-// Fixed-size Vulkan RT graph block. The first eleven floats are node count and
-// nine output indices (base, metalness, roughness, opacity, emission, normal,
-// subsurface weight, subsurface color, subsurface radius); each node then occupies op, three input
-// indices, four constants, and a resolved texture id.
+// Fixed-size Vulkan RT graph block. The header contains node count, the
+// production OpenPBR output routes, and one reserved float; each node then
+// occupies op, three input indices, three vec4 constants, resolved texture id,
+// and UV scale/offset.
 constexpr int kRtMaterialGraphMaxNodes = 64;
-constexpr int kRtMaterialGraphHeaderFloats = 11;
+constexpr int kRtMaterialGraphOutputCount =
+    MaterialXGraphRuntimeCPU::kOutputCount;
+constexpr int kRtMaterialGraphHeaderFloats =
+    2 + kRtMaterialGraphOutputCount;
 // op + 3 input indices + 3 vec4 fallbacks + texture id + uv scale/offset.
 constexpr int kRtMaterialGraphNodeFloats = 21;
 constexpr int kRtMaterialGraphFloats =

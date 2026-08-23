@@ -84,9 +84,9 @@ int main() {
     }
   }
 
-  // Standard Surface graphs used by OpenChessSet expose subsurface weight and
-  // color as named graph outputs. Both routes must survive into the fixed-size
-  // runtime block for per-hit texture evaluation.
+  // Standard Surface/OpenPBR graphs used by OpenChessSet expose both body and
+  // layer lobes as named graph outputs. These routes must survive into the
+  // fixed-size runtime block for per-hit texture evaluation.
   {
     tusdview::DrawMaterialCPU subsurfaceMaterial;
     subsurfaceMaterial.materialXNodeGraphJson = R"json({
@@ -95,13 +95,25 @@ int main() {
         "outputs": [
           {"name": "subsurface_output", "nodename": "sss"},
           {"name": "base_color_output", "nodename": "sss"},
-          {"name": "radius_output", "nodename": "sss"}
+          {"name": "radius_output", "nodename": "sss"},
+          {"name": "roughness_output", "nodename": "sss"},
+          {"name": "specular_output", "nodename": "sss"},
+          {"name": "transmission_output", "nodename": "sss"},
+          {"name": "coat_output", "nodename": "sss"},
+          {"name": "fuzz_output", "nodename": "sss"},
+          {"name": "ior_output", "nodename": "sss"}
         ]
       },
       "connections": [
         {"input": "subsurface", "output": "subsurface_output"},
         {"input": "subsurface_color", "output": "base_color_output"},
-        {"input": "subsurface_radius", "output": "radius_output"}
+        {"input": "subsurface_radius", "output": "radius_output"},
+        {"input": "roughness", "output": "roughness_output"},
+        {"input": "specular_color", "output": "specular_output"},
+        {"input": "transmission", "output": "transmission_output"},
+        {"input": "coat_color", "output": "coat_output"},
+        {"input": "fuzz_weight", "output": "fuzz_output"},
+        {"input": "specular_ior", "output": "ior_output"}
       ]
     })json";
     std::string subsurfaceError;
@@ -109,7 +121,13 @@ int main() {
                                                 &subsurfaceError) ||
         subsurfaceMaterial.materialXGraph.output[6] != 0 ||
         subsurfaceMaterial.materialXGraph.output[7] != 0 ||
-        subsurfaceMaterial.materialXGraph.output[8] != 0) {
+        subsurfaceMaterial.materialXGraph.output[8] != 0 ||
+        subsurfaceMaterial.materialXGraph.output[2] != 0 ||
+        subsurfaceMaterial.materialXGraph.output[10] != 0 ||
+        subsurfaceMaterial.materialXGraph.output[11] != 0 ||
+        subsurfaceMaterial.materialXGraph.output[14] != 0 ||
+        subsurfaceMaterial.materialXGraph.output[16] != 0 ||
+        subsurfaceMaterial.materialXGraph.output[19] != 0) {
       std::fprintf(stderr,
                    "MaterialX subsurface routes were not retained: %s\n",
                    subsurfaceError.c_str());

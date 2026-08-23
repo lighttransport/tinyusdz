@@ -149,7 +149,10 @@ examples/tusdview/tests/run-openchess-path-trace.sh
 Its workstation defaults are 512×512, 1024 reference spp, and 256 candidate
 spp. `TUSDVIEW_OPENCHESS_PT_SIZE`, `_REFERENCE_SPP`, `_CANDIDATE_SPP`,
 `_BACKENDS`, and `_OUT` make shorter smoke runs or persistent benchmark output
-explicit. The corresponding CTest (`tusdview-openchess-path-trace`) skips unless
+explicit. The report records the device class and the benchmark rejects a CPU
+Vulkan fallback by default; select an adapter with `TUSDVIEW_VK_DEVICE`, or set
+`TUSDVIEW_OPENCHESS_ALLOW_CPU=1` only for an intentional software run. The
+corresponding CTest (`tusdview-openchess-path-trace`) skips unless
 `TUSDVIEW_RUN_OPENCHESS_PATH=1` is present.
 
 ## CUDA ray-tracing run test (verified working on NVIDIA)
@@ -747,10 +750,13 @@ xvfb-run -a env \
 ```
 
 The first RT launch on a new NVIDIA driver/shader-cache combination compiles
-the embedded graph-free ray-query variant (currently about 100 KiB for simple
-untextured materials without MaterialX/OpenPBR graphs). Textured or OpenPBR
-materials continue to use the full-fidelity module. Keep `TUSDVIEW_RT_TIMING=1` enabled when
-diagnosing startup. The cache is shared by the graph-free and full MaterialX
+the embedded compact ray-query variant. It includes the OpenPBR constants,
+semantic textures, and directly connected MaterialX image/tiledimage routes;
+arithmetic and procedural graphs promote to the full interpreter. Keep
+`TUSDVIEW_RT_TIMING=1` enabled when diagnosing startup. A measured cold compile
+can take minutes on some NVIDIA driver/shader combinations, while the same
+pipeline loaded from tusdview's persistent cache is typically sub-second. The
+cache is shared by the compact and full MaterialX
 variants and keyed by the Vulkan device/driver UUID, so subsequent launches
 and a later MaterialX upgrade can reuse driver-internal compilation state.
 For isolated cold-cache measurements, set `TUSDVIEW_VK_PIPELINE_CACHE_DIR` to
@@ -1158,8 +1164,10 @@ re-uploading the USD scene. Use `--live-shader-reload` to watch the active
 backend's default source, or call the MCP `shader_reload` tool with
 `action=status`, `reload`, or `watch`. The default files are:
 
-- Vulkan ray query: `examples/tusdview/vk/shaders/raytrace.comp` (`glslc`,
-  override with `TUSDVIEW_GLSLC`)
+- Vulkan hardware ray query: `examples/tusdview/vk/shaders/raytrace.comp`
+- Vulkan compute-BVH fallback:
+  `examples/tusdview/vk/shaders/raytrace_swbvh.comp`
+  (`glslc` compiles both; override it with `TUSDVIEW_GLSLC`)
 - CUDA/NVRTC and HIP/hiprtc:
   `examples/tusdview/raytracer_kernel_src.txt`
 
@@ -1170,21 +1178,23 @@ backend's default source, or call the MCP `shader_reload` tool with
 
 An explicit MCP reload is transactional. Vulkan creates the shader module and
 replacement compute pipeline first; CUDA/HIP compile a replacement code object
-and resolve its `trace` symbol first. Only then does tusdview synchronize the
-relevant GPU work and swap handles. A bad edit therefore updates `last_error`
-but leaves the last working generation and all scene GPU allocations intact.
+and resolve its `trace` symbol first. Only then does tusdview swap handles;
+Vulkan retires the previous pipeline after its last in-flight frame completes.
+A bad edit therefore updates `last_error` but leaves the last working generation
+and all scene GPU allocations intact.
 The watch loop polls every 250 ms and consumes each write timestamp once, so a
 broken intermediate editor save does not cause a continuous compile loop.
 
 Threaded Vulkan swaps are queued without blocking the UI/MCP thread and initially
 return `pending:true`; poll `shader_reload {"action":"status"}` until it becomes
 false, then call `screenshot` for visual comparison. Vulkan mirrors the active
-scene's shader variant: simple scenes use the compact graph-free build for much
-lower driver-JIT latency (including base-color textures), while OpenPBR,
-MaterialX, and advanced semantic-texture scenes retain the full MaterialX-capable
-build. The compute-BVH fallback is not live-reloadable
-yet. CUDA/HIP kernels must retain the existing `trace` name and parameter ABI,
-and Vulkan edits must retain the descriptor-set and push-constant ABI.
+scene's shader variant: the compact build covers OpenPBR constants, all semantic
+texture lanes, and direct MaterialX image/tiledimage routes; arithmetic and
+procedural networks select the full interpreter. The compute-BVH fallback uses
+its own compatible live source. CUDA/HIP
+kernels must retain the existing `trace` name and parameter ABI, and Vulkan
+edits must retain the descriptor-set and push-constant ABI of the active
+hardware or compute-BVH pipeline.
 
 MCP accepts arbitrary local source paths and the HTTP endpoint has no
 authentication. Keep it bound to the trusted development machine/network.

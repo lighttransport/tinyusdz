@@ -612,9 +612,10 @@ class Renderer {
   // when rayTracingAvailable() is false. Defaults to true: only backends that
   // actually have a non-hardware RT technique need to override this.
   virtual bool rayTracingIsHardware() const { return true; }
-  // Transactionally replace the active hardware ray-query compute pipeline
-  // from a SPIR-V module. The old pipeline remains live on validation/creation
-  // failure. Intended for persistent-process shader development.
+  // Transactionally replace the active Vulkan ray-query or compute-BVH
+  // pipeline from a SPIR-V module. The old pipeline remains live on
+  // validation/creation failure. Intended for persistent-process shader
+  // development.
   virtual bool reloadRayTracingShader(const uint32_t* /*words*/,
                                       size_t /*wordCount*/,
                                       std::string* err) {

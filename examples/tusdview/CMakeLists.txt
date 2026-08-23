@@ -166,6 +166,11 @@ endif()
 if(NOT MSVC)
   set(TUSDVIEW_KERNEL_SRC_TXT ${CMAKE_CURRENT_SOURCE_DIR}/raytracer_kernel_src.txt)
   set(TUSDVIEW_KERNEL_INC_GEN ${CMAKE_CURRENT_BINARY_DIR}/generated/raytracer_kernel.inc)
+  # The generated literal participates in the CUDA/HIP persistent-cache key.
+  # Make a kernel edit trigger CMake regeneration automatically; otherwise an
+  # ordinary `cmake --build` can silently keep compiling/loading stale PTX.
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+               ${TUSDVIEW_KERNEL_SRC_TXT})
   file(READ ${TUSDVIEW_KERNEL_SRC_TXT} TUSDVIEW_KERNEL_SRC_CONTENT)
   file(WRITE ${TUSDVIEW_KERNEL_INC_GEN}
        "const char* kKernelSrc = R\"CUDA(${TUSDVIEW_KERNEL_SRC_CONTENT})CUDA\";\n")
@@ -529,6 +534,7 @@ target_include_directories(${EXAMPLE_TARGET} PRIVATE
 # path through the MCP shader_reload tool.
 target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
     TUSDVIEW_DEFAULT_VK_SHADER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/raytrace.comp"
+    TUSDVIEW_DEFAULT_VK_SW_SHADER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/raytrace_swbvh.comp"
     TUSDVIEW_DEFAULT_GPU_KERNEL_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/raytracer_kernel_src.txt")
 
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE

@@ -135,13 +135,39 @@ trap - EXIT
 # itself is missing or broken. Absent -> compute-BVH fallback compiled out
 # (TUSDVIEW_HAVE_SWRT_SHADER=0); --rt then falls back to plain rasterization
 # on GPUs without hardware ray query, same as before this fallback existed.
-if "$GLSLANG" -V --target-env vulkan1.1 --vn raytrace_swbvh_comp_spv \
+# Keep full-interpreter variants for automatic procedural-graph upgrades.
+if "$GLSLANG" -V --target-env vulkan1.1 --vn raytrace_swbvh_full_comp_spv \
+      -o "$OUT/raytrace_swbvh_full_comp.spv.h" "$HERE/raytrace_swbvh.comp" 2>/dev/null; then
+  echo "==> raytrace_swbvh.comp (full MaterialX) -> embedded/raytrace_swbvh_full_comp.spv.h"
+else
+  rm -f "$OUT/raytrace_swbvh_full_comp.spv.h"
+fi
+if "$GLSLANG" -V --target-env vulkan1.1 -DTUSDVIEW_SW_DISABLE_MTLX=1 \
+      --vn raytrace_swbvh_comp_spv \
       -o "$OUT/raytrace_swbvh_comp.spv.h" "$HERE/raytrace_swbvh.comp" 2>/dev/null; then
-  echo "==> raytrace_swbvh.comp -> embedded/raytrace_swbvh_comp.spv.h (compute-BVH RT fallback ENABLED)"
+  echo "==> raytrace_swbvh.comp (graph-free) -> embedded/raytrace_swbvh_comp.spv.h (compute-BVH RT fallback ENABLED)"
 else
   rm -f "$OUT/raytrace_swbvh_comp.spv.h"
   echo "==> WARNING: '$GLSLANG' cannot produce valid raytrace_swbvh.comp SPIR-V"
   echo "    (compile failed) — compute-BVH RT fallback omitted."
+fi
+if "$GLSLANG" -V --target-env vulkan1.1 -DTUSDVIEW_SW_PATH_ONLY=1 \
+      --vn raytrace_swbvh_path_full_comp_spv \
+      -o "$OUT/raytrace_swbvh_path_full_comp.spv.h" \
+      "$HERE/raytrace_swbvh.comp" 2>/dev/null; then
+  echo "==> raytrace_swbvh.comp (path-only full MaterialX) -> embedded/raytrace_swbvh_path_full_comp.spv.h"
+else
+  rm -f "$OUT/raytrace_swbvh_path_full_comp.spv.h"
+fi
+if "$GLSLANG" -V --target-env vulkan1.1 -DTUSDVIEW_SW_PATH_ONLY=1 \
+      -DTUSDVIEW_SW_DISABLE_MTLX=1 \
+      --vn raytrace_swbvh_path_comp_spv \
+      -o "$OUT/raytrace_swbvh_path_comp.spv.h" \
+      "$HERE/raytrace_swbvh.comp" 2>/dev/null; then
+  echo "==> raytrace_swbvh.comp (path-only) -> embedded/raytrace_swbvh_path_comp.spv.h"
+else
+  rm -f "$OUT/raytrace_swbvh_path_comp.spv.h"
+  echo "==> WARNING: compute-BVH production path shader omitted"
 fi
 
 # --- RT GPU-skinning compute shader (optional) ------------------------------
