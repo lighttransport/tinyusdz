@@ -1230,7 +1230,7 @@ int main(int argc, char** argv) {
           "  --curve-preview-strands N  Retain at most N complete curve strands "
           "(0 = all; presets may provide a limit).\n"
           "  --subdivision-level N  Scene-wide conversion-time subdivision "
-          "surface refinement level (0 = off). Applies only to meshes whose USD "
+          "surface refinement level (default 2; 0 = off). Applies only to meshes whose USD "
           "subdivisionScheme is not none.\n"
           "  --subdivision-prim /Prim/Path=N  Override subdivision level for one "
           "mesh prim. Repeatable; ':' is also accepted as the separator.\n"
@@ -1818,7 +1818,7 @@ int main(int argc, char** argv) {
       LOGI("interactive --next: deferring CPU texture mip generation "
            "(use --texture-mips on to enable)");
     }
-    lo.subdivisionLevel = std::max(0, subdivisionLevel.value_or(0));
+    lo.subdivisionLevel = std::max(0, subdivisionLevel.value_or(2));
     lo.subdivisionAuto = subdivisionAuto;
     lo.subdivisionAutoMaxLevel =
         std::max(0, std::min(10, subdivisionAutoMaxLevel));

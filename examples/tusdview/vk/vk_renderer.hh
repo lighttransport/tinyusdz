@@ -644,8 +644,13 @@ class VulkanRenderer final : public Renderer {
   // Unlit line pipeline for debug helpers (grid/axes/bbox). Per-frame host
   // buffers (grow on demand) so a frame never writes a buffer still in flight.
   VkPipelineLayout lineLayout_{VK_NULL_HANDLE};
+  VkDescriptorSetLayout lineDepthSetLayout_{VK_NULL_HANDLE};
+  VkPipelineLayout lineDepthLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool lineDepthPool_{VK_NULL_HANDLE};
+  VkDescriptorSet lineDepthSet_{VK_NULL_HANDLE};
   VkPipeline linePipeline_{VK_NULL_HANDLE};
   VkPipeline linePipelineNoDepth_{VK_NULL_HANDLE};  // X-ray overlay (skeleton)
+  VkPipeline lineDepthPipeline_{VK_NULL_HANDLE};
   // Camera-facing native Points/Curves raster carrier. The persistent Vulkan
   // path stores one compact instance per point/selected curve segment and lets
   // the vertex shader expand it; the old CPU triangle expansion remains as a
@@ -733,6 +738,7 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory highlightLineMem_[kFramesInFlight]{};
   VkDeviceSize highlightLineCap_[kFramesInFlight]{};
   std::vector<HelperVertex> highlightLineCopy_;
+  bool highlightXray_{false};
   std::vector<uint8_t> meshVisible_;  // per-mesh visibility mask (raster), copied in renderFrame
   std::vector<uint8_t> rtMeshVisible_;  // persistent user hide/isolate mask for TLAS
 
@@ -1144,6 +1150,9 @@ class VulkanRenderer final : public Renderer {
   VkImage rtImage_{VK_NULL_HANDLE};
   VkDeviceMemory rtImageMem_{VK_NULL_HANDLE};
   VkImageView rtImageView_{VK_NULL_HANDLE};
+  VkImage rtPrimaryDepthImage_{VK_NULL_HANDLE};
+  VkDeviceMemory rtPrimaryDepthMem_{VK_NULL_HANDLE};
+  VkImageView rtPrimaryDepthView_{VK_NULL_HANDLE};
 
   // Interactive HIP/CUDA path: an externally-traced image staged into colorImg_ by
   // uploadViewportImage(). When externalColorValid_ is set, the next presentImpl()

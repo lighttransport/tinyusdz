@@ -327,6 +327,7 @@ class Gui {
   struct OpenPbrMaterialEdit {
     int materialId{-1};
     DrawLightRtOpenPBRCPU constants;
+    bool makeConstant{false};
   };
   bool takeOpenPbrMaterialEdit(OpenPbrMaterialEdit* edit) {
     if (!hasOpenPbrMaterialEdit_) return false;
@@ -467,6 +468,9 @@ class Gui {
   // World-space orange edge lines of the highlighted triangles (whole mesh or
   // subset) for the Vulkan backend's line-pipeline highlight.
   std::vector<HelperVertex> highlightLinesData_;
+  // 0 off, 1 selected bounds, 2 depth-tested wireframe, 3 X-ray wireframe.
+  int selectionHighlightMode_{2};
+  int selectionHighlightLastVisibleMode_{2};
   void rebuildSubsetHighlight();
 
   // Blendshape editor state. blendWeights_ is keyed by BlendShape name; when
@@ -511,7 +515,7 @@ class Gui {
   bool showGrid_{true};
   bool showAxes_{true};
   bool showSceneBbox_{false};
-  bool showPrimBbox_{true};
+  bool showPrimBbox_{false};  // legacy config state; selection mode owns display
   bool showSkeleton_{true};
   bool showLights_{false};
   bool showCameras_{false};

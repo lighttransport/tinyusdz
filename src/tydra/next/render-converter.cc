@@ -23,6 +23,7 @@
 #include "tydra/mikktspace-tangent.hh"
 #include "tydra/shape-to-mesh.hh"
 #include "tydra/tangent-quantize.hh"
+#include "tsd/tinysubdiv.hh"
 #include "external/mapbox/earcut/earcut.hpp"
 #include <cmath>
 #include <algorithm>
@@ -5334,6 +5335,147 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   // large face-varying normals and UVs here would be pure transient overhead.
   if (config_.mesh.retain_geometry) {
     ExtractMeshPrimvars(prim, out);
+  }
+
+  // Uniformly pre-tessellate authored subdivision surfaces before building
+  // skinning/blend-shape payloads and before triangulation. The next viewer
+  // path used to ignore the same subdivision options honored by legacy Tydra,
+  // leaving Catmull-Clark assets visibly faceted in every RT backend.
+  int subdivision_level = config_.mesh.subdivision_level;
+  const auto level_it =
+      config_.mesh.subdivision_prim_levels.find(out->prim_path);
+  if (level_it != config_.mesh.subdivision_prim_levels.end()) {
+    subdivision_level = level_it->second;
+  }
+  std::string subdivision_scheme;
+  const bool has_authored_subdivision =
+      GetToken(prim, "subdivisionScheme", &subdivision_scheme);
+  SkinBindingInfo subdivision_skin;
+  const bool subdivision_deformed =
+      GetSkinBinding(prim, &subdivision_skin) || !GetBlendShapes(prim).empty();
+  if (subdivision_level > 0 && has_authored_subdivision &&
+      subdivision_scheme != "none" &&
+      config_.mesh.retain_geometry && !subdivision_deformed) {
+    ::tinyusdz::tsd::Options subdiv_options;
+    subdiv_options.level = std::min(subdivision_level,
+                                    ::tinyusdz::tsd::kMaxLevel);
+    if (subdivision_scheme == "loop") {
+      subdiv_options.scheme = ::tinyusdz::tsd::Scheme::Loop;
+    } else if (subdivision_scheme == "bilinear") {
+      subdiv_options.scheme = ::tinyusdz::tsd::Scheme::Bilinear;
+    } else {
+      subdiv_options.scheme = ::tinyusdz::tsd::Scheme::CatmullClark;
+    }
+
+    const std::vector<float> points = out->points.flatten();
+    const std::vector<uint32_t> counts = out->face_vertex_counts.flatten();
+    const std::vector<uint32_t> indices = out->face_vertex_indices.flatten();
+    ::tinyusdz::tsd::MeshView mesh_view;
+    mesh_view.points = points.data();
+    mesh_view.num_points = static_cast<uint32_t>(points.size() / 3);
+    mesh_view.face_vertex_counts = counts.data();
+    mesh_view.num_faces = static_cast<uint32_t>(counts.size());
+    mesh_view.face_vertex_indices = indices.data();
+    mesh_view.num_face_vertex_indices = static_cast<uint32_t>(indices.size());
+
+    struct RefinedChannel {
+      FloatChunked* data;
+      Interpolation* interpolation;
+      uint32_t stride;
+      bool face_varying;
+    };
+    std::vector<RefinedChannel> channels;
+    auto add_channel = [&](FloatChunked* data, Interpolation* interpolation,
+                           uint32_t stride) {
+      if (!data->empty() && (*interpolation == Interpolation::FaceVarying ||
+                             *interpolation == Interpolation::Vertex ||
+                             *interpolation == Interpolation::Varying)) {
+        channels.push_back(
+            RefinedChannel{data, interpolation, stride,
+                           *interpolation == Interpolation::FaceVarying});
+      }
+    };
+    add_channel(&out->texcoords_0, &out->texcoords_0_interp, 2);
+    add_channel(&out->texcoords_1, &out->texcoords_1_interp, 2);
+    add_channel(&out->colors, &out->colors_interp,
+                out->colors.size() == out->point_count() * 4 ||
+                        out->colors.size() == indices.size() * 4
+                    ? 4u
+                    : 3u);
+    add_channel(&out->opacities, &out->opacities_interp, 1);
+
+    std::vector<std::vector<float>> channel_values(channels.size());
+    std::vector<::tinyusdz::tsd::FVarChannelView> fvar;
+    std::vector<::tinyusdz::tsd::VertexPrimvarView> vertex;
+    std::vector<size_t> fvar_channel;
+    std::vector<size_t> vertex_channel;
+    for (size_t i = 0; i < channels.size(); ++i) {
+      channel_values[i] = channels[i].data->flatten();
+      if (channels[i].face_varying) {
+        ::tinyusdz::tsd::FVarChannelView view;
+        view.values = channel_values[i].data();
+        view.num_values = static_cast<uint32_t>(channel_values[i].size() /
+                                                channels[i].stride);
+        view.stride = channels[i].stride;
+        fvar.push_back(view);
+        fvar_channel.push_back(i);
+      } else {
+        ::tinyusdz::tsd::VertexPrimvarView view;
+        view.values = channel_values[i].data();
+        view.stride = channels[i].stride;
+        view.varying = *channels[i].interpolation == Interpolation::Varying;
+        vertex.push_back(view);
+        vertex_channel.push_back(i);
+      }
+    }
+
+    ::tinyusdz::tsd::RefinedMesh refined;
+    std::string subdivision_error;
+    const ::tinyusdz::tsd::Result result = ::tinyusdz::tsd::Refine(
+        mesh_view, fvar.empty() ? nullptr : fvar.data(),
+        static_cast<uint32_t>(fvar.size()),
+        vertex.empty() ? nullptr : vertex.data(),
+        static_cast<uint32_t>(vertex.size()), subdiv_options, &refined,
+        &subdivision_error);
+    if (result == ::tinyusdz::tsd::Result::Success) {
+      out->points.clear();
+      out->points.append(refined.points.data(), refined.points.size());
+      out->face_vertex_counts.clear();
+      out->face_vertex_counts.append(refined.face_vertex_counts.data(),
+                                     refined.face_vertex_counts.size());
+      out->face_vertex_indices.clear();
+      out->face_vertex_indices.append(refined.face_vertex_indices.data(),
+                                      refined.face_vertex_indices.size());
+      for (size_t i = 0; i < refined.fvar.size(); ++i) {
+        RefinedChannel& channel = channels[fvar_channel[i]];
+        channel.data->clear();
+        channel.data->append(refined.fvar[i].data(), refined.fvar[i].size());
+        *channel.interpolation = Interpolation::FaceVarying;
+      }
+      for (size_t i = 0; i < refined.vertex_primvars.size(); ++i) {
+        RefinedChannel& channel = channels[vertex_channel[i]];
+        channel.data->clear();
+        channel.data->append(refined.vertex_primvars[i].data(),
+                             refined.vertex_primvars[i].size());
+      }
+      out->normals.clear();
+      out->tangents.clear();
+      out->triangulated_indices.clear();
+      out->triangulated_face_vertex_indices.clear();
+      out->face_triangle_offsets.clear();
+      out->is_triangulated = false;
+      ComputePointBounds(out->points, &out->bbox_min, &out->bbox_max,
+                         &out->has_bbox);
+    } else {
+      AddWarning("Subdivision failed for '" + out->prim_path + "': " +
+                 subdivision_error);
+    }
+  } else if (subdivision_level > 0 && has_authored_subdivision &&
+             subdivision_scheme != "none" &&
+             subdivision_deformed) {
+    AddWarning("Subdivision skipped for deformed mesh '" + out->prim_path +
+               "' on the next path; use --no-next for refined skin and "
+               "blend-shape primvars");
   }
 
   // Skinning binding (skel:skeleton + skel:jointIndices/Weights primvars).

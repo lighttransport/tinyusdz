@@ -17,3 +17,4 @@ void usdpreviewsurface_displacement_test(void);
 void usduvtexture_uvset_test(void);
 void openpbr_opacity_precedence_test(void);
 void openpbr_geometry_connection_alias_test(void);
+void materialx_139_version_test(void);

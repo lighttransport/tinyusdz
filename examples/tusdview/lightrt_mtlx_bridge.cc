@@ -1646,6 +1646,40 @@ void ApplyOpenPBRMaterialConstants(
   scalar({"geometry_opacity", "opacity"}, p.opacity);
 }
 
+void MakeConstantOpenPBRMaterial(DrawMaterialCPU* mat) {
+  if (!mat || !mat->hasOpenPBRSurface) return;
+
+  int* textureSlots[] = {
+      &mat->baseColorTex,   &mat->metallicTex,      &mat->roughnessTex,
+      &mat->normalTex,      &mat->coatNormalTex,    &mat->emissiveTex,
+      &mat->opacityTex,     &mat->occlusionTex,     &mat->specularColorTex,
+      &mat->coatWeightTex,  &mat->coatColorTex,     &mat->coatRoughnessTex};
+  for (int* slot : textureSlots) *slot = -1;
+
+  DrawTexSampleCPU* samples[] = {
+      &mat->baseColorSample,  &mat->metallicSample,
+      &mat->roughnessSample,  &mat->normalSample,
+      &mat->coatNormalSample, &mat->emissiveSample,
+      &mat->opacitySample,    &mat->occlusionSample,
+      &mat->specularColorSample, &mat->coatWeightSample,
+      &mat->coatColorSample,  &mat->coatRoughnessSample};
+  for (DrawTexSampleCPU* sample : samples) sample->tex = -1;
+
+  for (DrawMaterialParamCPU& param : mat->params) {
+    if (param.shader == "OpenPBRSurface") {
+      param.texture = -1;
+      param.renderTexture = -1;
+      param.sample.tex = -1;
+    }
+  }
+  mat->materialXNodeGraphJson.clear();
+  mat->materialXGraph = MaterialXGraphRuntimeCPU{};
+  mat->lightRtOpenPBR.hasTextureInputs = false;
+  mat->lightRtOpenPBR.hasNormalInput = false;
+  mat->hasUsdPreviewSurface = false;
+  mat->openPbrSpecularModel = true;
+}
+
 void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
   if (!mat) return;
   DrawLightRtOpenPBRCPU p;

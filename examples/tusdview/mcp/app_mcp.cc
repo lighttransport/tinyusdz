@@ -7,6 +7,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 #include "app.hh"
 #include "light3d/math.h"
@@ -20,6 +21,37 @@ using nlohmann::json;
 namespace {
 json arr3(const float a[3]) { return json::array({a[0], a[1], a[2]}); }
 json vec3json(const light3d::Vec3& v) { return json::array({v.x, v.y, v.z}); }
+
+json openPbrValues(const DrawLightRtOpenPBRCPU& p) {
+  return {{"base_weight", p.baseWeight}, {"base_color", arr3(p.baseColor)},
+          {"diffuse_roughness", p.diffuseRoughness}, {"metalness", p.metalness},
+          {"specular_weight", p.specularWeight}, {"specular_color", arr3(p.specularColor)},
+          {"specular_roughness", p.specularRoughness}, {"specular_ior", p.specularIor},
+          {"transmission_weight", p.transmission}, {"transmission_color", arr3(p.transmissionColor)},
+          {"transmission_depth", p.transmissionDepth}, {"transmission_scatter", arr3(p.transmissionScatter)},
+          {"subsurface_weight", p.subsurface}, {"subsurface_color", arr3(p.subsurfaceColor)},
+          {"subsurface_radius", arr3(p.subsurfaceRadius)}, {"subsurface_scale", p.subsurfaceScale},
+          {"coat_weight", p.coatWeight}, {"coat_color", arr3(p.coatColor)},
+          {"coat_roughness", p.coatRoughness}, {"coat_ior", p.coatIor},
+          {"fuzz_weight", p.sheenWeight}, {"fuzz_color", arr3(p.sheenColor)},
+          {"fuzz_roughness", p.sheenRoughness}, {"thin_film_weight", p.thinFilmWeight},
+          {"thin_film_thickness", p.thinFilmThicknessNm}, {"thin_film_ior", p.thinFilmIor},
+          {"emission_luminance", p.emission}, {"emission_color", arr3(p.emissionColor)},
+          {"opacity", p.opacity}, {"has_texture_inputs", p.hasTextureInputs},
+          {"has_normal_input", p.hasNormalInput}};
+}
+
+json openPbrMaterialJson(int id, const DrawMaterialCPU& mat) {
+  size_t connected = 0;
+  for (const DrawMaterialParamCPU& param : mat.params)
+    if (param.texture >= 0 || param.renderTexture >= 0) ++connected;
+  return {{"material_id", id}, {"name", mat.name}, {"display_name", mat.displayName},
+          {"path", mat.absPath}, {"active_openpbr", mat.openPbrSpecularModel},
+          {"dual_authored", mat.hasUsdPreviewSurface && mat.hasOpenPBRSurface},
+          {"connected_parameter_count", connected},
+          {"materialx_graph", mat.materialXGraph.valid},
+          {"values", openPbrValues(mat.lightRtOpenPBR)}};
+}
 
 json nextValueJson(const tinyusdz::next::Value& value) {
   if (value.is_array()) {
@@ -161,6 +193,80 @@ json App::mcpSceneInfo(const json&, std::string&) {
     out["deferred_payloads"] = std::move(paths);
   }
   return out;
+}
+
+json App::mcpListOpenPbrMaterials(const json&, std::string&) {
+  json materials = json::array();
+  for (size_t i = 0; i < draw_.materials.size(); ++i) {
+    if (draw_.materials[i].hasOpenPBRSurface) {
+      materials.push_back(openPbrMaterialJson(static_cast<int>(i),
+                                              draw_.materials[i]));
+    }
+  }
+  return {{"count", materials.size()}, {"materials", std::move(materials)}};
+}
+
+json App::mcpOpenPbrMaterial(const json& args, std::string& err) {
+  if (!args.contains("material_id") || !args["material_id"].is_number_integer()) {
+    err = "openpbr_material requires integer material_id";
+    return json::object();
+  }
+  const int id = args["material_id"].get<int>();
+  if (id < 0 || static_cast<size_t>(id) >= draw_.materials.size() ||
+      !draw_.materials[static_cast<size_t>(id)].hasOpenPBRSurface) {
+    err = "openpbr_material: material_id is not OpenPBR-capable";
+    return json::object();
+  }
+  DrawMaterialCPU& material = draw_.materials[static_cast<size_t>(id)];
+  const bool makeConstant = args.value("make_constant", false);
+  const bool hasValues = args.contains("values");
+  if (hasValues && !args["values"].is_object()) {
+    err = "openpbr_material: values must be an object";
+    return json::object();
+  }
+  if (makeConstant || hasValues) {
+    DrawLightRtOpenPBRCPU p = material.lightRtOpenPBR;
+    std::unordered_map<std::string, float*> scalars = {
+        {"base_weight", &p.baseWeight}, {"diffuse_roughness", &p.diffuseRoughness},
+        {"metalness", &p.metalness}, {"specular_weight", &p.specularWeight},
+        {"specular_roughness", &p.specularRoughness}, {"specular_ior", &p.specularIor},
+        {"transmission_weight", &p.transmission}, {"transmission_depth", &p.transmissionDepth},
+        {"subsurface_weight", &p.subsurface}, {"subsurface_scale", &p.subsurfaceScale},
+        {"coat_weight", &p.coatWeight}, {"coat_roughness", &p.coatRoughness},
+        {"coat_ior", &p.coatIor}, {"fuzz_weight", &p.sheenWeight},
+        {"fuzz_roughness", &p.sheenRoughness}, {"thin_film_weight", &p.thinFilmWeight},
+        {"thin_film_thickness", &p.thinFilmThicknessNm}, {"thin_film_ior", &p.thinFilmIor},
+        {"emission_luminance", &p.emission}, {"opacity", &p.opacity}};
+    std::unordered_map<std::string, float*> colors = {
+        {"base_color", p.baseColor}, {"specular_color", p.specularColor},
+        {"transmission_color", p.transmissionColor}, {"transmission_scatter", p.transmissionScatter},
+        {"subsurface_color", p.subsurfaceColor}, {"subsurface_radius", p.subsurfaceRadius},
+        {"coat_color", p.coatColor}, {"fuzz_color", p.sheenColor},
+        {"emission_color", p.emissionColor}};
+    if (hasValues) {
+      for (auto it = args["values"].begin(); it != args["values"].end(); ++it) {
+        auto scalar = scalars.find(it.key());
+        auto color = colors.find(it.key());
+        if (scalar != scalars.end() && it.value().is_number()) {
+          *scalar->second = it.value().get<float>();
+        } else if (color != colors.end() && it.value().is_array() &&
+                   it.value().size() == 3 && it.value()[0].is_number() &&
+                   it.value()[1].is_number() && it.value()[2].is_number()) {
+          for (int c = 0; c < 3; ++c) color->second[c] = it.value()[c].get<float>();
+        } else {
+          err = "openpbr_material: invalid or unsupported value '" + it.key() + "'";
+          return json::object();
+        }
+      }
+    }
+    tinyusdz::tydra::ClampRealtimePbrMaterial(&p);
+    pendingOpenPbrEdit_.materialId = id;
+    pendingOpenPbrEdit_.constants = p;
+    pendingOpenPbrEdit_.makeConstant = makeConstant;
+    hasPendingOpenPbrEdit_ = true;
+    return {{"pending", true}, {"material", openPbrMaterialJson(id, material)}};
+  }
+  return openPbrMaterialJson(id, material);
 }
 
 json App::mcpSkinning(const json& args, std::string& err) {

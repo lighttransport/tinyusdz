@@ -34,6 +34,11 @@ namespace next {
 //
 
 struct MeshConfig {
+  // Uniform pre-tessellation level for authored subdivision surfaces.
+  // Zero disables refinement. Per-prim entries override the scene level.
+  int subdivision_level = 0;
+  std::unordered_map<std::string, int> subdivision_prim_levels;
+
   // Subdivision level for generated analytic spheres. Match the legacy
   // converter default so backend switches do not expose faceted silhouettes.
   // Clamped to [0, 6] by the converter.
