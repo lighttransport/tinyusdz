@@ -575,6 +575,33 @@ int main() {
     }
   }
 
+  // A dual-authored material can be converted into a session-local constant
+  // OpenPBR variant for live tweaking. All shading connections are detached;
+  // displacement remains a geometry concern and is intentionally untouched.
+  tusdview::DrawMaterialCPU constantMat = mat;
+  constantMat.hasUsdPreviewSurface = true;
+  tusdview::MakeConstantOpenPBRMaterial(&constantMat);
+  if (constantMat.hasUsdPreviewSurface ||
+      !constantMat.openPbrSpecularModel ||
+      constantMat.baseColorTex >= 0 || constantMat.metallicTex >= 0 ||
+      constantMat.roughnessTex >= 0 || constantMat.normalTex >= 0 ||
+      constantMat.emissiveTex >= 0 || constantMat.opacityTex >= 0 ||
+      constantMat.materialXGraph.valid ||
+      constantMat.lightRtOpenPBR.hasTextureInputs) {
+    std::fprintf(stderr,
+                 "constant OpenPBR variant retained a shading connection\n");
+    return 1;
+  }
+  for (const tusdview::DrawMaterialParamCPU& param : constantMat.params) {
+    if (param.shader == "OpenPBRSurface" &&
+        (param.texture >= 0 || param.renderTexture >= 0 ||
+         param.sample.tex >= 0)) {
+      std::fprintf(stderr,
+                   "constant OpenPBR variant retained a parameter texture\n");
+      return 1;
+    }
+  }
+
   const tusdview::DrawMaterialCPU& graphMat = draw.materials[1];
   if (!graphMat.hasLightRtOpenPBR || graphMat.lightRtOpenPBR.hasTextureInputs) {
     std::fprintf(stderr, "MaterialX graph material was not baked as constants\n");

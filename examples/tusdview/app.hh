@@ -314,6 +314,10 @@ class App
   nlohmann::json mcpSkinning(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpRenderSettings(const nlohmann::json& a,
                                    std::string& e) override;
+  nlohmann::json mcpListOpenPbrMaterials(const nlohmann::json& a,
+                                         std::string& e) override;
+  nlohmann::json mcpOpenPbrMaterial(const nlohmann::json& a,
+                                    std::string& e) override;
   nlohmann::json mcpShaderReload(const nlohmann::json& a,
                                  std::string& e) override;
   nlohmann::json mcpCallLibraryTool(const std::string& name, const nlohmann::json& a,
@@ -540,6 +544,12 @@ class App
   std::filesystem::path configPath_;        // where to persist recent scenes
   std::filesystem::path executablePath_;    // local imgui.ini lookup anchor
   std::string imguiIniPath_;                // storage backing ImGuiIO::IniFilename
+  int iniWindowX_{0};
+  int iniWindowY_{0};
+  int iniWindowWidth_{0};
+  int iniWindowHeight_{0};
+  bool iniWindowPositionValid_{false};
+  bool iniWindowSizeValid_{false};
   std::vector<std::string> recentScenes_;   // newest first; File > Open Recent
   CudaRayTracer cudaTracer_;
   size_t cudaMaxTris_{32000000};  // unique prototype-triangle cap

@@ -4488,6 +4488,8 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     // by the helper shader from rest positions and all skin uniforms were
     // ignored. This is especially visible on the Elephant pose.
     glUseProgram(program_);
+    if (params.highlightXray) glDisable(GL_DEPTH_TEST);
+    else glEnable(GL_DEPTH_TEST);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glEnable(GL_POLYGON_OFFSET_LINE);
     glPolygonOffset(-1.0f, -1.0f);
@@ -4550,6 +4552,7 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     }
     glBindVertexArray(0);
     glDisable(GL_POLYGON_OFFSET_LINE);
+    glEnable(GL_DEPTH_TEST);
   }
 
   glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -4648,7 +4651,10 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
       glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bytes), params.highlightLines);
     }
     glDisable(GL_CULL_FACE);
+    if (params.highlightXray) glDisable(GL_DEPTH_TEST);
+    else glEnable(GL_DEPTH_TEST);
     glDrawArrays(GL_LINES, 0, params.highlightLineVertexCount);
+    glEnable(GL_DEPTH_TEST);
     glBindVertexArray(0);
   }
 

@@ -160,6 +160,20 @@ json MCPServer::buildToolsList() const {
        {"target_render_fps", numProp("adaptive render FPS floor")},
        {"camera", strProp("named USD camera to resolve on the next load")}}));
   tools.push_back(tool(
+      "list_openpbr_materials",
+      "List live OpenPBR-capable render materials, including dual-authored "
+      "PreviewSurface/OpenPBR materials and connection state.",
+      json::object()));
+  tools.push_back(tool(
+      "openpbr_material",
+      "Get or live-edit a render material's complete OpenPBR constant block. "
+      "Pass values to update named constants; make_constant=true detaches "
+      "shading texture/nodegraph connections for session-local tweaking.",
+      {{"material_id", {{"type", "integer"}}},
+       {"values", {{"type", "object"}}},
+       {"make_constant", {{"type", "boolean"}}}},
+      json::array({"material_id"})));
+  tools.push_back(tool(
       "shader_reload",
       "Live GPU shader development in the persistent viewer. action=status | "
       "reload | watch; backend=active|vulkan|cuda|hip|all. Reload compiles and "
@@ -314,6 +328,10 @@ void MCPServer::drain() {
         payload = host_->mcpSkinning(cmd->args, err);
       } else if (t == "render_settings") {
         payload = host_->mcpRenderSettings(cmd->args, err);
+      } else if (t == "list_openpbr_materials") {
+        payload = host_->mcpListOpenPbrMaterials(cmd->args, err);
+      } else if (t == "openpbr_material") {
+        payload = host_->mcpOpenPbrMaterial(cmd->args, err);
       } else if (t == "shader_reload") {
         payload = host_->mcpShaderReload(cmd->args, err);
       } else {

@@ -160,6 +160,12 @@ material buffers and restarts path-trace accumulation; geometry, acceleration
 structures, and texture tables stay resident on Vulkan, CUDA, and HIP. Inputs
 driven by a texture or MaterialX nodegraph are disabled with a connection
 tooltip so a constant override cannot silently hide an authored network.
+Dual-authored materials that initially use their richer PreviewSurface fallback
+also appear in the combo. **Use constant OpenPBR** switches only that material
+to a session-local OpenPBR preview and detaches its shading texture/nodegraph
+connections, making all constant controls editable. This is useful for the
+StandardShaderBall neutral shell while leaving its initial textured render
+intact until explicitly requested.
 Edits are session-local preview overrides; they do not author values back into
 the USD layer.
 
@@ -696,6 +702,19 @@ roughness, normal, emissive, and opacity images, including sparse UDIM and
 compressed-only inputs decoded into the shared mipmapped table. Vulkan uses
 ray-footprint LOD and CUDA/HIP use projected-triangle LOD, both with trilinear
 filtering. Raster texture resize/compression behavior is unchanged.
+
+### Persistent window and docking layout
+
+Interactive tusdview stores both the ImGui docking layout and the native GLFW
+window position/size in `imgui.ini` beside the active startup config (normally
+`~/.config/tusdview/imgui.ini`). The state is flushed on shutdown and restored
+before the native window and renderer are created on the next run, which keeps
+restoration reliable with HiDPI window managers and Vulkan swapchains. Startup
+logs both logical and framebuffer dimensions plus the selected size source. An
+explicit `--size WxH` or configured `window_size` overrides
+the saved native size for that run. With no saved ini or size override, a
+4K-class display (at least 3840 pixels wide) starts at 2560×1600; smaller
+displays use 1280×800 and are clamped to the available work area.
 
 ```sh
 python3 -c "from PIL import Image; import numpy as np; \

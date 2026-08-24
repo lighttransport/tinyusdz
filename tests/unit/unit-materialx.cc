@@ -32,11 +32,20 @@
 #include "composition.hh"
 #include "usdMtlx.hh"
 #include "asset-resolution.hh"
+#include "mtlx-xml-parser.hh"
 #include "value-types.hh"
 #include "tinyusdz.hh"
 #include "math-util.inc"
 
 using namespace tinyusdz;
+
+void materialx_139_version_test(void) {
+  mtlx::MaterialXParser parser;
+  TEST_CHECK(parser.Parse(
+      R"(<materialx version="1.39"><open_pbr_surface name="surface" type="surfaceshader"/></materialx>)"));
+  TEST_CHECK(parser.GetVersion() == "1.39");
+  TEST_CHECK(parser.GetWarning().empty());
+}
 
 namespace {
 

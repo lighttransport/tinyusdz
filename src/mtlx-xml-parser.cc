@@ -451,7 +451,7 @@ std::string MaterialXParser::GetNamespace() const {
 bool MaterialXParser::ValidateVersion(const std::string& version) {
   // MaterialX versions we support
   static const std::vector<std::string> supported_versions = {
-    "1.38", "1.37", "1.36"
+    "1.39", "1.38", "1.37", "1.36"
   };
 
   return std::find(supported_versions.begin(), supported_versions.end(), version) !=
@@ -528,4 +528,3 @@ bool MaterialXParser::ValidateType(const std::string& type_name) {
 
 } // namespace mtlx
 } // namespace tinyusdz
-

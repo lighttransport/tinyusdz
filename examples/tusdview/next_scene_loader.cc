@@ -3581,6 +3581,13 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     return -1;  // no PreviewSurface/OpenPBR -- fall back to default material
   }
 
+  // Keep a composed OpenPBR alternative discoverable by the live editor even
+  // when the richer PreviewSurface fallback wins initial rendering. This is
+  // used by StandardShaderBall's neutral shell: the user can explicitly turn
+  // that dual-authored material into a connection-free OpenPBR preview without
+  // making the sparse OpenPBR branch degrade the scene at load time.
+  if (rm.openpbr) dm.hasOpenPBRSurface = true;
+
   // tydra-next has no dedicated coat_normal input, so the coat lobe reuses the
   // surface normal map. mesh_build.cc (legacy) already does this; without it the
   // --next path was the only loader leaving coatNormalTex unset.
@@ -5590,6 +5597,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   //        after baking it into a batch, so the whole RenderScene's geometry
   //        (~half the load peak) is never resident at once. ---
   tydn::ConverterConfig cfg;
+  cfg.mesh.subdivision_level = std::max(0, opts.subdivisionLevel);
+  cfg.mesh.subdivision_prim_levels.insert(opts.subdivisionPrimLevels.begin(),
+                                          opts.subdivisionPrimLevels.end());
   cfg.mesh.triangulate = true;
   // Authored USD meshes may contain concave n-gons. A triangle fan can emit
   // overlapping or degenerate triangles for them, so use the converter's

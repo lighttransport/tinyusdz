@@ -119,6 +119,7 @@ layout(set = 0, binding = 14, scalar) readonly buffer RtMatTexParams {
 layout(set = 0, binding = 20, scalar) readonly buffer RtMaterialGraphs {
   float graphRows[];
 };
+layout(set = 0, binding = 21, r32f) uniform writeonly image2D primaryDepthImg;
 // scalar layout keeps only the fields used by the analytic ellipse kernel:
 // center/major/normal (vec3), radii (vec2), and RGBA color. This is 60 bytes
 // instead of five padded vec4 fields (80 bytes) per Gaussian.
@@ -2005,9 +2006,8 @@ void main() {
   bool primaryPoint = false;
   int pointId = -1;
   float pointWeight = 0.0;
-  float pointT = productionPath ? 1e30 :
-      tracePointEllipses(origin, dir, pointId, pointWeight);
-  if (!productionPath && pointId >= 0) {
+  float pointT = tracePointEllipses(origin, dir, pointId, pointWeight);
+  if (pointId >= 0) {
     primaryHit = true; primaryPoint = true; primaryT = pointT;
   }
   uint triangleIid = 0u;
@@ -2016,7 +2016,7 @@ void main() {
   bool triangleFront = true;
   mat4x3 triangleO2w;
   float triangleT = primaryT;
-  if (!productionPath && traceAcceptedPrimary(origin, dir, 1e-3, primaryT,
+  if (traceAcceptedPrimary(origin, dir, 1e-3, primaryT,
                            triangleIid, trianglePrim, triangleBc,
                            triangleFront, triangleO2w, triangleT)) {
     primaryHit = true;
@@ -2049,7 +2049,7 @@ void main() {
     }
   }
 
-  if (primaryPoint) {
+  if (!productionPath && primaryPoint) {
     RtPoint p = points[pointId];
     vec3 N = normalize(p.normal);
     if (dot(N, dir) > 0.0) N = -N;
@@ -2107,7 +2107,7 @@ void main() {
       }
       outc = lit + bgc * (1.0 - alpha);
     } else outc = C;
-  } else if (primaryHit) {
+  } else if (!productionPath && primaryHit) {
     uint iid = primaryIid;
     int prim = primaryPrim;
     vec2 bc = primaryBc;
@@ -3584,4 +3584,6 @@ void main() {
   if (outMode == 0) outc *= exp2(pc.clearColor.w);
   if (outMode == 0 || outMode == 1) outc = linearToSrgb(outc);
   imageStore(outImg, px, vec4(outc, 1.0));
+  imageStore(primaryDepthImg, px,
+             vec4(primaryHit ? primaryT : 1.0e30, 0.0, 0.0, 0.0));
 }

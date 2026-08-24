@@ -33,6 +33,7 @@ struct FramePacket {
   int highlightMeshIndex{-1};
   std::vector<uint32_t> highlightIndices;
   std::vector<HelperVertex> highlightLines;
+  bool highlightXray{false};
   std::vector<HelperVertex> helperLines;
   std::vector<HelperVertex> overlayLines;
   std::vector<uint8_t> meshVisible;
@@ -74,6 +75,7 @@ struct FramePacket {
     p.highlightIndexCount = static_cast<int>(highlightIndices.size());
     p.highlightLines = highlightLines.empty() ? nullptr : highlightLines.data();
     p.highlightLineVertexCount = static_cast<int>(highlightLines.size());
+    p.highlightXray = highlightXray;
     p.helperLines = helperLines.empty() ? nullptr : helperLines.data();
     p.helperLineVertexCount = static_cast<int>(helperLines.size());
     p.overlayLines = overlayLines.empty() ? nullptr : overlayLines.data();

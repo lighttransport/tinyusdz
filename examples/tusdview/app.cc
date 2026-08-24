@@ -36,6 +36,7 @@
 #include "external/stb_image_resize2.h"  // stbir_resize (impl lives in the lib)
 #include "external/jsonhpp/nlohmann/json.hpp"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_glfw.h"
 #include "log.hh"
 #include "lightrt_mtlx_bridge.hh"
@@ -1429,7 +1430,13 @@ App::~App() {
     renderer_->shutdown();
   }
   ShutdownTextureGpu();
-  if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
+  if (ImGui::GetCurrentContext()) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.IniFilename && io.IniFilename[0]) {
+      ImGui::SaveIniSettingsToDisk(io.IniFilename);
+    }
+    ImGui::DestroyContext();
+  }
   if (window_) glfwDestroyWindow(window_);
   glfwTerminate();
 #if defined(TUSDVIEW_HAVE_MCP)
@@ -1454,9 +1461,12 @@ void App::autoDetectUiScale() {
   // the font/widgets are not oversized on a normal-DPI display.
   const float scale = (xs >= 1.5f || mw >= 2560) ? 2.0f : 1.0f;
   uiScale_ = scale;
-  windowScale_ = scale;
+  // A first run on a 4K-class display starts at 2560x1600. A normal 2560-wide
+  // monitor still gets crisp 2x UI metrics without nearly filling its workarea.
+  windowScale_ = mw >= 3840 ? 2.0f : 1.0f;
   fontSizePx_ = 16.0f * scale;
-  LOGI("ui scale: %.0fx (monitor %dpx wide, content scale %.2f)", scale, mw, xs);
+  LOGI("ui scale: %.0fx, window scale: %.0fx (monitor %dpx wide, content scale %.2f)",
+       scale, windowScale_, mw, xs);
 }
 
 bool App::initWindow(std::string* err) {
@@ -1489,16 +1499,64 @@ bool App::initWindow(std::string* err) {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   }
 
-  // Scale the default window independently from the font/widget sizing, then
-  // clamp to the current monitor work area.
+  // Restore native geometry before creating the GLFW window. Applying it later
+  // from ImGui's settings callback works under X11/Xvfb but is not reliably
+  // honored by HiDPI compositors/window managers after the surface and swapchain
+  // already exist. ImGui still loads the same file later for docking state.
+  if (!hasWindowSizeOverride_) {
+    std::optional<std::filesystem::path> iniPath;
+    if (!executablePath_.empty()) {
+      const std::filesystem::path localIni =
+          executablePath_.parent_path() / "imgui.ini";
+      std::error_code ec;
+      if (std::filesystem::is_regular_file(localIni, ec) && !ec)
+        iniPath = localIni;
+    }
+    if (!iniPath && !configPath_.empty()) {
+      iniPath = configPath_.parent_path() / "imgui.ini";
+    } else if (!iniPath) {
+      iniPath = DefaultImGuiIniPath();
+    }
+    if (iniPath) {
+      std::ifstream input(*iniPath);
+      std::string line;
+      bool inMainWindow = false;
+      while (std::getline(input, line)) {
+        if (!line.empty() && line.front() == '[') {
+          inMainWindow = line == "[tusdview][MainWindow]";
+          continue;
+        }
+        if (!inMainWindow) continue;
+        int a = 0, b = 0;
+        if (std::sscanf(line.c_str(), "Pos=%d,%d", &a, &b) == 2) {
+          iniWindowX_ = a;
+          iniWindowY_ = b;
+          iniWindowPositionValid_ = true;
+        } else if (std::sscanf(line.c_str(), "Size=%d,%d", &a, &b) == 2 &&
+                   a > 0 && b > 0) {
+          iniWindowWidth_ = a;
+          iniWindowHeight_ = b;
+          iniWindowSizeValid_ = true;
+        }
+      }
+    }
+  }
+
+  // Scale the first-run default independently from font/widget sizing, then
+  // clamp saved/default dimensions to GLFW's monitor work-area coordinate space.
   int winW = 0;
   int winH = 0;
-  getRequestedWindowSize(&winW, &winH);
+  if (!hasWindowSizeOverride_ && iniWindowSizeValid_) {
+    winW = iniWindowWidth_;
+    winH = iniWindowHeight_;
+  } else {
+    getRequestedWindowSize(&winW, &winH);
+  }
+  int workX = 0, workY = 0, workW = 0, workH = 0;
   if (GLFWmonitor* mon = glfwGetPrimaryMonitor()) {
-    int mx = 0, my = 0, mw = 0, mh = 0;
-    glfwGetMonitorWorkarea(mon, &mx, &my, &mw, &mh);
-    if (mw > 0 && winW > mw) winW = mw;
-    if (mh > 0 && winH > mh) winH = mh;
+    glfwGetMonitorWorkarea(mon, &workX, &workY, &workW, &workH);
+    if (workW > 0 && winW > workW) winW = workW;
+    if (workH > 0 && winH > workH) winH = workH;
   }
   window_ = glfwCreateWindow(winW, winH, "tusdview", nullptr, nullptr);
   if (!window_ && backend_ == Backend::GL) {
@@ -1512,6 +1570,22 @@ bool App::initWindow(std::string* err) {
     *err = "glfwCreateWindow failed";
     return false;
   }
+
+  if (!hasWindowSizeOverride_ && iniWindowPositionValid_) {
+    int x = iniWindowX_;
+    int y = iniWindowY_;
+    if (workW > 0) x = std::max(workX, std::min(x, workX + workW - winW));
+    if (workH > 0) y = std::max(workY, std::min(y, workY + workH - winH));
+    glfwSetWindowPos(window_, x, y);
+  }
+  int actualW = 0, actualH = 0, framebufferW = 0, framebufferH = 0;
+  glfwGetWindowSize(window_, &actualW, &actualH);
+  glfwGetFramebufferSize(window_, &framebufferW, &framebufferH);
+  LOGI("window size: %dx%d logical, %dx%d framebuffer (%s%s)", actualW,
+       actualH, framebufferW, framebufferH,
+       hasWindowSizeOverride_ ? "explicit size" :
+       (iniWindowSizeValid_ ? "restored from imgui.ini" : "display default"),
+       (winW != actualW || winH != actualH) ? ", adjusted by window manager" : "");
 
   if (backend_ == Backend::GL) {
     glfwMakeContextCurrent(window_);
@@ -1540,6 +1614,73 @@ bool App::initImGui(std::string* err) {
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+  ImGuiSettingsHandler windowSettings;
+  windowSettings.TypeName = "tusdview";
+  windowSettings.TypeHash = ImHashStr(windowSettings.TypeName);
+  windowSettings.UserData = this;
+  windowSettings.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler* handler,
+                                 const char* name) -> void* {
+    if (std::strcmp(name, "MainWindow") != 0) return nullptr;
+    App* app = static_cast<App*>(handler->UserData);
+    app->iniWindowPositionValid_ = false;
+    app->iniWindowSizeValid_ = false;
+    return app;
+  };
+  windowSettings.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler*,
+                                 void* entry, const char* line) {
+    App* app = static_cast<App*>(entry);
+    int a = 0, b = 0;
+    if (std::sscanf(line, "Pos=%d,%d", &a, &b) == 2) {
+      app->iniWindowX_ = a;
+      app->iniWindowY_ = b;
+      app->iniWindowPositionValid_ = true;
+    } else if (std::sscanf(line, "Size=%d,%d", &a, &b) == 2 && a > 0 &&
+               b > 0) {
+      app->iniWindowWidth_ = a;
+      app->iniWindowHeight_ = b;
+      app->iniWindowSizeValid_ = true;
+    }
+  };
+  windowSettings.ApplyAllFn = [](ImGuiContext*, ImGuiSettingsHandler* handler) {
+    App* app = static_cast<App*>(handler->UserData);
+    if (!app->window_ || app->hasWindowSizeOverride_) return;
+    int workX = 0, workY = 0, workWidth = 0, workHeight = 0;
+    if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) {
+      glfwGetMonitorWorkarea(monitor, &workX, &workY, &workWidth, &workHeight);
+    }
+    if (app->iniWindowSizeValid_) {
+      int width = app->iniWindowWidth_;
+      int height = app->iniWindowHeight_;
+      if (workWidth > 0) width = std::min(width, workWidth);
+      if (workHeight > 0) height = std::min(height, workHeight);
+      glfwSetWindowSize(app->window_, width, height);
+    }
+    if (app->iniWindowPositionValid_) {
+      int x = app->iniWindowX_;
+      int y = app->iniWindowY_;
+      int width = 0, height = 0;
+      glfwGetWindowSize(app->window_, &width, &height);
+      if (workWidth > 0) {
+        x = std::max(workX, std::min(x, workX + workWidth - width));
+      }
+      if (workHeight > 0) {
+        y = std::max(workY, std::min(y, workY + workHeight - height));
+      }
+      glfwSetWindowPos(app->window_, x, y);
+    }
+  };
+  windowSettings.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* handler,
+                                  ImGuiTextBuffer* out) {
+    App* app = static_cast<App*>(handler->UserData);
+    if (!app->window_) return;
+    int x = 0, y = 0, width = 0, height = 0;
+    glfwGetWindowPos(app->window_, &x, &y);
+    glfwGetWindowSize(app->window_, &width, &height);
+    if (width <= 0 || height <= 0) return;
+    out->appendf("[tusdview][MainWindow]\nPos=%d,%d\nSize=%d,%d\n\n", x,
+                 y, width, height);
+  };
+  ImGui::AddSettingsHandler(&windowSettings);
   imguiIniPath_.clear();
   std::optional<std::filesystem::path> iniPath;
   // A portable layout beside the executable wins when present. This lets a
@@ -4423,6 +4564,7 @@ static std::uint64_t FrameSceneKey(const FramePacket& p) {
   bytes(&p.viewportW, sizeof(p.viewportW));
   bytes(&p.viewportH, sizeof(p.viewportH));
   bytes(&p.purposeVisibleMask, sizeof(p.purposeVisibleMask));
+  bytes(&p.highlightXray, sizeof(p.highlightXray));
   if (!p.meshVisible.empty()) bytes(p.meshVisible.data(), p.meshVisible.size());
   if (!p.carrierVisible.empty())
     bytes(p.carrierVisible.data(), p.carrierVisible.size());
@@ -5974,6 +6116,9 @@ int App::run(const std::string& initialFile, int maxFrames,
   uint32_t pathConvergenceLastSample = 0;
   if (!modeSweep_.empty()) setRenderMode(modeSweep_[0].second);
   bool running = true;
+  bool escapeWasDown = false;
+  bool haveFirstEscape = false;
+  std::chrono::steady_clock::time_point firstEscapeTime;
   while (running) {
     const auto uiFrameStart = std::chrono::steady_clock::now();
     // Apply a browser-requested headless composite resize (queued last frame):
@@ -6226,6 +6371,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     const bool cancelLoad = gui_.wantCancelLoad();
     const bool loadAllPayloads = gui_.wantLoadAllPayloads();
     std::vector<std::string> payloadReqs = gui_.takePayloadLoadRequests();
+    const bool variantSwitch = gui_.wantVariantSwitch();
+    const auto variantOverrides = gui_.variantOverrides();
     // Timeline actions.
     const bool togglePlay = gui_.wantTogglePlay();
     const bool stopPlay = gui_.wantStop();
@@ -6259,6 +6406,9 @@ int App::run(const std::string& initialFile, int maxFrames,
         const int materialId = pendingOpenPbrEdit_.materialId;
         DrawMaterialCPU& material =
             draw_.materials[static_cast<size_t>(materialId)];
+        if (pendingOpenPbrEdit_.makeConstant) {
+          MakeConstantOpenPBRMaterial(&material);
+        }
         ApplyOpenPBRMaterialConstants(&material,
                                       pendingOpenPbrEdit_.constants);
         const DrawMaterialCPU materialCopy = material;
@@ -6560,19 +6710,42 @@ int App::run(const std::string& initialFile, int maxFrames,
     }
 
     // Variant switch: recompose with the user's variant selections.
-    if (!loadActive_ && gui_.wantVariantSwitch() &&
+    if (!loadActive_ && variantSwitch &&
         ((useNextLoader_ && nextSession_) ||
          (loaded_.comp.composed && loaded_.comp.rootLayer))) {
-      loadOpts_.variantOverrides = gui_.variantOverrides();
+      loadOpts_.variantOverrides = variantOverrides;
       startRecomposeAsync(std::set<std::string>());
     }
 
     if (!headless_) {
       if (quit) glfwSetWindowShouldClose(window_, GLFW_TRUE);
       ImGuiIO& io = ImGui::GetIO();
-      if (!io.WantTextInput && glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+      const bool ctrlDown =
+          glfwGetKey(window_, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+          glfwGetKey(window_, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+      if (ctrlDown && glfwGetKey(window_, GLFW_KEY_Q) == GLFW_PRESS) {
         glfwSetWindowShouldClose(window_, GLFW_TRUE);
       }
+
+      const bool escapeDown =
+          glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+      if (!io.WantTextInput && escapeDown && !escapeWasDown) {
+        constexpr auto kDoubleEscapeWindow = std::chrono::milliseconds(600);
+        const auto now = std::chrono::steady_clock::now();
+        if (haveFirstEscape && now - firstEscapeTime <= kDoubleEscapeWindow) {
+          glfwSetWindowShouldClose(window_, GLFW_TRUE);
+          haveFirstEscape = false;
+        } else {
+          firstEscapeTime = now;
+          haveFirstEscape = true;
+          LOGI("press Escape again to quit (or Ctrl+Q)");
+        }
+      }
+      escapeWasDown = escapeDown;
+      if (haveFirstEscape &&
+          std::chrono::steady_clock::now() - firstEscapeTime >
+              std::chrono::milliseconds(600))
+        haveFirstEscape = false;
     }
 
     if (quitAfterFullPresent_) running = false;

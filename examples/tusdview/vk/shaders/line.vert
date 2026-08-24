@@ -8,8 +8,10 @@ layout(push_constant) uniform PushConstants {
 } pc;
 
 layout(location = 0) out vec3 vCol;
+layout(location = 1) out vec3 vWorld;
 
 void main() {
   vCol = aCol;
+  vWorld = aPos;
   gl_Position = pc.vp * vec4(aPos, 1.0);
 }

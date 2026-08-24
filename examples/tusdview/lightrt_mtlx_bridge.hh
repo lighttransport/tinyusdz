@@ -71,6 +71,10 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat);
 void ApplyOpenPBRMaterialConstants(
     DrawMaterialCPU* mat, const DrawLightRtOpenPBRCPU& constants);
 
+// Switch a dual-authored/fallback material to a session-local, connection-free
+// OpenPBR preview suitable for interactive constant editing.
+void MakeConstantOpenPBRMaterial(DrawMaterialCPU* mat);
+
 // Bake texture/procedural MaterialX graph outputs into the existing semantic
 // texture table when Tydra did not extract a direct slot. The retained graph
 // IR is also packed separately for descriptor-indexed runtime evaluation; this

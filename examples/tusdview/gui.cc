@@ -95,6 +95,22 @@ void HintWrapped(const char* s) {
   ImGui::PopStyleColor();
 }
 
+// Selectable diagnostic text with a one-click clipboard action. InputTextMultiline
+// requires a mutable buffer even in read-only mode, so use std::string::data()
+// without permitting ImGui to resize or edit it.
+void DiagnosticTextArea(const char* id, const char* copyLabel,
+                        const std::string& message) {
+  if (ImGui::SmallButton(copyLabel)) {
+    ImGui::SetClipboardText(message.c_str());
+  }
+  ImGui::PushItemWidth(-FLT_MIN);
+  const float height = ImGui::GetTextLineHeightWithSpacing() * 6.0f;
+  ImGui::InputTextMultiline(id, const_cast<char*>(message.c_str()),
+                            message.size() + 1, ImVec2(-FLT_MIN, height),
+                            ImGuiInputTextFlags_ReadOnly);
+  ImGui::PopItemWidth();
+}
+
 bool ViewportRay(const OrbitCamera& camera, bool zeroToOneDepth, float px,
                  float py, int viewportWidth, int viewportHeight,
                  light3d::Vec3* origin, light3d::Vec3* direction) {
@@ -610,7 +626,7 @@ void Gui::drawDockspaceAndMenu() {
         }
       }
       ImGui::Separator();
-      if (ImGui::MenuItem("Quit", "Esc")) wantQuit_ = true;
+      if (ImGui::MenuItem("Quit", "Ctrl+Q / Esc Esc")) wantQuit_ = true;
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
@@ -618,6 +634,23 @@ void Gui::drawDockspaceAndMenu() {
         mode_ = RenderMode::Shaded;
       if (ImGui::MenuItem("Wireframe", nullptr, mode_ == RenderMode::Wireframe))
         mode_ = RenderMode::Wireframe;
+      ImGui::Separator();
+      if (ImGui::BeginMenu("Selection display")) {
+        static const char* labels[] = {"Off", "Bounds only",
+                                       "Wireframe (depth tested)",
+                                       "Wireframe (X-ray)"};
+        for (int i = 0; i < 4; ++i) {
+          if (ImGui::MenuItem(labels[i], i == 0 ? "K" : nullptr,
+                              selectionHighlightMode_ == i)) {
+            selectionHighlightMode_ = i;
+            if (i > 0) selectionHighlightLastVisibleMode_ = i;
+          }
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("Shift+K cycles modes");
+        ImGui::EndMenu();
+      }
+      ImGui::Separator();
       // Debug AOV channels (grouped to keep the View menu tidy as they grow).
       if (ImGui::BeginMenu("Debug AOV")) {
         struct AovItem { const char* label; RenderMode m; };
@@ -865,7 +898,11 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::MenuItem("Grid", nullptr, &showGrid_);
       ImGui::MenuItem("Axes", nullptr, &showAxes_);
       ImGui::MenuItem("Scene bounds", nullptr, &showSceneBbox_);
-      ImGui::MenuItem("Selected bounds", nullptr, &showPrimBbox_);
+      bool selectedBounds = selectionHighlightMode_ == 1;
+      if (ImGui::MenuItem("Selected bounds", nullptr, &selectedBounds)) {
+        selectionHighlightMode_ = selectedBounds ? 1 : 0;
+        if (selectedBounds) selectionHighlightLastVisibleMode_ = 1;
+      }
       ImGui::MenuItem("Skeleton", nullptr, &showSkeleton_);
       ImGui::MenuItem("Frustum culling", nullptr, &cullEnabled_);
       ImGui::Separator();
@@ -925,6 +962,9 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::TextUnformatted("7/Shift+7 Top/Bottom");
       ImGui::TextUnformatted("Ctrl+1..3 Recall bookmark");
       ImGui::TextUnformatted("Ctrl+Shift+1..3 Save bookmark");
+      ImGui::Separator();
+      ImGui::TextDisabled("Application");
+      ImGui::TextUnformatted("Ctrl+Q / Esc Esc  Quit");
       ImGui::Separator();
       if (ImGui::MenuItem("About tusdview")) showAbout_ = true;
       ImGui::EndMenu();
@@ -1978,6 +2018,65 @@ void Gui::drawNextInspector() {
                                          : "class");
   ImGui::Text("Active: %s", prim.IsActive() ? "true" : "false");
 
+  // StandardShaderBall authors its example-material choice on the scene root,
+  // while the selected material_surface inherits that binding through the
+  // shader_ball Xform. PCP's composed snapshot intentionally flattens variant
+  // definitions, so the ordinary per-prim Variant sets section below cannot
+  // discover this control. Build the material choices from the composed
+  // example Material scope instead and author the root override explicitly.
+  const std::string shaderBallSuffix = "/shader_ball/material_surface";
+  const size_t shaderBallPos = selPath_.find(shaderBallSuffix);
+  if (shaderBallPos != std::string::npos &&
+      shaderBallPos + shaderBallSuffix.size() == selPath_.size()) {
+    const std::string sceneRoot = selPath_.substr(0, shaderBallPos);
+    const tinyusdz::next::UsdPrim materialScope = nextStage_->GetPrimAtPath(
+        sceneRoot + "/materials/examples/mtlx");
+    std::vector<std::string> choices;
+    if (materialScope.IsValid()) {
+      for (const tinyusdz::next::UsdPrim& child : materialScope.GetChildren()) {
+        if (child.GetTypeName() == "Material") choices.push_back(child.GetName());
+      }
+      std::sort(choices.begin(), choices.end());
+    }
+    if (!choices.empty() &&
+        ImGui::CollapsingHeader("Inherited material variant",
+                                ImGuiTreeNodeFlags_DefaultOpen)) {
+      std::string selected = "none";
+      if (loadOptions_) {
+        const auto primIt = loadOptions_->variantOverrides.find(sceneRoot);
+        if (primIt != loadOptions_->variantOverrides.end()) {
+          const auto setIt = primIt->second.find("example_material");
+          if (setIt != primIt->second.end()) {
+            constexpr const char* kPrefix = "mtlx_";
+            selected = setIt->second.rfind(kPrefix, 0) == 0
+                           ? setIt->second.substr(std::strlen(kPrefix))
+                           : setIt->second;
+          }
+        }
+      }
+      if (ImGui::BeginCombo("OpenPBR example##inherited_material_variant",
+                            selected.c_str())) {
+        const bool noneSelected = selected == "none";
+        if (ImGui::Selectable("none", noneSelected) && !noneSelected) {
+          requestVariantSwitch(sceneRoot,
+                               {{"example_material", "none"}});
+        }
+        if (noneSelected) ImGui::SetItemDefaultFocus();
+        for (const std::string& choice : choices) {
+          const bool current = selected == choice;
+          if (ImGui::Selectable(choice.c_str(), current) && !current) {
+            requestVariantSwitch(
+                sceneRoot, {{"example_material", "mtlx_" + choice}});
+          }
+          if (current) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+      ImGui::TextDisabled("Authored on %s; inherited by this surface.",
+                          sceneRoot.c_str());
+    }
+  }
+
   const tinyusdz::next::PrimSpecMeta& meta = prim.GetMeta();
   if (!meta.variantSets().empty() &&
       ImGui::CollapsingHeader("Variant sets", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2999,6 +3098,7 @@ void Gui::drawOpenPbrMaterialPanel() {
       draw_->materials[static_cast<size_t>(openPbrEditorMaterial_)];
   DrawLightRtOpenPBRCPU p = editedMat.lightRtOpenPBR;
   bool changed = false;
+  bool makeConstant = false;
   auto connected = [&](std::initializer_list<const char*> names, int route,
                        int directTexture) {
     if (directTexture >= 0) return true;
@@ -3046,7 +3146,18 @@ void Gui::drawOpenPbrMaterialPanel() {
     changed |= edited;
   };
 
-  ImGui::TextDisabled("Constant inputs update the active renderer live.");
+  if (!editedMat.openPbrSpecularModel) {
+    ImGui::TextWrapped(
+        "This material is currently using its textured PreviewSurface "
+        "fallback. Switch it to a session-local OpenPBR material to edit "
+        "connection-free constants on the selected shape.");
+    if (ImGui::Button("Use constant OpenPBR")) {
+      makeConstant = true;
+      changed = true;
+    }
+  } else {
+    ImGui::TextDisabled("Constant inputs update the active renderer live.");
+  }
   if (ImGui::CollapsingHeader("Base", ImGuiTreeNodeFlags_DefaultOpen)) {
     slider("Weight##base", &p.baseWeight, 0.0f, 1.0f,
            connected({"base_weight"}, -1, -1));
@@ -3162,6 +3273,7 @@ void Gui::drawOpenPbrMaterialPanel() {
     tinyusdz::tydra::ClampRealtimePbrMaterial(&p);
     openPbrMaterialEdit_.materialId = openPbrEditorMaterial_;
     openPbrMaterialEdit_.constants = p;
+    openPbrMaterialEdit_.makeConstant = makeConstant;
     hasOpenPbrMaterialEdit_ = true;
   }
   ImGui::End();
@@ -3691,12 +3803,14 @@ void Gui::drawStats() {
   if (loaded_ && !loaded_->warn.empty()) {
     ImGui::Separator();
     ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Warnings:");
-    ImGui::TextWrapped("%s", loaded_->warn.c_str());
+    ImGui::SameLine();
+    DiagnosticTextArea("##load-warnings", "Copy warnings", loaded_->warn);
   }
   if (loaded_ && !loaded_->ok && !loaded_->err.empty()) {
     ImGui::Separator();
     ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Load error:");
-    ImGui::TextWrapped("%s", loaded_->err.c_str());
+    ImGui::SameLine();
+    DiagnosticTextArea("##load-error", "Copy error", loaded_->err);
   }
 
   if (budget_) {
@@ -3720,6 +3834,16 @@ void Gui::drawStats() {
   }
   if (loadOptions_) {
     ImGui::Separator();
+    if (ImGui::CollapsingHeader("Subdivision surfaces",
+                                ImGuiTreeNodeFlags_DefaultOpen)) {
+      int level = loadOptions_->subdivisionLevel;
+      if (ImGui::SliderInt("Pre-tessellation level", &level, 0, 5)) {
+        loadOptions_->subdivisionLevel = std::max(0, level);
+      }
+      if (ImGui::IsItemDeactivatedAfterEdit()) wantReload_ = true;
+      ImGui::TextDisabled(
+          "Catmull-Clark, Loop and bilinear meshes rebuild asynchronously.");
+    }
     if (ImGui::CollapsingHeader("Load scheduling")) {
       int composeThreads = static_cast<int>(loadOptions_->compositionThreads);
       if (ImGui::InputInt("Composition threads (0=auto)", &composeThreads)) {
@@ -3862,6 +3986,21 @@ void Gui::handleNavigation() {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F)) frameSelected();  // frame selection
     if (ImGui::IsKeyPressed(ImGuiKey_A)) frameAll();        // frame all
+
+    // Shift+K cycles off -> bounds -> Z-tested wire -> X-ray wire. Plain K is
+    // the quick hide/restore toggle and never clears the actual selection.
+    if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)) {
+      if (io.KeyShift) {
+        selectionHighlightMode_ = (selectionHighlightMode_ + 1) % 4;
+        if (selectionHighlightMode_ > 0)
+          selectionHighlightLastVisibleMode_ = selectionHighlightMode_;
+      } else if (selectionHighlightMode_ == 0) {
+        selectionHighlightMode_ = selectionHighlightLastVisibleMode_;
+      } else {
+        selectionHighlightLastVisibleMode_ = selectionHighlightMode_;
+        selectionHighlightMode_ = 0;
+      }
+    }
 
     // Hide family. Needs a valid selected mesh (except none is required for the
     // plain toggle/show, but those are no-ops without a selection too).
@@ -5781,20 +5920,22 @@ void Gui::renderViewportScene(FramePacket* packet) {
   const bool selHidden =
       selMeshIndex_ >= 0 &&
       !meshVisibleForView(static_cast<size_t>(selMeshIndex_));
-  p.highlightMeshIndex = pickingAov || selHidden ? -1 : selMeshIndex_;
+  const bool showHighlight = selectionHighlightMode_ >= 2 && !pickingAov;
+  p.highlightMeshIndex = !showHighlight || selHidden ? -1 : selMeshIndex_;
   // A selected GeomSubset highlights just its faces on the parent mesh (GL
   // polygon-mode path).
-  if (!pickingAov && highlightSubsetMesh_ >= 0 && !highlightSubsetIndices_.empty() &&
+  if (showHighlight && highlightSubsetMesh_ >= 0 && !highlightSubsetIndices_.empty() &&
       meshVisibleForView(static_cast<size_t>(highlightSubsetMesh_))) {
     p.highlightMeshIndex = highlightSubsetMesh_;
     p.highlightIndices = highlightSubsetIndices_.data();
     p.highlightIndexCount = static_cast<int>(highlightSubsetIndices_.size());
   }
   // Vulkan highlight: world-space edge lines (whole mesh or subset).
-  if (!pickingAov && !highlightLinesData_.empty()) {
+  if (showHighlight && !highlightLinesData_.empty()) {
     p.highlightLines = highlightLinesData_.data();
     p.highlightLineVertexCount = static_cast<int>(highlightLinesData_.size());
   }
+  p.highlightXray = selectionHighlightMode_ == 3;
   for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
   // Scene bbox for the depth + position AOVs.
   if (draw_ && draw_->hasBounds) {
@@ -5881,6 +6022,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   packet->depthScale = p.depthScale;
   for (int i = 0; i < 3; ++i) { packet->sceneMin[i] = p.sceneMin[i]; packet->sceneExtent[i] = p.sceneExtent[i]; }
   packet->highlightMeshIndex = p.highlightMeshIndex;
+  packet->highlightXray = p.highlightXray;
   if (p.highlightIndices)
     packet->highlightIndices.assign(p.highlightIndices, p.highlightIndices + p.highlightIndexCount);
   if (p.highlightLines)
@@ -5979,7 +6121,7 @@ void Gui::buildHelpers() {
   if (showSceneBbox_ && draw_ && draw_->hasBounds) {
     addBox(draw_->aabbMin, draw_->aabbMax, 0.90f, 0.90f, 0.30f);
   }
-  if (showPrimBbox_ && draw_ && selMeshIndex_ >= 0 &&
+  if (selectionHighlightMode_ == 1 && draw_ && selMeshIndex_ >= 0 &&
       static_cast<size_t>(selMeshIndex_) < draw_->meshes.size() &&
       meshVisibleForView(static_cast<size_t>(selMeshIndex_))) {
     const auto& m = draw_->meshes[static_cast<size_t>(selMeshIndex_)];

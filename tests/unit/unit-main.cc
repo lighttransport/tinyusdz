@@ -193,6 +193,7 @@ TEST_LIST = {
   { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
   { "openpbr_surface_reconstruction_test", openpbr_surface_reconstruction_test },
   { "mtlx_standard_surface_reconstruction_test", mtlx_standard_surface_reconstruction_test },
+  { "materialx_139_version_test", materialx_139_version_test },
   { "nodegraph_support_test", nodegraph_support_test },
   { "nodegraph_reconstruct_from_layer_test", nodegraph_reconstruct_from_layer_test },
   { "materialx_shader_constants_test", materialx_shader_constants_test },

@@ -76,6 +76,9 @@ displays it with an ImGui docking UI.
     matches' ancestors and auto-expanding), the Inspector (filters properties by
     name/value), and the Stage metadata panel (filters by key/value).
 - **Maya-style navigation & selection** (only when the viewport is hovered):
+  - **Persistent layout** — docking plus native window position/size are saved
+    to `imgui.ini` and restored on the next run. A clean 4K first run starts at
+    2560×1600; `--size` and configured `window_size` remain explicit overrides.
   - `Alt + LMB` orbit, `Alt + MMB` pan, `Alt + RMB` / **mouse wheel** dolly.
   - `W` / `S` moves both camera eye and orbit pivot forward/backward for
     right-handed mouse navigation; `Up` / `Down` are aliases and `Shift`
@@ -98,10 +101,16 @@ displays it with an ImGui docking UI.
     `3 / Shift+3` right/left, `7 / Shift+7` top/bottom.
   - **Camera bookmarks** — `Ctrl+1..3` recall a saved view and
     `Ctrl+Shift+1..3` save the current camera/selection to a bookmark slot.
+  - **Safe quit shortcuts** — `Ctrl+Q` exits immediately; Escape must be
+    pressed twice within 600 ms, so a single Escape cannot close the viewer.
   - **Hide family** (Maya 2016+): `H` toggle-hide the selection, `Ctrl+H` hide,
     `Shift+H` show, `Alt+H` isolate (hide everything else). **View ▸ Unhide all**
     restores. Visibility is viewer-side (raster paths; the RT path traces all
     meshes) and is not written back to the USD `visibility` attribute.
+  - **Selection overlay controls** — `Shift+K` cycles off, bounds only,
+    depth-tested wireframe, and X-ray wireframe. `K` quickly hides or restores
+    the last visible mode without clearing the selection. X-ray deliberately
+    shows hidden edges for topology debugging.
 - **Skeleton (UsdSkel) display** — the joint hierarchy is drawn as world-space
   bone line segments (parent→child) plus a small cross per joint, as an **X-ray
   overlay** (depth-test disabled, so bones stay visible through solid geometry).
@@ -128,7 +137,10 @@ displays it with an ImGui docking UI.
   fuzz/film/emission/opacity inputs, and rerenders on every adjustment. Vulkan,
   CUDA, and HIP update material buffers without rebuilding geometry or BVHs;
   texture- and nodegraph-connected controls are disabled and identified. The
-  overrides are session-local and do not modify the source USD.
+  material combo also exposes dual-authored PreviewSurface/OpenPBR materials;
+  **Use constant OpenPBR** creates a session-local, connection-free OpenPBR
+  preview for parameter studies such as the StandardShaderBall neutral shell.
+  Overrides do not modify the source USD.
 - **Authored USD lighting** on both raster backends: up to 16 supported direct
   lights are evaluated in stage order with diffuse/specular multipliers,
   shaping cones, and per-mesh `collection:lightLink` masks, alongside
@@ -176,6 +188,13 @@ displays it with an ImGui docking UI.
   (Vulkan ray query, CUDA) intersect real triangles, so the displacement is baked
   into the geometry before the BLAS/TLAS is built. Geometric normals are used on
   displaced surfaces so the new detail shades correctly.
+- **Subdivision-surface pre-tessellation** — explicitly authored Catmull-Clark, Loop and
+  bilinear meshes are uniformly refined with `tinysubdiv` before raster or RT
+  geometry is built. The default level is 2; use `--subdivision-level 0` to
+  disable it or change **Scene ▸ Subdivision surfaces ▸ Pre-tessellation level**
+  to rebuild the live scene. The default next loader refines face-varying UVs
+  and recomputes normals along with the topology; the legacy loader additionally
+  supports refined skin and blend-shape primvars.
 - **Production path tracing** — `--path-trace` selects a separate multi-bounce
   integrator while preserving the fast `--rt` preview. Vulkan uses hardware ray
   query when the selected adapter exposes it; `--cuda` and `--hip` run the same

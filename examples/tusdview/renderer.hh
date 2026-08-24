@@ -237,6 +237,8 @@ struct RenderFrameParams {
   // no wireframe pass, draws these through its line pipeline instead.
   const HelperVertex* highlightLines{nullptr};
   int highlightLineVertexCount{0};
+  // false: selection obeys the scene depth buffer; true: draw through geometry.
+  bool highlightXray{false};
 
   // Debug helper lines (grid / axes / bounding boxes), world space, depth-tested
   // so geometry occludes them.
