@@ -1559,6 +1559,85 @@ def Xform "World"
   std::cout << "  RenderConverter materials: PASSED\n";
 }
 
+void TestRenderConverterNestedMaterialXGraph() {
+  std::cout << "Testing nested MaterialX NodeGraph retention...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Material "Mat"
+    {
+        token outputs:mtlx:surface.connect = </World/Mat/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color.connect = </World/Mat/Outer.outputs:base>
+            float inputs:base_roughness.connect = </World/Mat/Roughness.outputs:value>
+            token outputs:surface
+        }
+
+        def NodeGraph "Outer"
+        {
+            color3f outputs:base.connect = </World/Mat/Outer/Inner.outputs:forwarded>
+
+            def NodeGraph "Inner"
+            {
+                color3f outputs:forwarded.connect = </World/Mat/Outer/Inner/Add.outputs:out>
+
+                def Shader "Const"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.1, 0.2, 0.3)
+                    color3f outputs:out
+                }
+
+                def Shader "Add"
+                {
+                    uniform token info:id = "ND_add_color3"
+                    color3f inputs:in1.connect = </World/Mat/Outer/Inner/Const.outputs:out>
+                    color3f inputs:in2 = (0.4, 0.3, 0.2)
+                    color3f outputs:out
+                }
+            }
+        }
+
+        def NodeGraph "Roughness"
+        {
+            float outputs:value.connect = </World/Mat/Roughness/Const.outputs:out>
+            def Shader "Const"
+            {
+                uniform token info:id = "ND_constant_float"
+                float inputs:value = 0.35
+                float outputs:out
+            }
+        }
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(load_result.success);
+  RenderSceneConverter converter;
+  ConvertResult result = converter.Convert(load_result.stage);
+  assert(result.success);
+  auto material_it = result.scene.material_by_path.find("/World/Mat");
+  assert(material_it != result.scene.material_by_path.end());
+  const RenderMaterial& material = result.scene.materials[material_it->second];
+  assert(material.openpbr);
+  const std::string& graph = material.openpbr->nodegraph_json;
+  assert(!graph.empty());
+  assert(graph.find("\"name\":\"Outer_Inner_Const\"") != std::string::npos);
+  assert(graph.find("\"name\":\"Outer_Inner_Add\"") != std::string::npos);
+  assert(graph.find("\"name\":\"Roughness_Const\"") != std::string::npos);
+  assert(graph.find("\"nodename\":\"Outer_Inner_Add\"") != std::string::npos);
+  assert(graph.find("\"output\":\"Outer_base\"") != std::string::npos);
+  assert(graph.find("\"output\":\"Roughness_value\"") != std::string::npos);
+  assert(graph.find("\"nodename\":\"Inner\"") == std::string::npos);
+
+  std::cout << "  nested MaterialX NodeGraph retention: PASSED\n";
+}
+
 // Regression: a material whose `outputs:surface` connects to a path that is
 // absent from the composed stage (Unreal USD exports connect to a
 // reference-SOURCE path that vanishes after composition), but which carries
@@ -6960,6 +7039,7 @@ int main() {
   TestRenderConverter();
   TestRenderConverterHalfGaussian();
   TestRenderConverterMaterials();
+  TestRenderConverterNestedMaterialXGraph();
   TestRenderConverterUnrealSurfaceFallback();
   TestRenderConverterUnrealSourceAssetFallback();
   TestRenderConverterInheritedSkelBinding();

@@ -2383,6 +2383,13 @@ if(TINYUSDZ_BUILD_TESTS)
   # (that property only takes effect once the test process actually runs).
   find_program(TUSDR_BASH NAMES bash)
   if(TARGET tusdrender AND TUSDR_BASH)
+    add_test(
+      NAME tool-tusdrender-gpu-render
+      COMMAND ${TUSDR_BASH}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-gpu-render.sh
+              "$<TARGET_FILE:tusdrender>")
+    set_tests_properties(tool-tusdrender-gpu-render PROPERTIES
+                         SKIP_RETURN_CODE 77 LABELS "tusdrender;gpu;rt;materialx;openpbr")
     set(TUSDR_SHELL_TESTS
         backplate
         backface-material

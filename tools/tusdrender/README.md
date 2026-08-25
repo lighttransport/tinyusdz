@@ -16,6 +16,8 @@ Common flags:
 |------|---------|
 | `-rtPreview` | ray-traced preview (the `next` loader; default for USDC) |
 | `-vk` / `-vkr` / `-d3d` | GPU backends — Vulkan compute / Vulkan ray query / Direct3D 11 compute — see [`doc/tusdrender.md`](../../doc/tusdrender.md) for status + testing |
+| `-cuda` / `-hip` | Headless RT using the GUI-free tusdview core, including packed MaterialX/OpenPBR preview shading |
+| `--path-trace` | Production path tracing on `-vkr`/`-cuda`/`-hip`; tune with `--pt-quality`, `--pt-samples`, `--pt-max-depth`, and `--pt-rr-depth` |
 | `-largeSceneProfile caldera\|island\|alab` | Vulkan large-scene preset over backend/LOD/shared memory policy; explicit flags win |
 | `-w N -height N` | image size (`-height` omitted → from camera aspect) |
 | `-autoframe` | usdrecord-style auto camera framing |

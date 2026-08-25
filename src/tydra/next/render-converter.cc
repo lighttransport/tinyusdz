@@ -1002,6 +1002,234 @@ bool ValueToShaderParam(const Value& value, ShaderParam* out) {
   return false;
 }
 
+std::string JsonEscape(const std::string& value) {
+  std::string out;
+  out.reserve(value.size());
+  for (char c : value) {
+    if (c == '\\' || c == '"') out.push_back('\\');
+    if (static_cast<unsigned char>(c) >= 0x20) out.push_back(c);
+  }
+  return out;
+}
+
+std::string ConnectionNodeName(const std::string& path) {
+  const size_t slash = path.rfind('/');
+  const size_t dot = path.rfind('.');
+  if (slash == std::string::npos || dot == std::string::npos || dot <= slash)
+    return {};
+  return path.substr(slash + 1, dot - slash - 1);
+}
+
+std::string ConnectionOutputName(const std::string& path) {
+  const size_t dot = path.rfind('.');
+  if (dot == std::string::npos) return {};
+  std::string out = path.substr(dot + 1);
+  if (out.compare(0, 8, "outputs:") == 0) out.erase(0, 8);
+  return out;
+}
+
+std::string ConnectionPropertyName(const std::string& path) {
+  const size_t dot = path.rfind('.');
+  return dot == std::string::npos ? std::string() : path.substr(dot + 1);
+}
+
+void EmitNextGraphValue(std::ostream& os, const Value& value) {
+  if (const std::string* v = value.as_asset_path()) {
+    os << '"' << JsonEscape(*v) << '"';
+    return;
+  }
+  if (const std::string* v = value.as_string()) {
+    os << '"' << JsonEscape(*v) << '"';
+    return;
+  }
+  if (const std::string* v = value.as_token()) {
+    os << '"' << JsonEscape(*v) << '"';
+    return;
+  }
+  ShaderParam p;
+  if (!ValueToShaderParam(value, &p)) { os << "null"; return; }
+  int lanes = 1;
+  if (value.as_float2() || value.as_double2()) lanes = 2;
+  else if (value.as_float3() || value.as_double3()) lanes = 3;
+  else if (value.as_float4() || value.as_double4()) lanes = 4;
+  const float v[4] = {p.value.x, p.value.y, p.value.z, p.value.w};
+  if (lanes == 1) { os << v[0]; return; }
+  os << '[';
+  for (int i = 0; i < lanes; ++i) { if (i) os << ','; os << v[i]; }
+  os << ']';
+}
+
+// Preserve the programmable MaterialX graph in the same compact JSON schema
+// consumed by the shared tusdview graph compiler. The next converter already
+// resolves simple constants and images; this record retains the full utility
+// node topology for descriptor-backed renderers instead of silently baking it.
+std::string BuildNextMaterialXGraphJson(const Stage& stage,
+                                        const UsdPrim& shader) {
+  const UsdPrim material = shader.GetParent();
+  if (!material.IsValid()) return {};
+  std::vector<UsdPrim> graphs;
+  ::tinyusdz::next::AttributeEval shader_connections(&stage);
+  for (const std::string& prop : shader.GetPropertyNames()) {
+    if (prop.compare(0, 7, "inputs:") != 0 ||
+        !shader_connections.HasConnection(shader, prop)) continue;
+    const std::string connection =
+        shader_connections.GetConnectionPath(shader, prop);
+    UsdPrim candidate = stage.GetPrimAtPath(
+        SourcePrimPathFromConnection(connection));
+    if (::tinyusdz::next::IsNodeGraph(candidate) &&
+        std::none_of(graphs.begin(), graphs.end(), [&](const UsdPrim& item) {
+          return item.GetPath() == candidate.GetPath();
+        })) {
+      graphs.push_back(candidate);
+    }
+  }
+  for (size_t i = 0; i < material.GetChildCount(); ++i) {
+    if (!graphs.empty()) break;
+    UsdPrim child = material.GetChildAt(i);
+    if (::tinyusdz::next::IsNodeGraph(child)) { graphs.push_back(child); break; }
+  }
+  if (graphs.empty()) return {};
+  const bool graph_forest = graphs.size() > 1;
+  const std::string graph_name = graph_forest
+      ? material.GetName() + "_graphs" : graphs.front().GetName();
+  std::vector<UsdPrim> graph_nodes;
+  std::function<void(const UsdPrim&)> collect_nodes = [&](const UsdPrim& parent) {
+    for (size_t ci = 0; ci < parent.GetChildCount(); ++ci) {
+      const UsdPrim child = parent.GetChildAt(ci);
+      if (::tinyusdz::next::IsShader(child)) graph_nodes.push_back(child);
+      else if (::tinyusdz::next::IsNodeGraph(child)) collect_nodes(child);
+    }
+  };
+  for (const UsdPrim& graph : graphs) collect_nodes(graph);
+  std::unordered_map<std::string, std::string> graph_node_names;
+  for (const UsdPrim& graph : graphs) {
+    const std::string graph_path = graph.GetPath().str();
+    for (const UsdPrim& node : graph_nodes) {
+      std::string relative = node.GetPath().str();
+      if (relative.compare(0, graph_path.size(), graph_path) != 0) continue;
+      relative.erase(0, graph_path.size());
+      while (!relative.empty() && relative.front() == '/') relative.erase(0, 1);
+      std::replace(relative.begin(), relative.end(), '/', '_');
+      if (graph_forest) relative = graph.GetName() + '_' + relative;
+      graph_node_names[node.GetPath().str()] =
+          relative.empty() ? node.GetName() : relative;
+    }
+  }
+  // A connection may target an output on a nested NodeGraph. Chase those
+  // forwarding outputs until the actual Shader output is reached; the packed
+  // runtime has no graph-boundary node and should see the flattened topology.
+  auto resolve_connection = [&](std::string connection) {
+    for (int depth = 0; depth < 16; ++depth) {
+      const UsdPrim source = stage.GetPrimAtPath(
+          SourcePrimPathFromConnection(connection));
+      if (!source.IsValid() || !::tinyusdz::next::IsNodeGraph(source)) break;
+      const std::string property = ConnectionPropertyName(connection);
+      if (property.empty()) break;
+      ::tinyusdz::next::AttributeEval eval(&stage);
+      if (!eval.HasConnection(source, property)) break;
+      const std::string forwarded = eval.GetConnectionPath(source, property);
+      if (forwarded.empty() || forwarded == connection) break;
+      connection = forwarded;
+    }
+    return connection;
+  };
+  std::ostringstream os;
+  os << "{\"version\":\"1.39\",\"nodegraph\":{\"name\":\""
+     << JsonEscape(graph_name) << "\",\"inputs\":[],\"nodes\":[";
+  bool first_node = true;
+  for (const UsdPrim& node : graph_nodes) {
+    std::string node_id;
+    GetToken(node, "info:id", &node_id);
+    std::string category = node_id;
+    if (category.compare(0, 3, "ND_") == 0) {
+      category.erase(0, 3);
+      const size_t suffix = category.rfind('_');
+      if (suffix != std::string::npos) category.erase(suffix);
+    }
+    if (!first_node) os << ',';
+    first_node = false;
+    os << "{\"name\":\"" << JsonEscape(graph_node_names[node.GetPath().str()])
+       << "\",\"category\":\"" << JsonEscape(category)
+       << "\",\"type\":\"" << JsonEscape(node_id)
+       << "\",\"inputs\":[";
+    bool first_input = true;
+    ::tinyusdz::next::AttributeEval eval(&stage);
+    for (const std::string& prop : node.GetPropertyNames()) {
+      if (prop.compare(0, 7, "inputs:") != 0) continue;
+      if (!first_input) os << ',';
+      first_input = false;
+      os << "{\"name\":\"" << JsonEscape(prop.substr(7)) << '"';
+      if (eval.HasConnection(node, prop)) {
+        const std::string connection = resolve_connection(
+            eval.GetConnectionPath(node, prop));
+        const std::string source_path = SourcePrimPathFromConnection(connection);
+        const auto source_name = graph_node_names.find(source_path);
+        os << ",\"nodename\":\""
+           << JsonEscape(source_name == graph_node_names.end()
+                             ? ConnectionNodeName(connection)
+                             : source_name->second)
+           << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection)) << '"';
+      } else if (const Value* value = node.GetPropertyValueOrEarliestTimeSample(prop)) {
+        os << ",\"value\":"; EmitNextGraphValue(os, *value);
+        if (const ::tinyusdz::next::PrimSpec* spec = node.GetPrimSpec()) {
+          if (const std::string* type = spec->property_type_name(prop))
+            os << ",\"type\":\"" << JsonEscape(*type) << '"';
+        }
+      }
+      os << '}';
+    }
+    os << "]}";
+  }
+  os << "],\"outputs\":[";
+  bool first_output = true;
+  for (const UsdPrim& graph : graphs) {
+    ::tinyusdz::next::AttributeEval graph_eval(&stage);
+    for (const std::string& prop : graph.GetPropertyNames()) {
+      if (prop.compare(0, 8, "outputs:") != 0 ||
+          !graph_eval.HasConnection(graph, prop)) continue;
+      const std::string connection = resolve_connection(
+          graph_eval.GetConnectionPath(graph, prop));
+      const std::string source_path = SourcePrimPathFromConnection(connection);
+      const auto source_name = graph_node_names.find(source_path);
+      if (!first_output) os << ',';
+      first_output = false;
+      os << "{\"name\":\""
+         << JsonEscape((graph_forest ? graph.GetName() + '_' : std::string()) +
+                       prop.substr(8))
+         << "\",\"nodename\":\""
+         << JsonEscape(source_name == graph_node_names.end()
+                           ? ConnectionNodeName(connection)
+                           : source_name->second)
+         << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection)) << "\"}";
+    }
+  }
+  os << "]},\"connections\":[";
+  bool first_connection = true;
+  ::tinyusdz::next::AttributeEval shader_eval(&stage);
+  for (const std::string& prop : shader.GetPropertyNames()) {
+    if (prop.compare(0, 7, "inputs:") != 0 ||
+        !shader_eval.HasConnection(shader, prop)) continue;
+    const std::string connection = shader_eval.GetConnectionPath(shader, prop);
+    const UsdPrim source = stage.GetPrimAtPath(
+        SourcePrimPathFromConnection(connection));
+    if (!::tinyusdz::next::IsNodeGraph(source)) continue;
+    const auto graph_it = std::find_if(
+        graphs.begin(), graphs.end(), [&](const UsdPrim& graph) {
+          return graph.GetPath() == source.GetPath();
+        });
+    if (graph_it == graphs.end()) continue;
+    if (!first_connection) os << ',';
+    first_connection = false;
+    os << "{\"input\":\"" << JsonEscape(prop.substr(7))
+       << "\",\"nodegraph\":\"" << JsonEscape(graph_name)
+       << "\",\"output\":\""
+       << JsonEscape((graph_forest ? source.GetName() + '_' : std::string()) +
+                     ConnectionOutputName(connection)) << "\"}";
+  }
+  os << "]}";
+  return first_node || first_output || first_connection ? std::string() : os.str();
+}
+
 struct MtlxConstantValue {
   std::array<float, 4> value{{0.0f, 0.0f, 0.0f, 0.0f}};
   int components = 0;
@@ -8361,6 +8589,8 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         out->shader_type = RenderMaterial::ShaderType::OpenPBR;
         out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
         ExtractOpenPBRSurface(stage, child, out->openpbr.get(), scene);
+        out->openpbr->nodegraph_json =
+            BuildNextMaterialXGraphJson(stage, child);
         if (out->openpbr->opacity.is_texture() ||
             out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon ||
             out->openpbr->transmission_weight.value.x > kAlphaEpsilon) {
@@ -8375,6 +8605,8 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         out->shader_type = RenderMaterial::ShaderType::OpenPBR;
         out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
         ExtractStandardSurfaceAsOpenPBR(stage, child, out->openpbr.get(), scene);
+        out->openpbr->nodegraph_json =
+            BuildNextMaterialXGraphJson(stage, child);
         if (out->openpbr->opacity.is_texture() ||
             out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;

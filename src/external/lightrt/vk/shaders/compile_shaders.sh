@@ -43,12 +43,34 @@ gen() {
     echo "generated ${SH}/${out}.spv.h  (${sym})"
 }
 
-gen trace_bvh        trace_bvh_spv        trace_bvh
-gen build_morton     build_morton_spv     build_morton
-gen trace_ray_query  trace_ray_query_spv  trace_ray_query  # needs VK_KHR_ray_query (SPIR-V 1.4)
-# Wide-id variant of the ray-query trace: 5 words/hit with instanceId + prim index
-# stored separately, so instanced scenes past the 32-bit prim_id product still trace.
-gen trace_ray_query_wide trace_ray_query_wide_spv trace_ray_query -DLRT_WIDE_ID
-gen shade_analytic   shade_analytic_spv   shade_analytic   # analytic sphere/box forward shading
+gen_glslc() {
+    local out="$1" sym="$2" src="$3"
+    shift 3
+    local tmp="${SH}/${out}.words.tmp"
+    "${GLSLC}" --target-env=vulkan1.2 -mfmt=num "$@" \
+        -o "${tmp}" "${SH}/${src}.comp"
+    {
+        printf 'const uint32_t %s[] = {\n' "${sym}"
+        cat "${tmp}"
+        printf '\n};\n'
+    } > "${SH}/${out}.spv.h"
+    rm -f "${tmp}"
+    echo "generated ${SH}/${out}.spv.h  (${sym}, glslc)"
+}
+
+if [[ "${ONLY:-}" != "trace_materialx_path" ]]; then
+    gen trace_bvh        trace_bvh_spv        trace_bvh
+    gen build_morton     build_morton_spv     build_morton
+    gen trace_ray_query  trace_ray_query_spv  trace_ray_query  # needs VK_KHR_ray_query (SPIR-V 1.4)
+    # Wide-id variant of the ray-query trace: 5 words/hit with instanceId + prim index
+    # stored separately, so instanced scenes past the 32-bit prim_id product still trace.
+    gen trace_ray_query_wide trace_ray_query_wide_spv trace_ray_query -DLRT_WIDE_ID
+    gen shade_analytic   shade_analytic_spv   shade_analytic   # analytic sphere/box forward shading
+fi
+if [[ -n "${GLSLC:-}" ]]; then
+    gen_glslc trace_materialx_path trace_materialx_path_spv trace_materialx_path
+else
+    gen trace_materialx_path trace_materialx_path_spv trace_materialx_path
+fi
 
 echo "done."

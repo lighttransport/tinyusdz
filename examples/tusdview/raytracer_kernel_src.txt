@@ -123,7 +123,7 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
                                     float u, float v, float u1, float v1, int face,
                                  const unsigned char* texels,
                                  const TexDesc* textures, int numTextures) {
-  const int stride = 1366;
+  const int stride = 1394;
   const int base = mid * stride;
   if (!graph || mid < 0 || route < 0 || base + 7 >= 0x3fffffff) return mk4(0.f,0.f,0.f,0.f);
   int count = (int)fminf(fmaxf(graph[base], 0.f), 64.f);
@@ -131,7 +131,7 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
   if (count <= 0 || wanted < 0 || wanted >= count) return mk4(0.f,0.f,0.f,0.f);
   F4 values[64];
   for (int i=0; i<count; ++i) {
-      const int p=base+22+i*21;
+      const int p=base+46+i*21;
       const int op=(int)(graph[p]+0.5f);
       const int ia=(int)(graph[p+1]+0.5f), ib=(int)(graph[p+2]+0.5f),
                 ic=(int)(graph[p+3]+0.5f);
@@ -211,6 +211,11 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
       else if (op==37) values[i]=mk4(1.f,0.f,0.f,1.f);
       else if (op==38) { F3 axis=norm3(mk(b.x,b.y,b.z)); float ang=a.x*0.0174532925199433f, cs=cosf(ang), sn=sinf(ang), d=axis.x*c.x+axis.y*c.y+axis.z*c.z; F3 q=mk(c.x*cs+(axis.y*c.z-axis.z*c.y)*sn+axis.x*d*(1.f-cs),c.y*cs+(axis.z*c.x-axis.x*c.z)*sn+axis.y*d*(1.f-cs),c.z*cs+(axis.x*c.y-axis.y*c.x)*sn+axis.z*d*(1.f-cs)); values[i]=mk4(q.x,q.y,q.z,c.w); }
       else if (op==39) { float tx=a.x*graph[p+17]+graph[p+19], ty=a.y*graph[p+18]+graph[p+20], ang=graph[p+15]*0.0174532925199433f, cs=cosf(ang), sn=sinf(ang); values[i]=mk4(tx*cs-ty*sn,tx*sn+ty*cs,a.z,a.w); }
+      else if (op==44) values[i]=mk4(a.x,b.x,c.x,1.f);
+      else if (op==45) { int lane=(int)floorf(b.x+.5f);lane=lane<0?0:(lane>3?3:lane);const float q[4]={a.x,a.y,a.z,a.w};values[i]=mk4(q[lane],q[lane],q[lane],q[lane]); }
+      else if (op==46 || op==48) values[i]=a;
+      else if (op==47) values[i]=mk4(0.f,0.f,0.f,1.f);
+      else if (op==49) values[i]=mk4(.5f,.5f,1.f,1.f);
       else values[i]=fallback;
   }
   (void)face;
@@ -720,7 +725,7 @@ __device__ bool cutoutAllowsHit(
     int ch=tp?(int)(tp[66]+0.5f):0;
     opacity*=channel4(ot,ch)*(tp?tp[67]:1.f)+(tp?tp[68]:0.f);
   }
-  if (matGraph && matGraph[mid*1366+4] >= 0.f) {
+  if (matGraph && matGraph[mid*1394+4] >= 0.f) {
     opacity=evalMaterialXGraph(matGraph,mid,3,ouu,ovv,(unsigned int)ht,
                                texels,textures,numTextures).x;
   }
@@ -765,11 +770,13 @@ struct PtMat {
   F3 specularColor, coatColor, sheenColor;
   float metal, rough, transmission, ior, subsurface, specularWeight;
   float coatWeight, coatRoughness, coatIor, sheenWeight, sheenRoughness;
+  float coatAffectColor, coatAffectRoughness, coatDarkening;
   float subsurfaceAnisotropy;
   float anisotropy, anisotropyRotation, coatAnisotropy, coatRotation;
   float thinFilmWeight, thinFilmThickness, thinFilmIor;
   float dispersion, dispersionAbbe, transmissionDepth;
-  F3 transmissionScatter, volumeAlbedo, volumeEmission; float volumeDensity;
+  F3 transmissionScatter, volumeAlbedo, volumeEmission;
+  float transmissionScatterG, volumeDensity;
   float opacity, alphaMode;
 };
 
@@ -871,12 +878,12 @@ __device__ PtMat ptResolveMaterial(
   m.sheenColor=mk(1.f,1.f,1.f);
   m.radius=mk(1.f,1.f,1.f);m.metal=0.f;m.rough=.5f;m.transmission=0.f;
   m.ior=1.5f;m.subsurface=0.f;m.specularWeight=1.f;m.coatWeight=0.f;
-  m.coatRoughness=.1f;m.coatIor=1.5f;m.sheenWeight=0.f;
+  m.coatRoughness=.1f;m.coatIor=1.5f;m.sheenWeight=0.f;m.coatAffectColor=0.f;m.coatAffectRoughness=0.f;m.coatDarkening=0.f;
   m.sheenRoughness=.3f;m.subsurfaceAnisotropy=0.f;
   m.anisotropy=0.f;m.anisotropyRotation=0.f;m.coatAnisotropy=0.f;m.coatRotation=0.f;
   m.thinFilmWeight=0.f;m.thinFilmThickness=0.f;m.thinFilmIor=1.5f;
   m.dispersion=0.f;m.dispersionAbbe=0.f;m.transmissionDepth=0.f;
-  m.transmissionScatter=mk(0.f,0.f,0.f);m.volumeAlbedo=mk(1.f,1.f,1.f);m.volumeEmission=mk(0.f,0.f,0.f);m.volumeDensity=0.f;
+  m.transmissionScatter=mk(0.f,0.f,0.f);m.transmissionScatterG=0.f;m.volumeAlbedo=mk(1.f,1.f,1.f);m.volumeEmission=mk(0.f,0.f,0.f);m.volumeDensity=0.f;
   m.opacity=1.f;m.alphaMode=0.f;
   int mid=mats?mats[tri]:-1;
   if(!front&&backMats&&backMats[tri]>=0)mid=backMats[tri];
@@ -891,11 +898,46 @@ __device__ PtMat ptResolveMaterial(
     if(matPbr){m.metal=fminf(fmaxf(matPbr[mid*6],0.f),1.f);m.rough=fminf(fmaxf(matPbr[mid*6+1],.02f),1.f);m.emission=mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]);}
     if(matLightRt){const float* p=&matLightRt[mid*80];if(p[51]>.5f){
       m.base=scale(mk(p[0],p[1],p[2]),p[3]);m.specularColor=mk(p[4],p[5],p[6]);m.specularWeight=fminf(fmaxf(p[7],0.f),1.f);m.transmissionColor=mk(p[8],p[9],p[10]);m.transmission=fminf(fmaxf(p[11],0.f),1.f);m.transmissionScatter=mk(fmaxf(p[12],0.f),fmaxf(p[13],0.f),fmaxf(p[14],0.f));m.transmissionDepth=fmaxf(p[15],0.f);m.opacity=fminf(fmaxf(p[39],0.f),1.f);m.alphaMode=p[54];
-      m.subsurfaceColor=mk(p[16],p[17],p[18]);m.subsurface=fminf(fmaxf(p[19],0.f),1.f);m.radius=scale(mk(fmaxf(p[20],1e-5f),fmaxf(p[21],1e-5f),fmaxf(p[22],1e-5f)),fmaxf(p[23],1e-5f));m.coatColor=mk(p[24],p[25],p[26]);m.coatWeight=fminf(fmaxf(p[27],0.f),1.f);m.sheenColor=mk(p[28],p[29],p[30]);m.sheenWeight=fminf(fmaxf(p[31],0.f),1.f);m.ior=fmaxf(p[43],1.0001f);m.coatRoughness=fminf(fmaxf(p[44],.02f),1.f);m.coatIor=fmaxf(p[45],1.0001f);m.sheenRoughness=fminf(fmaxf(p[46],.02f),1.f);m.subsurfaceAnisotropy=fminf(fmaxf(p[64],-.95f),.95f);m.anisotropy=fminf(fmaxf(p[57]+.5f*p[59],-.95f),.95f);m.anisotropyRotation=p[58];m.coatAnisotropy=fminf(fmaxf(p[65]+.5f*p[69],-.95f),.95f);m.coatRotation=p[66];m.thinFilmWeight=fminf(fmaxf(p[48],0.f),1.f);m.thinFilmThickness=fmaxf(p[49],0.f)*1e-3f;m.thinFilmIor=fmaxf(p[50],1.f);m.dispersion=fmaxf(p[60]*p[62],0.f);m.dispersionAbbe=fmaxf(p[61],0.f);m.volumeAlbedo=mk(fmaxf(p[72],0.f),fmaxf(p[73],0.f),fmaxf(p[74],0.f));m.volumeDensity=fmaxf(p[75],0.f);m.volumeEmission=scale(mk(fmaxf(p[76],0.f),fmaxf(p[77],0.f),fmaxf(p[78],0.f)),fmaxf(p[79],0.f));m.emission=add(m.emission,scale(mk(p[32],p[33],p[34]),fmaxf(p[35],0.f)));}}
+      m.subsurfaceColor=mk(p[16],p[17],p[18]);m.subsurface=fminf(fmaxf(p[19],0.f),1.f);m.radius=scale(mk(fmaxf(p[20],1e-5f),fmaxf(p[21],1e-5f),fmaxf(p[22],1e-5f)),fmaxf(p[23],1e-5f));m.coatColor=mk(p[24],p[25],p[26]);m.coatWeight=fminf(fmaxf(p[27],0.f),1.f);m.sheenColor=mk(p[28],p[29],p[30]);m.sheenWeight=fminf(fmaxf(p[31],0.f),1.f);m.ior=fmaxf(p[43],1.0001f);m.coatRoughness=fminf(fmaxf(p[44],.02f),1.f);m.coatIor=fmaxf(p[45],1.0001f);m.sheenRoughness=fminf(fmaxf(p[46],.02f),1.f);m.transmissionScatterG=fminf(fmaxf(p[47],-.95f),.95f);m.subsurfaceAnisotropy=fminf(fmaxf(p[64],-.95f),.95f);m.anisotropy=fminf(fmaxf(p[57]+.5f*p[59],-.95f),.95f);m.anisotropyRotation=p[58];m.coatAnisotropy=fminf(fmaxf(p[65]+.5f*p[69],-.95f),.95f);m.coatRotation=p[66];m.coatAffectColor=fminf(fmaxf(p[67],0.f),1.f);m.coatAffectRoughness=fminf(fmaxf(p[68],0.f),1.f);m.coatDarkening=fminf(fmaxf(p[70],0.f),1.f);m.thinFilmWeight=fminf(fmaxf(p[48],0.f),1.f);m.thinFilmThickness=fmaxf(p[49],0.f)*1e-3f;m.thinFilmIor=fmaxf(p[50],1.f);m.dispersion=fmaxf(p[60]*p[62],0.f);m.dispersionAbbe=fmaxf(p[61],0.f);m.volumeAlbedo=mk(fmaxf(p[72],0.f),fmaxf(p[73],0.f),fmaxf(p[74],0.f));m.volumeDensity=fmaxf(p[75],0.f);m.volumeEmission=scale(mk(fmaxf(p[76],0.f),fmaxf(p[77],0.f),fmaxf(p[78],0.f)),fmaxf(p[79],0.f));m.emission=add(m.emission,scale(mk(p[32],p[33],p[34]),fmaxf(p[35],0.f)));}}
     if(matTex){int tid=matTex[mid*12];F4 q=sampleMaterialTexture(texels,textures,numTextures,tid,u,v,(unsigned)tri,0.f,mk4(1.f,1.f,1.f,1.f));m.base=mk(m.base.x*q.x,m.base.y*q.y,m.base.z*q.z);m.opacity*=q.w;int opacityTid=matTex[mid*12+5];if(opacityTid>=0){F4 oq=sampleMaterialTexture(texels,textures,numTextures,opacityTid,u,v,(unsigned)tri,0.f,mk4(1.f,1.f,1.f,1.f));const float* tp=matTexParam?&matTexParam[mid*155]:0;int ch=tp?(int)(tp[66]+.5f):0;float sample=ch==1?oq.y:(ch==2?oq.z:(ch==3?oq.w:oq.x));m.opacity*=sample*(tp?tp[67]:1.f)+(tp?tp[68]:0.f);}}
-    if(matGraph){int gb=mid*1366;if(matGraph[gb+1]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,0,u,v,u1,v1,tri,texels,textures,numTextures);m.base=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+2]>=0.f)m.metal=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+3]>=0.f)m.rough=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+4]>=0.f)m.opacity=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,3,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+5]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,4,u,v,u1,v1,tri,texels,textures,numTextures);m.emission=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+7]>=0.f)m.subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+8]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,7,u,v,u1,v1,tri,texels,textures,numTextures);m.subsurfaceColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+9]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,8,u,v,u1,v1,tri,texels,textures,numTextures);m.radius=mk(fmaxf(q.x,1e-5f),fmaxf(q.y,1e-5f),fmaxf(q.z,1e-5f));}if(matGraph[gb+10]>=0.f)m.specularWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,9,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+11]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,10,u,v,u1,v1,tri,texels,textures,numTextures);m.specularColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+12]>=0.f)m.transmission=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,11,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+13]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,12,u,v,u1,v1,tri,texels,textures,numTextures);m.transmissionColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+14]>=0.f)m.coatWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,13,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+15]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,14,u,v,u1,v1,tri,texels,textures,numTextures);m.coatColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+16]>=0.f)m.coatRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,15,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+17]>=0.f)m.sheenWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,16,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+18]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,17,u,v,u1,v1,tri,texels,textures,numTextures);m.sheenColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+19]>=0.f)m.sheenRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,18,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+20]>=0.f)m.ior=fmaxf(evalMaterialXGraphUv(matGraph,mid,19,u,v,u1,v1,tri,texels,textures,numTextures).x,1.0001f);}
-    if(matGraph&&matLightRt&&matGraph[mid*1366+9]>=0.f)
+    if(matGraph){int gb=mid*1394;if(matGraph[gb+1]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,0,u,v,u1,v1,tri,texels,textures,numTextures);m.base=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+2]>=0.f)m.metal=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+3]>=0.f)m.rough=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+4]>=0.f)m.opacity=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,3,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+5]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,4,u,v,u1,v1,tri,texels,textures,numTextures);m.emission=scale(mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f)),matLightRt?fmaxf(matLightRt[mid*80+35],0.f):1.f);}if(matGraph[gb+7]>=0.f)m.subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+8]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,7,u,v,u1,v1,tri,texels,textures,numTextures);m.subsurfaceColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+9]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,8,u,v,u1,v1,tri,texels,textures,numTextures);m.radius=mk(fmaxf(q.x,1e-5f),fmaxf(q.y,1e-5f),fmaxf(q.z,1e-5f));}if(matGraph[gb+10]>=0.f)m.specularWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,9,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+11]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,10,u,v,u1,v1,tri,texels,textures,numTextures);m.specularColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+12]>=0.f)m.transmission=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,11,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+13]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,12,u,v,u1,v1,tri,texels,textures,numTextures);m.transmissionColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+14]>=0.f)m.coatWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,13,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+15]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,14,u,v,u1,v1,tri,texels,textures,numTextures);m.coatColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+16]>=0.f)m.coatRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,15,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+17]>=0.f)m.sheenWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,16,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+18]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,17,u,v,u1,v1,tri,texels,textures,numTextures);m.sheenColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+19]>=0.f)m.sheenRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,18,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+20]>=0.f)m.ior=fmaxf(evalMaterialXGraphUv(matGraph,mid,19,u,v,u1,v1,tri,texels,textures,numTextures).x,1.0001f);}
+    if(matGraph){int gb=mid*1394;
+      if(matGraph[gb+21]>=0.f)m.base=scale(m.base,fmaxf(evalMaterialXGraphUv(matGraph,mid,20,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f));
+      if(matGraph[gb+22]>=0.f)m.rough=fminf(fmaxf(fmaxf(m.rough,evalMaterialXGraphUv(matGraph,mid,21,u,v,u1,v1,tri,texels,textures,numTextures).x),.02f),1.f);
+      if(matGraph[gb+23]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,22,u,v,u1,v1,tri,texels,textures,numTextures);m.transmissionScatter=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}
+      if(matGraph[gb+24]>=0.f)m.transmissionDepth=fmaxf(evalMaterialXGraphUv(matGraph,mid,23,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);
+      if(matGraph[gb+25]>=0.f)m.transmissionScatterG=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,24,u,v,u1,v1,tri,texels,textures,numTextures).x,-.95f),.95f);
+      if(matGraph[gb+26]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,25,u,v,u1,v1,tri,texels,textures,numTextures);m.radius=mk(m.radius.x*fmaxf(q.x,0.f),m.radius.y*fmaxf(q.y,0.f),m.radius.z*fmaxf(q.z,0.f));}
+      if(matGraph[gb+27]>=0.f)m.subsurfaceAnisotropy=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,26,u,v,u1,v1,tri,texels,textures,numTextures).x,-.95f),.95f);
+      if(matGraph[gb+28]>=0.f)m.coatIor=fmaxf(evalMaterialXGraphUv(matGraph,mid,27,u,v,u1,v1,tri,texels,textures,numTextures).x,1.0001f);
+      if(matGraph[gb+29]>=0.f)m.thinFilmWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,28,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);
+      if(matGraph[gb+30]>=0.f)m.thinFilmThickness=fmaxf(evalMaterialXGraphUv(matGraph,mid,29,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f)*1e-3f;
+      if(matGraph[gb+31]>=0.f)m.thinFilmIor=fmaxf(evalMaterialXGraphUv(matGraph,mid,30,u,v,u1,v1,tri,texels,textures,numTextures).x,1.f);
+      if(matGraph[gb+32]>=0.f)m.anisotropy=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,31,u,v,u1,v1,tri,texels,textures,numTextures).x,-.95f),.95f);
+      if(matGraph[gb+33]>=0.f)m.anisotropyRotation=evalMaterialXGraphUv(matGraph,mid,32,u,v,u1,v1,tri,texels,textures,numTextures).x;
+      if(matGraph[gb+34]>=0.f)m.anisotropy=fminf(fmaxf(m.anisotropy+.5f*evalMaterialXGraphUv(matGraph,mid,33,u,v,u1,v1,tri,texels,textures,numTextures).x,-.95f),.95f);
+      if(matGraph[gb+35]>=0.f)m.dispersion=fmaxf(evalMaterialXGraphUv(matGraph,mid,34,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);
+      if(matGraph[gb+36]>=0.f)m.dispersionAbbe=fmaxf(evalMaterialXGraphUv(matGraph,mid,35,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);
+      if(matGraph[gb+37]>=0.f)m.dispersion*=fmaxf(evalMaterialXGraphUv(matGraph,mid,36,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);
+      if(matGraph[gb+38]>=0.f)m.coatAnisotropy=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,37,u,v,u1,v1,tri,texels,textures,numTextures).x,-.95f),.95f);
+      if(matGraph[gb+39]>=0.f)m.coatRotation=evalMaterialXGraphUv(matGraph,mid,38,u,v,u1,v1,tri,texels,textures,numTextures).x;
+      if(matGraph[gb+40]>=0.f)m.coatAnisotropy=fminf(fmaxf(m.coatAnisotropy+.5f*evalMaterialXGraphUv(matGraph,mid,39,u,v,u1,v1,tri,texels,textures,numTextures).x,-.95f),.95f);
+      if(matGraph[gb+41]>=0.f)m.volumeDensity=fmaxf(evalMaterialXGraphUv(matGraph,mid,40,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);
+      if(matGraph[gb+42]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,41,u,v,u1,v1,tri,texels,textures,numTextures);m.volumeAlbedo=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}
+      if(matGraph[gb+43]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,42,u,v,u1,v1,tri,texels,textures,numTextures);float s=matLightRt?fmaxf(matLightRt[mid*80+79],0.f):1.f;m.volumeEmission=scale(mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f)),s);}
+      if(matGraph[gb+44]>=0.f){float s=fmaxf(evalMaterialXGraphUv(matGraph,mid,43,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);F3 c=matLightRt?mk(matLightRt[mid*80+76],matLightRt[mid*80+77],matLightRt[mid*80+78]):mk(1.f,1.f,1.f);m.volumeEmission=scale(c,s);}
+      if(matGraph[gb+45]>=0.f){float s=fmaxf(evalMaterialXGraphUv(matGraph,mid,44,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);F3 c=matGraph[gb+5]>=0.f?m.emission:(matLightRt?mk(matLightRt[mid*80+32],matLightRt[mid*80+33],matLightRt[mid*80+34]):mk(1.f,1.f,1.f));m.emission=scale(c,s);}
+      if(matGraph[gb+46]>=0.f)m.coatAffectColor=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,45,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);
+      if(matGraph[gb+47]>=0.f)m.coatAffectRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,46,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);
+      if(matGraph[gb+48]>=0.f)m.coatDarkening=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,47,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);
+    }
+    if(matGraph&&matLightRt&&matGraph[mid*1394+9]>=0.f)
       m.radius=scale(m.radius,fmaxf(matLightRt[mid*80+23],0.f));
+    float coatColorMix=fminf(fmaxf(m.coatWeight*m.coatAffectColor,0.f),1.f);
+    m.base=mk(m.base.x*(1.f+(m.coatColor.x-1.f)*coatColorMix),m.base.y*(1.f+(m.coatColor.y-1.f)*coatColorMix),m.base.z*(1.f+(m.coatColor.z-1.f)*coatColorMix));
+    m.base=scale(m.base,1.f-.2f*fminf(fmaxf(m.coatWeight*m.coatDarkening,0.f),1.f));
+    float coatRoughMix=fminf(fmaxf(m.coatWeight*m.coatAffectRoughness,0.f),1.f);
+    m.rough=m.rough*(1.f-coatRoughMix)+m.coatRoughness*coatRoughMix;
   }
   if(insts){m.base=ptMul(m.base,mk(insts[hitInst].tint[0],insts[hitInst].tint[1],insts[hitInst].tint[2]));m.opacity*=insts[hitInst].tint[3];}
   m.opacity=fminf(fmaxf(m.opacity,0.f),1.f);
@@ -953,7 +995,7 @@ __device__ F3 productionPath(
   float subsurfaceSigma=1.f;F3 subsurfaceAlbedo=mk(1.f,1.f,1.f);
   float subsurfaceG=0.f,previousBsdfPdf=0.f,previousEnvironmentPdf=0.f;
   bool previousDelta=true;
-  float mediumIor[4]={1.f,1.f,1.f,1.f};F3 mediumSigma[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};F3 mediumEmission[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};int mediumInstance[4]={-1,-1,-1,-1};int mediumDepth=0,heroChannel=-1;
+  float mediumIor[4]={1.f,1.f,1.f,1.f};F3 mediumSigma[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};F3 mediumSigmaS[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};F3 mediumEmission[4]={mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f),mk(0.f,0.f,0.f)};float mediumG[4]={0.f,0.f,0.f,0.f};int mediumInstance[4]={-1,-1,-1,-1};int mediumDepth=0,heroChannel=-1;
   for(int bounce=0;bounce<maxDepth;++bounce){
     int tri=-1,ii=-1;float bu=0.f,bv=0.f;
     float t=traverseCutout(tlas,insts,blas,tris,ro,rd,1e30f,&tri,&bu,&bv,&ii,
@@ -963,7 +1005,7 @@ __device__ F3 productionPath(
       if(!inSubsurface){float mis=previousDelta?1.f:ptPowerHeuristic(previousBsdfPdf,previousEnvironmentPdf);L=add(L,scale(ptMul(beta,ptEnvironment(lightParams,numLights,rd,clear)),mis));}
       break;
     }
-    if(!inSubsurface&&mediumDepth>0){F3 sigma=mediumSigma[mediumDepth];F3 tr=mk(expf(-sigma.x*t),expf(-sigma.y*t),expf(-sigma.z*t));F3 integral=mk(sigma.x>1e-6f?(1.f-tr.x)/sigma.x:t,sigma.y>1e-6f?(1.f-tr.y)/sigma.y:t,sigma.z>1e-6f?(1.f-tr.z)/sigma.z:t);L=add(L,ptMul(beta,ptMul(mediumEmission[mediumDepth],integral)));beta=ptMul(beta,tr);}
+    if(!inSubsurface&&mediumDepth>0){F3 sigma=mediumSigma[mediumDepth];float majorant=ptMax(sigma);float flight=majorant>1e-6f?-logf(fmaxf(1e-7f,1.f-rndf(seed)))/majorant:1e30f;float segment=fminf(flight,t);F3 tr=mk(expf(-sigma.x*segment),expf(-sigma.y*segment),expf(-sigma.z*segment));F3 integral=mk(sigma.x>1e-6f?(1.f-tr.x)/sigma.x:segment,sigma.y>1e-6f?(1.f-tr.y)/sigma.y:segment,sigma.z>1e-6f?(1.f-tr.z)/sigma.z:segment);L=add(L,ptMul(beta,ptMul(mediumEmission[mediumDepth],integral)));beta=ptMul(beta,tr);if(flight<t&&ptMax(mediumSigmaS[mediumDepth])>1e-6f){beta=ptMul(beta,scale(mediumSigmaS[mediumDepth],1.f/fmaxf(majorant,1e-6f)));ro=add(ro,scale(rd,flight));rd=ptSampleHg(rd,mediumG[mediumDepth],seed);previousDelta=false;previousBsdfPdf=1.f/(4.f*3.14159265359f);continue;}}
     // Hero-wavelength analog random walk. The exponential free-flight sample
     // already accounts for extinction, so a second Beer factor would bias SSS
     // dark. Interior events use their own budget rather than maxDepth.
@@ -1012,7 +1054,7 @@ __device__ F3 productionPath(
       if(normalTex>=0){float uu=tu0*w0+tu1*bu+tu2*bv,vv=tv0*w0+tv1*bu+tv2*bv;
         F4 nt=sampleMaterialTexture(texels,textures,numTextures,normalTex,uu,vv,(unsigned)tri,0.f,mk4(.5f,.5f,1.f,1.f));
         tangentNormal=tp?mk(nt.x*tp[44]+tp[48],nt.y*tp[45]+tp[49],nt.z*tp[46]+tp[50]):mk(nt.x*2.f-1.f,nt.y*2.f-1.f,nt.z*2.f-1.f);hasTangentNormal=true;}
-      int gb=mid*1366;if(matGraph&&matGraph[gb+6]>=0.f){float u=uv0[0]*w0+uv0[2]*bu+uv0[4]*bv,v=uv0[1]*w0+uv0[3]*bu+uv0[5]*bv,u1=uv1v[0]*w0+uv1v[2]*bu+uv1v[4]*bv,v1=uv1v[1]*w0+uv1v[3]*bu+uv1v[5]*bv;F4 q=evalMaterialXGraphUv(matGraph,mid,5,u,v,u1,v1,tri,texels,textures,numTextures);tangentNormal=mk(q.x*2.f-1.f,q.y*2.f-1.f,q.z*2.f-1.f);hasTangentNormal=true;}
+      int gb=mid*1394;if(matGraph&&matGraph[gb+6]>=0.f){float u=uv0[0]*w0+uv0[2]*bu+uv0[4]*bv,v=uv0[1]*w0+uv0[3]*bu+uv0[5]*bv,u1=uv1v[0]*w0+uv1v[2]*bu+uv1v[4]*bv,v1=uv1v[1]*w0+uv1v[3]*bu+uv1v[5]*bv;F4 q=evalMaterialXGraphUv(matGraph,mid,5,u,v,u1,v1,tri,texels,textures,numTextures);tangentNormal=mk(q.x*2.f-1.f,q.y*2.f-1.f,q.z*2.f-1.f);hasTangentNormal=true;}
       if(hasTangentNormal)n=norm3(add(add(scale(tangent,tangentNormal.x),scale(bitangent,tangentNormal.y)),scale(n,tangentNormal.z)));
       coatN=n;int coatNormalTex=matTex?matTex[mid*12+11]:-1;if(coatNormalTex>=0&&tp){const float* cuv=(int)(tp[146]+.5f)==1&&uvs1?uv1v:uv0;float cu=cuv[0]*w0+cuv[2]*bu+cuv[4]*bv,cv=cuv[1]*w0+cuv[3]*bu+cuv[5]*bv;xformUv(tp,140,cu,cv,&cu,&cv);F4 cn=sampleMaterialTexture(texels,textures,numTextures,coatNormalTex,cu,cv,(unsigned)tri,0.f,mk4(.5f,.5f,1.f,1.f));F3 ctn=mk(cn.x*tp[147]+tp[151],cn.y*tp[148]+tp[152],cn.z*tp[149]+tp[153]);coatN=norm3(add(add(scale(tangent,ctn.x),scale(bitangent,ctn.y)),scale(n,ctn.z)));}
     }
@@ -1114,7 +1156,7 @@ __device__ F3 productionPath(
       float prob=wt/sum;if(heroChannel<0&&m.dispersion>0.f&&m.dispersionAbbe>0.f){heroChannel=(int)(rndf(seed)*3.f);if(heroChannel>2)heroChannel=2;F3 hero=heroChannel==0?mk(3.f,0.f,0.f):(heroChannel==1?mk(0.f,3.f,0.f):mk(0.f,0.f,3.f));transmissionC=ptMul(transmissionC,hero);}float materialIor=ptSpectralIor(m.ior,m.dispersionAbbe,m.dispersion,heroChannel<0?1:heroChannel);float outsideIor=mediumIor[mediumDepth],insideIor=materialIor;if(!front&&mediumDepth>0){insideIor=mediumIor[mediumDepth];outsideIor=mediumIor[mediumDepth-1];}float eta=outsideIor/insideIor,c=-dot3(n,rd);
       float k=1.f-eta*eta*(1.f-c*c);
       nd=k<0.f?ptReflect(rd,n):norm3(add(scale(rd,eta),scale(n,eta*c-sqrtf(k))));
-      w=scale(transmissionC,1.f/fmaxf(prob,1e-6f));side=dot3(nd,n)<0.f?-1.f:1.f;if(k>=0.f){if(front&&mediumDepth<3){++mediumDepth;mediumIor[mediumDepth]=materialIor;F3 extinction=scale(mk(fmaxf(1.f-m.volumeAlbedo.x,0.f),fmaxf(1.f-m.volumeAlbedo.y,0.f),fmaxf(1.f-m.volumeAlbedo.z,0.f)),m.volumeDensity);if(m.transmissionDepth>0.f){float depth=m.transmissionDepth;F3 muT=mk(-logf(fminf(fmaxf(m.transmissionColor.x,1e-6f),1.f))/depth,-logf(fminf(fmaxf(m.transmissionColor.y,1e-6f),1.f))/depth,-logf(fminf(fmaxf(m.transmissionColor.z,1e-6f),1.f))/depth);F3 muS=scale(mk(fmaxf(m.transmissionScatter.x,0.f),fmaxf(m.transmissionScatter.y,0.f),fmaxf(m.transmissionScatter.z,0.f)),1.f/depth);F3 muA=sub(muT,muS);float minA=fminf(muA.x,fminf(muA.y,muA.z));if(minA<0.f)muA=sub(muA,mk(minA,minA,minA));extinction=add(extinction,add(muA,muS));}mediumSigma[mediumDepth]=extinction;mediumEmission[mediumDepth]=m.volumeEmission;mediumInstance[mediumDepth]=ii;}else if(!front&&mediumDepth>0){int matched=mediumDepth;for(int level=mediumDepth;level>0;--level)if(mediumInstance[level]==ii){matched=level;break;}mediumDepth=matched-1;}}previousDelta=true;
+      w=scale(transmissionC,1.f/fmaxf(prob,1e-6f));side=dot3(nd,n)<0.f?-1.f:1.f;if(k>=0.f){if(front&&mediumDepth<3){++mediumDepth;mediumIor[mediumDepth]=materialIor;F3 sigmaS=scale(m.volumeAlbedo,m.volumeDensity);F3 extinction=mk(m.volumeDensity,m.volumeDensity,m.volumeDensity);if(m.transmissionDepth>0.f){float depth=m.transmissionDepth;F3 muT=mk(-logf(fminf(fmaxf(m.transmissionColor.x,1e-6f),1.f))/depth,-logf(fminf(fmaxf(m.transmissionColor.y,1e-6f),1.f))/depth,-logf(fminf(fmaxf(m.transmissionColor.z,1e-6f),1.f))/depth);F3 muS=scale(mk(fmaxf(m.transmissionScatter.x,0.f),fmaxf(m.transmissionScatter.y,0.f),fmaxf(m.transmissionScatter.z,0.f)),1.f/depth);F3 muA=sub(muT,muS);float minA=fminf(muA.x,fminf(muA.y,muA.z));if(minA<0.f)muA=sub(muA,mk(minA,minA,minA));sigmaS=add(sigmaS,muS);extinction=add(extinction,add(muA,muS));}mediumSigma[mediumDepth]=extinction;mediumSigmaS[mediumDepth]=sigmaS;mediumEmission[mediumDepth]=m.volumeEmission;mediumG[mediumDepth]=m.transmissionScatterG;mediumInstance[mediumDepth]=ii;}else if(!front&&mediumDepth>0){int matched=mediumDepth;for(int level=mediumDepth;level>0;--level)if(mediumInstance[level]==ii){matched=level;break;}mediumDepth=matched-1;}}previousDelta=true;
     }else if((xi-=ws)<0.f){
       float prob=ws/sum;
       w=scale(subsurfaceC,1.f/fmaxf(prob,1e-6f));
@@ -1170,7 +1212,7 @@ __device__ F3 approxPrimaryLayer(
                                  (unsigned int)ht, 0.f,
                                  mk4(1.f, 1.f, 1.f, 1.f));
     base = mk(base.x * t.x, base.y * t.y, base.z * t.z);
-    if (matGraph && matGraph[mid * 1366 + 1] >= 0.f) {
+    if (matGraph && matGraph[mid * 1394 + 1] >= 0.f) {
       F4 g = evalMaterialXGraph(matGraph, mid, 0, u, v, ht, texels,
                                 textures, numTextures);
       base = mk(g.x, g.y, g.z);
@@ -1185,7 +1227,7 @@ __device__ F3 approxPrimaryLayer(
               e.z * p[54] + p[58], e.w * p[55] + p[59]);
       emission = mk(emission.x * e.x, emission.y * e.y, emission.z * e.z);
     }
-    if (matGraph && matGraph[mid * 1366 + 5] >= 0.f) {
+    if (matGraph && matGraph[mid * 1394 + 5] >= 0.f) {
       F4 g = evalMaterialXGraph(matGraph, mid, 4, u, v, ht, texels,
                                 textures, numTextures);
       emission = mk(fmaxf(g.x, 0.f), fmaxf(g.y, 0.f), fmaxf(g.z, 0.f));
@@ -1826,7 +1868,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     // output is authoritative for that lane; unconnected lanes retain the
     // regular material path above.
     if (matGraph && mid >= 0 && mid < numMats) {
-      const int gb=mid*1366;
+      const int gb=mid*1394;
       if (matGraph[gb+1]>=0.f) {
         F4 g=evalMaterialXGraphUv(matGraph,mid,0,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
         base=mk(g.x,g.y,g.z);

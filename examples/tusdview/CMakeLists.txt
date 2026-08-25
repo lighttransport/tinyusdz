@@ -60,17 +60,11 @@ set(TUSDVIEW_SOURCES
     scene_loader.cc
     scene_optimize.cc
     next_scene_loader.cc
-    lighting_ies.cc
     preview_cache.cc
     texture_residency_policy.cc
-    ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
-    ptex_atlas.cc
     mesh_build.cc
-    texture_tools.cc
-    lightrt_mtlx_bridge.cc
     gpu_budget_lod.cc
     rt_lod.cc
-    displacement_bake.cc
     gizmo_build.cc
     parametric_tess.cc
     skinning.cc
@@ -81,16 +75,10 @@ set(TUSDVIEW_SOURCES
     gui_style.cc
     gl/gl_util.cc
     gl/gl_renderer.cc
-    rt_bvh.cc
-    rt_scene_build.cc
-    cuda/cuda_raytracer.cc
-    hip/hip_raytracer.cc
     cpu/cpu_raytracer.cc
     lod_stream.cc)
 
 set(TUSDVIEW_COMMON_SOURCES
-    ${COMMON_DIR}/cuew/cuew.c
-    ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c
     ${COMMON_DIR}/glad/src/glad.c
     ${COMMON_DIR}/imgui/imgui.cpp
     ${COMMON_DIR}/imgui/imgui_draw.cpp
@@ -98,7 +86,6 @@ set(TUSDVIEW_COMMON_SOURCES
     ${COMMON_DIR}/imgui/imgui_widgets.cpp
     ${COMMON_DIR}/imgui/imgui_impl_glfw.cpp
     ${COMMON_DIR}/imgui/imgui_impl_opengl3.cpp
-    ${COMMON_DIR}/light3d/math.cpp
     ${COMMON_DIR}/light3d/camera.cpp
     ${COMMON_DIR}/light3d/material.cpp
     ${COMMON_DIR}/light3d/texture.cpp)
@@ -178,13 +165,66 @@ endif()
 
 if(MSVC)
   enable_language(RC)
-  list(APPEND TUSDVIEW_SOURCES kernel_resource.cc raytracer_kernel_resource.rc)
+endif()
+
+# GUI-independent GPU ray-tracing core shared by tusdview and tusdrender.
+# Keep all scene/material packing and runtime shader implementations behind one
+# target so the CLI renderer cannot drift from the viewer's OpenPBR/MaterialX
+# ABI.  In particular this target has no GLFW, ImGui, OpenGL, or X11 dependency.
+set(TUSD_GPU_RT_COMMON_SOURCES
+    lighting_ies.cc
+    ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+    ptex_atlas.cc
+    texture_tools.cc
+    lightrt_mtlx_bridge.cc
+    displacement_bake.cc
+    rt_bvh.cc
+    rt_scene_build.cc
+    cuda/cuda_raytracer.cc
+    hip/hip_raytracer.cc
+    ${COMMON_DIR}/light3d/math.cpp
+    ${COMMON_DIR}/cuew/cuew.c
+    ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c)
+if(MSVC)
+  list(APPEND TUSD_GPU_RT_COMMON_SOURCES
+       kernel_resource.cc raytracer_kernel_resource.rc)
+endif()
+
+add_library(tusd_gpu_rt_common STATIC
+    ${TUSD_GPU_RT_COMMON_SOURCES}
+    $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+add_dependencies(tusd_gpu_rt_common tusdview_lightrt_mtlx)
+target_compile_features(tusd_gpu_rt_common PUBLIC cxx_std_17)
+target_include_directories(tusd_gpu_rt_common PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/src/external
+    ${COMMON_DIR}
+    ${COMMON_DIR}/cuew
+    ${PROJECT_SOURCE_DIR}/src/external/hipew)
+if(NOT MSVC)
+  target_include_directories(tusd_gpu_rt_common PRIVATE
+      ${CMAKE_CURRENT_BINARY_DIR}/generated)
+endif()
+target_link_libraries(tusd_gpu_rt_common PUBLIC
+    ${TINYUSDZ_TARGET_STATIC}
+    ${CMAKE_DL_LIBS})
+if(Threads_FOUND)
+  target_link_libraries(tusd_gpu_rt_common PUBLIC Threads::Threads)
+endif()
+if(TINYUSDZ_WITH_TEXTOOLS)
+  target_link_libraries(tusd_gpu_rt_common PUBLIC tinyusdz_textools)
+  target_compile_definitions(tusd_gpu_rt_common PRIVATE
+      TUSDVIEW_WITH_TEXTOOLS=1)
+  if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+    target_compile_definitions(tusd_gpu_rt_common PRIVATE
+        TINYUSDZ_WITH_ZSTD_COMPRESSION)
+  endif()
 endif()
 
 add_executable(${EXAMPLE_TARGET}
     ${TUSDVIEW_SOURCES}
-    ${TUSDVIEW_COMMON_SOURCES}
-    $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+    ${TUSDVIEW_COMMON_SOURCES})
 add_dependencies(${EXAMPLE_TARGET} tusdview_lightrt_mtlx)
 if(NOT MSVC)
   target_include_directories(${EXAMPLE_TARGET} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -538,6 +578,7 @@ target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
     TUSDVIEW_DEFAULT_GPU_KERNEL_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/raytracer_kernel_src.txt")
 
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE
+    tusd_gpu_rt_common
     ${TINYUSDZ_TARGET_STATIC}
     glfw
     OpenGL::GL

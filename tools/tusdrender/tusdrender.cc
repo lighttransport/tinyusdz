@@ -81,7 +81,7 @@ extern "C" {
 #include "tusdr_types.hh"
 #include "tusdr_context.hh"
 #include "tusdr_rt_lod.hh"
-#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
 #include "tusdr_gpu_common.hh"  // GpuInstancedScene, RunVulkanLightRTInstanced
 #endif
 
@@ -118,7 +118,7 @@ tinyusdz::Image MakeBlankImage(const Options &opt, int height) {
   return img;
 }
 
-#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
 // GPU triangle backends share the CPU LightRT curve tessellator. This must not
 // be Vulkan-only: HIP/ROCm and D3D11 use the same bounded triangle fallback for
 // round curves when no analytic curve primitive is exposed by their API.
@@ -1230,7 +1230,7 @@ int main(int argc, char **argv) {
   std::string lod_wrapper;
   if (opt.lod_stream) {
     if (!opt.rt_preview && !opt.vulkan && !opt.vulkan_rt && !opt.use_d3d &&
-        !opt.hip) {
+        !opt.hip && !opt.cuda) {
       opt.rt_preview = true;  // default the LOD render to the CPU rtPreview path
     }
     PrepareLodStream(&opt, &lod_wrapper);
@@ -1246,7 +1246,7 @@ int main(int argc, char **argv) {
       lower_input.compare(lower_input.size() - 5, 5, ".usdc") == 0;
   if (!opt.legacy_load && opt.subdivision_level == 0 &&
       (opt.rt_preview || default_next_usdc) && !opt.vulkan && !opt.use_d3d &&
-      !opt.hip) {
+      !opt.hip && !opt.cuda) {
     return RunRTPreviewNext(opt);
   }
 
@@ -1261,14 +1261,10 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
   // GPU backends (Vulkan / Direct3D 11 / HIP): load the scene through the `next`
   // lazy loader, build the geometry once, then trace on the selected GPU backend.
-  if (opt.vulkan || opt.use_d3d || opt.hip) {
-    if (opt.gpu_shade == Options::GpuShadeMode::Preview) {
-      std::cerr << "-gpuShade preview: GPU preview shading is not enabled yet; "
-                   "using cpu shade-after-hit path.\n";
-    }
+  if (opt.vulkan || opt.use_d3d || opt.hip || opt.cuda) {
     // Load through next loader.
     tinyusdz::next::Stage stage;
     tinyusdz::next::ValueClipStageLoader clip_stage_loader;
@@ -1297,6 +1293,13 @@ int main(int argc, char **argv) {
     // backends (RunVulkanLightRT / RunD3D11LightRT).
     std::vector<Vec3> base_colors;
     std::vector<RTPreviewStats::MeshGeometry> geos;
+    std::vector<ResolvedMat> gpu_materials;
+    std::vector<tusdr::Texture> gpu_textures;
+    LightCache gpu_lights;
+    for (const auto &root : stage.GetRootPrims()) {
+      CollectLightsNext(stage, root, matrix4d::identity(), opt.timecode,
+                        &gpu_lights);
+    }
     RenderContext gaussian_ctx;
     gaussian_ctx.opt = opt;
     gaussian_ctx.clip_stage_loader = clip_stage_loader;
@@ -1324,12 +1327,12 @@ int main(int argc, char **argv) {
       // (Instancing on the GPU backends). No per-prototype BLAS sharing yet.
       // Displacement textures are shared across roots; traversal records are
       // intentionally root-local below.
-      std::vector<tusdr::Texture> disp_textures;
       TextureCache tc;
-      tc.textures = &disp_textures;
+      tc.textures = &gpu_textures;
       tc.base_dir = DirName(opt.input);
       tc.usdz = nullptr;
       tc.options = &opt;
+      std::unordered_map<std::string, ResolvedMat> material_cache;
       for (const auto &root : stage.GetRootPrims()) {
         // Keep only one root's traversal records alive.  A production stage can
         // contain thousands of roots (or large instancer expansions); collecting
@@ -1348,6 +1351,7 @@ int main(int argc, char **argv) {
         // 26M-triangle guide breadcrumb/endpoint Points engulfed the camera.
         if (!PurposeVisible(PurposeBit(job.purpose), opt.purpose_mask)) continue;
         tinyusdz::next::UsdPrim &prim = job.prim;
+        ResolveMeshMaterialCached(stage, prim, tc, material_cache, &job);
         RTPreviewStats::MeshGeometry geo;
         uint32_t nv = 0;
         const tinyusdz::next::Value *val = prim.GetPropertyValue("points");
@@ -1474,8 +1478,8 @@ int main(int argc, char **argv) {
             }
             const tusdr::Texture *dtex =
                 (disp_tex.id >= 0 &&
-                 size_t(disp_tex.id) < disp_textures.size())
-                    ? &disp_textures[size_t(disp_tex.id)]
+                 size_t(disp_tex.id) < gpu_textures.size())
+                    ? &gpu_textures[size_t(disp_tex.id)]
                     : nullptr;
             const bool per_vertex_uv = geo.uvs.size() >= size_t(nv) * 2;
             for (uint32_t v = 0; v < nv; ++v) {
@@ -1497,13 +1501,96 @@ int main(int argc, char **argv) {
         }
 
         // Base color from primvars:displayColor (constant); mid-grey default.
-        Vec3 bc{0.5f, 0.5f, 0.5f};
+        Vec3 display_color{1.0f, 1.0f, 1.0f};
         if (const tinyusdz::next::Value *dcv =
                 prim.GetPropertyValue("primvars:displayColor")) {
           const std::vector<float> *dc = dcv->as_float_array();
-          if (dc && dc->size() >= 3) bc = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
+          if (dc && dc->size() >= 3)
+            display_color = Vec3{(*dc)[0], (*dc)[1], (*dc)[2]};
         }
+        const Vec3 bc{job.base_color.x * display_color.x,
+                      job.base_color.y * display_color.y,
+                      job.base_color.z * display_color.z};
         base_colors.push_back(bc);
+        ResolvedMat resolved;
+        // Preserve the same material * constant displayColor composition used
+        // by the CPU/GPU flat path. Per-vertex displayColor needs a parallel
+        // streaming attribute; the constant form can be folded losslessly.
+        resolved.base_color = bc;
+        resolved.tex_id = job.tex_id;
+        resolved.roughness = job.roughness;
+        resolved.metallic = job.metallic;
+        resolved.normal_tex_id = job.normal_tex_id;
+        resolved.uv_xform = job.uv_xform;
+        resolved.rough_tex = job.rough_tex;
+        resolved.metal_tex = job.metal_tex;
+        resolved.emission = job.emission;
+        resolved.emission_tex_id = job.emission_tex_id;
+        resolved.occlusion = job.occlusion;
+        resolved.occ_tex = job.occ_tex;
+        resolved.opacity = job.opacity;
+        resolved.opacity_tex = job.opacity_tex;
+        resolved.opacity_threshold = job.opacity_threshold;
+        resolved.clearcoat = job.clearcoat;
+        resolved.clearcoat_roughness = job.clearcoat_roughness;
+        resolved.clearcoat_tex = job.clearcoat_tex;
+        resolved.clearcoat_rough_tex = job.clearcoat_rough_tex;
+        resolved.specular_color = job.specular_color;
+        resolved.specular_tex_id = job.specular_tex_id;
+        resolved.ior = job.ior;
+        resolved.use_specular_workflow = job.use_specular_workflow;
+        resolved.has_openpbr = job.has_openpbr;
+        resolved.openpbr = job.openpbr;
+        resolved.materialx_graph_json = job.materialx_graph_json;
+        for (const std::string &api : job.prim.GetMeta().apiSchemas()) {
+          if (api != "MeshLightAPI") continue;
+          float intensity = 1.0f, exposure = 0.0f;
+          Vec3 light_color{1.0f, 1.0f, 1.0f};
+          bool normalize = false;
+          if (const tinyusdz::next::Value *v =
+                  job.prim.GetPropertyValue("inputs:intensity"))
+            if (const float *f = v->as_float()) intensity = *f;
+          if (const tinyusdz::next::Value *v =
+                  job.prim.GetPropertyValue("inputs:exposure"))
+            if (const float *f = v->as_float()) exposure = *f;
+          if (const tinyusdz::next::Value *v =
+                  job.prim.GetPropertyValue("inputs:color"))
+            if (const float *f = v->as_float3())
+              light_color = Vec3{f[0], f[1], f[2]};
+          if (const tinyusdz::next::Value *v =
+                  job.prim.GetPropertyValue("inputs:normalize"))
+            if (const bool *b = v->as_bool()) normalize = *b;
+          float area = 0.0f;
+          for (size_t ti = 0; ti + 2u < geo.indices.size(); ti += 3u) {
+            const uint32_t ia = geo.indices[ti], ib = geo.indices[ti + 1u],
+                           ic = geo.indices[ti + 2u];
+            if (size_t(std::max({ia, ib, ic})) * 3u + 2u >=
+                geo.positions.size()) continue;
+            const Vec3 a{geo.positions[ia * 3u], geo.positions[ia * 3u + 1u],
+                         geo.positions[ia * 3u + 2u]};
+            const Vec3 b{geo.positions[ib * 3u], geo.positions[ib * 3u + 1u],
+                         geo.positions[ib * 3u + 2u]};
+            const Vec3 c{geo.positions[ic * 3u], geo.positions[ic * 3u + 1u],
+                         geo.positions[ic * 3u + 2u]};
+            area += 0.5f * Length(Cross(Sub(b, a), Sub(c, a)));
+          }
+          const Vec3 tint = Luminance(resolved.emission) > 1.0e-6f
+                                ? resolved.emission : resolved.base_color;
+          float gain = intensity * std::pow(2.0f, exposure);
+          if (normalize && area > 1.0e-8f) gain /= area;
+          resolved.emission = Vec3{light_color.x * tint.x * gain,
+                                   light_color.y * tint.y * gain,
+                                   light_color.z * tint.z * gain};
+          resolved.area_light = true;
+          if (resolved.has_openpbr) {
+            resolved.openpbr.emission = 1.0f;
+            resolved.openpbr.emissionColor[0] = resolved.emission.x;
+            resolved.openpbr.emissionColor[1] = resolved.emission.y;
+            resolved.openpbr.emissionColor[2] = resolved.emission.z;
+          }
+          break;
+        }
+        gpu_materials.push_back(std::move(resolved));
         geos.push_back(std::move(geo));
       }
     }
@@ -1524,8 +1611,8 @@ int main(int argc, char **argv) {
       return true;
     });
 
-#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
-    const bool gpu_backend = opt.vulkan || opt.use_d3d || opt.hip;
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
+    const bool gpu_backend = opt.vulkan || opt.use_d3d || opt.hip || opt.cuda;
     if (gpu_backend && has_direct_curves) {
       // LightRT's Vulkan API does not yet expose the CUDA analytic curve
       // primitives. Build the same direct round-linear scene used by the next
@@ -1556,7 +1643,7 @@ int main(int argc, char **argv) {
     // Vulkan uses the native analytic ellipse path for a pure splat scene.
     // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
     // fallback as HIP/ROCm and D3D11 so all geometry reaches one flat trace.
-    if (gpu_backend && (opt.vulkan || opt.hip) && geos.empty()) {
+    if (gpu_backend && (opt.vulkan || opt.hip || opt.cuda) && geos.empty()) {
       stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
         const std::string &type = prim.GetTypeName();
         if (type == "Points" || type == "BasisCurves" ||
@@ -1567,7 +1654,7 @@ int main(int argc, char **argv) {
         return true;
       });
     }
-    if (gpu_backend && (opt.vulkan || opt.hip) && geos.empty() &&
+    if (gpu_backend && (opt.vulkan || opt.hip || opt.cuda) && geos.empty() &&
         !has_other_native_carrier) {
       native_gaussian =
           BuildNextGaussianEllipses(stage, gaussian_ctx, opt.timecode,
@@ -1646,8 +1733,8 @@ int main(int argc, char **argv) {
       camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
     }
 
-#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
-    if ((opt.vulkan || opt.use_d3d || opt.hip) && has_flat_curves) {
+#if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
+    if ((opt.vulkan || opt.use_d3d || opt.hip || opt.cuda) && has_flat_curves) {
       if (!BuildNextFlatCurveMeshes(gpu_curve_jobs, opt.timecode,
                                     clip_stage_loader, camera, &geos,
                                     &base_colors)) {
@@ -1710,8 +1797,10 @@ int main(int argc, char **argv) {
       tusdr::RtLodStats lod_stats;
       std::vector<RTPreviewStats::MeshGeometry> kept_geos;
       std::vector<Vec3> kept_colors;
+      std::vector<ResolvedMat> kept_materials;
       kept_geos.reserve(geos.size());
       kept_colors.reserve(geos.size());
+      kept_materials.reserve(gpu_materials.size());
       for (size_t i = 0; i < geos.size(); ++i) {
         RTPreviewStats::MeshGeometry &g = geos[i];
         const size_t nv = g.positions.size() / 3;
@@ -1750,14 +1839,19 @@ int main(int argc, char **argv) {
           box.indices.assign(kI, kI + 36);
           kept_geos.push_back(std::move(box));
           kept_colors.push_back(base_colors[i]);
+          if (i < gpu_materials.size())
+            kept_materials.push_back(std::move(gpu_materials[i]));
           continue;
         }
         lod_stats.full++;
         kept_geos.push_back(std::move(g));
         kept_colors.push_back(base_colors[i]);
+        if (i < gpu_materials.size())
+          kept_materials.push_back(std::move(gpu_materials[i]));
       }
       geos.swap(kept_geos);
       base_colors.swap(kept_colors);
+      gpu_materials.swap(kept_materials);
       if (opt.stats) {
         std::cerr << "[rt-lod] flatten-side: full=" << lod_stats.full
                   << " proxy=" << lod_stats.proxy
@@ -1782,7 +1876,8 @@ int main(int argc, char **argv) {
 #endif
 #ifdef HAVE_VULKAN
     if (opt.vulkan) {
-      if (!RunVulkanLightRT(opt, base_colors, geos, camera, out_height)) {
+      if (!RunVulkanLightRT(opt, base_colors, geos, gpu_materials,
+                            gpu_textures, gpu_lights, camera, out_height)) {
         return EXIT_FAILURE;
       }
       return EXIT_SUCCESS;
@@ -1790,7 +1885,24 @@ int main(int argc, char **argv) {
 #endif
 #ifdef HAVE_HIP
     if (opt.hip) {
-      if (!RunHipLightRT(opt, base_colors, geos, camera, out_height)) {
+      const bool cpu_shade =
+          opt.gpu_shade == Options::GpuShadeMode::Cpu && !opt.path_trace;
+      const bool ok = cpu_shade
+                          ? RunHipLightRT(opt, base_colors, geos, camera,
+                                          out_height)
+                          : RunHipSharedRT(opt, base_colors, geos, gpu_materials,
+                                           gpu_textures, gpu_lights, camera,
+                                           out_height);
+      if (!ok) {
+        return EXIT_FAILURE;
+      }
+      return EXIT_SUCCESS;
+    }
+#endif
+#ifdef HAVE_CUDA_RT
+    if (opt.cuda) {
+      if (!RunCudaSharedRT(opt, base_colors, geos, gpu_materials,
+                           gpu_textures, gpu_lights, camera, out_height)) {
         return EXIT_FAILURE;
       }
       return EXIT_SUCCESS;

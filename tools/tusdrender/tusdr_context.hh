@@ -9,6 +9,9 @@
 #include "next/eval/value-clip.hh"
 #include "tydra/next/render-extract.hh"
 #include "tusdr_types.hh"
+#ifdef HAVE_CUDA_RT
+#include "gpu_scene.hh"
+#endif
 
 namespace tusdr {
 
@@ -354,9 +357,12 @@ int RunStreamServer(const Options &opt);
 
 #ifdef HAVE_VULKAN
 bool RunVulkanLightRT(const Options &opt,
-                              const std::vector<Vec3> &base_colors,
-                              std::vector<RTPreviewStats::MeshGeometry> &geos,
-                              const CameraFrame &camera, int height);
+                      const std::vector<Vec3> &base_colors,
+                      std::vector<RTPreviewStats::MeshGeometry> &geos,
+                      const std::vector<ResolvedMat> &materials,
+                      const std::vector<Texture> &textures,
+                      const LightCache &lights,
+                      const CameraFrame &camera, int height);
 bool RunVulkanGaussianLightRT(const Options &opt, DirectScene *direct,
                               const CameraFrame &camera, int height);
 #endif
@@ -373,8 +379,31 @@ bool RunHipLightRT(const Options &opt,
                    const std::vector<Vec3> &base_colors,
                    std::vector<RTPreviewStats::MeshGeometry> &geos,
                    const CameraFrame &camera, int height);
+bool RunHipSharedRT(const Options &opt,
+                    const std::vector<Vec3> &base_colors,
+                    std::vector<RTPreviewStats::MeshGeometry> &geos,
+                    const std::vector<ResolvedMat> &materials,
+                    const std::vector<Texture> &textures,
+                    const LightCache &lights,
+                    const CameraFrame &camera, int height);
 bool RunHipGaussianLightRT(const Options &opt, DirectScene *direct,
                            const CameraFrame &camera, int height);
+#endif
+
+#ifdef HAVE_CUDA_RT
+bool BuildSharedDrawScene(
+    const std::vector<Vec3> &base_colors,
+    const std::vector<RTPreviewStats::MeshGeometry> &geos,
+    const std::vector<ResolvedMat> &materials,
+    const std::vector<Texture> &textures, const LightCache &lights,
+    const std::string &asset_path, tusdview::DrawScene *scene);
+bool RunCudaSharedRT(const Options &opt,
+                     const std::vector<Vec3> &base_colors,
+                     std::vector<RTPreviewStats::MeshGeometry> &geos,
+                     const std::vector<ResolvedMat> &materials,
+                     const std::vector<Texture> &textures,
+                     const LightCache &lights,
+                     const CameraFrame &camera, int height);
 #endif
 
 // ---- tusdr_next.cc (next loader + driver) ----

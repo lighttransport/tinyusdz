@@ -5,6 +5,88 @@ cmake_minimum_required(VERSION 3.16)
 
 include(CheckCCompilerFlag)
 
+# Build the shared GPU RT implementation even in tools-only/headless
+# configurations. When tusdview was configured first this target already
+# exists; otherwise define the identical GUI-free source set here.
+if(NOT TARGET tusd_gpu_rt_common)
+  set(TUSD_GPU_RT_VIEW_DIR ${PROJECT_SOURCE_DIR}/examples/tusdview)
+  set(TUSD_GPU_RT_COMMON_DIR ${PROJECT_SOURCE_DIR}/examples/common)
+  set(TUSD_GPU_RT_MTLX_DIR ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+
+  if(NOT TARGET tusdview_lightrt_mtlx_const)
+    add_library(tusdview_lightrt_mtlx_const OBJECT
+      ${TUSD_GPU_RT_MTLX_DIR}/color.c
+      ${TUSD_GPU_RT_MTLX_DIR}/mtlx_doc.c
+      ${TUSD_GPU_RT_MTLX_DIR}/mtlx_eval.c
+      ${TUSD_GPU_RT_MTLX_DIR}/mtlx_xml.c
+      ${TUSD_GPU_RT_MTLX_DIR}/texture.c
+      ${TUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_image_impl.c)
+    target_include_directories(tusdview_lightrt_mtlx_const PRIVATE
+      ${TUSD_GPU_RT_MTLX_DIR} ${PROJECT_SOURCE_DIR}/src/external)
+    target_compile_features(tusdview_lightrt_mtlx_const PRIVATE c_std_11)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+      target_compile_options(tusdview_lightrt_mtlx_const PRIVATE -w)
+    endif()
+  endif()
+
+  set(TUSD_GPU_RT_KERNEL_DIR ${CMAKE_CURRENT_BINARY_DIR}/shared_gpu_generated)
+  file(MAKE_DIRECTORY ${TUSD_GPU_RT_KERNEL_DIR})
+  if(NOT MSVC)
+    set(TUSD_GPU_RT_KERNEL_TXT ${TUSD_GPU_RT_VIEW_DIR}/raytracer_kernel_src.txt)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 ${TUSD_GPU_RT_KERNEL_TXT})
+    file(READ ${TUSD_GPU_RT_KERNEL_TXT} TUSD_GPU_RT_KERNEL_CONTENT)
+    file(WRITE ${TUSD_GPU_RT_KERNEL_DIR}/raytracer_kernel.inc
+      "const char* kKernelSrc = R\"CUDA(${TUSD_GPU_RT_KERNEL_CONTENT})CUDA\";\n")
+  endif()
+
+  set(TUSD_GPU_RT_SOURCES
+    ${TUSD_GPU_RT_VIEW_DIR}/lighting_ies.cc
+    ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/ptex_atlas.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/texture_tools.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_bridge.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/displacement_bake.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/rt_bvh.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/rt_scene_build.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/cuda/cuda_raytracer.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/hip/hip_raytracer.cc
+    ${TUSD_GPU_RT_COMMON_DIR}/light3d/math.cpp
+    ${TUSD_GPU_RT_COMMON_DIR}/cuew/cuew.c
+    ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c)
+  if(MSVC)
+    enable_language(RC)
+    list(APPEND TUSD_GPU_RT_SOURCES
+      ${TUSD_GPU_RT_VIEW_DIR}/kernel_resource.cc
+      ${TUSD_GPU_RT_VIEW_DIR}/raytracer_kernel_resource.rc)
+  endif()
+  add_library(tusd_gpu_rt_common STATIC
+    ${TUSD_GPU_RT_SOURCES}
+    $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusd_gpu_rt_common PUBLIC cxx_std_17)
+  target_include_directories(tusd_gpu_rt_common PUBLIC
+    ${TUSD_GPU_RT_VIEW_DIR}
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/src/external
+    ${TUSD_GPU_RT_COMMON_DIR}
+    ${TUSD_GPU_RT_COMMON_DIR}/cuew
+    ${PROJECT_SOURCE_DIR}/src/external/hipew)
+  if(NOT MSVC)
+    target_include_directories(tusd_gpu_rt_common PRIVATE
+      ${TUSD_GPU_RT_KERNEL_DIR})
+  endif()
+  target_link_libraries(tusd_gpu_rt_common PUBLIC
+    ${TINYUSDZ_TARGET_STATIC} ${CMAKE_DL_LIBS})
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    target_link_libraries(tusd_gpu_rt_common PUBLIC tinyusdz_textools)
+    target_compile_definitions(tusd_gpu_rt_common PRIVATE TUSDVIEW_WITH_TEXTOOLS=1)
+    if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+      target_compile_definitions(tusd_gpu_rt_common PRIVATE
+        TINYUSDZ_WITH_ZSTD_COMPRESSION)
+    endif()
+  endif()
+endif()
+
 add_library(lightrt_c STATIC
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c.c
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c.h
@@ -78,6 +160,7 @@ add_executable(tusdrender
   tusdr_vulkan.cc
   tusdr_d3d.cc
   tusdr_hip.cc
+  tusdr_cuda.cc
 )
 
 target_link_libraries(tusdrender
@@ -169,6 +252,7 @@ set(TUSDRENDER_CXX_SOURCES
   tusdr_vulkan.cc
   tusdr_d3d.cc
   tusdr_hip.cc
+  tusdr_cuda.cc
 )
 set_source_files_properties(${TUSDRENDER_CXX_SOURCES}
     PROPERTIES COMPILE_FLAGS "${TUSDRENDER_CXX_FLAGS}")
@@ -248,6 +332,16 @@ if(TUSDRENDER_WITH_HIP AND NOT WIN32)
   target_compile_definitions(tusdrender PRIVATE HAVE_HIP=1)
   target_include_directories(tusdrender PRIVATE ${LIGHTRT_HIP_SRC} ${HIPEW_SRC})
   target_link_libraries(tusdrender ${CMAKE_DL_LIBS})
+endif()
+
+# The viewer defines this GUI-free target before pulling tusdrender in for its
+# CPU LightRT dependency. Reuse its CUDA/NVRTC renderer and material ABI here.
+if(TARGET tusd_gpu_rt_common)
+  target_link_libraries(tusdrender tusd_gpu_rt_common)
+  target_compile_definitions(tusdrender PRIVATE HAVE_CUDA_RT=1)
+  target_include_directories(tusdrender PRIVATE
+      ${PROJECT_SOURCE_DIR}/examples/tusdview
+      ${PROJECT_SOURCE_DIR}/examples/common)
 endif()
 
 # --- LightRT Direct3D 11 backend (Windows only) ----------------------------
