@@ -40,6 +40,20 @@ own nested payloads. The loader reports the number of deferred payloads.
 | `-texBudgetMb <N>` | decoded texture residency budget; derived automatically from the host/VRAM budget unless explicitly set |
 | `-stats` | print mesh/triangle/memory/timing stats |
 
+The headless MaterialX/OpenPBR parity regression runs the production Vulkan
+ray-query, CUDA, and HIP paths when they are available:
+
+```sh
+ctest --test-dir build_ninja \
+  -R '^tool-tusdrender-materialx-openpbr-parity$' --output-on-failure
+```
+
+It checks PreviewSurface/OpenPBR/standard_surface color semantics, executable
+MaterialX graph retention, tight CUDA/HIP image parity, and exposure-independent
+Vulkan/shared-backend chromaticity parity. To turn missing hardware into a
+failure for a GPU validation host, set
+`TUSDR_PARITY_REQUIRE_BACKENDS=vkr,cuda,hip`.
+
 Texture decode is bounded for ordinary `-rtPreview` runs as well as the named
 large-scene profiles. The derived cap applies before material conversion, and
 the texture cache releases decoded pixels after upload; explicit texture flags
