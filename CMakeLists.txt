@@ -3431,6 +3431,13 @@ if(TINYUSDZ_BUILD_TESTS)
         COMMAND ${CMAKE_COMMAND} -E env
                 "TUSDVIEW=$<TARGET_FILE:tusdview>"
                 "TUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
+                # The loader-parity shards below own UDIM/USDZ and both-loader
+                # coverage. Keep the main shards focused on every OpenPBR AOV;
+                # this removes duplicate process/device startup and bounds each
+                # hardware backend to roughly 13 viewer launches.
+                "TUSDVIEW_SEMANTIC_FAMILIES=openpbr"
+                "TUSDVIEW_SEMANTIC_UDIM=0"
+                "TUSDVIEW_SEMANTIC_PACKAGE_PARITY=0"
                 ${_semantic_timeout_env}
                 bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
         )
