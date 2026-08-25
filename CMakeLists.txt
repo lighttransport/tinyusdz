@@ -2678,7 +2678,9 @@ if(TINYUSDZ_BUILD_TESTS)
               "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
       )
     set_tests_properties(tusdview-raster-multilight PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "tusdview")
+                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview"
+                         ENVIRONMENT "TUSDVIEW_GL_TIMEOUT=120s"
+                         RESOURCE_LOCK tusdview_gl_gpu)
 
     add_test(
       NAME tusdview-rt-light-links
@@ -2730,6 +2732,9 @@ if(TINYUSDZ_BUILD_TESTS)
       NAME tusdview-gl-vk-parity
       COMMAND ${CMAKE_COMMAND} -E env
               "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              # NVIDIA can need one additional cold shader-program compile for
+              # a fixture variant not exercised by the global GL warm-up.
+              "TUSDVIEW_GL_VK_TIMEOUT=120s"
               bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-gl-vk-parity.sh"
       )
@@ -3432,7 +3437,12 @@ if(TINYUSDZ_BUILD_TESTS)
     foreach(_backend IN LISTS _tinyusdz_semantic_backends)
       set(_test_name "tusdview-texture-semantic-aov-${_backend}")
       set(_semantic_timeout_env)
-      if(_backend STREQUAL "vk-rt")
+      if(_backend STREQUAL "gl")
+        # A fixture can select an additional NVIDIA shader variant that was
+        # not covered by the global warm-up. Under concurrent suite load its
+        # first compile can exceed the normal 60 s launch guard.
+        set(_semantic_timeout_env "TUSDVIEW_RENDER_TIMEOUT=180s")
+      elseif(_backend STREQUAL "vk-rt")
         # A new compact RT SPIR-V can take roughly 150 s for NVIDIA's first
         # driver JIT.  Let that first process populate tusdview's persistent
         # VkPipelineCache; warm launches are typically below 200 ms.
@@ -4276,6 +4286,21 @@ if(TINYUSDZ_BUILD_TESTS)
         endif()
       endif()
       get_property(_tinyusdz_tusdview_tests DIRECTORY PROPERTY TESTS)
+      set(_tinyusdz_nvidia_gl_cache
+          "${CMAKE_BINARY_DIR}/tusdview-nvidia-gl-cache")
+      file(MAKE_DIRECTORY "${_tinyusdz_nvidia_gl_cache}")
+      add_test(
+        NAME tusdview-nvidia-gl-warmup
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                bash
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-gl-warmup.sh")
+      set_tests_properties(
+        tusdview-nvidia-gl-warmup
+        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview;opengl"
+                   FIXTURES_SETUP tusdview_nvidia_gl_cache
+                   RESOURCE_LOCK tusdview_gl_gpu)
+      list(APPEND _tinyusdz_tusdview_tests tusdview-nvidia-gl-warmup)
       foreach(_tinyusdz_test IN LISTS _tinyusdz_tusdview_tests)
         if(_tinyusdz_test MATCHES "^tusdview-")
           get_property(_tinyusdz_test_env TEST "${_tinyusdz_test}"
@@ -4287,6 +4312,8 @@ if(TINYUSDZ_BUILD_TESTS)
                "__NV_PRIME_RENDER_OFFLOAD=1"
                "__GLX_VENDOR_LIBRARY_NAME=nvidia"
                "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
+               "__GL_SHADER_DISK_CACHE=1"
+               "__GL_SHADER_DISK_CACHE_PATH=${_tinyusdz_nvidia_gl_cache}"
                "TUSDVIEW_NVIDIA_OFFLOAD=1"
                "TUSDVIEW_XVFB=1")
           if(_tinyusdz_nvidia_vulkan_visible)
@@ -4294,6 +4321,10 @@ if(TINYUSDZ_BUILD_TESTS)
           endif()
           set_tests_properties("${_tinyusdz_test}"
                                PROPERTIES ENVIRONMENT "${_tinyusdz_test_env}")
+          if(NOT _tinyusdz_test STREQUAL "tusdview-nvidia-gl-warmup")
+            set_property(TEST "${_tinyusdz_test}" APPEND PROPERTY
+                         FIXTURES_REQUIRED tusdview_nvidia_gl_cache)
+          endif()
         endif()
       endforeach()
       if(_tinyusdz_nvidia_vulkan_visible)

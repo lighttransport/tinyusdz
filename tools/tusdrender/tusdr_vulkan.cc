@@ -14,6 +14,7 @@
 #include "lightrt_c_vk.h"
 #include "tusdr_context.hh"
 #include "tusdr_gpu_common.hh"
+#include "displacement_bake.hh"
 
 namespace tusdr {
 
@@ -247,7 +248,7 @@ bool RunVulkanLightRTChunked(
     const CameraFrame &camera, int height, size_t chunk_limit) {
   lrt_vk_engine_options vopts;
   std::memset(&vopts, 0, sizeof(vopts));
-  vopts.device_index = -1;
+  vopts.device_index = opt.vulkan_device;
   vopts.prefer_discrete = 1;
   vopts.want_ray_tracing = opt.vulkan_rt;
   lrt_result vkerr = LRT_RESULT_OK;
@@ -407,7 +408,7 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   // from the indexed mesh, so the CPU build would be pure waste there).
   lrt_vk_engine_options vopts;
   std::memset(&vopts, 0, sizeof(vopts));
-  vopts.device_index = -1;
+  vopts.device_index = opt.vulkan_device;
   vopts.prefer_discrete = 1;
   vopts.want_ray_tracing = opt.vulkan_rt;
   lrt_result vkerr = LRT_RESULT_OK;
@@ -428,6 +429,29 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
             << ((vk_caps & LRT_VK_CAP_RAY_QUERY) ? " ray_query" : "")
             << "\n";
 
+  tusdview::DrawScene shared_scene;
+  const bool have_shared_scene = BuildSharedDrawScene(
+      base_colors, geos, materials, textures, lights, opt.input, &shared_scene);
+  if (have_shared_scene && opt.displace && opt.displace_scale != 0.0f) {
+    const size_t count = std::min(geos.size(), shared_scene.meshes.size());
+    for (size_t i = 0; i < count; ++i) {
+      std::vector<tusdview::DrawVertex> displaced;
+      if (!tusdview::BakeDisplacedVertices(
+              shared_scene, shared_scene.meshes[i], opt.displace_scale,
+              &displaced) || displaced.size() * 3u != geos[i].positions.size()) {
+        continue;
+      }
+      geos[i].normals.resize(displaced.size() * 3u);
+      for (size_t v = 0; v < displaced.size(); ++v) {
+        geos[i].positions[v * 3u + 0u] = displaced[v].px;
+        geos[i].positions[v * 3u + 1u] = displaced[v].py;
+        geos[i].positions[v * 3u + 2u] = displaced[v].pz;
+        geos[i].normals[v * 3u + 0u] = displaced[v].nx;
+        geos[i].normals[v * 3u + 1u] = displaced[v].ny;
+        geos[i].normals[v * 3u + 2u] = displaced[v].nz;
+      }
+    }
+  }
   GpuTriScene s;
   auto t0 = std::chrono::steady_clock::now();
   if (!BuildGpuTriScene(base_colors, geos, opt.threads, !use_hw_rt, &s,
@@ -435,9 +459,6 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     lrt_vk_engine_destroy(vk);
     return false;
   }
-  tusdview::DrawScene shared_scene;
-  const bool have_shared_scene = BuildSharedDrawScene(
-      base_colors, geos, materials, textures, lights, opt.input, &shared_scene);
   const double flatten_s = SecsSince(t0);
   for (RTPreviewStats::MeshGeometry &geo : geos) {
     std::vector<float>().swap(geo.positions);
@@ -574,7 +595,7 @@ bool RunVulkanGaussianLightRT(const Options &opt, DirectScene *direct,
     return false;
   lrt_vk_engine_options vopts;
   std::memset(&vopts, 0, sizeof(vopts));
-  vopts.device_index = -1;
+  vopts.device_index = opt.vulkan_device;
   vopts.prefer_discrete = 1;
   lrt_result err = LRT_RESULT_OK;
   lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &err);
@@ -650,7 +671,7 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
 
   lrt_vk_engine_options vopts;
   std::memset(&vopts, 0, sizeof(vopts));
-  vopts.device_index = -1;
+  vopts.device_index = opt.vulkan_device;
   vopts.prefer_discrete = 1;
   vopts.want_ray_tracing = 1;
   lrt_result vkerr = LRT_RESULT_OK;

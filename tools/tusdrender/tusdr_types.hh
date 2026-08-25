@@ -637,6 +637,7 @@ struct Options {
   float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
+  int vulkan_device{-1};           // -vkDevice: physical-device index (-1 = auto)
   enum class GpuShadeMode { Auto, Cpu, Preview };
   GpuShadeMode gpu_shade{GpuShadeMode::Auto};  // -gpuShade cpu|preview
   bool path_trace{false};
@@ -947,6 +948,7 @@ struct MeshJobNext {
   float roughness{0.55f};                // resolved inputs:roughness
   float metallic{0.0f};                  // resolved inputs:metallic
   int32_t normal_tex_id{-1};             // resolved tangent-space normal map
+  int32_t coat_normal_tex_id{-1};        // OpenPBR coat tangent-space normal map
   ScalarTex rough_tex;                   // roughness texture + channel
   ScalarTex metal_tex;                   // metallic texture + channel
   Vec3 emission{0.0f, 0.0f, 0.0f};       // resolved inputs:emissiveColor
@@ -1003,6 +1005,7 @@ struct ResolvedMat {
   float roughness{0.55f};
   float metallic{0.0f};
   int32_t normal_tex_id{-1};
+  int32_t coat_normal_tex_id{-1};
   UvXform uv_xform;
   ScalarTex rough_tex;
   ScalarTex metal_tex;

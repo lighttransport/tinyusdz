@@ -1455,6 +1455,7 @@ void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
   job->roughness = r.roughness;
   job->metallic = r.metallic;
   job->normal_tex_id = r.normal_tex_id;
+  job->coat_normal_tex_id = r.coat_normal_tex_id;
   job->uv_xform = r.uv_xform;
   job->rough_tex = r.rough_tex;
   job->metal_tex = r.metal_tex;
@@ -1488,6 +1489,7 @@ ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
   r.roughness = job.roughness;
   r.metallic = job.metallic;
   r.normal_tex_id = job.normal_tex_id;
+  r.coat_normal_tex_id = job.coat_normal_tex_id;
   r.uv_xform = job.uv_xform;
   r.rough_tex = job.rough_tex;
   r.metal_tex = job.metal_tex;
@@ -1854,6 +1856,9 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
     LoadRenderTexture(scratch, s.normal.texture_id, tc, false,
                       &normal_scale, &normal_bias,
                       &resolved.normal_tex_id);
+    LoadRenderTexture(scratch, s.coat_normal.texture_id, tc, false,
+                      &normal_scale, &normal_bias,
+                      &resolved.coat_normal_tex_id);
     ApplyRenderTextureUvXform(stage, scratch, s.normal.texture_id,
                               true, &resolved.uv_xform);
     LoadRenderScalarTexture(scratch, s.base_roughness, tc, false,

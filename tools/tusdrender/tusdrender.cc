@@ -1521,6 +1521,7 @@ int main(int argc, char **argv) {
         resolved.roughness = job.roughness;
         resolved.metallic = job.metallic;
         resolved.normal_tex_id = job.normal_tex_id;
+        resolved.coat_normal_tex_id = job.coat_normal_tex_id;
         resolved.uv_xform = job.uv_xform;
         resolved.rough_tex = job.rough_tex;
         resolved.metal_tex = job.metal_tex;
@@ -1539,6 +1540,8 @@ int main(int argc, char **argv) {
         resolved.specular_tex_id = job.specular_tex_id;
         resolved.ior = job.ior;
         resolved.use_specular_workflow = job.use_specular_workflow;
+        resolved.displacement = job.displacement;
+        resolved.displacement_tex = job.displacement_tex;
         resolved.has_openpbr = job.has_openpbr;
         resolved.openpbr = job.openpbr;
         resolved.materialx_graph_json = job.materialx_graph_json;
