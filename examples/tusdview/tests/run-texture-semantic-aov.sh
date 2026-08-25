@@ -781,6 +781,14 @@ case_run() {
   local tag="$1" marker="$2" source="$3" mode="$4" kind="$5" case_id="$6"; shift 6
   local backend_key="${tag%-legacy}"
   if [ "${backend_unavailable[$backend_key]:-0}" = 1 ]; then return; fi
+  # The main AOV shards exercise every requested semantic on ordinary external
+  # textures.  Loader parity is a separate shard and owns the duplicated UDIM
+  # and USDZ cases.  Keeping the switches here lets focused/manual runs retain
+  # the historical exhaustive matrix while CI avoids paying renderer startup
+  # cost twice for equivalent semantic evaluation.
+  if [ "${TUSDVIEW_SEMANTIC_UDIM:-1}" = 0 ] && [[ "$case_id" = *udim* ]]; then
+    return
+  fi
   local img="$OUT/$tag-$case_id.ppm" log="$OUT/$tag-$case_id.log"
   local run_rc=0
   if [ -n "${prerendered_log[$img]:-}" ] && [ -s "$img" ]; then
@@ -824,7 +832,8 @@ case_run() {
       echo "FAIL: $tag $case_id default/legacy parity"; fail=1;
     }
   fi
-  if [ "$case_id" = preview-vector ]; then
+  if [ "${TUSDVIEW_SEMANTIC_PACKAGE_PARITY:-1}" != 0 ] &&
+     [ "$case_id" = preview-vector ]; then
     local packed="$OUT/$tag-vector-usdz.ppm"
     if [[ "$tag" = gl* ]]; then
       run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
@@ -858,7 +867,8 @@ case_run() {
     standard-vector) package="$OUT/normal-standard.usdz";;
     occlusion) package="$OUT/occlusion.usdz";;
   esac
-  if [ -n "$package" ]; then
+  if [ "${TUSDVIEW_SEMANTIC_PACKAGE_PARITY:-1}" != 0 ] &&
+     [ -n "$package" ]; then
     local packed="$OUT/$tag-$case_id-usdz.ppm"
     if [[ "$tag" = gl* ]]; then
       run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
