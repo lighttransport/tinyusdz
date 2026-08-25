@@ -387,7 +387,10 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   for (int i = 0; i < 8; ++i) {
     uGraphTex_[i] = glGetUniformLocation(
         program_, (std::string("uGraphTex") + std::to_string(i)).c_str());
-    if (uGraphTex_[i] >= 0) glUniform1i(uGraphTex_[i], 31 + i);
+    // 31 is the point-shadow cube and 32 is the Ptex rectangle buffer. Sharing
+    // either with a sampler2D makes the subsequent draw GL_INVALID_OPERATION,
+    // even when the graph route is disabled.
+    if (uGraphTex_[i] >= 0) glUniform1i(uGraphTex_[i], 33 + i);
   }
   uCoatWeight_ = glGetUniformLocation(program_, "uCoatWeight");
   uCoatColor_ = glGetUniformLocation(program_, "uCoatColor");
@@ -3865,7 +3868,12 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       {
         const MaterialXGraphRuntimeCPU& graph = mat.materialXGraph;
         std::vector<int> graphTextureIds;
-        bool graphUsable = graph.valid && graph.nodes.size() <= 64;
+        // The native graph interpreter is for MaterialX/OpenPBR graphs. A
+        // UsdPreviewSurface network is already lowered into the semantic slots
+        // above (including its named primvar reader); interpreting its retained
+        // diagnostic graph a second time bypasses per-slot UV routing.
+        bool graphUsable = mat.openPbrSpecularModel && graph.valid &&
+                           graph.nodes.size() <= 64;
         if (graphUsable) {
           for (const MaterialXGraphNodeCPU& node : graph.nodes) {
             if (node.isUdim) { graphUsable = false; break; }
@@ -3878,7 +3886,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
           }
         }
         for (int i = 0; i < 8; ++i) {
-          glActiveTexture(GL_TEXTURE0 + 31 + i);
+          glActiveTexture(GL_TEXTURE0 + 33 + i);
           GLuint tex = whiteTex_;
           if (graphUsable && i < static_cast<int>(graphTextureIds.size())) {
             const int slot = graphTextureIds[static_cast<size_t>(i)];

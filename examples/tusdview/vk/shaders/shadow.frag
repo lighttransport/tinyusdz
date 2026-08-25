@@ -88,18 +88,25 @@ vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
 }
 
 void main() {
-  // Rejected alpha modes must discard the fragment, not merely return: a
-  // return with no color output still performs the depth write in Vulkan and
-  // incorrectly turns an opaque/cutout blocker into a solid shadow caster.
-  if (pc.matAux.z < 0.5 || pc.matAux.z > 1.5) discard;
+  // Opaque materials write depth without an alpha test. Blend materials do not
+  // have a stochastic/colored raster-shadow representation, so omit them. Only
+  // mask mode evaluates texture/constant alpha against the cutoff below.
+  if (pc.matAux.z > 1.5) discard;
+  if (pc.matAux.z < 0.5) return;
   MaterialTexParam m = mtp.p[max(pc.ids.x, 0)];
-  vec2 baseUv = m.uvSets.x > 0.5 ? vUV1 : vUV;
-  vec2 baseTuv = xformUv(baseUv, m.baseUv0, m.baseUv1);
-  vec4 baseSample = (pc.ids.w & 1) != 0
-      ? sampleUdim(uBaseColorUdimTex, int(m.udimSlots0.x + 0.5), baseTuv,
-                   vec4(1.0))
-      : texture(uBaseColorTex, baseTuv);
-  float alpha = pc.baseColor.a * (baseSample * m.baseScale + m.baseBias).a;
+  float alpha = pc.baseColor.a;
+  // ids.w bit 1 means a base-color texture is actually connected. Avoid
+  // applying its scale/bias to the fallback white descriptor for constant-only
+  // mask materials.
+  if ((pc.ids.w & 2) != 0) {
+    vec2 baseUv = m.uvSets.x > 0.5 ? vUV1 : vUV;
+    vec2 baseTuv = xformUv(baseUv, m.baseUv0, m.baseUv1);
+    vec4 baseSample = (pc.ids.w & 1) != 0
+        ? sampleUdim(uBaseColorUdimTex, int(m.udimSlots0.x + 0.5), baseTuv,
+                     vec4(1.0))
+        : texture(uBaseColorTex, baseTuv);
+    alpha *= (baseSample * m.baseScale + m.baseBias).a;
+  }
   // ids.w bit 6 means an opacity texture is bound; bit 7 selects UDIM.
   if ((pc.ids.w & 64) != 0) {
     vec2 opacityUv = m.opacityParams.w > 0.5 ? vUV1 : vUV;

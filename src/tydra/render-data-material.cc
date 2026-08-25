@@ -4063,12 +4063,37 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
     const RenderSceneConverterEnv &env, const Path &shader_abs_path,
     const OpenPBRSurface &shader, OpenPBRSurfaceShader *rshader_out,
-    bool is_materialx) {
+    bool is_materialx, bool standard_surface_source) {
   if (!rshader_out) {
     PUSH_ERROR_AND_RETURN("rshader_out argument is nullptr.");
   }
 
   OpenPBRSurfaceShader rshader;
+
+  // Standard Surface is represented internally through an OpenPBR-compatible
+  // struct, but MaterialX resolution still queries the original USD shader.
+  // Preserve the original property spelling for fields renamed by that
+  // conversion; querying `inputs:specular_ior`, for example, cannot find the
+  // authored Standard Surface `inputs:specular_IOR` value.
+  auto sourceName = [standard_surface_source](const char *openpbr_name) {
+    if (!standard_surface_source) return openpbr_name;
+    static const std::map<std::string, const char *> renamed = {
+        {"base_weight", "base"},
+        {"base_roughness", "diffuse_roughness"},
+        {"base_metalness", "metalness"},
+        {"specular_weight", "specular"},
+        {"specular_ior", "specular_IOR"},
+        {"transmission_weight", "transmission"},
+        {"subsurface_weight", "subsurface"},
+        {"sheen_weight", "sheen"},
+        {"coat_weight", "coat"},
+        {"coat_ior", "coat_IOR"},
+        {"thin_film_ior", "thin_film_IOR"},
+        {"emission_luminance", "emission"},
+    };
+    const auto it = renamed.find(openpbr_name);
+    return it == renamed.end() ? openpbr_name : it->second;
+  };
 
   // Macros to reduce repetitive ConvertPreviewSurfaceShaderParam calls. When
   // this shader came from a MaterialX network (standard_surface / OpenPBR), EVERY
@@ -4078,13 +4103,13 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   // but resolves to the same is_materialx flag.
 #define CONVERT_OPENPBR_PARAM(field, name) \
   if (!ConvertPreviewSurfaceShaderParam( \
-          env, shader_abs_path, shader.field, name, rshader.field, is_materialx)) { \
+          env, shader_abs_path, shader.field, sourceName(name), rshader.field, is_materialx)) { \
     PushWarn(fmt::format("Failed to convert " name " parameter for shader: {}", shader_abs_path.prim_part())); \
     return false; \
   }
 #define CONVERT_OPENPBR_PARAM_MTLX(field, name) \
   if (!ConvertPreviewSurfaceShaderParam( \
-          env, shader_abs_path, shader.field, name, rshader.field, is_materialx)) { \
+          env, shader_abs_path, shader.field, sourceName(name), rshader.field, is_materialx)) { \
     PushWarn(fmt::format("Failed to convert " name " parameter for shader: {}", shader_abs_path.prim_part())); \
     return false; \
   }
@@ -4190,6 +4215,22 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
 
 #undef CONVERT_OPENPBR_PARAM
 
+  if (standard_surface_source) {
+    // OpenPBR's renderer-side fallback thickness is 500 nm, whereas Standard
+    // Surface defaults to no film (0 nm) and has no separate weight input.
+    // A missing Standard input must therefore not retain the OpenPBR fallback.
+    float thickness = 0.0f;
+    shader.thin_film_thickness.get_value().get(value::TimeCode::Default(),
+                                                &thickness);
+    if (!shader.thin_film_thickness.has_connections()) {
+      rshader.thin_film_thickness.value = thickness;
+    }
+    rshader.thin_film_weight.value =
+        (shader.thin_film_thickness.has_connections() || thickness > 0.0f)
+            ? 1.0f
+            : 0.0f;
+  }
+
   // Convert MaterialX NodeGraph connections to JSON if present
   // This allows reconstruction of node-based shading in JavaScript/WASM
   {
@@ -4280,7 +4321,21 @@ static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
   // thickness denotes an active film; keeping the weight at one preserves
   // that intent in the OpenPBR representation (zero thickness remains a
   // no-op in the shader).
-  dst.thin_film_weight.set_value(Animatable<float>(1.0f));
+  float thin_film_thickness = 0.0f;
+  src.thin_film_thickness.get_value().get(value::TimeCode::Default(),
+                                           &thin_film_thickness);
+  if (!src.thin_film_thickness.has_connections()) {
+    // Assigning between TypedAttributeWithFallback instances copies authored
+    // state, not the source schema's fallback. OpenPBR's 500 nm fallback must
+    // not replace Standard Surface's 0 nm fallback.
+    dst.thin_film_thickness.set_value(
+        Animatable<float>(thin_film_thickness));
+  }
+  dst.thin_film_weight.set_value(Animatable<float>(
+      (src.thin_film_thickness.has_connections() ||
+       thin_film_thickness > 0.0f)
+          ? 1.0f
+          : 0.0f));
 
   // Emission
   dst.emission_luminance = src.emission;
@@ -4860,7 +4915,9 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
 
       // Convert to OpenPBRSurfaceShader
       OpenPBRSurfaceShader openpbr_shader;
-      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr, &openpbr_shader, /* is_materialx */ true)) {
+      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr,
+                                       &openpbr_shader, /* is_materialx */ true,
+                                       /* standard_surface_source */ true)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert MtlxOpenPBRSurface : {}", surfacePath.prim_part()));
       }
@@ -5116,7 +5173,8 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
             if (!ConvertOpenPBRSurfaceShader(env, mtlxSurfacePath,
                                              converted_openpbr,
                                              &openpbr_shader,
-                                             /* is_materialx */ true)) {
+                                             /* is_materialx */ true,
+                                             /* standard_surface_source */ true)) {
               PUSH_ERROR_AND_RETURN(fmt::format(
                   "Failed to convert MtlxOpenPBRSurface : {}",
                   mtlxSurfacePath.prim_part()));

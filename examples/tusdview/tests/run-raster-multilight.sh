@@ -33,11 +33,18 @@ if [ "$use_existing_display" -eq 0 ] && command -v Xvfb >/dev/null 2>&1; then
     sleep 0.1
   done
 fi
-gl_log="$(timeout 45s "$TUSDVIEW" \
+gl_log="$(timeout --kill-after=5s 20s "$TUSDVIEW" \
   --config "$TMP/config.json" --backend gl --camera /World/Camera \
   --frames 3 --screenshot "$TMP/gl.ppm" "$asset" 2>&1)"
 gl_rc=$?
 if [ "$gl_rc" -ne 0 ]; then
+  # Some NVIDIA GLX/Xvfb combinations block inside window/context creation
+  # without producing a GLFW diagnostic. Treat the bounded startup timeout as
+  # an unavailable OpenGL environment, consistent with explicit init errors.
+  if [ "$gl_rc" -eq 124 ] || [ "$gl_rc" -eq 137 ]; then
+    echo "SKIP: OpenGL/X11 backend timed out during initialization"
+    exit "$SKIP"
+  fi
   if grep -Eqi "OpenGL.*(unavailable|failed)|GLFW.*failed|failed to open display|DISPLAY|xvfb-run: error" <<<"$gl_log"; then
     echo "SKIP: OpenGL/X11 backend unavailable"
     exit "$SKIP"

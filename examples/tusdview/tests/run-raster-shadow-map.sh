@@ -157,7 +157,7 @@ for spec in "gl:--backend gl:" "vk:--backend vk:--headless"; do
   tag="${spec%%:*}"; rest="${spec#*:}"; args="${rest%%:*}"; hl="${rest#*:}"
   img="$OUT/$tag.ppm"; log="$OUT/$tag.log"
   # shellcheck disable=SC2086
-  $XVFB env XDG_CONFIG_HOME="$OUT/config" \
+  timeout --kill-after=5s 30s $XVFB env XDG_CONFIG_HOME="$OUT/config" \
       "$BIN" $hl $args --frames 2 --size 640x480 --no-grid --camera Cam \
       --screenshot "$img" "$OUT/shadow.usda" >"$log" 2>&1
   if ! grep -q 'render stats' "$log"; then
@@ -181,7 +181,7 @@ done
 # Exercise the newly supported one-sided finite-light projection on Vulkan.
 rect_img="$OUT/vk-rect.ppm"
 rect_log="$OUT/vk-rect.log"
-$XVFB env XDG_CONFIG_HOME="$OUT/config" \
+timeout --kill-after=5s 30s $XVFB env XDG_CONFIG_HOME="$OUT/config" \
     "$BIN" --headless --backend vk --frames 2 --size 640x480 --no-grid \
     --camera Cam --screenshot "$rect_img" "$OUT/shadow-rect.usda" \
     >"$rect_log" 2>&1
@@ -206,7 +206,7 @@ fi
 # a failure, avoiding an accidental capability skip of the new cubemap path.
 point_img="$OUT/vk-point.ppm"
 point_log="$OUT/vk-point.log"
-$XVFB env XDG_CONFIG_HOME="$OUT/config" \
+timeout --kill-after=5s 30s $XVFB env XDG_CONFIG_HOME="$OUT/config" \
     "$BIN" --headless --backend vk --frames 2 --size 640x480 --no-grid \
     --camera Cam --screenshot "$point_img" "$OUT/shadow-point.usda" \
     >"$point_log" 2>&1
@@ -230,7 +230,7 @@ for spec in "gl:--backend gl:" "vk:--backend vk:--headless"; do
   tag="${spec%%:*}"; rest="${spec#*:}"; args="${rest%%:*}"; hl="${rest#*:}"
   img="$OUT/$tag-udim.ppm"; log="$OUT/$tag-udim.log"
   # shellcheck disable=SC2086
-  $XVFB env XDG_CONFIG_HOME="$OUT/config" \
+  timeout --kill-after=5s 30s $XVFB env XDG_CONFIG_HOME="$OUT/config" \
       "$BIN" $hl $args --frames 2 --size 640x480 --no-grid --camera Cam \
       --screenshot "$img" "$OUT/shadow-udim.usda" >"$log" 2>&1
   grep -q 'render stats' "$log" || continue
@@ -248,7 +248,7 @@ done
 # caster coverage cannot satisfy this assertion.
 inst_img="$OUT/vk-instanced.ppm"
 inst_log="$OUT/vk-instanced.log"
-$XVFB env XDG_CONFIG_HOME="$OUT/config" \
+timeout --kill-after=5s 30s $XVFB env XDG_CONFIG_HOME="$OUT/config" \
     "$BIN" --headless --backend vk --frames 2 --size 640x480 --no-grid \
     --camera Cam --screenshot "$inst_img" "$OUT/shadow-instanced.usda" \
     >"$inst_log" 2>&1
@@ -270,7 +270,7 @@ for spec in "gl:--backend gl:" "vk:--backend vk:--headless"; do
   tag="${spec%%:*}"; rest="${spec#*:}"; args="${rest%%:*}"; hl="${rest#*:}"
   img="$OUT/$tag-cutout.ppm"; log="$OUT/$tag-cutout.log"
   # shellcheck disable=SC2086
-  $XVFB env XDG_CONFIG_HOME="$OUT/config" \
+  timeout --kill-after=5s 30s $XVFB env XDG_CONFIG_HOME="$OUT/config" \
       "$BIN" $hl $args --frames 2 --size 640x480 --no-grid --camera Cam \
       --screenshot "$img" "$OUT/shadow-cutout.usda" >"$log" 2>&1
   grep -q 'render stats' "$log" || continue

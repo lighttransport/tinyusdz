@@ -14,10 +14,10 @@ joint bend came out as 120 degrees.
 Asserted on a fixture whose SkelRoot is rotated and non-uniformly scaled (the case
 that makes a double deform unmistakable rather than a subtle overshoot): the default
 raster path and the ray tracer must both land where the CPU bake lands. Compared as
-a silhouette of the MESH ITSELF in `--mode depth` through a fixed USD camera with
-`--no-grid`: depth is geometry-only, the camera removes auto-framing, and disabling
-the raster grid prevents it from overwriting the composited RT image (the RT pass
-does not populate the raster depth attachment).
+a silhouette of the mesh in `--mode material-id` through a fixed USD camera with
+`--no-grid`. Material ID is geometry-only and remains stable now that the RT pass
+exports primary-hit depth for depth-tested overlays; using the depth AOV itself
+would conflate pose parity with the backend-specific depth visualization curve.
 
 Before the fix the cube silhouettes overlapped 0.43 (raster) and 0.42 (RT) against
 the bake; after, 0.96 and 0.92.
@@ -49,7 +49,7 @@ def render(binary, scene, out, extra=(), env=None):
     if not os.path.exists(config):
         with open(config, "w") as f:
             f.write('{"window_size":{"width":320,"height":320}}\n')
-    cmd = [binary, "--legacy-load", "--headless", "--mode", "depth",
+    cmd = [binary, "--legacy-load", "--headless", "--mode", "material-id",
            "--camera", "Cam", "--no-grid", "--frames", "3", "--time", "20",
            "--config", config, "--screenshot", out, *extra, scene]
     try:
@@ -102,9 +102,46 @@ def read_luma(path):
 
 
 def mesh_mask(path):
-    # The mesh is the nearest thing to the camera, so it holds the darkest depths;
-    # the ground grid sits mid-gray and the background is a flat 32.
-    return [v < 20.0 for v in read_luma(path)]
+    # Material 0's stable ID color is ochre. This rejects the dark background
+    # and the RGB axis gizmo while retaining antialiased silhouette pixels.
+    d = open(path, "rb").read()
+    w = h = color = None
+    idat = b""
+    pos = 8
+    while pos + 8 <= len(d):
+        ln = struct.unpack(">I", d[pos:pos + 4])[0]
+        typ = d[pos + 4:pos + 8]
+        body = d[pos + 8:pos + 8 + ln]
+        if typ == b"IHDR":
+            w, h, _bd, color = struct.unpack(">IIBB", body[:10])
+        elif typ == b"IDAT":
+            idat += body
+        elif typ == b"IEND":
+            break
+        pos += 12 + ln
+    nch = 3 if color == 2 else 4
+    raw = zlib.decompress(idat)
+    stride = w * nch
+    out, prev, p = [], bytearray(stride), 0
+    for _y in range(h):
+        f = raw[p]; p += 1
+        line = bytearray(raw[p:p + stride]); p += stride
+        for i in range(stride):
+            a = line[i - nch] if i >= nch else 0
+            b = prev[i]
+            c = prev[i - nch] if i >= nch else 0
+            if f == 1: line[i] = (line[i] + a) & 0xFF
+            elif f == 2: line[i] = (line[i] + b) & 0xFF
+            elif f == 3: line[i] = (line[i] + (a + b) // 2) & 0xFF
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pr) & 0xFF
+        for x in range(w):
+            r, g, b = line[x * nch:x * nch + 3]
+            out.append(r > 90 and g > 60 and b < 90 and r > g * 1.2)
+        prev = line
+    return out
 
 
 def iou(a, b):

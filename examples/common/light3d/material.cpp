@@ -940,6 +940,12 @@ float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
 
 void main() {
     vec3 baseColor = uBaseColor * vColor.rgb;  // vColor defaults to white
+    // base_weight is an OpenPBR input. UsdPreviewSurface has no equivalent and
+    // must retain its full diffuse contribution; its shared CPU payload leaves
+    // the OpenPBR-only field at zero.
+    float baseWeight = uOpenPbrSpecularModel != 0
+                           ? clamp(uBaseWeight, 0.0, 1.0)
+                           : 1.0;
     float metallic = uMetallic;
     float roughness = uRoughness;
     vec3 emissive = uEmissive;
@@ -948,12 +954,14 @@ void main() {
     baseColor = mix(baseColor, baseColor * uVolumeAlbedo, volumeOpacity);
     emissive += uVolumeEmission * max(uVolumeEmissionScale, 0.0) * volumeOpacity;
     float opacity = clamp(uAlpha * vColor.a, 0.0, 1.0);
-    vec4 graphBase = evalMaterialXGraph(0, vUV);
-    vec4 graphMetal = evalMaterialXGraph(1, vUV);
-    vec4 graphRough = evalMaterialXGraph(2, vUV);
-    vec4 graphOpacity = evalMaterialXGraph(3, vUV);
-    vec4 graphEmission = evalMaterialXGraph(4, vUV);
-    vec4 graphNormal = evalMaterialXGraph(5, vUV);
+    vec4 graphBase = evalMaterialXGraph(0, uUvSet.x == 1 ? vUV1 : vUV);
+    vec4 graphMetal = evalMaterialXGraph(1, uUvSet.y == 1 ? vUV1 : vUV);
+    vec4 graphRough = evalMaterialXGraph(
+        2, uRoughnessUvSet == 1 ? vUV1 : vUV);
+    vec4 graphOpacity = evalMaterialXGraph(
+        3, uOpacityUvSet == 1 ? vUV1 : vUV);
+    vec4 graphEmission = evalMaterialXGraph(4, uUvSet.w == 1 ? vUV1 : vUV);
+    vec4 graphNormal = evalMaterialXGraph(5, uUvSet.z == 1 ? vUV1 : vUV);
     vec4 graphSubsurface = evalMaterialXGraph(6, vUV);
     vec4 graphSubsurfaceColor = evalMaterialXGraph(7, vUV);
     vec4 graphSubsurfaceRadius = evalMaterialXGraph(8, vUV);
@@ -1257,19 +1265,19 @@ void main() {
                      0.02, 1.0);
     cr = mix(cr, clamp(roughness, 0.02, 1.0),
              clamp(uCoatAffectRoughness, 0.0, 1.0));
-    vec3 coatTint = uCoatColor * sampleCoatColor(uCoatColorTex, uHasCoatColorTex,
-                                                 uAdvancedTexIsUdim.z,
-                                                 uAdvancedUdimRoutes.z,
-                                                 uAdvancedUdimSlots.z,
-                                                 uCoatColorUv0, uCoatColorUv1,
-                                                 uCoatColorUvSet,
-                                                 uCoatColorScale,
-                                                 uCoatColorBias,
-                                                 uCoatColorPtexGrid);
-    coatTint = mix(vec3(1.0), coatTint, clamp(uCoatAffectColor, 0.0, 1.0));
+    vec3 sampledCoatTint = uCoatColor * sampleCoatColor(
+        uCoatColorTex, uHasCoatColorTex, uAdvancedTexIsUdim.z,
+        uAdvancedUdimRoutes.z, uAdvancedUdimSlots.z, uCoatColorUv0,
+        uCoatColorUv1, uCoatColorUvSet, uCoatColorScale, uCoatColorBias,
+        uCoatColorPtexGrid);
     if (uRenderMode == 36) { fragColor = vec4(vec3(cw), 1.0); return; }
-    if (uRenderMode == 37) { fragColor = vec4(coatTint, 1.0); return; }
+    // The semantic AOV reports the authored/sampled coat color itself. The
+    // coat_affect_color control belongs to BSDF shading and must not wash the
+    // diagnostic texture toward white.
+    if (uRenderMode == 37) { fragColor = vec4(sampledCoatTint, 1.0); return; }
     if (uRenderMode == 38) { fragColor = vec4(vec3(cr), 1.0); return; }
+    vec3 coatTint = mix(vec3(1.0), sampledCoatTint,
+                        clamp(uCoatAffectColor, 0.0, 1.0));
     float ci = max(uCoatIor, 1.0);
     float cd = (ci - 1.0) / (ci + 1.0);
     vec3 direct = vec3(0.0);
@@ -1315,7 +1323,7 @@ void main() {
         vec3 specular = D * G * F * clamp(uSpecularWeight, 0.0, 1.0) /
                         max(4.0 * NoV * NoL, 1e-5);
         vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * baseColor *
-                       clamp(uBaseWeight, 0.0, 1.0) / kPi;
+                       baseWeight / kPi;
         // OpenPBR sheen: a rough retro-reflective lobe concentrated at the
         // grazing angles.  This Charlie-like approximation is intentionally
         // bounded so it can be layered with the existing GGX response.
@@ -1397,7 +1405,7 @@ void main() {
                         geometrySchlickGGX(NoL, rgh) * F /
                         max(4.0 * NoV * NoL, 1e-5);
         vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * baseColor *
-                       clamp(uBaseWeight, 0.0, 1.0) / kPi;
+                       baseWeight / kPi;
         specular *= clamp(uSpecularWeight, 0.0, 1.0);
         direct = (diffuse + specular) * lightColor * NoL;
     }
@@ -1418,7 +1426,7 @@ void main() {
                  vec4(1.0, 0.0425, 1.04, -0.04);
         float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
         vec2 dfg = vec2(-1.04, 1.04) * a004 + r.zw;
-        ambient = (baseColor * (1.0 - met) * clamp(uBaseWeight, 0.0, 1.0) * irr +
+        ambient = (baseColor * (1.0 - met) * baseWeight * irr +
                    pref * (F0 * dfg.x + dfg.y)) * uIblColor;
         vec3 coatPref = textureLod(uPrefilteredMap, Re,
                                    cr * float(uPrefilteredLods - 1)).rgb;

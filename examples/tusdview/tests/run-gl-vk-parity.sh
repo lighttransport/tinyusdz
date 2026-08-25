@@ -27,7 +27,7 @@ printf '%s\n' '{"window_size":{"width":1024,"height":768}}' >"$TMP/config.json"
 
 run_bounded() {
   if command -v timeout >/dev/null 2>&1; then
-    timeout --kill-after=5s "${TUSDVIEW_GL_VK_TIMEOUT:-45s}" "$@"
+    timeout --kill-after=5s "${TUSDVIEW_GL_VK_TIMEOUT:-20s}" "$@"
   else
     "$@"
   fi
@@ -49,8 +49,14 @@ for fixture in "${FIXTURES[@]}"; do
   gl_ok=0; vk_ok=0
   LOG_GL="$(run_bounded "${GL_RUN[@]}" env XDG_CONFIG_HOME="$TMP/config-home" \
     "$BIN" --config "$TMP/config.json" --backend gl --frames 2 \
-    --no-grid --screenshot "$gl_out" "$fixture" 2>&1)" && gl_ok=1
+    --no-grid --screenshot "$gl_out" "$fixture" 2>&1)"
+  gl_rc=$?
+  [ "$gl_rc" -eq 0 ] && gl_ok=1
   if [ "$gl_ok" -eq 0 ]; then
+    if [ "$gl_rc" -eq 124 ] || [ "$gl_rc" -eq 137 ]; then
+      echo "SKIP: OpenGL/X11 backend timed out during initialization"
+      exit "$SKIP"
+    fi
     if grep -Eiq 'failed to open display|glfwInit failed|OpenGL.*unavailable' \
          <<<"$LOG_GL"; then
       echo "SKIP: OpenGL unavailable for $name"

@@ -248,6 +248,11 @@ struct RenderMesh {
   UInt32Chunked face_vertex_counts;   // Number of verts per face
   UInt32Chunked face_vertex_indices;  // Vertex indices
 
+  // For pre-tessellated subdivision surfaces, maps each refined face to its
+  // level-0 face. GeomSubset membership remains authored in level-0 face
+  // space, so render consumers must use this ancestry when batching triangles.
+  std::vector<uint32_t> subdivision_face_source;
+
   // Primary vertex data (always present for valid mesh)
   FloatChunked points;  // xyz interleaved, size = num_points * 3
 

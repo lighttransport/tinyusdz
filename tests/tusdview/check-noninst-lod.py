@@ -37,7 +37,7 @@ MIN_TRI_DROP = 0.50       # LOD on: drawn triangles must fall by at least this
 
 def write_scene(path):
     """A field of small cubes + one big cube, each mesh with its own material."""
-    def cube(name, cx, cy, cz, h, mat):
+    def cube(name, cx, cy, cz, h, mat, color):
         pts = [(cx + sx * h, cy + sy * h, cz + sz * h)
                for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
         # 6 quads over the 8 corners (index bit order: x=4, y=2, z=1).
@@ -50,7 +50,7 @@ def write_scene(path):
     token outputs:surface.connect = </World/{mat}/PBR.outputs:surface>
     def Shader "PBR" {{
       uniform token info:id = "UsdPreviewSurface"
-      color3f inputs:diffuseColor = (0.6, 0.6, 0.6)
+      color3f inputs:diffuseColor = ({color[0]}, {color[1]}, {color[2]})
       token outputs:surface
     }}
   }}
@@ -62,12 +62,17 @@ def write_scene(path):
     rel material:binding = </World/{mat}>
   }}'''
 
-    body = [cube("Big", 0, 0, 0, 300.0, "MatBig")]
+    body = [cube("Big", 0, 0, 0, 300.0, "MatBig", (0.9, 0.9, 0.9))]
     side = 8
     for i in range(SMALL):
         gx, gz = i % side, i // side
+        # Material identity is value-deduplicated by the loader. Give every
+        # fixture material a distinct constant so these remain independent
+        # batches and actually exercise per-mesh raster LOD.
+        color = (0.2 + gx * 0.07, 0.2 + gz * 0.07,
+                 0.2 + i * 0.005)
         body.append(cube(f"Small_{i}", -900 + gx * 260, 0, -900 + gz * 260, 3.0,
-                         f"MatSmall_{i}"))
+                         f"MatSmall_{i}", color))
     with open(path, "w") as f:
         f.write('#usda 1.0\n(defaultPrim = "World" upAxis = "Y")\n'
                 'def Xform "World" {' + "".join(body) + "\n}\n")

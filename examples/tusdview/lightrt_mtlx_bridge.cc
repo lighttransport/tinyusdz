@@ -1719,6 +1719,8 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
   // nodes or direct runtime textures; LightRT's no-image texture stub would
   // otherwise bake MaterialX `default` values over live texture inputs.
   if (mat->hasOpenPBRSurface && !mat->materialXNodeGraphJson.empty()) {
+    const float directThinFilmWeight = p.thinFilmWeight;
+    const float directThinFilmThickness = p.thinFilmThicknessNm;
     DrawLightRtOpenPBRCPU graphParams;
     std::string graphErr;
     if (EvaluateMaterialXJsonGraphForMaterial(*mat, &graphParams, &graphErr)) {
@@ -1729,6 +1731,14 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
            std::fabs(graphParams.normal[1]) > 0.0f ||
            std::fabs(graphParams.normal[2] - 1.0f) > 1.0e-6f);
       MergeGraphParamsPreservingTextureDeps(graphParams, textureDeps, &p);
+      // A graph evaluator starts from OpenPBR defaults (500 nm film), while a
+      // converted Standard Surface with no authored film is explicitly 0 nm.
+      // Do not let evaluation of an unrelated graph-connected lane (such as a
+      // specular-color image) manufacture an iridescent film lobe.
+      if (directThinFilmWeight <= 0.0f) {
+        p.thinFilmWeight = 0.0f;
+        p.thinFilmThicknessNm = directThinFilmThickness;
+      }
       p.hasTextureInputs = graphParams.hasTextureInputs;
       p.hasNormalInput = graphParams.hasNormalInput;
       ClampLightRtParams(&p);
