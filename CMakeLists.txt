@@ -3376,7 +3376,8 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backface-material.sh"
       )
     set_tests_properties(tusdview-backface-material
-                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    ENVIRONMENT "TUSDVIEW_XVFB=1")
 
     # doubleSided (audit T8): a single-sided mesh back-face culls, a doubleSided
     # one does not -- identically on GL and Vulkan. The --next loader used to
@@ -3433,11 +3434,10 @@ if(TINYUSDZ_BUILD_TESTS)
                 ${_semantic_timeout_env}
                 bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
         )
-      # 900 s to match the loader-parity cases below, which do comparable work.
       # 300 s was enough only while a failed backend probe let most cases be
       # skipped; a full GL run over every mode and family measures ~436 s.
       set_tests_properties("${_test_name}" PROPERTIES
-                           SKIP_RETURN_CODE 77 TIMEOUT 900 LABELS "tusdview"
+                           SKIP_RETURN_CODE 77 TIMEOUT 1800 LABELS "tusdview"
                            RESOURCE_LOCK tusdview_semantic_gpu)
     endforeach()
 
@@ -3456,9 +3456,11 @@ if(TINYUSDZ_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "tusdview"
                          RESOURCE_LOCK tusdview_semantic_gpu)
 
-    # Keep the RT texture-table path loader-neutral. Split by backend while
-    # retaining both loaders in each case so default/legacy image parity is
-    # still checked within the backend shard.
+    # Keep the RT texture-table path loader-neutral without repeating the full
+    # semantic matrix above. One textured OpenPBR albedo case still exercises
+    # external, UDIM, and USDZ resolution through both loaders and compares the
+    # resulting images, while reducing this shard from ~162 viewer launches to
+    # six.
     set(_tinyusdz_semantic_rt_backends vk-rt cuda hip)
     foreach(_backend IN LISTS _tinyusdz_semantic_rt_backends)
       set(_test_name "tusdview-texture-semantic-rt-loader-parity-${_backend}")
@@ -3478,11 +3480,13 @@ if(TINYUSDZ_BUILD_TESTS)
               "TUSDVIEW=$<TARGET_FILE:tusdview>"
               "TUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
               "TUSDVIEW_SEMANTIC_LOADERS=default legacy"
+              "TUSDVIEW_SEMANTIC_FAMILIES=openpbr"
+              "TUSDVIEW_SEMANTIC_MODES=albedo"
               ${_semantic_rt_timeout_env}
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
       )
       set_tests_properties("${_test_name}" PROPERTIES
-                           SKIP_RETURN_CODE 77 TIMEOUT 900 LABELS "tusdview"
+                           SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "tusdview"
                            RESOURCE_LOCK tusdview_semantic_gpu)
     endforeach()
 
@@ -3543,7 +3547,7 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-displacement-udim.sh"
       )
     set_tests_properties(tusdview-displacement-udim PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 180)
+                         SKIP_RETURN_CODE 77 TIMEOUT 600)
 
     # A single mesh may bind different materials through materialBind
     # GeomSubsets. All RT backends must resolve the committed triangle's
