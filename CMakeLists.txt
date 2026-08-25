@@ -2390,6 +2390,18 @@ if(TINYUSDZ_BUILD_TESTS)
               "$<TARGET_FILE:tusdrender>")
     set_tests_properties(tool-tusdrender-gpu-render PROPERTIES
                          SKIP_RETURN_CODE 77 LABELS "tusdrender;gpu;rt;materialx;openpbr")
+    if(TUSDR_PYTHON)
+      add_test(
+        NAME tool-tusdrender-materialx-openpbr-parity
+        COMMAND ${TUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_materialx_openpbr_parity.py
+                "$<TARGET_FILE:tusdrender>" ${PROJECT_SOURCE_DIR})
+      set_tests_properties(tool-tusdrender-materialx-openpbr-parity PROPERTIES
+                           SKIP_RETURN_CODE 77
+                           TIMEOUT 180
+                           RESOURCE_LOCK tusdview_semantic_gpu
+                           LABELS "tusdrender;gpu;rt;materialx;openpbr;parity")
+    endif()
     set(TUSDR_SHELL_TESTS
         backplate
         backface-material
