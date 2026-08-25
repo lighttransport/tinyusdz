@@ -675,8 +675,9 @@ vec3 swApproxLayerColor(int iid, int tri, vec2 bc) {
     for (uint li = 0u; li < uint(lightRows.length()) / 20u; ++li) {
       vec4 l0 = lightRows[li * 20u];
       int lt = int(l0.x + 0.5);
+      if (lt < 0 || lt > 8) continue;
       int flags = int(l0.y + 0.5);
-      if (lt == 6 || l0.y <= 0.5 ||
+      if (lt == 6 ||
           (li < 32u && (insts[iid].directLightMask & (1u << li)) == 0u) ||
           (li >= 32u && (flags & (1 << 5)) == 0)) continue;
       vec3 L;
@@ -1457,6 +1458,7 @@ vec3 swPtSampleDirect(SwPtSurface s, int iid, vec3 v, inout uint seed) {
   float totalPower = 0.0; uint selected = 0u;
   for (uint li = 0u; li < count; ++li) {
     int type = int(lightRows[li * 20u].x + 0.5);
+    if (type < 0 || type > 8) continue;
     int flags = int(lightRows[li * 20u].y + 0.5);
     bool linked = li < 32u
         ? (insts[iid].directLightMask & (1u << li)) != 0u
@@ -1471,6 +1473,7 @@ vec3 swPtSampleDirect(SwPtSurface s, int iid, vec3 v, inout uint seed) {
   if (totalPower <= 0.0) return vec3(0.0);
   uint li = selected;
   int type = int(lightRows[li * 20u].x + 0.5);
+  if (type < 0 || type > 8) return vec3(0.0);
   int flags = int(lightRows[li * 20u].y + 0.5);
   float area = max(lightRows[li * 20u + 5u].w, 1.0);
   float selectPdf = swPtLum(lightRows[li * 20u + 3u].rgb) * area /
@@ -2124,8 +2127,9 @@ void main() {
     for (uint li = 0u; li < directLightCount; ++li) {
       vec4 l0 = lightRows[li * 20u + 0u];
       int lightType = int(l0.x + 0.5);
+      if (lightType < 0 || lightType > 8) continue;
       int flags = int(l0.y + 0.5);
-      if (lightType == 6 || l0.y <= 0.5) continue;
+      if (lightType == 6) continue;
       hadDirectLight = true;
       bool linked = li < 32u
           ? (inst.directLightMask & (1u << li)) != 0u
@@ -2136,7 +2140,11 @@ void main() {
       float maxShadowT = 1e30;
       float attenuation = 1.0;
       vec3 geometryNormal = vec3(0.0);
-      vec3 geometryEmission = lightRows[li * 20u + 3u].rgb;
+      // Analytic lights carry their exposure/color-resolved RGB in row 4.
+      // Geometry lights retain authored surface emission in row 3.
+      vec3 geometryEmission = lightType == 7
+                                  ? lightRows[li * 20u + 3u].rgb
+                                  : lightRows[li * 20u + 4u].rgb;
       float geometryArea = 1.0;
       if (lightType == 5) {
         vec3 lightDirection = lightRows[li * 20u + 2u].xyz;

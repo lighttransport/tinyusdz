@@ -13,7 +13,7 @@ SKIP=77
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUSDVIEW="${TUSDVIEW:-$SCRIPT_DIR/../../../build/tusdview}"
-BACKEND="${BACKEND:-gl}"
+BACKEND="${BACKEND:-vk}"
 
 if [ ! -x "$TUSDVIEW" ]; then
   echo "SKIP: tusdview binary not found at $TUSDVIEW (set TUSDVIEW=...)"
@@ -109,8 +109,9 @@ run_case() {
   local asset="$2"
   local out="$TMP_DIR/${label}.png"
   local log
-  log="$("${RUN[@]}" "$TUSDVIEW" --backend "$BACKEND" --next --config "$CONFIG" \
-         --frames 4 --screenshot "$out" "$asset" 2>&1)"
+  log="$(timeout --kill-after=5s 30s "${RUN[@]}" "$TUSDVIEW" --headless \
+         --backend "$BACKEND" --next --config "$CONFIG" --frames 1 \
+         --screenshot "$out" "$asset" 2>&1)"
   echo "$log"
 
   if ! echo "$log" | grep -q "render stats"; then

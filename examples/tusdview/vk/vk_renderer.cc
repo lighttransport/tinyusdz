@@ -9489,14 +9489,10 @@ void VulkanRenderer::rebuildTlas() {
   if (mats.empty()) mats.assign(12, 0.0f);   // dummy 1-material block (non-empty SSBO)
   std::vector<float> lrtMats = matLightRt_;  // 14 vec4 per material (LightRT/OpenPBR)
   if (lrtMats.empty()) lrtMats.assign(kVkLightRtOpenPBRFloats, 0.0f);
-  std::vector<float> lights = lightParams_;  // packed DrawLightCPU light records
-  if (lights.empty()) lights.assign(kVkRtLightFloats, 0.0f);
   createHostBuffer(mats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    mats.data(), &rtMatBuf_, &rtMatMem_);
   createHostBuffer(lrtMats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    lrtMats.data(), &rtMatLightRtBuf_, &rtMatLightRtMem_);
-  createHostBuffer(lights.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                   lights.data(), &rtLightBuf_, &rtLightMem_);
   if (rebuildRtTextures) {
     HostTextureTable rtTextures;
     BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures,
@@ -9553,6 +9549,17 @@ void VulkanRenderer::rebuildTlas() {
                                        : static_cast<const void*>(matGraph_.data()),
                      &rtMatGraphBuf_, &rtMatGraphMem_);
   }
+  // rebuildTlas() releases the previous light SSBO above. Recreate it even
+  // when the texture table is unchanged; in that case lightParams_ already
+  // contains the current lights with their previously mapped envmap ids.
+  std::vector<float> lights = lightParams_;
+  if (lights.empty()) {
+    lights.assign(kVkRtLightFloats, 0.0f);
+    lights[0] = 9.0f;  // invalid sentinel; shader uses its headlight fallback
+  }
+  createHostBuffer(lights.size() * sizeof(float),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, lights.data(),
+                   &rtLightBuf_, &rtLightMem_);
   createHostBuffer(instInfos.size() * sizeof(InstanceInfoGPU),
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, instInfos.data(),
                    &instInfoBuf_, &instInfoMem_);
@@ -10427,14 +10434,10 @@ void VulkanRenderer::rebuildSwMaterialLightSSBOs() {
   if (mats.empty()) mats.assign(12, 0.0f);
   std::vector<float> lrtMats = matLightRt_;  // 14 vec4 per material (LightRT/OpenPBR)
   if (lrtMats.empty()) lrtMats.assign(kVkLightRtOpenPBRFloats, 0.0f);
-  std::vector<float> lights = lightParams_;  // packed DrawLightCPU light records
-  if (lights.empty()) lights.assign(kVkRtLightFloats, 0.0f);
   createHostBuffer(mats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    mats.data(), &rtMatBuf_, &rtMatMem_);
   createHostBuffer(lrtMats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    lrtMats.data(), &rtMatLightRtBuf_, &rtMatLightRtMem_);
-  createHostBuffer(lights.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                   lights.data(), &rtLightBuf_, &rtLightMem_);
 
   HostTextureTable rtTextures;
   BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures,
@@ -10450,15 +10453,21 @@ void VulkanRenderer::rebuildSwMaterialLightSSBOs() {
                ? rtTextures.sourceToTable[static_cast<size_t>(sourceId)]
                : -1;
   };
-  // Matches rebuildTlas()'s own ordering: lightParams_ is rewritten with the
-  // freshly-remapped envmap ids AFTER the pre-rebuild lights[] snapshot above
-  // was already uploaded, so the new mapping takes effect starting next
-  // rebuild -- same one-rebuild lag as the hardware path, not a new bug.
+  // Pack and upload the current scene in the same rebuild. Snapshotting
+  // lightParams_ before this loop left the compute-BVH path one rebuild behind;
+  // a fresh scene therefore traced with an all-zero/stale light buffer.
   lightParams_.assign(rtLightsCpu_.size() * kVkRtLightFloats, 0.0f);
   for (size_t i = 0; i < rtLightsCpu_.size(); ++i) {
     PackRtLightParams(rtLightsCpu_[i], mapEnvmap(rtLightsCpu_[i].envmapTexture),
                       &lightParams_[i * kVkRtLightFloats]);
   }
+  std::vector<float> lights = lightParams_;
+  if (lights.empty()) {
+    lights.assign(kVkRtLightFloats, 0.0f);
+    lights[0] = 9.0f;  // invalid sentinel; shader falls back to its headlight
+  }
+  createHostBuffer(lights.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   lights.data(), &rtLightBuf_, &rtLightMem_);
   const uint32_t dummyTexel = 0xffffffffu;
   HostTextureDesc dummyTexDesc;
   for (int& layer : dummyTexDesc.udimLayer) layer = -1;
@@ -12848,11 +12857,19 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
             const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12u];
             push.baseColor[0] = mc[0]; push.baseColor[1] = mc[1];
             push.baseColor[2] = mc[2]; push.baseColor[3] = mc[3];
-            // Shadow.frag uses matAux.z/w for alpha mode/cutoff.  The
-            // material color packing stores those in row 1 (lanes 0/1), not
-            // the emissive row that the lit fragment consumes.
-            push.matAux[2] = mc[4];
-            push.matAux[3] = mc[5];
+            // Shadow.frag uses matAux.z/w for alpha mode/cutoff. Material row
+            // 1 is (metallic, roughness, alphaMode, alphaCutoff).
+            push.matAux[2] = mc[6];
+            push.matAux[3] = mc[7];
+            if (std::getenv("TUSDVIEW_DEBUG_SHADOW")) {
+              std::fprintf(stderr,
+                           "[vk-shadow] mesh=%zu material=%d alpha=%.3f "
+                           "mode=%.0f cutoff=%.3f opacityTex=%d\n",
+                           mi, sub.materialId, mc[3], mc[6], mc[7],
+                           static_cast<size_t>(sub.materialId) < matOpacityTex_.size()
+                               ? matOpacityTex_[static_cast<size_t>(sub.materialId)]
+                               : -1);
+            }
           } else {
             push.baseColor[0] = push.baseColor[1] = push.baseColor[2] = 0.6f;
             push.baseColor[3] = 1.0f;
@@ -12870,6 +12887,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           if (sub.materialId >= 0 &&
               static_cast<size_t>(sub.materialId) < matBaseTex_.size()) {
             const int slot = matBaseTex_[static_cast<size_t>(sub.materialId)];
+            if (slot >= 0) push.ids[3] |= 2;
             if (slot >= 0 && static_cast<size_t>(slot) < texIsUdim_.size() &&
                 texIsUdim_[static_cast<size_t>(slot)] != 0)
               push.ids[3] |= 1;

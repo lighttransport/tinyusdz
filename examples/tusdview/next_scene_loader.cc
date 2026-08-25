@@ -944,6 +944,10 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     const uint32_t faceId = (cornerToFace.empty() || cornerId >= cornerToFace.size())
                                 ? 0u
                                 : cornerToFace[cornerId];
+    const uint32_t sourceFaceId =
+        faceId < m.subdivision_face_source.size()
+            ? m.subdivision_face_source[faceId]
+            : faceId;
 
     float n[3], t0[2], t1[2], rgb[4], a = 1.0f, tg[4];
     nrm.read(pid, cornerId, faceId, 3, n);
@@ -1026,7 +1030,7 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     // then discard triangulation diagonals even if the explicit perimeter EBO
     // is unavailable after material batching or backend conversion.
     if ((c % 3) == 0 && (c / 3) < dm->sourceFaceId.size()) {
-      dm->sourceFaceId[c / 3] = faceId;
+      dm->sourceFaceId[c / 3] = sourceFaceId;
     }
   }
 
@@ -1040,7 +1044,10 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
       const size_t end = std::min<size_t>(m.face_triangle_offsets[f + 1],
                                           dm->sourceFaceId.size());
       for (size_t t = begin; t < end; ++t) {
-        dm->sourceFaceId[t] = static_cast<uint32_t>(f);
+        dm->sourceFaceId[t] =
+            f < m.subdivision_face_source.size()
+                ? m.subdivision_face_source[f]
+                : static_cast<uint32_t>(f);
       }
     }
   }
@@ -7003,7 +7010,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // (fan/earcut both emit c-2 triangles per face, in face order).
   using MaterialPair = std::pair<int, int>;
   auto buildTriMaterials = [&](const tnext::UsdPrim& mp, const tydn::RenderMesh& m,
-                               size_t numTris, MaterialPair wholeMat,
+                               size_t numTris,
+                               const std::vector<uint32_t>& sourceFaceId,
+                               MaterialPair wholeMat,
                                std::vector<MaterialPair>* triMat) {
     triMat->clear();
     struct Sub { std::vector<int32_t> faces; MaterialPair mat; };
@@ -7037,9 +7046,21 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     const std::vector<uint32_t> fvc = m.face_vertex_counts.flatten();
     std::vector<int> triFace;
     triFace.reserve(numTris);
-    for (size_t f = 0; f < fvc.size(); ++f)
-      for (uint32_t k = 2; k < fvc[f]; ++k) triFace.push_back(static_cast<int>(f));
-    if (triFace.size() != numTris) return;  // triangulation mismatch -> whole-mesh
+    // Prefer retained provenance even when the tessellator rewrote the mesh's
+    // faceVertexCounts into one triangle per refined face. Merely comparing
+    // triangle counts is insufficient there: both arrays have the same length,
+    // but authored GeomSubset indices still refer to the four coarse faces.
+    if (sourceFaceId.size() == numTris) {
+      for (uint32_t face : sourceFaceId) {
+        if (face >= fvc.size()) return;
+        triFace.push_back(static_cast<int>(face));
+      }
+    } else {
+      for (size_t f = 0; f < fvc.size(); ++f)
+        for (uint32_t k = 2; k < fvc[f]; ++k)
+          triFace.push_back(static_cast<int>(f));
+      if (triFace.size() != numTris) return;
+    }
 
     std::vector<MaterialPair> faceMat(fvc.size(), wholeMat);
     // Authored subset indices use the ORIGINAL face numbering. When
@@ -8068,7 +8089,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // meshes; the child-count query is backed by the composed prim index and
     // does not allocate. GeomSubset meshes still take the exact existing path.
     if (hasSubsetMaterialBindings) {
-      buildTriMaterials(mp, m, loc.indices.size() / 3,
+      buildTriMaterials(mp, m, loc.indices.size() / 3, loc.sourceFaceId,
                         {wholeMat, wholeBackMat}, &triMat);
     }
     if (!loc.vertexAlpha.empty()) {

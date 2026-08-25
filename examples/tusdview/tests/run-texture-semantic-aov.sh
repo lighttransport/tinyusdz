@@ -876,11 +876,11 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
   esac
   for backend in ${TUSDVIEW_SEMANTIC_BACKENDS:-gl vk-raster vk-rt cuda hip}; do
     case "$backend" in
-      gl) args=("$BIN" --backend gl "${loader_args[@]}"); tag=gl$loader_suffix; marker='render stats';;
-      vk-raster) args=("$BIN" --headless --backend vk "${loader_args[@]}"); tag=vk-raster$loader_suffix; marker='render stats';;
-      vk-rt) [ "$vk_software" = 0 ] || { echo 'SKIP: Vulkan RT on software Vulkan'; continue; }; args=("$BIN" --headless --backend vk --rt "${loader_args[@]}"); tag=vk-rt$loader_suffix; marker='caps: v1 .*rt=hardware';;
-      cuda) args=("$BIN" --headless --cuda "${loader_args[@]}"); tag=cuda$loader_suffix; marker='CUDA RT wrote';;
-      hip) args=("$BIN" --headless --hip "${loader_args[@]}"); tag=hip$loader_suffix; marker='HIP RT wrote';;
+      gl) args=("$BIN" --backend gl --texture-compress off --texture-mips off "${loader_args[@]}"); tag=gl$loader_suffix; marker='render stats';;
+      vk-raster) args=("$BIN" --headless --backend vk --texture-compress off --texture-mips off "${loader_args[@]}"); tag=vk-raster$loader_suffix; marker='render stats';;
+      vk-rt) [ "$vk_software" = 0 ] || { echo 'SKIP: Vulkan RT on software Vulkan'; continue; }; args=("$BIN" --headless --backend vk --rt --texture-compress off --texture-mips off "${loader_args[@]}"); tag=vk-rt$loader_suffix; marker='caps: v1 .*rt=hardware';;
+      cuda) args=("$BIN" --headless --cuda --texture-compress off --texture-mips off "${loader_args[@]}"); tag=cuda$loader_suffix; marker='CUDA RT wrote';;
+      hip) args=("$BIN" --headless --hip --texture-compress off --texture-mips off "${loader_args[@]}"); tag=hip$loader_suffix; marker='HIP RT wrote';;
       *) echo "unknown backend: $backend" >&2; exit 2;;
     esac
     for family in preview openpbr standard; do

@@ -14,7 +14,7 @@ SKIP=77
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUSDVIEW="${TUSDVIEW:-$SCRIPT_DIR/../../../build/tusdview}"
-BACKEND="${BACKEND:-gl}"
+BACKEND="${BACKEND:-vk}"
 
 if [ ! -x "$TUSDVIEW" ]; then
   echo "SKIP: tusdview binary not found at $TUSDVIEW (set TUSDVIEW=...)"
@@ -25,6 +25,8 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 PLAIN_ASSET="$TMP_DIR/pointinstancer_plain.usda"
 REF_ASSET="$TMP_DIR/pointinstancer_ref.usda"
+CONFIG="$TMP_DIR/config.json"
+printf '%s\n' '{"window_size":{"width":800,"height":600}}' > "$CONFIG"
 
 # Three cubes along X. The prototype lives at the origin; the instances place
 # copies at x = -1.5, 0, +1.5. The tydra path must emit 3 instances and frame
@@ -83,7 +85,8 @@ run_case() {
   local out="$TMP_DIR/${label}.png"
   local log
   # NOTE: default (tydra) loader -- no --next.
-  log="$("${RUN[@]}" "$TUSDVIEW" --backend "$BACKEND" --frames 1 \
+  log="$(timeout --kill-after=5s 30s "${RUN[@]}" "$TUSDVIEW" --headless \
+         --backend "$BACKEND" --config "$CONFIG" --frames 1 \
          --screenshot "$out" "$asset" 2>&1)"
   echo "$log"
 

@@ -130,6 +130,7 @@ def stdev_of_lit(px):
 
 def render(binary, model, out_png, backend):
     args = [binary, "--backend", backend, "--next", "--frames", "4",
+            "--no-grid", "--view-dir", "0,0,-1",
             "--screenshot", out_png, model]
     args[1:1] = vk_device_args(backend)
     xvfb = shutil.which("xvfb-run")

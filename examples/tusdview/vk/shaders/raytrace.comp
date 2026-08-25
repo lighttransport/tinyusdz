@@ -901,8 +901,9 @@ vec3 approximatePrimaryLayerColor(uint iid, int prim, vec2 bc, bool front,
     vec3 f0 = mix(vec3(fd * fd), base, metallic);
     vec3 shaded = emission + base * 0.05;
     for (uint li = 0u; li < uint(lightRows.length()) / RT_LIGHT_ROWS; ++li) {
+      if (li < 32u && (ii.directLightMask & (1u << li)) == 0u) continue;
       int lt = int(light(li, 0u).x + 0.5);
-      if (lt == 6 || light(li, 0u).y <= 0.5) continue;
+      if (lt == 6) continue;
       vec3 L;
       float attenuation = 1.0;
       if (lt == 5) {
@@ -2064,7 +2065,7 @@ void main() {
       for (uint li = 0u; li < lightCount; ++li) {
         if ((p.directLightMask & (1u << min(li, 31u))) == 0u) continue;
         vec4 l0 = light(li, 0u);
-        if (l0.y <= 0.5 || int(l0.x + 0.5) == 6) continue;
+        if (int(l0.x + 0.5) == 6) continue;
         vec3 L;
         float attenuation = 1.0;
         if (int(l0.x + 0.5) == 5) {
@@ -2424,7 +2425,7 @@ void main() {
       uint lightCount = uint(lightRows.length()) / RT_LIGHT_ROWS;
       for (uint li = 0u; li < lightCount; ++li) {
         vec4 l0 = light(li, 0u);
-        if (l0.y <= 0.5 || int(l0.x + 0.5) == 6) continue;
+        if (int(l0.x + 0.5) == 6) continue;
         // Keep the graph-free fast material semantically aligned with the
         // full RT path: CollectionAPI light links are carried per TLAS
         // instance and must gate both direct contribution and its shadow.
@@ -2475,7 +2476,8 @@ void main() {
                     ggxG1(nl, roughness) * F /
                     max(4.0 * nv * nl, 1.0e-5);
         lit += (base * (1.0 - metallic) * (vec3(1.0) - F) /
-                3.14159265 + spec) * l0.z * l0.w * attenuation * nl * shadow;
+                3.14159265 + spec) * light(li, 4u).rgb * attenuation * nl *
+               shadow;
       }
       outc = mix(bgc, lit, materialOpacity);
     } else if (rmode == 2) outc = N * 0.5 + 0.5;
@@ -2992,7 +2994,6 @@ void main() {
     for (uint li = 0u; li < directLightCount; ++li) {
       int lightType = int(light(li, 0u).x + 0.5);
       if (lightType == 6) continue;  // dome is consumed as environment
-      if (light(li, 0u).y <= 0.5) continue;
       hadDirectLight = true;
       int flags = int(light(li, 0u).y + 0.5);
       bool directLinked = li < 32u
@@ -3154,7 +3155,7 @@ void main() {
                       max(4.0 * coatNoV * coatNoL, 1e-5) * coatColor *
                       clamp(coatWeight, 0.0, 1.0);
       float ies = rtIesFactor(li, normalize(-L));
-      vec3 lightColor = light(li, 3u).rgb;
+      vec3 lightColor = light(li, 4u).rgb;
       if (lightType == 8) {
         vec3 portalRadiance = rtDomeRadiance(L);
         if (dot(portalRadiance, portalRadiance) > 1e-8)
@@ -3378,7 +3379,11 @@ void main() {
       vec2 uvh = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x + fetchUV(vb, i2) * bc.y;
       outc = vec3(fract(uvh), 0.0);
     } else if (rmode == 6) {
-      float d = clamp(t / max(pc.lightDir.w, 1e-3), 0.0, 1.0);
+      // Match raster depth exactly: camera-to-fragment Euclidean distance.
+      // The ray-query parameter is measured from the near-plane ray origin
+      // and can also diverge under a non-uniform instance transform.
+      float d = clamp(length(pc.camPos.xyz - hit) /
+                      max(pc.lightDir.w, 1e-3), 0.0, 1.0);
       outc = vec3(1.0 - d);
     } else if (rmode == 7) {
       outc = base;  // albedo (pre-lighting)

@@ -5438,6 +5438,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
         static_cast<uint32_t>(vertex.size()), subdiv_options, &refined,
         &subdivision_error);
     if (result == ::tinyusdz::tsd::Result::Success) {
+      out->subdivision_face_source = std::move(refined.face_source);
       out->points.clear();
       out->points.append(refined.points.data(), refined.points.size());
       out->face_vertex_counts.clear();

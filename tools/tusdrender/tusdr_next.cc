@@ -900,7 +900,27 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     t.width = int(img.width);
     t.height = int(img.height);
     t.channels = int(img.channels);
-    t.pixels = std::move(img.pixels);
+    if (img.hdr) {
+      // tusdrender's CPU sampler and mip chain store 8-bit texels. The shared
+      // decoder retains EXR/HDR inputs as linear float RGB, so moving `pixels`
+      // here used to leave a non-zero-sized Texture with a null mip source and
+      // crash in build_mips(). Preserve the renderer's existing storage model
+      // by quantizing the decoded source-space values; the authored color
+      // transform is still applied later by Texture::sample_data().
+      const size_t texel_count = size_t(t.width) * size_t(t.height);
+      t.channels = 3;
+      t.pixels.resize(texel_count * 3u);
+      for (size_t i = 0; i < texel_count * 3u; ++i) {
+        const float value = i < img.float_pixels.size() &&
+                                    std::isfinite(img.float_pixels[i])
+                                ? img.float_pixels[i]
+                                : 0.0f;
+        t.pixels[i] = static_cast<uint8_t>(
+            std::lround(std::max(0.0f, std::min(value, 1.0f)) * 255.0f));
+      }
+    } else {
+      t.pixels = std::move(img.pixels);
+    }
     t.wrap_s = ws;
     t.wrap_t = wt;
     t.srgb = srgb;

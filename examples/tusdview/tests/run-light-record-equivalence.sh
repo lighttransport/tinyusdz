@@ -4,7 +4,7 @@ SKIP=77
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BIN="${TUSDVIEW:-$ROOT/build_ninja/tusdview}"
 [ -x "$BIN" ] || { echo "SKIP: tusdview not found"; exit "$SKIP"; }
-command -v xvfb-run >/dev/null || { echo "SKIP: xvfb-run missing"; exit "$SKIP"; }
+command -v timeout >/dev/null || { echo "SKIP: timeout missing"; exit "$SKIP"; }
 OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"
 [ -n "${TUSDVIEW_TEST_OUT:-}" ] || trap 'rm -rf "$OUT"' EXIT
 mkdir -p "$OUT"
@@ -138,7 +138,8 @@ run_loader() {
   local name="$1"; shift
   local attempt
   for attempt in 1 2; do
-    TUSDVIEW_DUMP_LIGHT_RECORDS=1 xvfb-run -a "$BIN" --backend gl \
+    TUSDVIEW_DUMP_LIGHT_RECORDS=1 timeout --kill-after=5s 30s \
+      "$BIN" --headless --backend vk \
       --config "$OUT/config.json" --frames 1 --no-grid "$@" \
       "$OUT/lights.usda" >"$OUT/$name.log" 2>&1 && break
     [ "$attempt" = 1 ] || return 1

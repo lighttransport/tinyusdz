@@ -57,7 +57,8 @@ for spec in "gl:--backend gl:" "vk:--backend vk:--headless"; do
   available=1
   for variant in off linked all; do
     # shellcheck disable=SC2086
-    $XVFB env XDG_CONFIG_HOME="$OUT/config" "$BIN" $hl $args --frames 2 \
+    timeout --kill-after=5s 30s $XVFB env XDG_CONFIG_HOME="$OUT/config" \
+      "$BIN" $hl $args --frames 2 \
       --size 640x480 --no-grid --camera Cam --screenshot "$OUT/$tag-$variant.ppm" \
       "$OUT/$variant.usda" >"$OUT/$tag-$variant.log" 2>&1
     if ! grep -q 'render stats' "$OUT/$tag-$variant.log"; then
