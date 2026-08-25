@@ -179,6 +179,7 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       mat.roughness = src.roughness;
       mat.metallic = src.metallic;
       mat.normalTex = src.normal_tex_id;
+      mat.coatNormalTex = src.coat_normal_tex_id;
       mat.roughnessTex = src.rough_tex.id;
       mat.metallicTex = src.metal_tex.id;
       mat.emissive[0] = src.emission.x;
@@ -199,6 +200,10 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       mat.coatRoughness = src.clearcoat_roughness;
       mat.coatWeightTex = src.clearcoat_tex.id;
       mat.coatRoughnessTex = src.clearcoat_rough_tex.id;
+      mat.displacementConst = src.displacement;
+      mat.displacementTex = src.displacement_tex.id;
+      mat.displacementTexScale = src.displacement_tex.scale;
+      mat.displacementTexBias = src.displacement_tex.bias;
       mat.specularColor[0] = src.specular_color.x;
       mat.specularColor[1] = src.specular_color.y;
       mat.specularColor[2] = src.specular_color.z;
@@ -227,6 +232,9 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
       };
       set_sample(src.tex_id, -1, nullptr, &mat.baseColorSample);
       set_sample(src.normal_tex_id, -1, nullptr, &mat.normalSample);
+      set_sample(src.coat_normal_tex_id, -1, nullptr, &mat.coatNormalSample);
+      set_sample(src.displacement_tex.id, src.displacement_tex.ch,
+                 &src.displacement_tex, &mat.displacementSample);
       set_sample(src.rough_tex.id, src.rough_tex.ch, &src.rough_tex,
                  &mat.roughnessSample);
       set_sample(src.metal_tex.id, src.metal_tex.ch, &src.metal_tex,

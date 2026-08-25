@@ -200,6 +200,7 @@ void PrintUsage(const char *prog) {
       << "                         frame is rendered (default 320).\n"
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
+      << "  -vkDevice <N>         Select Vulkan physical-device index (default auto).\n"
       << "  -vkInstanced          -vkr + a true two-level GPU TLAS (one BLAS per\n"
       << "                        prototype, shared across instances; saves VRAM on\n"
       << "                        instanced scenes). Falls back to flat if no shares.\n"
@@ -744,6 +745,14 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->vulkan = true;
       opt->vulkan_rt = true;
       opt->backend_explicit = true;
+    }
+    OPT_MATCH(a == "-vkDevice" || a == "--vk-device") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->vulkan_device) ||
+          opt->vulkan_device < 0) {
+        std::cerr << "-vkDevice must be a non-negative physical-device index.\n";
+        return false;
+      }
     }
     OPT_MATCH(a == "-vkInstanced" || a == "--vkInstanced") {
       opt->vulkan = true;

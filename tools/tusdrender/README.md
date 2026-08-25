@@ -16,6 +16,7 @@ Common flags:
 |------|---------|
 | `-rtPreview` | ray-traced preview (the `next` loader; default for USDC) |
 | `-vk` / `-vkr` / `-d3d` | GPU backends — Vulkan compute / Vulkan ray query / Direct3D 11 compute — see [`doc/tusdrender.md`](../../doc/tusdrender.md) for status + testing |
+| `-vkDevice N` | Select a Vulkan physical-device index for explicit multi-GPU validation (`-1`/omitted means automatic selection) |
 | `-cuda` / `-hip` | Headless RT using the GUI-free tusdview core, including packed MaterialX/OpenPBR preview shading |
 | `--path-trace` | Production path tracing on `-vkr`/`-cuda`/`-hip`; tune with `--pt-quality`, `--pt-samples`, `--pt-max-depth`, and `--pt-rr-depth` |
 | `-largeSceneProfile caldera\|island\|alab` | Vulkan large-scene preset over backend/LOD/shared memory policy; explicit flags win |
@@ -52,7 +53,11 @@ It checks PreviewSurface/OpenPBR/standard_surface color semantics, executable
 MaterialX graph retention, tight CUDA/HIP image parity, and exposure-independent
 Vulkan/shared-backend chromaticity parity. To turn missing hardware into a
 failure for a GPU validation host, set
-`TUSDR_PARITY_REQUIRE_BACKENDS=vkr,cuda,hip`.
+`TUSDR_PARITY_REQUIRE_BACKENDS=vkr,cuda,hip`. Set
+`TUSDR_PARITY_REQUIRE_HARDWARE=1` to require NVIDIA identity on CUDA and AMD
+identity on HIP. Multi-GPU Vulkan validation accepts an explicit index/vendor
+matrix such as `TUSDR_PARITY_VULKAN_DEVICES=0:NVIDIA,1:AMD`; every listed
+device must expose hardware ray query and pass the semantic grid.
 
 Texture decode is bounded for ordinary `-rtPreview` runs as well as the named
 large-scene profiles. The derived cap applies before material conversion, and

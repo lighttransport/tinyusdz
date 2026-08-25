@@ -660,6 +660,14 @@ for family in preview openpbr standard; do
     "core-$family.usda" base.ppm orm.ppm emission.ppm)
 done
 
+# Reuse the exact semantic fixtures from headless renderer parity tests without
+# starting a viewer or duplicating the USDA/texture generators. The caller owns
+# TUSDVIEW_TEST_OUT in this mode, so the normal cleanup trap is already disabled.
+if [ "${TUSDVIEW_SEMANTIC_GENERATE_ONLY:-0}" = 1 ]; then
+  echo "PASS: generated semantic MaterialX fixtures in $OUT"
+  exit 0
+fi
+
 probe() {
   python3 - "$1" "$2" <<'PY'
 import collections,re,sys

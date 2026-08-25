@@ -33,7 +33,7 @@ if [ "$use_existing_display" -eq 0 ] && command -v Xvfb >/dev/null 2>&1; then
     sleep 0.1
   done
 fi
-gl_log="$(timeout --kill-after=5s 20s "$TUSDVIEW" \
+gl_log="$(timeout --kill-after=5s "${TUSDVIEW_GL_TIMEOUT:-20s}" "$TUSDVIEW" \
   --config "$TMP/config.json" --backend gl --camera /World/Camera \
   --frames 3 --screenshot "$TMP/gl.ppm" "$asset" 2>&1)"
 gl_rc=$?
