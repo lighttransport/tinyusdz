@@ -97,7 +97,17 @@ if(TARGET tinyusdz_static)
 else()
     target_sources(tydra_next PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../ptx-loader.cc
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../external/miniz.c)
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../external/miniz.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-validate.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-topology.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-bilinear.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-catmark.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-loop.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-fvar.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-refine.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-stream.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-limit.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tsd/tsd-tinyusdz.cc)
 endif()
 
 # Optional: Build test

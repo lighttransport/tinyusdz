@@ -485,20 +485,20 @@ vec4 evalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
   // the CPU before this shader is selected.  Keeping this tiny lowering here
   // avoids instantiating the 64-node interpreter (and its very expensive
   // driver JIT) for ordinary MaterialX texture materials.
-  const uint STRIDE = 1366u;
+  const uint STRIDE = 1394u;
   uint base = mid * STRIDE;
-  if (base + 20u >= uint(graphRows.length()) || route < 0 || route > 19)
+  if (base + 44u >= uint(graphRows.length()) || route < 0 || route > 43)
     return vec4(0.0);
   int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
   int count = int(clamp(graphRows[base], 0.0, 64.0));
   if (wanted < 0 || wanted >= count) return vec4(0.0);
-  uint p = base + 22u + uint(wanted) * 21u;
+  uint p = base + 50u + uint(wanted) * 21u;
   int op = int(graphRows[p] + 0.5);
   bool normalMap = op == 3;
   if (normalMap) {
     wanted = int(graphRows[p + 1u] + 0.5);
     if (wanted < 0 || wanted >= count) return vec4(0.0);
-    p = base + 22u + uint(wanted) * 21u;
+    p = base + 50u + uint(wanted) * 21u;
     op = int(graphRows[p] + 0.5);
   }
   if (op != 1 && op != 2) return vec4(0.0);
@@ -517,9 +517,9 @@ vec4 evalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
 }
 #else
 vec4 evalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
-  const uint STRIDE = 1366u;
+  const uint STRIDE = 1394u;
   uint base = mid * STRIDE;
-  if (base + 20u >= uint(graphRows.length()) || route < 0 || route > 19) return vec4(0.0);
+  if (base + 44u >= uint(graphRows.length()) || route < 0 || route > 43) return vec4(0.0);
   int count = int(clamp(graphRows[base], 0.0, 64.0));
   int wanted = int(graphRows[base + 1u + uint(route)] + 0.5);
   if (count <= 0 || wanted < 0 || wanted >= count) return vec4(0.0);
@@ -527,7 +527,7 @@ vec4 evalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
   // The CPU packer guarantees dependency-first order. One runtime-bounded pass
   // avoids the former fixed-point nest and its pathological driver-JIT cost.
   [[dont_unroll]] for (int i = 0; i < count; ++i) {
-      uint p = base + 22u + uint(i) * 21u;
+      uint p = base + 50u + uint(i) * 21u;
       int op = int(graphRows[p] + 0.5);
       int a = int(graphRows[p + 1u] + 0.5);
       int b = int(graphRows[p + 2u] + 0.5);
@@ -710,7 +710,7 @@ bool materialAllowsHit(uint iid, int prim, vec2 bc, bool frontFace) {
     alpha *= fetchCol(cbuff, i0).a * w0 + fetchCol(cbuff, i1).a * bc.x +
              fetchCol(cbuff, i2).a * bc.y;
   }
-  uint gb = mid * 1366u;
+  uint gb = mid * 1394u;
   if (gb + 4u < uint(graphRows.length()) && graphRows[gb + 4u] >= 0.0)
     alpha = evalMaterialXGraph(mid, 3, uv0, uv1, uint(max(prim, 0))).x *
             ii.tint.a;
@@ -766,7 +766,7 @@ float materialOpacityAtHit(uint iid, int prim, vec2 bc, bool frontFace,
     alpha *= fetchCol(cbuff, i0).a * w0 + fetchCol(cbuff, i1).a * bc.x +
              fetchCol(cbuff, i2).a * bc.y;
   }
-  uint gb = mid * 1366u;
+  uint gb = mid * 1394u;
   if (gb + 4u < uint(graphRows.length()) && graphRows[gb + 4u] >= 0.0)
     alpha = evalMaterialXGraph(mid, 3, uv0, uv1, uint(max(prim, 0))).x *
             ii.tint.a;
@@ -854,7 +854,7 @@ vec3 approximatePrimaryLayerColor(uint iid, int prim, vec2 bc, bool front,
       emission = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
     }
     uint face = uint(max(prim, 0));
-    uint gb = mid * 1366u;
+    uint gb = mid * 1394u;
     if (gb + 9u < uint(graphRows.length())) {
       if (graphRows[gb + 1u] >= 0.0)
         base = evalMaterialXGraph(mid, 0, uv0, uv1, face).rgb;
@@ -1226,7 +1226,7 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
     s.volumeDensity = max(lrt(mid, 18u).w, 0.0);
     s.volumeEmission = max(lrt(mid, 19u).rgb * lrt(mid, 19u).w, vec3(0.0));
   }
-  uint gb = mid * 1366u, face = uint(max(prim, 0));
+  uint gb = mid * 1394u, face = uint(max(prim, 0));
   if (gb + 9u < uint(graphRows.length())) {
     if (graphRows[gb + 1u] >= 0.0)
       s.base = max(evalMaterialXGraph(mid, 0, uv0, uv1, face).rgb, vec3(0.0));
@@ -2366,7 +2366,7 @@ void main() {
         }
       }
 
-      uint graphBase = mid * 1366u;
+      uint graphBase = mid * 1394u;
       if (graphBase + 20u < uint(graphRows.length())) {
         if (graphRows[graphBase + 1u] >= 0.0)
           base = evalMaterialXGraph(mid, 0, uv0h, uv1h, sourceFace).rgb;
@@ -2864,7 +2864,7 @@ void main() {
       }
     }
     if (ii.useMaterial != 0u && mid != 0xffffffffu) {
-      uint gb = mid * 1366u;
+      uint gb = mid * 1394u;
       if (gb + 9u < uint(graphRows.length())) {
         if (graphRows[gb + 1u] >= 0.0)
           base = evalMaterialXGraph(uint(mid), 0, uv0h, uv1h, sourceFace).rgb;

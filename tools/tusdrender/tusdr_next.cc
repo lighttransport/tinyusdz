@@ -1478,6 +1478,7 @@ void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
   job->displacement_tex = r.displacement_tex;
   job->has_openpbr = r.has_openpbr;
   job->openpbr = r.openpbr;
+  job->materialx_graph_json = r.materialx_graph_json;
 }
 
 ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
@@ -1510,6 +1511,7 @@ ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
   r.displacement_tex = job.displacement_tex;
   r.has_openpbr = job.has_openpbr;
   r.openpbr = job.openpbr;
+  r.materialx_graph_json = job.materialx_graph_json;
   return r;
 }
 
@@ -1830,6 +1832,7 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
                             &resolved.displacement_tex);
   } else if (rm.shader_type == NextMat::ShaderType::OpenPBR && rm.openpbr) {
     const auto &s = *rm.openpbr;
+    resolved.materialx_graph_json = s.nodegraph_json;
     tinyusdz::tydra::LightRtOpenPBRParams p;
     if (tinyusdz::tydra::next::BuildLightRtOpenPBRParams(rm, &p)) {
       ApplyLightRtOpenPBRParamsToJob(p, &resolved);

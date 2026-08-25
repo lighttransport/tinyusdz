@@ -1,0 +1,351 @@
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_scalar_block_layout : require
+
+// Headless triangle MaterialX/OpenPBR path tracer. All variable-sized inputs
+// are descriptor-backed SSBOs so the pipeline needs no sampled-image objects or
+// window-system resources. Texture pixels are packed RGBA8 uints.
+layout(local_size_x = 64) in;
+layout(binding=0) uniform accelerationStructureEXT scene;
+layout(binding=1, scalar) readonly buffer Vertices { float vertices[]; };
+layout(binding=2, scalar) readonly buffer Indices { uint indices[]; };
+layout(binding=3, scalar) readonly buffer TriMaterials { uint triMaterials[]; };
+layout(binding=4, scalar) readonly buffer Materials { float materials[]; };
+layout(binding=5, scalar) readonly buffer Graphs { float graphs[]; };
+layout(binding=6, scalar) readonly buffer Texels { uint texels[]; };
+layout(binding=7, scalar) readonly buffer TextureDescs { int textureDescs[]; };
+layout(binding=8, scalar) readonly buffer Lights { float lights[]; };
+layout(binding=9, scalar) writeonly buffer Output { float outputPixels[]; };
+
+layout(push_constant, scalar) uniform Push {
+  mat4 invViewProj;
+  vec4 camera;       // xyz origin
+  vec4 clearColor;   // rgb miss, w exposure
+  uvec4 frame;       // width,height,samples,maxDepth
+  uvec4 path;        // rrDepth,seed,materialCount,lightCount
+} pc;
+
+const float PI = 3.14159265358979323846;
+const uint MAT_STRIDE = 80u;
+const uint GRAPH_OUTPUTS = 48u;
+const uint GRAPH_HEADER = 50u;
+const uint GRAPH_NODE = 21u;
+const uint GRAPH_NODES = 64u;
+const uint GRAPH_STRIDE = GRAPH_HEADER + GRAPH_NODES * GRAPH_NODE;
+const uint TEX_DESC_STRIDE = 8u; // offset,w,h,wrapS,wrapT,srgb,reserved,reserved
+
+uint hashU(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
+float rnd(inout uint s) { s = s * 747796405u + 2891336453u; uint r=((s>>((s>>28)+4u))^s)*277803737u; return float((r>>22)^r)/4294967296.0; }
+float graphNoise(vec3 p) { return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453); }
+vec3 srgbToLinear(vec3 c) { return mix(c/12.92, pow((c+0.055)/1.055,vec3(2.4)), greaterThan(c,vec3(0.04045))); }
+
+float wrapCoord(float x, int mode) {
+  if (mode == 0) return clamp(x, 0.0, 1.0);
+  if (mode == 2) { float q=mod(x,2.0); if(q<0.0)q+=2.0; return q<=1.0?q:2.0-q; }
+  return fract(x);
+}
+vec4 sampleTexture(int id, vec2 uv) {
+  uint d=uint(id)*TEX_DESC_STRIDE;
+  if (id < 0 || d+5u >= textureDescs.length()) return vec4(1.0);
+  int off=textureDescs[d], w=textureDescs[d+1u], h=textureDescs[d+2u];
+  if (off < 0 || w < 1 || h < 1) return vec4(1.0);
+  float x,y;
+  int udimMeta=textureDescs[d+6u];
+  if(udimMeta<0){
+    uint origin=uint(-udimMeta-1),grid=uint(textureDescs[d+7u]);
+    int minU=int(origin&65535u),minV=int(origin>>16u);
+    int gw=max(int(grid&65535u),1),gh=max(int(grid>>16u),1);
+    int tu=int(floor(uv.x))-minU,tv=int(floor(uv.y))-minV;
+    if(tu<0||tv<0||tu>=gw||tv>=gh)return vec4(0.0);
+    int tw=w/gw,th=h/gh;vec2 local=fract(uv);
+    x=float(tu*tw)+local.x*float(max(tw-1,0));
+    y=float(tv*th)+local.y*float(max(th-1,0));
+  }else{
+    float u=wrapCoord(uv.x,textureDescs[d+3u]);
+    float v=wrapCoord(uv.y,textureDescs[d+4u]);
+    x=u*float(max(w-1,0));y=v*float(max(h-1,0));
+  }
+  ivec2 p0=ivec2(floor(x),floor(y)); ivec2 p1=min(p0+1,ivec2(w-1,h-1));
+  vec2 f=fract(vec2(x,y));
+  vec4 c[4]; ivec2 p[4]=ivec2[4](p0,ivec2(p1.x,p0.y),ivec2(p0.x,p1.y),p1);
+  for(int i=0;i<4;++i){ uint q=texels[uint(off+p[i].y*w+p[i].x)]; c[i]=vec4(q&255u,(q>>8)&255u,(q>>16)&255u,(q>>24)&255u)/255.0; }
+  vec4 r=mix(mix(c[0],c[1],f.x),mix(c[2],c[3],f.x),f.y);
+  if(textureDescs[d+5u]!=0) r.rgb=srgbToLinear(r.rgb);
+  return r;
+}
+
+vec4 graphInput(int idx, vec4 fallback, vec4 values[64], int count) {
+  return idx>=0 && idx<count ? values[idx] : fallback;
+}
+vec3 rgbToHsv(vec3 c){vec4 K=vec4(0,-1.0/3.0,2.0/3.0,-1),p=mix(vec4(c.bg,K.wz),vec4(c.gb,K.xy),step(c.b,c.g)),q=mix(vec4(p.xyw,c.r),vec4(c.r,p.yzx),step(p.x,c.r));float d=q.x-min(q.w,q.y),e=1e-10;return vec3(abs(q.z+(q.w-q.y)/(6.0*d+e)),d/(q.x+e),q.x);}
+vec3 hsvToRgb(vec3 c){vec3 p=abs(fract(c.xxx+vec3(0,2.0/3.0,1.0/3.0))*6.0-3.0);return c.z*mix(vec3(1),clamp(p-1.0,0.0,1.0),c.y);}
+void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position, out vec4 routed[48]) {
+  for(int r=0;r<44;++r) routed[r]=vec4(0.0);
+  uint gb=matId*GRAPH_STRIDE;
+  if(gb+GRAPH_HEADER>graphs.length()) return;
+  int count=int(clamp(graphs[gb],0.0,64.0));
+  if(count<=0) return;
+  vec4 value[64];
+  for(int i=0;i<count;++i){
+    uint p=gb+GRAPH_HEADER+uint(i)*GRAPH_NODE;
+    int op=int(round(graphs[p])); int ai=int(round(graphs[p+1u]));
+    int bi=int(round(graphs[p+2u])); int ci=int(round(graphs[p+3u]));
+    vec4 a=graphInput(ai,vec4(graphs[p+4u],graphs[p+5u],graphs[p+6u],graphs[p+7u]),value,count);
+    vec4 b=graphInput(bi,vec4(graphs[p+8u],graphs[p+9u],graphs[p+10u],graphs[p+11u]),value,count);
+    vec4 c=graphInput(ci,vec4(graphs[p+12u],graphs[p+13u],graphs[p+14u],graphs[p+15u]),value,count);
+    vec2 graphUv=uv;int uvInput=int(floor(graphs[p+15u]+0.5));
+    if(uvInput==0)graphUv=a.xy;else if(uvInput==1)graphUv=b.xy;else if(uvInput==2)graphUv=c.xy;
+    vec2 tuv=graphUv*vec2(graphs[p+17u],graphs[p+18u])+vec2(graphs[p+19u],graphs[p+20u]);
+    if(op==0) value[i]=a;
+    else if(op==1||op==2) value[i]=sampleTexture(int(round(graphs[p+16u])),tuv);
+    else if(op==3) value[i]=vec4(normalize(a.xyz*2.0-1.0)*0.5+0.5,a.w);
+    else if(op==4) value[i]=a+b; else if(op==5) value[i]=a-b;
+    else if(op==6) value[i]=a*b; else if(op==7) value[i]=a/max(abs(b),vec4(1e-6));
+    else if(op==8) value[i]=mix(a,b,clamp(c,0.0,1.0));
+    else if(op==9) value[i]=clamp(a,b,c); else if(op==10) value[i]=vec4(dot(a.xyz,b.xyz));
+    else if(op==11) value[i]=vec4(normalize(a.xyz),a.w); else if(op==12) value[i]=pow(max(a,vec4(0.0)),b);
+    else if(op==13) value[i]=min(a,b); else if(op==14) value[i]=max(a,b); else if(op==15) value[i]=abs(a);
+    else if(op==16) value[i]=sqrt(max(a,vec4(0.0))); else if(op==17) value[i]=sin(a); else if(op==18) value[i]=cos(a);
+    else if(op==19) value[i]=vec4(dot(a.rgb,vec3(0.2126,0.7152,0.0722)));
+    else if(op==20) value[i]=a.x<0.5?b:c; else if(op==21) value[i]=vec4(tuv,0,1);
+    else if(op==22) value[i]=floor(a); else if(op==23) value[i]=ceil(a); else if(op==24) value[i]=fract(a);
+    else if(op==25) value[i]=step(b,a); else if(op==26) value[i]=smoothstep(b,c,a);
+    else if(op==27) value[i]=vec4(cross(a.xyz,b.xyz),1); else if(op==28) value[i]=vec4(length(a.xyz));
+    else if(op==29) value[i]=vec4(graphNoise(vec3(a.xy+uv*vec2(17,31),0)));
+    else if(op==30) value[i]=tan(a);
+    else if(op==31) value[i]=exp(a); else if(op==32) value[i]=log(max(a,vec4(1e-8)));
+    else if(op==33){vec4 den=max(abs(b),vec4(1e-6));value[i]=a-den*trunc(a/den);} else if(op==34) value[i]=vec4(1)-a;
+    else if(op==35) value[i]=(a-b)/max(c-b,vec4(1e-6)); else if(op==36) value[i]=vec4(normal,1);
+    else if(op==37) value[i]=vec4(normalize(abs(normal.z)<0.9?cross(normal,vec3(0,0,1)):cross(normal,vec3(0,1,0))),1);
+    else if(op==38){ float ang=radians(a.x),cs=cos(ang),sn=sin(ang); vec3 ax=normalize(b.xyz); value[i]=vec4(c.xyz*cs+cross(ax,c.xyz)*sn+ax*dot(ax,c.xyz)*(1.0-cs),c.w); }
+    else if(op==39){ vec2 q=a.xy*vec2(graphs[p+17u],graphs[p+18u])+vec2(graphs[p+19u],graphs[p+20u]); float ang=radians(graphs[p+15u]); value[i]=vec4(mat2(cos(ang),sin(ang),-sin(ang),cos(ang))*q,a.zw); }
+    else if(op==40) value[i]=vec4(graphNoise(a.xyz+vec3(uv*vec2(17,31),0)));
+    else if(op==41) value[i]=atan(a,b); else if(op==42) value[i]=sign(a); else if(op==43) value[i]=round(a);
+    else if(op==44) value[i]=vec4(a.x,b.x,c.x,1);
+    else if(op==45){int lane=clamp(int(floor(b.x+0.5)),0,3);value[i]=vec4(a[lane]);}
+    else if(op==46) value[i]=a;
+    else if(op==47) value[i]=vec4(position,1);
+    else if(op==48){vec3 hsv=rgbToHsv(a.rgb);hsv.x=fract(hsv.x+b.x);hsv.y=clamp(hsv.y*b.y,0.0,1.0);hsv.z=max(hsv.z*b.z,0.0);value[i]=vec4(hsvToRgb(hsv),a.w);}
+    else if(op==49){float eps=0.01,scale=max(abs(b.x),1e-4),h0=graphNoise(position),hx=graphNoise(position+vec3(eps,0,0)),hy=graphNoise(position+vec3(0,eps,0));vec3 hn=normalize(vec3(-(hx-h0)*scale/eps,-(hy-h0)*scale/eps,1));value[i]=vec4(hn*0.5+0.5,1);}
+    else value[i]=a;
+  }
+  for(int r=0;r<44;++r){int wanted=int(round(graphs[gb+1u+uint(r)]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}
+}
+
+struct Hit { float t; uint prim; vec2 bary; vec3 p; vec3 n; vec3 tangent; vec2 uv; uint mat; };
+bool traceClosest(vec3 o, vec3 d, float tmin, float tmax, out Hit h) {
+  rayQueryEXT q; rayQueryInitializeEXT(q,scene,gl_RayFlagsOpaqueEXT,0xff,o,tmin,d,tmax);
+  while(rayQueryProceedEXT(q)){}
+  if(rayQueryGetIntersectionTypeEXT(q,true)==gl_RayQueryCommittedIntersectionNoneEXT) return false;
+  h.t=rayQueryGetIntersectionTEXT(q,true); h.prim=rayQueryGetIntersectionPrimitiveIndexEXT(q,true);
+  h.bary=rayQueryGetIntersectionBarycentricsEXT(q,true);
+  uint i0=indices[h.prim*3u],i1=indices[h.prim*3u+1u],i2=indices[h.prim*3u+2u];
+  vec3 p0=vec3(vertices[i0*8u],vertices[i0*8u+1u],vertices[i0*8u+2u]);
+  vec3 p1=vec3(vertices[i1*8u],vertices[i1*8u+1u],vertices[i1*8u+2u]);
+  vec3 p2=vec3(vertices[i2*8u],vertices[i2*8u+1u],vertices[i2*8u+2u]);
+  float w=1.0-h.bary.x-h.bary.y; h.p=o+d*h.t;
+  vec3 n0=vec3(vertices[i0*8u+3u],vertices[i0*8u+4u],vertices[i0*8u+5u]);
+  vec3 n1=vec3(vertices[i1*8u+3u],vertices[i1*8u+4u],vertices[i1*8u+5u]);
+  vec3 n2=vec3(vertices[i2*8u+3u],vertices[i2*8u+4u],vertices[i2*8u+5u]);
+  h.n=normalize(n0*w+n1*h.bary.x+n2*h.bary.y); if(length(h.n)<0.1)h.n=normalize(cross(p1-p0,p2-p0));
+  vec2 uv0=vec2(vertices[i0*8u+6u],vertices[i0*8u+7u]),uv1=vec2(vertices[i1*8u+6u],vertices[i1*8u+7u]),uv2=vec2(vertices[i2*8u+6u],vertices[i2*8u+7u]);
+  h.uv=uv0*w+uv1*h.bary.x+uv2*h.bary.y;vec2 duv1=uv1-uv0,duv2=uv2-uv0;float det=duv1.x*duv2.y-duv1.y*duv2.x;
+  h.tangent=abs(det)>1e-8?normalize(((p1-p0)*duv2.y-(p2-p0)*duv1.y)/det):normalize(abs(h.n.z)<0.9?cross(h.n,vec3(0,0,1)):cross(h.n,vec3(0,1,0)));
+  h.mat=min(triMaterials[h.prim],max(pc.path.z,1u)-1u); return true;
+}
+
+vec3 cosineHemisphere(vec3 n, inout uint seed){ float r=sqrt(rnd(seed)),a=2.0*PI*rnd(seed); vec3 t=normalize(abs(n.z)<0.9?cross(n,vec3(0,0,1)):cross(n,vec3(0,1,0))); vec3 b=cross(n,t); return normalize(t*(r*cos(a))+b*(r*sin(a))+n*sqrt(max(0.0,1.0-r*r))); }
+vec3 fresnelSchlick(float c,vec3 f0){return f0+(vec3(1)-f0)*pow(1.0-clamp(c,0.0,1.0),5.0);}
+float ggxD(float nh,float r){float a=max(r*r,0.002),a2=a*a,q=nh*nh*(a2-1.0)+1.0;return a2/max(PI*q*q,1e-6);}
+float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}
+void rotatedBasis(vec3 n,vec3 tangent,float rotation,out vec3 t,out vec3 b){vec3 t0=normalize(tangent-n*dot(n,tangent));if(length(t0)<0.1)t0=normalize(abs(n.z)<0.9?cross(vec3(0,0,1),n):cross(vec3(0,1,0),n));vec3 b0=cross(n,t0);float a=radians(rotation);t=t0*cos(a)+b0*sin(a);b=-t0*sin(a)+b0*cos(a);}
+float ggxDAniso(float nh,float ht,float hb,float r,float aniso){float a=max(r*r,0.002),ax=max(a*(1.0+aniso),0.001),ay=max(a*(1.0-aniso),0.001),q=ht*ht/(ax*ax)+hb*hb/(ay*ay)+nh*nh;return 1.0/max(PI*ax*ay*q*q,1e-6);}
+float ggxG1Aniso(float nv,float vt,float vb,float r,float aniso){float a=max(r*r,0.002),ax=max(a*(1.0+aniso),0.001),ay=max(a*(1.0-aniso),0.001),vn2=max(nv*nv,1e-6),lambda=0.5*(-1.0+sqrt(1.0+(vt*vt*ax*ax+vb*vb*ay*ay)/vn2));return 1.0/max(1.0+lambda,1e-6);}
+vec3 sampleGgx(vec3 n,vec3 tangent,vec3 v,float rough,float aniso,float rotation,inout uint seed,out float pdf){float alpha=max(rough*rough,0.002),ax=max(alpha*(1.0+aniso),0.001),ay=max(alpha*(1.0-aniso),0.001),u1=rnd(seed),u2=rnd(seed),phi=atan(ay/ax*tan(2.0*PI*u2));if(u2>0.25&&u2<=0.75)phi+=PI;else if(u2>0.75)phi+=2.0*PI;float cp=cos(phi),sp=sin(phi),alpha2=1.0/(cp*cp/(ax*ax)+sp*sp/(ay*ay)),ct=sqrt(max((1.0-u1)/(1.0+(alpha2-1.0)*u1),0.0)),st=sqrt(max(1.0-ct*ct,0.0));vec3 t,b;rotatedBasis(n,tangent,rotation,t,b);vec3 h=normalize(t*(st*cp)+b*(st*sp)+n*ct);if(dot(h,v)<0.0)h=-h;vec3 l=reflect(-v,h);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),1e-6);pdf=ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*nh/max(4.0*vh,1e-6);return normalize(l);}
+vec3 ggxBrdf(vec3 n,vec3 tangent,vec3 v,vec3 l,float rough,float aniso,float rotation,vec3 f0){float nl=max(dot(n,l),0.0),nv=max(dot(n,v),1e-6);if(nl<=0.0)return vec3(0);vec3 h=normalize(v+l),t,b;rotatedBasis(n,tangent,rotation,t,b);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),0.0);return fresnelSchlick(vh,f0)*ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*ggxG1Aniso(nv,dot(v,t),dot(v,b),rough,aniso)*ggxG1Aniso(nl,dot(l,t),dot(l,b),rough,aniso)/max(4.0*nv*nl,1e-6);}
+float ggxPdf(vec3 n,vec3 tangent,vec3 v,vec3 l,float rough,float aniso,float rotation){if(dot(n,l)<=0.0)return 0.0;vec3 h=normalize(v+l),t,b;rotatedBasis(n,tangent,rotation,t,b);float nh=max(dot(n,h),0.0),vh=max(dot(v,h),1e-6);return ggxDAniso(nh,dot(h,t),dot(h,b),rough,aniso)*nh/max(4.0*vh,1e-6);}
+vec3 thinFilm(vec3 f0,float ct,float weight,float thickness,float filmIor){float w=clamp(weight,0.0,1.0);if(w<=0.0||thickness<=0.0)return f0;float phase=2.0*PI*max(filmIor,1.0)*thickness*(1.0-clamp(ct,0.0,1.0));vec3 film=0.5+0.5*cos(phase*vec3(1.0,1.17,1.35)+vec3(0.0,2.1,4.2));return mix(f0,clamp(f0+(vec3(1)-f0)*film*0.65,vec3(0),vec3(1)),w);}
+float spectralIor(float iorD,float abbe,float dispersion,int channel){if(dispersion<=0.0||abbe<=0.0)return iorD;float lc=0.6562725,ld=0.5875618,lf=0.4861327,delta=(iorD-1.0)/max(abbe,1.0)*dispersion,ic=1.0/(lc*lc),id=1.0/(ld*ld),iff=1.0/(lf*lf),B=delta/max(iff-ic,1e-6),A=iorD-B*id,lambda=channel==0?lc:(channel==1?ld:lf);return max(A+B/(lambda*lambda),1.0001);}
+vec3 applyGraphNormal(vec3 n,vec3 tangent,vec3 encoded){vec3 t,b;rotatedBasis(n,tangent,0.0,t,b);vec3 q=encoded*2.0-1.0;return normalize(t*q.x+b*q.y+n*q.z);}
+vec3 environmentRadiance(vec3 dir){vec3 result=vec3(0);for(uint li=0u;li<pc.path.w;++li){uint lb=li*16u;if(int(round(lights[lb+3u]))!=6)continue;vec3 c=vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]);int tid=int(round(lights[lb+15u]));if(tid>=0){vec2 uv=vec2(atan(dir.z,dir.x)/(2.0*PI)+0.5,acos(clamp(dir.y,-1.0,1.0))/PI);c*=sampleTexture(tid,uv).rgb;}result+=c;}return dot(result,result)>1e-12?result:pc.clearColor.rgb;}
+float lightWeight(uint li){uint lb=li*16u;int type=int(round(lights[lb+3u]));float lum=max(dot(vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]),vec3(0.2126,0.7152,0.0722)),0.0),area=1.0;if(type==1){float r=max(lights[lb+7u],0.0);area=4.0*PI*r*r;}else if(type==2){float r=max(lights[lb+7u],0.0);area=PI*r*r;}else if(type==3)area=max(lights[lb+11u]*lights[lb+12u],0.0);else if(type==4)area=2.0*PI*max(lights[lb+7u],0.0)*max(lights[lb+13u],0.0);else if(type==6)area=4.0*PI;else if(type==7)area=max(lights[lb+11u],0.0);else if(type==8)return 0.0;return lum*max(area,1e-6);}
+float totalLightWeight(){float total=0.0;for(uint li=0u;li<pc.path.w;++li)total+=lightWeight(li);return total;}
+uint sampleLightIndex(inout uint seed,out float selectionPdf){float total=totalLightWeight();if(total<=1e-12){uint li=min(uint(rnd(seed)*float(max(pc.path.w,1u))),max(pc.path.w,1u)-1u);selectionPdf=1.0/float(max(pc.path.w,1u));return li;}float target=rnd(seed)*total,accum=0.0;for(uint li=0u;li<pc.path.w;++li){float w=lightWeight(li);accum+=w;if(target<=accum){selectionPdf=w/total;return li;}}uint last=max(pc.path.w,1u)-1u;selectionPdf=lightWeight(last)/total;return last;}
+float environmentPdf(){float total=totalLightWeight(),dome=0.0;for(uint li=0u;li<pc.path.w;++li)if(int(round(lights[li*16u+3u]))==6)dome+=lightWeight(li);return total>1e-12?dome/(total*4.0*PI):0.0;}
+float powerHeuristic(float a,float b){float aa=a*a,bb=b*b;return aa/max(aa+bb,1e-20);}
+bool sampleDirectLight(uint li,vec3 p,inout uint seed,out vec3 l,
+                       out vec3 radiance,out float tmax,
+                       out float conditionalPdf,out bool delta,
+                       out int targetTri){
+  uint lb=li*16u;int type=int(round(lights[lb+3u]));
+  radiance=vec3(lights[lb+8u],lights[lb+9u],lights[lb+10u]);
+  conditionalPdf=1.0;delta=true;targetTri=-1;if(type==8)return false;
+  if(type==6){
+    float z=1.0-2.0*rnd(seed),phi=2.0*PI*rnd(seed),r=sqrt(max(0.0,1.0-z*z));
+    l=vec3(r*cos(phi),z,r*sin(phi));int tid=int(round(lights[lb+15u]));
+    if(tid>=0){vec2 uv=vec2(atan(l.z,l.x)/(2.0*PI)+0.5,
+        acos(clamp(l.y,-1.0,1.0))/PI);radiance*=sampleTexture(tid,uv).rgb;}
+    tmax=1e30;conditionalPdf=1.0/(4.0*PI);delta=false;return true;
+  }
+  if(type==5){l=normalize(-vec3(lights[lb+4u],lights[lb+5u],
+      lights[lb+6u]));tmax=1e30;return true;}
+  vec3 center=vec3(lights[lb],lights[lb+1u],lights[lb+2u]);
+  vec3 samplePos=center,lightNormal=vec3(0);float area=0.0;
+  if(type==7){
+    int triId=int(round(lights[lb+7u]));
+    if(triId>=0&&uint(triId)<indices.length()/3u){
+      uint ti=uint(triId)*3u,i0=indices[ti],i1=indices[ti+1u],i2=indices[ti+2u];
+      vec3 p0=vec3(vertices[i0*8u],vertices[i0*8u+1u],vertices[i0*8u+2u]);
+      vec3 p1=vec3(vertices[i1*8u],vertices[i1*8u+1u],vertices[i1*8u+2u]);
+      vec3 p2=vec3(vertices[i2*8u],vertices[i2*8u+1u],vertices[i2*8u+2u]);
+      float su=sqrt(rnd(seed)),v=rnd(seed);samplePos=p0*(1.0-su)+p1*(su*(1.0-v))+p2*(su*v);
+      vec3 crossE=cross(p1-p0,p2-p0);area=0.5*length(crossE);if(area<=1e-10)return false;
+      lightNormal=normalize(crossE);delta=false;targetTri=triId;
+    }else{
+      // Instanced emitters whose source triangle is not in this flattened AS
+      // retain their centroid/power as a bounded point-light fallback.
+      delta=true;
+    }
+  }else if(type>=1&&type<=4){
+    delta=false;vec3 axis=normalize(vec3(lights[lb+4u],lights[lb+5u],
+        lights[lb+6u]));vec3 t,b;vec3 axisT=abs(axis.z)<0.9?cross(vec3(0,0,1),axis):cross(vec3(0,1,0),axis);rotatedBasis(axis,axisT,0.0,t,b);
+    if(type==1){float z=1.0-2.0*rnd(seed),phi=2.0*PI*rnd(seed);
+      float rr=sqrt(max(0.0,1.0-z*z));lightNormal=vec3(rr*cos(phi),z,rr*sin(phi));
+      float radius=max(lights[lb+7u],1e-5);samplePos+=lightNormal*radius;
+      area=4.0*PI*radius*radius;
+    }else if(type==2){float radius=max(lights[lb+7u],1e-5),r=sqrt(rnd(seed))*radius,
+      phi=2.0*PI*rnd(seed);samplePos+=t*(r*cos(phi))+b*(r*sin(phi));
+      lightNormal=-axis;area=PI*radius*radius;
+    }else if(type==3){float width=max(lights[lb+11u],1e-5),
+      height=max(lights[lb+12u],1e-5);samplePos+=t*((rnd(seed)-0.5)*width)+
+      b*((rnd(seed)-0.5)*height);lightNormal=-axis;area=width*height;
+    }else{float radius=max(lights[lb+7u],1e-5),
+      length=max(lights[lb+13u],1e-5),phi=2.0*PI*rnd(seed);
+      lightNormal=t*cos(phi)+b*sin(phi);samplePos+=lightNormal*radius+
+      axis*((rnd(seed)-0.5)*length);area=2.0*PI*radius*length;}
+  }
+  vec3 deltaP=samplePos-p;float d2=dot(deltaP,deltaP);if(d2<1e-8)return false;
+  l=deltaP*inversesqrt(d2);tmax=sqrt(d2)-1e-4;
+  if(delta){radiance/=max(d2,1e-6);}
+  else{float cosine=abs(dot(lightNormal,-l));if(cosine<1e-6)return false;
+    conditionalPdf=d2/max(cosine*area,1e-8);}
+  return true;
+}
+float hgPhase(float cosTheta,float g){float gg=g*g,den=max(1.0+gg-2.0*g*cosTheta,1e-5);return (1.0-gg)/(4.0*PI*den*sqrt(den));}
+vec3 sampleHg(vec3 forward,float g,inout uint seed,out float pdf){float u=rnd(seed),v=rnd(seed),ct=abs(g)<1e-3?1.0-2.0*u:(1.0+g*g-pow((1.0-g*g)/max(1.0-g+2.0*g*u,1e-5),2.0))/(2.0*g);ct=clamp(ct,-1.0,1.0);float st=sqrt(max(1.0-ct*ct,0.0)),phi=2.0*PI*v;vec3 t=normalize(abs(forward.z)<0.9?cross(vec3(0,0,1),forward):cross(vec3(0,1,0),forward)),b=cross(forward,t),outDir=normalize(t*(st*cos(phi))+b*(st*sin(phi))+forward*ct);pdf=hgPhase(ct,g);return outDir;}
+vec3 tonemap(vec3 x){ x=max(x,vec3(0)); x=(x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14); return pow(clamp(x,0.0,1.0),vec3(1.0/2.2)); }
+
+void main(){
+  uint pixel=gl_GlobalInvocationID.x; if(pixel>=pc.frame.x*pc.frame.y)return;
+  uvec2 px=uvec2(pixel%pc.frame.x,pixel/pc.frame.x);
+  uint seed=hashU(px.x+px.y*pc.frame.x+pc.path.y*1664525u); vec3 sum=vec3(0);
+  for(uint s=0u;s<max(pc.frame.z,1u);++s){
+    vec2 jitter=vec2(rnd(seed),rnd(seed)); vec2 ndc=(vec2(px)+jitter)/vec2(pc.frame.xy)*2.0-1.0;
+    vec4 f=pc.invViewProj*vec4(ndc,1,1); f/=f.w; vec3 o=pc.camera.xyz,d=normalize(f.xyz-o);
+    vec3 beta=vec3(1),radiance=vec3(0),mediumExt=vec3(0),mediumSigmaS=vec3(0),mediumEmission=vec3(0);float mediumIor=1.0,mediumG=0.0,previousPdf=0.0;int heroChannel=-1;bool previousDelta=true;
+    for(uint depth=0u;depth<max(pc.frame.w,1u);++depth){
+      Hit h;if(!traceClosest(o,d,1e-4,1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d)*mis;break;}
+      if(mediumIor>1.0001){float sigmaT=max(mediumExt.r,max(mediumExt.g,mediumExt.b)),scatterT=sigmaT>1e-6?-log(max(1.0-rnd(seed),1e-6))/sigmaT:1e30,segment=min(scatterT,h.t);vec3 transmittance=exp(-mediumExt*segment);radiance+=beta*mediumEmission*(vec3(1)-transmittance)/max(mediumExt,vec3(1e-6));beta*=transmittance;if(scatterT<h.t&&max(mediumSigmaS.r,max(mediumSigmaS.g,mediumSigmaS.b))>1e-6){vec3 sp=o+d*scatterT;beta*=mediumSigmaS/max(sigmaT,1e-6);if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,lightConditional;bool lightDelta;int targetTri;if(sampleDirectLight(li,sp,seed,l,lr,lightT,lightConditional,lightDelta,targetTri)){Hit sh;bool blocked=traceClosest(sp+l*1e-4,l,1e-4,lightT,sh),visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(visible){float phase=hgPhase(dot(d,l),mediumG),lightPdf=lightConditional*selectionPdf,mis=lightDelta?1.0:powerHeuristic(lightPdf,phase);radiance+=beta*lr*phase*mis/max(lightPdf,1e-8);}}}float phasePdf;d=sampleHg(d,mediumG,seed,phasePdf);o=sp+d*1e-4;previousPdf=phasePdf;previousDelta=false;continue;}}
+      bool front=dot(h.n,-d)>=0.0;if(!front)h.n=-h.n; uint mb=h.mat*MAT_STRIDE;
+      vec3 base=max(vec3(materials[mb],materials[mb+1u],materials[mb+2u])*materials[mb+3u],vec3(0));
+      vec3 specColor=max(vec3(materials[mb+4u],materials[mb+5u],materials[mb+6u]),vec3(0)); float specWeight=clamp(materials[mb+7u],0.0,1.0);
+      vec3 transmissionColor=max(vec3(materials[mb+8u],materials[mb+9u],materials[mb+10u]),vec3(0)); float transmission=clamp(materials[mb+11u],0.0,1.0);
+      vec3 transmissionScatter=max(vec3(materials[mb+12u],materials[mb+13u],materials[mb+14u]),vec3(0));float transmissionDepth=max(materials[mb+15u],0.0),transmissionScatterG=clamp(materials[mb+47u],-0.95,0.95);
+      vec3 subsurfaceColor=max(vec3(materials[mb+16u],materials[mb+17u],materials[mb+18u]),vec3(0)); float subsurface=clamp(materials[mb+19u],0.0,1.0);
+      vec3 subsurfaceRadius=max(vec3(materials[mb+20u],materials[mb+21u],materials[mb+22u])*max(materials[mb+23u],0.0),vec3(1e-5));
+      vec3 coatColor=max(vec3(materials[mb+24u],materials[mb+25u],materials[mb+26u]),vec3(0)); float coatWeight=clamp(materials[mb+27u],0.0,1.0);
+      vec3 sheenColor=max(vec3(materials[mb+28u],materials[mb+29u],materials[mb+30u]),vec3(0)); float sheenWeight=clamp(materials[mb+31u],0.0,1.0);
+      vec3 emission=max(vec3(materials[mb+32u],materials[mb+33u],materials[mb+34u])*materials[mb+35u],vec3(0));
+      float opacity=clamp(materials[mb+39u],0.0,1.0),metal=clamp(materials[mb+40u],0.0,1.0),rough=clamp(materials[mb+42u],0.02,1.0),ior=max(materials[mb+43u],1.0001);
+      float coatRough=clamp(materials[mb+44u],0.02,1.0),coatIor=max(materials[mb+45u],1.0001),sheenRough=clamp(materials[mb+46u],0.02,1.0);
+      float aniso=clamp(materials[mb+57u]+0.5*materials[mb+59u],-0.95,0.95),anisoRotation=materials[mb+58u];
+      float coatAniso=clamp(materials[mb+65u]+0.5*materials[mb+69u],-0.95,0.95),coatRotation=materials[mb+66u];
+      float coatAffectColor=clamp(materials[mb+67u],0.0,1.0),coatAffectRoughness=clamp(materials[mb+68u],0.0,1.0),coatDarkening=clamp(materials[mb+70u],0.0,1.0);
+      float filmWeight=clamp(materials[mb+48u],0.0,1.0),filmThickness=max(materials[mb+49u],0.0)*1e-3,filmIor=max(materials[mb+50u],1.0);
+      float dispersion=max(materials[mb+60u]*materials[mb+62u],0.0),dispersionAbbe=max(materials[mb+61u],0.0);
+      float volumeDensity=max(materials[mb+75u],0.0),volumeEmissionScale=max(materials[mb+79u],0.0);vec3 volumeAlbedo=max(vec3(materials[mb+72u],materials[mb+73u],materials[mb+74u]),vec3(0)),volumeEmission=max(vec3(materials[mb+76u],materials[mb+77u],materials[mb+78u]),vec3(0));
+      uint gb=h.mat*GRAPH_STRIDE;
+      if(graphs[gb]>0.0){
+        vec4 gr[48];evalGraphAll(h.mat,h.uv,h.n,h.p,gr);
+        if(graphs[gb+1u]>=0.0)base=max(gr[0].rgb,vec3(0));
+        if(graphs[gb+2u]>=0.0)metal=clamp(gr[1].x,0.0,1.0);
+        if(graphs[gb+3u]>=0.0)rough=clamp(gr[2].x,0.02,1.0);
+        if(graphs[gb+4u]>=0.0)opacity=clamp(gr[3].x,0.0,1.0);
+        if(graphs[gb+5u]>=0.0)emission=max(gr[4].rgb,vec3(0))*max(materials[mb+35u],0.0);
+        if(graphs[gb+6u]>=0.0)h.n=applyGraphNormal(h.n,h.tangent,gr[5].xyz);
+        if(graphs[gb+7u]>=0.0)subsurface=clamp(gr[6].x,0.0,1.0);
+        if(graphs[gb+8u]>=0.0)subsurfaceColor=max(gr[7].rgb,vec3(0));
+        if(graphs[gb+9u]>=0.0)subsurfaceRadius=max(gr[8].rgb,vec3(1e-5));
+        if(graphs[gb+10u]>=0.0)specWeight=clamp(gr[9].x,0.0,1.0);
+        if(graphs[gb+11u]>=0.0)specColor=max(gr[10].rgb,vec3(0));
+        if(graphs[gb+12u]>=0.0)transmission=clamp(gr[11].x,0.0,1.0);
+        if(graphs[gb+13u]>=0.0)transmissionColor=max(gr[12].rgb,vec3(0));
+        if(graphs[gb+14u]>=0.0)coatWeight=clamp(gr[13].x,0.0,1.0);
+        if(graphs[gb+15u]>=0.0)coatColor=max(gr[14].rgb,vec3(0));
+        if(graphs[gb+16u]>=0.0)coatRough=clamp(gr[15].x,0.02,1.0);
+        if(graphs[gb+17u]>=0.0)sheenWeight=clamp(gr[16].x,0.0,1.0);
+        if(graphs[gb+18u]>=0.0)sheenColor=max(gr[17].rgb,vec3(0));
+        if(graphs[gb+19u]>=0.0)sheenRough=clamp(gr[18].x,0.02,1.0);
+        if(graphs[gb+20u]>=0.0)ior=max(gr[19].x,1.0001);
+        if(graphs[gb+21u]>=0.0)base*=max(gr[20].x,0.0);
+        if(graphs[gb+22u]>=0.0)rough=clamp(max(rough,gr[21].x),0.02,1.0);
+        if(graphs[gb+23u]>=0.0)transmissionScatter=max(gr[22].rgb,vec3(0));
+        if(graphs[gb+24u]>=0.0)transmissionDepth=max(gr[23].x,0.0);
+        if(graphs[gb+25u]>=0.0)transmissionScatterG=clamp(gr[24].x,-0.95,0.95);
+        if(graphs[gb+26u]>=0.0)subsurfaceRadius*=max(gr[25].rgb,vec3(0));
+        if(graphs[gb+28u]>=0.0)coatIor=max(gr[27].x,1.0001);
+        if(graphs[gb+29u]>=0.0)filmWeight=clamp(gr[28].x,0.0,1.0);
+        if(graphs[gb+30u]>=0.0)filmThickness=max(gr[29].x,0.0)*1e-3;
+        if(graphs[gb+31u]>=0.0)filmIor=max(gr[30].x,1.0);
+        if(graphs[gb+32u]>=0.0)aniso=clamp(gr[31].x,-0.95,0.95);
+        if(graphs[gb+33u]>=0.0)anisoRotation=gr[32].x;
+        if(graphs[gb+34u]>=0.0)aniso=clamp(aniso+0.5*gr[33].x,-0.95,0.95);
+        if(graphs[gb+35u]>=0.0)dispersion=max(gr[34].x,0.0);
+        if(graphs[gb+36u]>=0.0)dispersionAbbe=max(gr[35].x,0.0);
+        if(graphs[gb+37u]>=0.0)dispersion*=max(gr[36].x,0.0);
+        if(graphs[gb+38u]>=0.0)coatAniso=clamp(gr[37].x,-0.95,0.95);
+        if(graphs[gb+39u]>=0.0)coatRotation=gr[38].x;
+        if(graphs[gb+40u]>=0.0)coatAniso=clamp(coatAniso+0.5*gr[39].x,-0.95,0.95);
+        if(graphs[gb+41u]>=0.0)volumeDensity=max(gr[40].x,0.0);
+        if(graphs[gb+42u]>=0.0)volumeAlbedo=max(gr[41].rgb,vec3(0));
+        if(graphs[gb+43u]>=0.0)volumeEmission=max(gr[42].rgb,vec3(0));
+        if(graphs[gb+44u]>=0.0)volumeEmissionScale=max(gr[43].x,0.0);
+        if(graphs[gb+45u]>=0.0)emission=max(graphs[gb+5u]>=0.0?gr[4].rgb:vec3(materials[mb+32u],materials[mb+33u],materials[mb+34u]),vec3(0))*max(gr[44].x,0.0);
+        if(graphs[gb+46u]>=0.0)coatAffectColor=clamp(gr[45].x,0.0,1.0);
+        if(graphs[gb+47u]>=0.0)coatAffectRoughness=clamp(gr[46].x,0.0,1.0);
+        if(graphs[gb+48u]>=0.0)coatDarkening=clamp(gr[47].x,0.0,1.0);
+      }
+      int alphaMode=int(round(materials[mb+54u]));
+      if(alphaMode==0)opacity=1.0;else if(alphaMode==1)opacity=opacity>=materials[mb+55u]?1.0:0.0;
+      if(opacity<1.0&&rnd(seed)>opacity){o=h.p+d*1e-4;continue;}
+      radiance+=beta*emission;
+      base*=1.0-0.2*clamp(coatWeight*coatDarkening,0.0,1.0);
+      base*=mix(vec3(1),coatColor,clamp(coatWeight*coatAffectColor,0.0,1.0));
+      rough=mix(rough,coatRough,clamp(coatWeight*coatAffectRoughness,0.0,1.0));
+      // A small sky term keeps headless previews legible when a scene has no
+      // usable direct light; normal variation also makes blank-frame checks
+      // distinguish actual shaded geometry from a flat clear-color image.
+      vec3 diffuseColor=base*(1.0-subsurface)*(1.0-metal)*(1.0-transmission);
+      float radiusGain=clamp(sqrt(dot(subsurfaceRadius,vec3(0.2126,0.7152,0.0722)))*8.0,0.0,1.0);
+      vec3 subsurfaceBrdf=subsurfaceColor*subsurface*(1.0-metal)*(1.0-transmission)*radiusGain;
+      float dielectric=(ior-1.0)/(ior+1.0); vec3 f0=mix(vec3(dielectric*dielectric)*specColor*specWeight,base,metal);f0=thinFilm(f0,max(dot(h.n,-d),0.0),filmWeight,filmThickness,filmIor);
+      float coatF=(coatIor-1.0)/(coatIor+1.0); vec3 coatF0=coatColor*(coatF*coatF),coatEnergy=coatF0*coatWeight;
+      vec3 sheen=sheenColor*sheenWeight*(0.5+0.5*sheenRough)*(1.0-metal)*(1.0-transmission);
+      float wd=max(dot(diffuseColor+sheen,vec3(0.2126,0.7152,0.0722)),0.0),wss=max(dot(subsurfaceBrdf,vec3(0.2126,0.7152,0.0722)),0.0),wt=max(dot(transmissionColor,vec3(0.2126,0.7152,0.0722))*transmission*(1.0-metal),0.0),wg=max(dot(f0,vec3(0.2126,0.7152,0.0722)),0.0),wc=max(dot(coatEnergy,vec3(0.2126,0.7152,0.0722)),0.0),ws=wd+wss+wt+wg+wc;
+      if(depth==0u) radiance+=beta*(diffuseColor+subsurfaceBrdf+sheen*0.25)*(0.015+0.025*max(h.n.y,0.0));
+      // Descriptor-backed analytic lights use the shared 16-float record.
+      vec3 view=-d;
+      if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,conditionalPdf;bool lightDelta;int targetTri;if(sampleDirectLight(li,h.p,seed,l,lr,lightT,conditionalPdf,lightDelta,targetTri)){float nl=max(dot(h.n,l),0.0);Hit sh;bool blocked=traceClosest(h.p+h.n*1e-4,l,1e-4,lightT,sh);bool visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(nl>0.0&&visible){float lightPdf=conditionalPdf*selectionPdf,bsdfPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation),mis=lightDelta?1.0:powerHeuristic(lightPdf,bsdfPdf);vec3 spec=ggxBrdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation,f0);vec3 coat=ggxBrdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation,coatF0)*coatWeight;radiance+=beta*lr*nl*((diffuseColor+subsurfaceBrdf+sheen)/PI+spec+coat)*mis/max(lightPdf,1e-8);}}}
+      float xi=rnd(seed)*max(ws,1e-6),side=1.0;
+      if(xi<wt){if(heroChannel<0&&dispersion>0.0&&dispersionAbbe>0.0){heroChannel=min(int(rnd(seed)*3.0),2);beta*=heroChannel==0?vec3(3,0,0):(heroChannel==1?vec3(0,3,0):vec3(0,0,3));}float spectral=spectralIor(ior,dispersionAbbe,dispersion,heroChannel<0?1:heroChannel),targetIor=front?spectral:1.0,eta=mediumIor/targetIor;vec3 q=refract(d,h.n,eta);bool tir=length(q)<0.1;if(tir)q=reflect(d,h.n);else{mediumIor=targetIor;if(front){vec3 absorption=transmissionDepth>0.0?-log(clamp(transmissionColor,vec3(1e-6),vec3(1)))/transmissionDepth:vec3(0);mediumSigmaS=transmissionScatter+volumeAlbedo*volumeDensity;mediumExt=absorption+mediumSigmaS+max(vec3(1)-volumeAlbedo,vec3(0))*volumeDensity;mediumEmission=volumeEmission*volumeEmissionScale;mediumG=transmissionScatterG;}else{mediumExt=vec3(0);mediumSigmaS=vec3(0);mediumEmission=vec3(0);mediumG=0.0;}}d=normalize(q);beta*=transmissionColor/max(wt/ws,1e-6);side=tir?1.0:-1.0;previousDelta=true;previousPdf=0.0;}
+      else if(xi<wt+wss){d=cosineHemisphere(-h.n,seed);beta*=subsurfaceBrdf/max(wss/ws,1e-6);side=-1.0;previousDelta=true;previousPdf=0.0;}
+      else if(xi<wt+wss+wg){float pdf;d=sampleGgx(h.n,h.tangent,view,rough,aniso,anisoRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation,f0);float selectedPdf=pdf*(wg/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+selectedPdf+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation);previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
+      else if(xi<wt+wss+wg+wc){float pdf;d=sampleGgx(h.n,h.tangent,view,coatRough,coatAniso,coatRotation,seed,pdf);float nl=max(dot(h.n,d),0.0);vec3 brdf=ggxBrdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation,coatF0)*coatWeight;float selectedPdf=pdf*(wc/max(ws,1e-6));previousPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation)+selectedPdf;previousDelta=false;beta*=brdf*nl/max(selectedPdf,1e-6);}
+      else {d=cosineHemisphere(h.n,seed);float nl=max(dot(h.n,d),0.0);previousPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,d,coatRough,coatAniso,coatRotation);previousDelta=false;beta*=(diffuseColor+sheen)/max(wd/ws,1e-6);}
+      o=h.p+h.n*(side*1e-4);
+      if(depth>=pc.path.x){float p=clamp(max(beta.r,max(beta.g,beta.b)),0.05,0.95);if(rnd(seed)>p)break;beta/=p;}
+    }
+    sum+=radiance;
+  }
+  vec3 c=tonemap(sum/float(max(pc.frame.z,1u))*exp2(pc.clearColor.w)); uint dst=(px.y*pc.frame.x+px.x)*4u; outputPixels[dst]=c.r;outputPixels[dst+1u]=c.g;outputPixels[dst+2u]=c.b;outputPixels[dst+3u]=1.0;
+}

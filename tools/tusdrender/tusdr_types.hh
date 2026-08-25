@@ -563,7 +563,7 @@ struct Options {
   bool direct_prims{true};
   enum class LargeSceneProfile { Off, Auto, Caldera, Island, ALab };
   LargeSceneProfile large_scene_profile{LargeSceneProfile::Off};
-  bool backend_explicit{false};  // -rtPreview/-vk/-vkr/-vkInstanced/-d3d/-hip
+  bool backend_explicit{false};  // -rtPreview/-vk/-vkr/-vkInstanced/-d3d/-hip/-cuda
   bool camera_explicit{false};
   bool width_explicit{false};
   bool height_explicit{false};
@@ -637,8 +637,18 @@ struct Options {
   float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
-  enum class GpuShadeMode { Cpu, Preview };
-  GpuShadeMode gpu_shade{GpuShadeMode::Cpu};  // -gpuShade cpu|preview
+  enum class GpuShadeMode { Auto, Cpu, Preview };
+  GpuShadeMode gpu_shade{GpuShadeMode::Auto};  // -gpuShade cpu|preview
+  bool path_trace{false};
+  enum class PathTraceQuality { Interactive, Final };
+  PathTraceQuality path_trace_quality{PathTraceQuality::Interactive};
+  uint32_t path_trace_samples{0};
+  uint32_t path_trace_max_depth{6};
+  uint32_t path_trace_rr_depth{3};
+  uint32_t path_trace_seed{1};
+  uint32_t path_trace_max_subsurface_events{16};
+  uint32_t path_trace_max_volume_events{16};
+  float path_trace_variance{0.02f};
   // -vkInstanced: on -vkr, build a TRUE two-level GPU TLAS (one BLAS per
   // prototype, one instance per placement) instead of flattening instances into
   // one world-space BLAS. Stores instanced geometry ONCE on the device (memory
@@ -647,6 +657,7 @@ struct Options {
   bool vulkan_instanced{false};
   bool use_d3d{false};             // -d3d: use the Direct3D 11 compute backend
   bool hip{false};                 // -hip: use the HIP/ROCm compute backend
+  bool cuda{false};                // -cuda: shared CUDA/NVRTC RT backend
   std::string env_file;            // --env <hdr>: IBL environment map override
   bool displace{true};             // apply UsdPreviewSurface displacement (coarse)
   float displace_scale{1.0f};      // -displaceScale: global displacement multiplier
@@ -964,6 +975,7 @@ struct MeshJobNext {
   ScalarTex displacement_tex;            // inputs:displacement texture + channel
   bool has_openpbr{false};
   tinyusdz::tydra::LightRtOpenPBRParams openpbr;
+  std::string materialx_graph_json;
   // Present only for an authored material:binding:back. Shared across copies
   // made while expanding instances/subsets; no per-triangle memory cost.
   std::shared_ptr<ResolvedMat> back_material;
@@ -995,6 +1007,7 @@ struct ResolvedMat {
   ScalarTex rough_tex;
   ScalarTex metal_tex;
   Vec3 emission{0.0f, 0.0f, 0.0f};
+  bool area_light{false};
   int32_t emission_tex_id{-1};
   float occlusion{1.0f};
   ScalarTex occ_tex;
@@ -1014,6 +1027,7 @@ struct ResolvedMat {
   ScalarTex displacement_tex;
   bool has_openpbr{false};
   tinyusdz::tydra::LightRtOpenPBRParams openpbr;
+  std::string materialx_graph_json;
 };
 
 struct ProtoBuildReq {

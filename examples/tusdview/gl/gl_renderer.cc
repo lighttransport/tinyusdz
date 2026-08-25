@@ -3900,7 +3900,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         }
         glUniform1i(uGraphUsable_, graphUsable ? 1 : 0);
         glUniform1i(uGraphNodeCount_, graphUsable ? static_cast<GLint>(graph.nodes.size()) : 0);
-        glUniform4iv(uGraphOutputs0_, 1, graph.output);
+        glUniform4iv(uGraphOutputs0_, 1, graph.output.data());
         glUniform2i(uGraphOutputs1_, graph.output[4], graph.output[5]);
         glUniform2i(uGraphOutputs2_, graph.output[6], graph.output[7]);
         glUniform1i(uGraphOutputs3_, graph.output[8]);

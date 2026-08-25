@@ -23,8 +23,8 @@ constexpr int kLightRtOpenPBRFloats =
 // 140-145 carry coat-normal UV transform, 146 its UV set, and 147-154 its
 // scale/bias vectors.
 constexpr int kRtMaterialTextureParamFloats = 155;
-// Fixed-size Vulkan RT graph block. The header contains node count, the
-// production OpenPBR output routes, and one reserved float; each node then
+// Fixed-size GPU RT graph block. The header contains node count, all canonical
+// OpenPBR output routes, and one reserved float; each node then
 // occupies op, three input indices, three vec4 constants, resolved texture id,
 // and UV scale/offset.
 constexpr int kRtMaterialGraphMaxNodes = 64;

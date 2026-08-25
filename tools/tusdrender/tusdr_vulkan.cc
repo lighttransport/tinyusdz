@@ -4,8 +4,13 @@
 // generation and shading are shared with the HIP backend (tusdr_gpu_common).
 #ifdef HAVE_VULKAN
 #include <chrono>
+#include <cmath>
+#include <cstring>
 #include <vector>
 
+#include "image-writer.hh"
+#include "lightrt_mtlx_bridge.hh"
+#include "light3d/math.h"
 #include "lightrt_c_vk.h"
 #include "tusdr_context.hh"
 #include "tusdr_gpu_common.hh"
@@ -35,6 +40,202 @@ size_t GpuChunkLimit() {
     if (end != s && n > 0) limit = static_cast<size_t>(n);
   }
   return limit;
+}
+
+bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
+                      const Options &opt, const GpuTriScene &geometry,
+                      const tusdview::DrawScene &scene,
+                      const CameraFrame &camera, int height) {
+  const size_t material_count = std::max<size_t>(scene.materials.size(), 1u);
+  std::vector<float> materials(
+      material_count * static_cast<size_t>(tusdview::kLightRtOpenPBRFloats),
+      0.0f);
+  std::vector<float> graphs(material_count * tusdview::kRtMaterialGraphFloats,
+                            0.0f);
+  for (size_t i = 0; i < scene.materials.size(); ++i) {
+    const tusdview::DrawMaterialCPU &m = scene.materials[i];
+    float *dst = materials.data() +
+                 i * static_cast<size_t>(tusdview::kLightRtOpenPBRFloats);
+    tusdview::PackLightRtOpenPBR(m, dst);
+    tusdview::PackMaterialXGraphRuntime(
+        m, graphs.data() + i * tusdview::kRtMaterialGraphFloats);
+  }
+  if (scene.materials.empty()) {
+    materials[0] = materials[1] = materials[2] = 0.5f;
+    materials[3] = 1.0f;   // base weight
+    materials[7] = 1.0f;   // specular weight
+    materials[39] = 1.0f;  // opacity
+    materials[42] = 0.55f; materials[43] = 1.5f;
+  }
+  if (opt.stats && !materials.empty()) {
+    size_t graph_materials = 0;
+    size_t graph_nodes = 0;
+    for (size_t i = 0; i < material_count; ++i) {
+      const size_t gb = i * static_cast<size_t>(tusdview::kRtMaterialGraphFloats);
+      if (graphs[gb] > 0.0f) ++graph_materials;
+      graph_nodes += static_cast<size_t>(std::max(graphs[gb], 0.0f));
+    }
+    std::cerr << "Vulkan material ABI: count=" << material_count
+              << " base=" << materials[0] << "," << materials[1] << ","
+              << materials[2] << " weight=" << materials[3]
+              << " metal=" << materials[40]
+              << " rough=" << materials[42]
+              << " opacity=" << materials[39]
+              << " graphMaterials=" << graph_materials
+              << " graphNodes=" << graph_nodes << " firstRoutes=";
+    for (int route = 0; route < tusdview::kRtMaterialGraphOutputCount; ++route)
+      if (graphs[1 + route] >= 0.0f) std::cerr << route << ",";
+    std::cerr << "\n";
+  }
+
+  std::vector<uint32_t> texels;
+  std::vector<int32_t> texture_descs(scene.textures.size() * 8u, 0);
+  const auto packed_pixel = [](const light3d::Image &image, size_t p) {
+    const size_t base = p * static_cast<size_t>(std::max(image.channels, 1));
+    const auto channel = [&](int c, uint8_t fallback) {
+      return c < image.channels && base + static_cast<size_t>(c) < image.data.size()
+                 ? image.data[base + static_cast<size_t>(c)] : fallback;
+    };
+    return uint32_t(channel(0, 255u)) |
+           (uint32_t(channel(1, channel(0, 255u))) << 8u) |
+           (uint32_t(channel(2, channel(0, 255u))) << 16u) |
+           (uint32_t(channel(3, 255u)) << 24u);
+  };
+  for (size_t i = 0; i < scene.textures.size(); ++i) {
+    const tusdview::DrawTextureCPU &t = scene.textures[i];
+    const light3d::Image *image = &t.image;
+    int32_t *d = texture_descs.data() + i * 8u;
+    d[0] = static_cast<int32_t>(texels.size());
+    d[3] = t.wrapS; d[4] = t.wrapT; d[5] = t.srgb ? 1 : 0;
+    if (t.isUdim && !t.udimTiles.empty()) {
+      uint32_t min_u = 65535u, min_v = 65535u, max_u = 0u, max_v = 0u;
+      for (const tusdview::DrawUdimTileCPU &tile : t.udimTiles) {
+        min_u = std::min(min_u, tile.u); min_v = std::min(min_v, tile.v);
+        max_u = std::max(max_u, tile.u); max_v = std::max(max_v, tile.v);
+      }
+      const int tile_w = std::max(t.udimTileWidth, t.udimTiles.front().image.width);
+      const int tile_h = std::max(t.udimTileHeight, t.udimTiles.front().image.height);
+      const uint32_t grid_w = max_u - min_u + 1u;
+      const uint32_t grid_h = max_v - min_v + 1u;
+      d[1] = tile_w * static_cast<int>(grid_w);
+      d[2] = tile_h * static_cast<int>(grid_h);
+      d[6] = -1 - static_cast<int32_t>((min_u & 0xffffu) | (min_v << 16u));
+      d[7] = static_cast<int32_t>((grid_w & 0xffffu) | (grid_h << 16u));
+      const size_t atlas_start = texels.size();
+      texels.resize(atlas_start + static_cast<size_t>(d[1]) *
+                                      static_cast<size_t>(d[2]), 0u);
+      for (const tusdview::DrawUdimTileCPU &tile : t.udimTiles) {
+        const light3d::Image &src = tile.image;
+        const uint32_t ox = (tile.u - min_u) * static_cast<uint32_t>(tile_w);
+        const uint32_t oy = (tile.v - min_v) * static_cast<uint32_t>(tile_h);
+        for (int y = 0; y < std::min(src.height, tile_h); ++y)
+          for (int x = 0; x < std::min(src.width, tile_w); ++x) {
+            const size_t dst = atlas_start +
+                static_cast<size_t>(oy + static_cast<uint32_t>(y)) * d[1] +
+                ox + static_cast<uint32_t>(x);
+            texels[dst] = packed_pixel(src, static_cast<size_t>(y) * src.width + x);
+          }
+      }
+      continue;
+    }
+    d[1] = image->width; d[2] = image->height;
+    const size_t pixels = static_cast<size_t>(std::max(image->width, 0)) *
+                          static_cast<size_t>(std::max(image->height, 0));
+    for (size_t p = 0; p < pixels; ++p) texels.push_back(packed_pixel(*image, p));
+  }
+  std::vector<float> lights;
+  size_t geometry_lights = 0;
+  for (const tusdview::DrawLightCPU &light : scene.lights) {
+    const bool geometry_light = light.type == tusdview::DrawLightCPU::Type::Geometry;
+    geometry_lights += geometry_light ? 1u : 0u;
+    lights.insert(lights.end(), {
+        light.position[0], light.position[1], light.position[2],
+        static_cast<float>(light.type),
+        light.direction[0], light.direction[1], light.direction[2],
+        geometry_light ? static_cast<float>(light.geometryTriOffset) : light.radius,
+        light.effectiveColor[0], light.effectiveColor[1],
+        light.effectiveColor[2], geometry_light ? light.area : light.width,
+        light.height, light.length, light.angle,
+        static_cast<float>(light.envmapTexture)});
+  }
+  if (opt.stats) {
+    std::cerr << "Vulkan descriptor lights: count=" << lights.size() / 16u
+              << " geometry=" << geometry_lights << "\n";
+    for (size_t li = 0; li < lights.size() / 16u; ++li) {
+      const size_t lb = li * 16u;
+      if (static_cast<int>(lights[lb + 3u]) ==
+          static_cast<int>(tusdview::DrawLightCPU::Type::Geometry)) {
+        std::cerr << "  first geometry light: tri=" << lights[lb + 7u]
+                  << " area=" << lights[lb + 11u] << " radiance="
+                  << lights[lb + 8u] << "," << lights[lb + 9u] << ","
+                  << lights[lb + 10u] << "\n";
+        break;
+      }
+    }
+  }
+
+  const int width = opt.width > 0 ? opt.width : 960;
+  const int h = height > 0 ? height : 540;
+  const light3d::Vec3 eye{camera.origin.x, camera.origin.y, camera.origin.z};
+  const light3d::Vec3 fwd{camera.forward.x, camera.forward.y, camera.forward.z};
+  const light3d::Vec3 up{camera.up.x, camera.up.y, camera.up.z};
+  const light3d::Mat4 view = light3d::lookAt(eye, eye + fwd, up);
+  const float znear = std::max(camera.znear, 1.0e-5f);
+  const float zfar = std::max(camera.zfar, znear + 1.0f);
+  const light3d::Mat4 proj = light3d::perspectiveZeroOne(
+      camera.yfov, static_cast<float>(width) / static_cast<float>(h), znear, zfar);
+  const light3d::Mat4 inv_vp = (proj * view).inverse();
+  lrt_vk_material_path_desc desc{};
+  desc.vertices = geometry.flat_attrs.data();
+  desc.nverts = static_cast<uint32_t>(geometry.flat_attrs.size() / 8u);
+  desc.indices = geometry.flat_idx.data();
+  desc.triangle_materials = geometry.material_ids.data();
+  desc.ntris = geometry.ntris; desc.materials = materials.data();
+  desc.nmaterials = static_cast<uint32_t>(material_count);
+  desc.material_stride_floats = tusdview::kLightRtOpenPBRFloats;
+  desc.graphs = graphs.data();
+  desc.graph_stride_floats = tusdview::kRtMaterialGraphFloats;
+  desc.texels = texels.empty() ? nullptr : texels.data();
+  desc.ntexels = static_cast<uint32_t>(texels.size());
+  desc.texture_descs = texture_descs.empty() ? nullptr : texture_descs.data();
+  desc.ntextures = static_cast<uint32_t>(scene.textures.size());
+  desc.lights = lights.empty() ? nullptr : lights.data();
+  desc.nlights = static_cast<uint32_t>(lights.size() / 16u);
+  std::memcpy(desc.inv_view_proj, inv_vp.m, sizeof(desc.inv_view_proj));
+  desc.camera[0] = camera.origin.x; desc.camera[1] = camera.origin.y;
+  desc.camera[2] = camera.origin.z; desc.clear_color[0] = opt.bg.x;
+  desc.clear_color[1] = opt.bg.y; desc.clear_color[2] = opt.bg.z;
+  desc.exposure = 1.0f; desc.width = static_cast<uint32_t>(width);
+  desc.height = static_cast<uint32_t>(h);
+  desc.samples = opt.path_trace && opt.path_trace_samples > 0
+                     ? opt.path_trace_samples : static_cast<uint32_t>(std::max(1, opt.samples));
+  desc.max_depth = opt.path_trace ? opt.path_trace_max_depth : 1u;
+  desc.rr_depth = opt.path_trace_rr_depth; desc.seed = opt.path_trace_seed;
+  std::vector<float> rgba(static_cast<size_t>(width) * static_cast<size_t>(h) * 4u);
+  lrt_result err = LRT_RESULT_OK;
+  if (lrt_vk_rtx_scene_render_materialx_path(vk, rtx, &desc, rgba.data(), &err) != 0) {
+    std::cerr << "Vulkan MaterialX/path dispatch failed (" << int(err) << "): "
+              << lrt_vk_engine_last_error(vk) << "\n";
+    return false;
+  }
+  tinyusdz::Image out;
+  out.width = width; out.height = h; out.channels = 4; out.bpp = 8;
+  out.data.resize(rgba.size());
+  for (size_t i = 0; i < rgba.size(); ++i)
+    out.data[i] = static_cast<uint8_t>(std::lround(
+        std::max(0.0f, std::min(1.0f, rgba[i])) * 255.0f));
+  tinyusdz::image::WriteOption write_opt;
+  write_opt.format = tinyusdz::image::WriteImageFormat::Autodetect;
+  auto written = tinyusdz::image::WriteImageToFile(opt.output, out, write_opt);
+  if (!written) {
+    std::cerr << "Failed to write Vulkan MaterialX/path image: "
+              << written.error() << "\n";
+    return false;
+  }
+  std::cerr << "backend: LightRT VK (ray_query, descriptor MaterialX, "
+            << (opt.path_trace ? "production path" : "OpenPBR preview")
+            << ", samples=" << desc.samples << ")\n";
+  return true;
 }
 
 bool RunVulkanLightRTChunked(
@@ -188,10 +389,13 @@ bool RunVulkanLightRTChunked(
 
 bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                       std::vector<RTPreviewStats::MeshGeometry> &geos,
+                      const std::vector<ResolvedMat> &materials,
+                      const std::vector<Texture> &textures,
+                      const LightCache &lights,
                       const CameraFrame &camera, int height) {
   const size_t total_triangles = GpuTriangleCount(geos);
   const size_t chunk_limit = GpuChunkLimit();
-  if (total_triangles > chunk_limit) {
+  if (total_triangles > chunk_limit && !opt.path_trace) {
     return RunVulkanLightRTChunked(opt, base_colors, geos, camera, height,
                                    chunk_limit);
   }
@@ -228,6 +432,9 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     lrt_vk_engine_destroy(vk);
     return false;
   }
+  tusdview::DrawScene shared_scene;
+  const bool have_shared_scene = BuildSharedDrawScene(
+      base_colors, geos, materials, textures, lights, opt.input, &shared_scene);
   const double flatten_s = SecsSince(t0);
   for (RTPreviewStats::MeshGeometry &geo : geos) {
     std::vector<float>().swap(geo.positions);
@@ -269,6 +476,26 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
         vk, s.flat_verts.data(), nverts, s.flat_idx.data(), s.ntris, &trerr);
     as_build_s = SecsSince(t0);
     if (rtx) {
+      if (!force_vkr_fallback && have_shared_scene &&
+          opt.gpu_shade != Options::GpuShadeMode::Cpu) {
+        const bool material_path_ok =
+            RunMaterialXPath(vk, rtx, opt, s, shared_scene, camera, height);
+        if (material_path_ok) {
+          lrt_vk_rtx_scene_free(vk, rtx);
+          if (s.scene) lrt_tri_scene_free(s.scene);
+          lrt_vk_engine_destroy(vk);
+          return true;
+        }
+        if (opt.path_trace) {
+          if (s.scene) lrt_tri_scene_free(s.scene);
+          lrt_vk_engine_destroy(vk);
+          return false;
+        }
+        std::cerr << "Vulkan descriptor material preview failed; falling back "
+                     "to hit readback shading.\n";
+      }
+    }
+    if (rtx) {
       t0 = std::chrono::steady_clock::now();
       if (force_vkr_fallback) {
         trerr = LRT_RESULT_UNSUPPORTED;
@@ -309,7 +536,11 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   }
 
   t0 = std::chrono::steady_clock::now();
-  bool ok = ShadeAndWriteImage(opt, s, rays, hits, w, h, spp);
+  const bool preview_shade =
+      opt.gpu_shade != Options::GpuShadeMode::Cpu;
+  bool ok = ShadeAndWriteImage(opt, s, rays, hits, w, h, spp,
+                               preview_shade ? &materials : nullptr,
+                               preview_shade ? &textures : nullptr);
   if (opt.stats) {
     std::cerr << "[gpu-stats] flatten+bvh " << flatten_s << " s, ";
     if (use_hw_rt) std::cerr << "as-build " << as_build_s << " s, ";
@@ -326,7 +557,8 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     } else {
       std::cerr << "compute trace";
     }
-    std::cerr << ")\n";
+    std::cerr << ", " << (preview_shade ? "OpenPBR preview" : "CPU flat")
+              << ")\n";
   }
   if (s.scene) lrt_tri_scene_free(s.scene);
   lrt_vk_engine_destroy(vk);

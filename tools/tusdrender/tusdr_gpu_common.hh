@@ -21,9 +21,12 @@ namespace tusdr {
 // the caller owns it and must lrt_tri_scene_free() it.
 struct GpuTriScene {
   std::vector<float> flat_verts;    // 3*nverts unique positions (indexed input)
+  std::vector<float> flat_attrs;    // 8*nverts: pos,nrm,uv for shaded Vulkan RT
   std::vector<uint32_t> flat_idx;   // 3*ntris vertex ids
   uint32_t ntris = 0;
   std::vector<Vec3> base_colors;    // per-triangle base color
+  std::vector<uint32_t> material_ids;  // source mesh/material per triangle
+  std::vector<float> tri_uvs;          // six floats per triangle
   std::vector<Vec3> normals;        // per-triangle flat face normal (fallback)
   std::vector<Vec3> vn0, vn1, vn2;  // per-triangle vertex normals (smooth shading)
   bool has_vertex_normals{false};   // false => the vn streams are omitted
@@ -132,7 +135,9 @@ void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
 // opt.output. Returns false on image-write failure.
 bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                         const std::vector<lrt_ray> &rays,
-                        const std::vector<lrt_hit> &hits, int w, int h, int spp);
+                        const std::vector<lrt_hit> &hits, int w, int h, int spp,
+                        const std::vector<ResolvedMat> *materials = nullptr,
+                        const std::vector<Texture> *textures = nullptr);
 
 // Shade native Gaussian ellipse hits directly from chunk-local metadata. This
 // avoids flattening all splat colors/normals into a second scene-wide

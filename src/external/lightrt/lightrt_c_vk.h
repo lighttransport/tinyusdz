@@ -227,6 +227,46 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
                            const lrt_ray *rays, uint32_t n, lrt_hit *out,
                            lrt_result *err);
 
+/* Descriptor-backed MaterialX/OpenPBR preview and production path tracing.
+ * The resident TLAS in `s` must describe the same indexed triangles. Vertices
+ * are interleaved pos.xyz,nrm.xyz,uv.xy (8 floats). Graph blocks use the
+ * canonical tusdview PackMaterialXGraphRuntime layout. Textures are packed
+ * RGBA8 uint32 texels with 8-int descriptors: offset,width,height,wrapS,wrapT,
+ * srgb,0,0. Materials use the canonical packed OpenPBR block whose stride is
+ * supplied in `material_stride_floats`. Lights use 16 floats:
+ * position.xyz,type,direction.xyz,radius,radiance.xyz,width,height,length,
+ * distant-angle,environment-texture-id.
+ * Output is display-referred RGBA float. */
+typedef struct lrt_vk_material_path_desc {
+    const float *vertices;
+    uint32_t nverts;
+    const uint32_t *indices;
+    const uint32_t *triangle_materials;
+    uint32_t ntris;
+    const float *materials;
+    uint32_t nmaterials;
+    uint32_t material_stride_floats;
+    const float *graphs;
+    uint32_t graph_stride_floats;
+    const uint32_t *texels;
+    uint32_t ntexels;
+    const int32_t *texture_descs;
+    uint32_t ntextures;
+    const float *lights;
+    uint32_t nlights;
+    float inv_view_proj[16];
+    float camera[3];
+    float clear_color[3];
+    float exposure;
+    uint32_t width, height;
+    uint32_t samples, max_depth, rr_depth, seed;
+} lrt_vk_material_path_desc;
+
+int lrt_vk_rtx_scene_render_materialx_path(
+    lrt_vk_engine *e, lrt_vk_rtx_scene *s,
+    const lrt_vk_material_path_desc *desc, float *out_rgba,
+    lrt_result *err);
+
 /* Wide-id hit: like lrt_hit but the single 32-bit prim_id is replaced by the two
  * fields the wide trace stores separately. `inst` is the TLAS instance (placement)
  * id 0..ninsts-1; `local` is the prototype-local triangle index. A miss sets

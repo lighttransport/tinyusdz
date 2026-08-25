@@ -450,6 +450,12 @@ enum class MaterialXGraphOpCPU : uint32_t {
   Atan2 = 41,
   Sign = 42,
   Round = 43,
+  Combine,
+  Extract,
+  Convert,
+  Position,
+  HsvAdjust,
+  HeightToNormal,
   Unknown,
 };
 
@@ -479,10 +485,14 @@ struct MaterialXGraphRuntimeCPU {
   // OpenPBR output node indices: base, metalness, roughness, opacity,
   // emission, normal, subsurface weight/color/radius, specular weight/color,
   // transmission weight/color, coat weight/color/roughness, sheen
-  // weight/color/roughness, and specular IOR. -1 means no graph connection.
-  static constexpr int kOutputCount = 20;
-  int output[kOutputCount]{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-                           -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+  // weight/color/roughness, specular IOR, and the advanced OpenPBR controls
+  // through volume emission scale. -1 means no graph connection.
+  static constexpr int kOutputCount = 48;
+  std::array<int, kOutputCount> output = [] {
+    std::array<int, kOutputCount> routes{};
+    routes.fill(-1);
+    return routes;
+  }();
   bool valid{false};
   bool hasImages{false};
 };

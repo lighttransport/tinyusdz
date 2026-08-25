@@ -3,6 +3,10 @@
 30e45b8efb4332a71e1558c6f100f5d50e51aaaf:src/external/xxhash.h:generic-api-key:5063
 4360e4d33bd0dfff94d97baa22942803a787e8c4:src/external/zstd.c:generic-api-key:13033
 4360e4d33bd0dfff94d97baa22942803a787e8c4:src/external/zstd.c:generic-api-key:13082
+97cb246079e7b2c02f8a5557e4cdcb5ebcecc2ec:src/external/xxhash.h:generic-api-key:5014
+97cb246079e7b2c02f8a5557e4cdcb5ebcecc2ec:src/external/xxhash.h:generic-api-key:5063
+c9481dbaba390000773dc36bb254fee15141050b:src/external/zstd.c:generic-api-key:13033
+c9481dbaba390000773dc36bb254fee15141050b:src/external/zstd.c:generic-api-key:13082
 849c808959498b7b70df990d0e240763d0635480:examples/common/glfw-3.3.2/src/x11_window.c:generic-api-key:1680
 849c808959498b7b70df990d0e240763d0635480:examples/common/glfw-3.3.2/src/x11_window.c:generic-api-key:1766
 8f2c816ed19303bb26e05313c1388a34fc5e7c07:src/external/zstd.c:generic-api-key:13033

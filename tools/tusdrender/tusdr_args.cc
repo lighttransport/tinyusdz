@@ -209,6 +209,14 @@ void PrintUsage(const char *prog) {
       << "                        back to cpu until that shader path is enabled.\n"
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
       << "  -hip                  Use the HIP/ROCm GPU-compute backend (AMD).\n"
+      << "  -cuda                 Use the shared CUDA/NVRTC RT backend (NVIDIA).\n"
+      << "  --path-trace          Use the shared multi-bounce GPU integrator.\n"
+      << "  --pt-quality interactive|final\n"
+      << "  --pt-samples <N>      Path-trace sample target (0 = backend default).\n"
+      << "  --pt-max-depth <N>    Maximum path depth (1..64).\n"
+      << "  --pt-rr-depth <N>     Russian-roulette start depth.\n"
+      << "  --pt-seed <N>         Deterministic path-trace seed.\n"
+      << "  --pt-variance <f>     Relative convergence threshold (0 disables).\n"
       << "  -texMaxSize <N>       Downsize loaded textures whose longest edge exceeds N\n"
       << "                         (auto-bounded unless explicitly set).\n"
       << "  -texBudgetMb <N>      Decoded texture budget in MiB (auto-derived unless\n"
@@ -764,6 +772,56 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->hip = true;
       opt->backend_explicit = true;
     }
+    OPT_MATCH(a == "-cuda" || a == "--cuda") {
+      opt->cuda = true;
+      opt->backend_explicit = true;
+    }
+    OPT_MATCH(a == "-path-trace" || a == "--path-trace") {
+      opt->path_trace = true;
+    }
+    OPT_MATCH(a == "-pt-quality" || a == "--pt-quality") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      const std::string quality = v;
+      if (quality == "interactive") {
+        opt->path_trace_quality = Options::PathTraceQuality::Interactive;
+      } else if (quality == "final") {
+        opt->path_trace_quality = Options::PathTraceQuality::Final;
+      } else {
+        std::cerr << "--pt-quality must be interactive or final.\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "-pt-samples" || a == "--pt-samples" ||
+              a == "-pt-max-depth" || a == "--pt-max-depth" ||
+              a == "-pt-rr-depth" || a == "--pt-rr-depth" ||
+              a == "-pt-seed" || a == "--pt-seed") {
+      const std::string option = a;
+      const char *v = need_value(a.c_str());
+      int parsed = 0;
+      if (!v || !ParseIntStrict(v, &parsed) || parsed < 0 ||
+          parsed > 1000000) {
+        std::cerr << option << " requires an integer in [0, 1000000].\n";
+        return false;
+      }
+      if (option.find("samples") != std::string::npos)
+        opt->path_trace_samples = static_cast<uint32_t>(parsed);
+      else if (option.find("max-depth") != std::string::npos)
+        opt->path_trace_max_depth = static_cast<uint32_t>(parsed);
+      else if (option.find("rr-depth") != std::string::npos)
+        opt->path_trace_rr_depth = static_cast<uint32_t>(parsed);
+      else
+        opt->path_trace_seed = static_cast<uint32_t>(parsed);
+    }
+    OPT_MATCH(a == "-pt-variance" || a == "--pt-variance") {
+      const char *v = need_value(a.c_str());
+      float parsed = 0.0f;
+      if (!v || !ParseFloatStrict(v, &parsed) || parsed < 0.0f) {
+        std::cerr << "--pt-variance requires a non-negative number.\n";
+        return false;
+      }
+      opt->path_trace_variance = parsed;
+    }
     OPT_MATCH(a == "-js" || a == "--js") {
       const char *v = need_value(a.c_str());
       if (!v) {
@@ -851,6 +909,10 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
   }
   opt->input = positional[0];
   opt->output = positional.size() > 1 ? positional[1] : std::string();
+  if (opt->path_trace && !opt->cuda && !opt->hip && !opt->vulkan_rt) {
+    std::cerr << "--path-trace requires -vkr, -cuda, or -hip.\n";
+    return false;
+  }
   return true;
 }
 

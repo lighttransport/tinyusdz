@@ -53,8 +53,11 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
       out->scene = nullptr;
     }
     std::vector<float>().swap(out->flat_verts);
+    std::vector<float>().swap(out->flat_attrs);
     std::vector<uint32_t>().swap(out->flat_idx);
     std::vector<Vec3>().swap(out->base_colors);
+    std::vector<uint32_t>().swap(out->material_ids);
+    std::vector<float>().swap(out->tri_uvs);
     std::vector<Vec3>().swap(out->normals);
     std::vector<Vec3>().swap(out->vn0);
     std::vector<Vec3>().swap(out->vn1);
@@ -102,6 +105,7 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
   }
   out->flat_verts.reserve(total_pos);
   out->flat_idx.reserve(total_idx);
+  out->flat_attrs.reserve(total_vertices * 8u);
   out->normals.reserve(total_tris);
   for (const auto &g : geos) {
     const size_t nv = g.positions.size() / 3u;
@@ -121,9 +125,19 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
     const auto &g = geos[mesh_idx];
     uint32_t nv = uint32_t(g.positions.size() / 3);
     for (uint32_t j = 0; j < nv; ++j) {
-      out->flat_verts.push_back(g.positions[j * 3 + 0]);
-      out->flat_verts.push_back(g.positions[j * 3 + 1]);
-      out->flat_verts.push_back(g.positions[j * 3 + 2]);
+      const float px = g.positions[j * 3 + 0];
+      const float py = g.positions[j * 3 + 1];
+      const float pz = g.positions[j * 3 + 2];
+      out->flat_verts.insert(out->flat_verts.end(), {px, py, pz});
+      const bool has_n = g.normals.size() == size_t(nv) * 3u;
+      const bool has_uv = g.uvs.size() == size_t(nv) * 2u;
+      out->flat_attrs.insert(out->flat_attrs.end(),
+          {px, py, pz,
+           has_n ? g.normals[j * 3u] : 0.0f,
+           has_n ? g.normals[j * 3u + 1u] : 0.0f,
+           has_n ? g.normals[j * 3u + 2u] : 0.0f,
+           has_uv ? g.uvs[j * 2u] : 0.0f,
+           has_uv ? g.uvs[j * 2u + 1u] : 0.0f});
     }
     for (uint32_t j = 0; j < uint32_t(g.indices.size()); ++j) {
       if (g.indices[j] >= nv) {
@@ -156,6 +170,13 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
         out->vn0.push_back(vnorm(i0));
         out->vn1.push_back(vnorm(i1));
         out->vn2.push_back(vnorm(i2));
+      }
+      out->material_ids.push_back(static_cast<uint32_t>(mesh_idx));
+      const bool perVertexUv = g.uvs.size() == size_t(nv) * 2u;
+      const uint32_t uv_idx[3] = {i0, i1, i2};
+      for (uint32_t corner : uv_idx) {
+        out->tri_uvs.push_back(perVertexUv ? g.uvs[corner * 2u] : 0.0f);
+        out->tri_uvs.push_back(perVertexUv ? g.uvs[corner * 2u + 1u] : 0.0f);
       }
     }
     size_t nm = (base_colors.size() > geos.size()) ? geos.size() : base_colors.size();
@@ -527,7 +548,9 @@ void GenerateCameraRays(const CameraFrame &camera, int w, int h, int spp,
 
 bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
                         const std::vector<lrt_ray> &rays,
-                        const std::vector<lrt_hit> &hits, int w, int h, int spp) {
+                        const std::vector<lrt_hit> &hits, int w, int h, int spp,
+                        const std::vector<ResolvedMat> *materials,
+                        const std::vector<Texture> *textures) {
   const float ambient = opt.ambient;
   const Vec3 light = Normalize(Vec3{0.5f, 0.8f, 0.6f});
 
@@ -549,6 +572,26 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
             Vec3 bc = hit.prim_id < s.base_colors.size()
                           ? s.base_colors[hit.prim_id]
                           : Vec3{0.5f, 0.5f, 0.5f};
+            const ResolvedMat *mat = nullptr;
+            if (materials && hit.prim_id < s.material_ids.size() &&
+                s.material_ids[hit.prim_id] < materials->size()) {
+              mat = &(*materials)[s.material_ids[hit.prim_id]];
+              bc = mat->base_color;
+              if (mat->tex_id >= 0 && textures &&
+                  static_cast<size_t>(mat->tex_id) < textures->size() &&
+                  hit.prim_id * 6u + 5u < s.tri_uvs.size()) {
+                const size_t uv = static_cast<size_t>(hit.prim_id) * 6u;
+                const float w0 = 1.0f - hit.u - hit.v;
+                float u = s.tri_uvs[uv] * w0 + s.tri_uvs[uv + 2u] * hit.u +
+                          s.tri_uvs[uv + 4u] * hit.v;
+                float v = s.tri_uvs[uv + 1u] * w0 +
+                          s.tri_uvs[uv + 3u] * hit.u +
+                          s.tri_uvs[uv + 5u] * hit.v;
+                mat->uv_xform.apply(&u, &v);
+                const Vec3 texel = (*textures)[size_t(mat->tex_id)].sample(u, v);
+                bc = Vec3{bc.x * texel.x, bc.y * texel.y, bc.z * texel.z};
+              }
+            }
             // Smooth normal: barycentric-interpolate the triangle's vertex normals
             // (hit.u, hit.v are the v1/v2 weights). Fall back to the flat face
             // normal when vertex normals are absent/degenerate.
@@ -574,8 +617,17 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
             // when the key grazes the surface; ambient lifts the shadow terminator.
             float key = std::max(0.0f, Dot(N, light));
             float head = std::max(0.0f, Dot(N, V));
-            float lit = ambient + 0.8f * key + 0.35f * head;
-            color = Add(color, Mul(bc, lit));
+            const float roughness = mat ? mat->roughness : 0.55f;
+            const float metallic = mat ? mat->metallic : 0.0f;
+            const float diffuse = (ambient + 0.8f * key + 0.25f * head) *
+                                  (1.0f - metallic);
+            const float specular = std::pow(head, 2.0f +
+                126.0f * (1.0f - std::max(0.0f, std::min(1.0f, roughness))));
+            Vec3 shaded = Add(Mul(bc, diffuse),
+                              Mul(Vec3{1.0f, 1.0f, 1.0f},
+                                  specular * (0.04f + 0.96f * metallic)));
+            if (mat) shaded = Add(shaded, mat->emission);
+            color = Add(color, shaded);
           }
         }
         color = Mul(color, 1.0f / float(spp));

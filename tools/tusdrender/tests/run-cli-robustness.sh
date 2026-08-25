@@ -52,6 +52,10 @@ expect_clean_failure "-fitScale 1e999" "$TMP/tri.usda" "$TMP/x.png" -fitScale 1e
 expect_clean_failure "-w 2000000000" "$TMP/tri.usda" "$TMP/x.png" -w 2000000000
 expect_clean_failure "-height 2000000000" "$TMP/tri.usda" "$TMP/x.png" -height 2000000000
 expect_clean_failure "-samples 2000000000" "$TMP/tri.usda" "$TMP/x.png" -samples 2000000000
+expect_clean_failure "--pt-samples 2000000000" "$TMP/tri.usda" "$TMP/x.png" \
+    -cuda --path-trace --pt-samples 2000000000
+expect_clean_failure "--path-trace without a supported backend" \
+    "$TMP/tri.usda" "$TMP/x.png" --path-trace
 expect_clean_failure "-frames on the non-next path" \
     "$TMP/tri.usda" "$TMP/f.####.png" -frames 1:3 -w 16 -height 16
 grep -qi "frames" "$TMP/log" \

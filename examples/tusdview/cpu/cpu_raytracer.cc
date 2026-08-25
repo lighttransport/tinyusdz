@@ -527,6 +527,40 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const float angle = scene.matGraph[p + 15] * 0.0174532925199433f;
         const float cs = std::cos(angle), sn = std::sin(angle);
         dst = {tx * cs - ty * sn, tx * sn + ty * cs, a[2], a[3]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Combine)) {
+        dst = {a[0], b[0], c[0], 1.0f};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Extract)) {
+        const int lane = std::clamp(static_cast<int>(std::floor(b[0] + 0.5f)), 0, 3);
+        dst = {a[lane], a[lane], a[lane], a[lane]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Convert)) {
+        dst = a;
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Position)) {
+        dst = {0.0f, 0.0f, 0.0f, 1.0f};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::HsvAdjust)) {
+        const float mx = std::max(a[0], std::max(a[1], a[2]));
+        const float mn = std::min(a[0], std::min(a[1], a[2]));
+        const float chroma = mx - mn;
+        float hue = 0.0f;
+        if (chroma > 1.0e-6f) {
+          if (mx == a[0]) hue = std::fmod((a[1] - a[2]) / chroma, 6.0f);
+          else if (mx == a[1]) hue = (a[2] - a[0]) / chroma + 2.0f;
+          else hue = (a[0] - a[1]) / chroma + 4.0f;
+          hue /= 6.0f;
+        }
+        hue = hue + b[0] - std::floor(hue + b[0]);
+        const float sat = mx > 1.0e-6f ? chroma / mx : 0.0f;
+        const float s2 = std::clamp(sat * b[1], 0.0f, 1.0f);
+        const float v2 = std::max(mx * b[2], 0.0f);
+        const float hp = hue * 6.0f, x = v2 * s2 *
+            (1.0f - std::fabs(std::fmod(hp, 2.0f) - 1.0f));
+        const float cc = v2 * s2, m = v2 - cc;
+        const int sector = static_cast<int>(std::floor(hp)) % 6;
+        const float rgb[6][3] = {{cc,x,0},{x,cc,0},{0,cc,x},
+                                 {0,x,cc},{x,0,cc},{cc,0,x}};
+        dst = {rgb[sector][0] + m, rgb[sector][1] + m,
+               rgb[sector][2] + m, a[3]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::HeightToNormal)) {
+        dst = {0.5f, 0.5f, 1.0f, 1.0f};
       } else dst = fallback(0);
     }
   }

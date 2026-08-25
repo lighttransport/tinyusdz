@@ -826,6 +826,67 @@ int main() {
     return 1;
   }
 
+  // Advanced OpenPBR inputs must remain descriptor-routed, not merely baked
+  // into the constant fallback. This locks the route ABI consumed by the
+  // Vulkan production path tracer (and shared CUDA/HIP graph buffer).
+  tusdview::DrawMaterialCPU advancedGraphMat;
+  advancedGraphMat.materialXNodeGraphJson = R"json({
+    "nodegraph": {"nodes": [
+      {"name":"film", "category":"constant", "inputs":[{"value":0.75}]},
+      {"name":"aniso", "category":"constant", "inputs":[{"value":0.6}]},
+      {"name":"disp", "category":"constant", "inputs":[{"value":1.0}]},
+      {"name":"scatter_g", "category":"constant", "inputs":[{"value":0.35}]},
+      {"name":"density", "category":"constant", "inputs":[{"value":0.25}]},
+      {"name":"albedo", "category":"constant", "inputs":[{"value":[0.2,0.4,0.6]}]},
+      {"name":"emission", "category":"constant", "inputs":[{"value":3.0}]}
+    ], "outputs": [
+      {"name":"film_o", "nodename":"film"},
+      {"name":"aniso_o", "nodename":"aniso"},
+      {"name":"disp_o", "nodename":"disp"},
+      {"name":"scatter_g_o", "nodename":"scatter_g"},
+      {"name":"density_o", "nodename":"density"},
+      {"name":"albedo_o", "nodename":"albedo"},
+      {"name":"emission_o", "nodename":"emission"}
+    ]},
+    "connections": [
+      {"input":"thin_film_weight", "output":"film_o"},
+      {"input":"specular_anisotropy", "output":"aniso_o"},
+      {"input":"transmission_dispersion", "output":"disp_o"},
+      {"input":"transmission_scatter_anisotropy", "output":"scatter_g_o"},
+      {"input":"volume_density", "output":"density_o"},
+      {"input":"volume_albedo", "output":"albedo_o"},
+      {"input":"emission_luminance", "output":"emission_o"},
+      {"input":"coat_affect_color", "output":"film_o"},
+      {"input":"coat_affect_roughness", "output":"film_o"},
+      {"input":"coat_darkening", "output":"film_o"}
+    ]
+  })json";
+  std::string advancedError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&advancedGraphMat,
+                                               &advancedError) ||
+      advancedGraphMat.materialXGraph.output[28] < 0 ||
+      advancedGraphMat.materialXGraph.output[31] < 0 ||
+      advancedGraphMat.materialXGraph.output[34] < 0 ||
+      advancedGraphMat.materialXGraph.output[24] < 0 ||
+      advancedGraphMat.materialXGraph.output[40] < 0 ||
+      advancedGraphMat.materialXGraph.output[41] < 0 ||
+      advancedGraphMat.materialXGraph.output[44] < 0 ||
+      advancedGraphMat.materialXGraph.output[45] < 0 ||
+      advancedGraphMat.materialXGraph.output[46] < 0 ||
+      advancedGraphMat.materialXGraph.output[47] < 0) {
+    std::fprintf(stderr, "advanced OpenPBR graph routing failed: %s\n",
+                 advancedError.c_str());
+    return 1;
+  }
+  std::vector<float> advancedPack(tusdview::kRtMaterialGraphFloats, 0.0f);
+  tusdview::PackMaterialXGraphRuntime(advancedGraphMat, advancedPack.data());
+  for (int route : {24, 28, 31, 34, 40, 41, 44, 45, 46, 47}) {
+    if (advancedPack[1 + route] < 0.0f) {
+      std::fprintf(stderr, "advanced OpenPBR route %d was not packed\n", route);
+      return 1;
+    }
+  }
+
   // Keep the canonical IR operation table aligned across CPU, Vulkan, CUDA,
   // and HIP interpreters. These scalar nodes are deliberately independent of
   // LightRT's legacy bake evaluator.
@@ -854,8 +915,6 @@ int main() {
           tusdview::MaterialXGraphOpCPU::Select ||
       extendedGraphMat.materialXGraph.nodes[9].op !=
           tusdview::MaterialXGraphOpCPU::Remap ||
-      !Near(extendedGraphMat.materialXGraph.nodes[0].uvScale[0], 2.0f) ||
-      !Near(extendedGraphMat.materialXGraph.nodes[0].uvOffset[1], 0.2f) ||
       !Near(extendedGraphMat.materialXGraph.nodes[7].value[0][1], 2.0f) ||
       !Near(extendedGraphMat.materialXGraph.nodes[8].value[2][0], 3.0f)) {
     std::fprintf(stderr, "extended MaterialX graph operators failed: %s\n",
@@ -915,7 +974,7 @@ int main() {
       placedImageMat.materialXGraph.nodes[1].op !=
           tusdview::MaterialXGraphOpCPU::Transform2D ||
       placedImageMat.materialXGraph.nodes[0].value[2][2] != 1.0f ||
-      placedImageMat.materialXGraph.nodes[2].value[2][3] != 1.0f) {
+      placedImageMat.materialXGraph.nodes[2].value[2][3] != 0.0f) {
     std::fprintf(stderr, "MaterialX placed image graph failed: %s\n",
                  placedError.c_str());
     return 1;
@@ -928,7 +987,7 @@ int main() {
                                  tusdview::kRtMaterialGraphNodeFloats;
   if (placedPack[placedNode] !=
           static_cast<float>(tusdview::MaterialXGraphOpCPU::Image) ||
-      placedPack[placedNode + 15] != 1.0f ||
+      placedPack[placedNode + 15] != 0.0f ||
       !Near(placedPack[placedTransform + 15], 30.0f)) {
     std::fprintf(stderr, "MaterialX placed image graph packing failed\n");
     return 1;

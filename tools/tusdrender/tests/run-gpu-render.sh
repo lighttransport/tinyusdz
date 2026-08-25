@@ -65,8 +65,9 @@ render() {
   fi
   if [ "$name" = "vkr" ] &&
      ! echo "$log" | grep -q "ray_query, indexed Vulkan AS, CPU BVH skipped" &&
+     ! echo "$log" | grep -q "ray_query, descriptor MaterialX" &&
      ! echo "$log" | grep -q "compute trace, ray_query fallback"; then
-    echo "FAIL: vkr did not report the direct indexed Vulkan AS path or explicit fallback"
+    echo "FAIL: vkr did not report descriptor shading, direct indexed Vulkan AS, or explicit fallback"
     echo "$log"
     REPLY="FAIL"
     return 0
@@ -78,6 +79,34 @@ render() {
   fi
   echo "  $name: rendered $(wc -c < "$out") bytes"
   REPLY="$out"
+  return 0
+}
+
+# CUDA and HIP use the tusdview RT core directly, including packed
+# OpenPBR/MaterialX graphs. Their richer preview is intentionally not compared
+# byte-for-byte with the legacy LightRT shade-after-hit Vulkan output.
+render_shared() {
+  local flag="$1" name="$2" extra="${3:-}"
+  local out="$TMP/gpu_${name}.png"
+  local graph_asset="$REPO_ROOT/tests/feat/node-mtlx/ChainTest.usda"
+  local log
+  log="$(run_tusdrender "$graph_asset" "$out" "$flag" -stats --path-trace \
+        --pt-samples 2 -w 200 -height 150 -autoframe -samples 2 $extra 2>&1)"
+  if ! echo "$log" | grep -q "backend: shared .* RT"; then
+    echo "  $name: unavailable (skipped)"
+    return 1
+  fi
+  if ! echo "$log" | grep -Eq "graphs=[1-9][0-9]* graph_nodes=[1-9][0-9]*"; then
+    echo "FAIL: $name did not retain executable MaterialX graph topology"
+    echo "$log"
+    return 2
+  fi
+  if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 2000 ]; then
+    echo "FAIL: $name produced a blank/trivial image"
+    echo "$log"
+    return 2
+  fi
+  echo "  $name: rendered $(wc -c < "$out") bytes"
   return 0
 }
 
@@ -117,20 +146,131 @@ render_gpu_shade_preview() {
   local log
   log="$(run_tusdrender "$ASSET" "$out" -vkr -gpuShade preview \
         -w 200 -height 150 -autoframe -samples 2 2>&1)"
-  if ! echo "$log" | grep -q -- "-gpuShade preview: GPU preview shading is not enabled yet"; then
-    echo "FAIL: -gpuShade preview did not report its CPU shade fallback"
+  if ! echo "$log" | grep -q "backend: LightRT"; then
+    echo "  -gpuShade preview: Vulkan unavailable (skipped)"
+    return 0
+  fi
+  if ! echo "$log" | grep -q "OpenPBR preview"; then
+    echo "FAIL: -gpuShade preview did not select OpenPBR material shading"
     echo "$log"
     return 1
-  fi
-  if ! echo "$log" | grep -q "backend: LightRT"; then
-    echo "  -gpuShade preview: Vulkan unavailable (fallback message covered)"
-    return 0
   fi
   if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 2000 ]; then
     echo "FAIL: -gpuShade preview produced a blank/trivial image"
     return 1
   fi
   echo "  -gpuShade preview: rendered $(wc -c < "$out") bytes"
+  return 0
+}
+
+render_vkr_path_trace() {
+  local out="$TMP/gpu_vkr_path.png"
+  local log
+  log="$(run_tusdrender "$ASSET" "$out" -vkr --path-trace \
+        --pt-samples 2 --pt-max-depth 3 --pt-rr-depth 2 \
+        -w 96 -height 72 -autoframe 2>&1)"
+  if ! echo "$log" | grep -q "backend: LightRT"; then
+    echo "  -vkr --path-trace: Vulkan ray query unavailable (skipped)"
+    return 0
+  fi
+  if ! echo "$log" | grep -q "descriptor MaterialX, production path"; then
+    echo "FAIL: -vkr --path-trace did not select descriptor MaterialX path tracing"
+    echo "$log"
+    return 1
+  fi
+  if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 1000 ]; then
+    echo "FAIL: -vkr --path-trace produced a blank/trivial image"
+    return 1
+  fi
+  echo "  -vkr --path-trace: rendered $(wc -c < "$out") bytes"
+  return 0
+}
+
+render_vkr_materialx_graph() {
+  local graph_asset="$REPO_ROOT/tests/feat/node-mtlx/ChainTest.usda"
+  local out="$TMP/gpu_vkr_graph.png"
+  local log
+  if [ ! -f "$graph_asset" ]; then
+    echo "FAIL: MaterialX graph fixture is missing: $graph_asset"
+    return 1
+  fi
+  log="$(run_tusdrender "$graph_asset" "$out" -vkr -stats --path-trace \
+        --pt-samples 1 --pt-max-depth 3 --pt-rr-depth 2 \
+        -w 64 -height 48 -autoframe 2>&1)"
+  if ! echo "$log" | grep -q "backend: LightRT"; then
+    echo "  -vkr MaterialX graph: Vulkan ray query unavailable (skipped)"
+    return 0
+  fi
+  if ! echo "$log" | grep -Eq "graphMaterials=[1-9][0-9]* graphNodes=[1-9][0-9]*"; then
+    echo "FAIL: -vkr did not retain executable MaterialX graph topology"
+    echo "$log"
+    return 1
+  fi
+  if ! echo "$log" | grep -q "descriptor MaterialX, production path" ||
+     [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 500 ]; then
+    echo "FAIL: -vkr MaterialX graph did not produce a nontrivial descriptor render"
+    echo "$log"
+    return 1
+  fi
+  echo "  -vkr MaterialX graph: retained and rendered executable graph IR"
+  return 0
+}
+
+render_vkr_geometry_light() {
+  local scene="$TMP/vkr_geometry_light.usda"
+  local dark="$TMP/vkr_geometry_dark.usda"
+  local lit_out="$TMP/vkr_geometry_light.png"
+  local dark_out="$TMP/vkr_geometry_dark.png"
+  cat > "$scene" <<'USDA'
+#usda 1.0
+(defaultPrim = "World" upAxis = "Z")
+def Xform "World" {
+  def Mesh "Floor" {
+    uniform bool doubleSided = 1
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-4,-4,0), (4,-4,0), (4,4,0), (-4,4,0)]
+    normal3f[] normals = [(0,0,1), (0,0,1), (0,0,1), (0,0,1)] (interpolation = "vertex")
+    color3f[] primvars:displayColor = [(0.8,0.8,0.8)]
+    uniform token subdivisionScheme = "none"
+  }
+  def Mesh "Emitter" (prepend apiSchemas = ["MeshLightAPI"]) {
+    uniform bool doubleSided = 1
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [3, 2, 1, 0]
+    point3f[] points = [(-1,-1,4), (1,-1,4), (1,1,4), (-1,1,4)]
+    float inputs:intensity = 80
+    color3f inputs:color = (1, 0.5, 0.2)
+    uniform token subdivisionScheme = "none"
+  }
+}
+USDA
+  sed 's/inputs:intensity = 80/inputs:intensity = 0/' "$scene" > "$dark"
+  local log
+  log="$(run_tusdrender "$scene" "$lit_out" -vkr -stats --path-trace \
+        --pt-samples 4 --pt-max-depth 2 -viewDir 0,0,1 -bg 0,0,0 \
+        -w 64 -height 64 2>&1)"
+  if ! echo "$log" | grep -q "backend: LightRT"; then
+    echo "  -vkr geometry light: Vulkan ray query unavailable (skipped)"
+    return 0
+  fi
+  if ! echo "$log" | grep -Eq "Vulkan descriptor lights: count=[2-9][0-9]* geometry=2"; then
+    echo "FAIL: MeshLightAPI triangles did not reach the descriptor light table"
+    echo "$log"
+    return 1
+  fi
+  run_tusdrender "$dark" "$dark_out" -vkr --path-trace --pt-samples 4 \
+      --pt-max-depth 2 -viewDir 0,0,1 -bg 0,0,0 -w 64 -height 64 >/dev/null 2>&1 || return 1
+  if command -v compare >/dev/null 2>&1; then
+    local changed
+    changed="$(compare -metric AE -fuzz 2% "$lit_out" "$dark_out" null: 2>&1)"
+    changed="${changed%%[!0-9]*}"
+    if [ -z "$changed" ] || [ "$changed" -lt 30 ]; then
+      echo "FAIL: descriptor geometry light did not illuminate enough pixels (changed=${changed:-invalid})"
+      return 1
+    fi
+  fi
+  echo "  -vkr geometry light: sampled two emissive triangles"
   return 0
 }
 
@@ -216,12 +356,17 @@ echo "=== tusdrender GPU backends ==="
 ok=0
 ref=""
 fail=0
-for spec in "-vk vk" "-vkr vkr" "-hip hip"; do
+for spec in "-vk vk" "-vkr vkr"; do
   set -- $spec
   if render "$1" "$2"; then
     [ "$REPLY" = "FAIL" ] && { fail=1; continue; }
     ok=$((ok + 1))
-    if [ -z "$ref" ]; then
+    # Descriptor MaterialX/OpenPBR deliberately differs from the legacy
+    # compute hit-shading path; keep both non-blank checks, but only compare
+    # backends that implement the same shading contract.
+    if [ "$2" = "vkr" ]; then
+      :
+    elif [ -z "$ref" ]; then
       ref="$REPLY"
     else
       if ! images_agree "$ref" "$REPLY"; then
@@ -232,6 +377,14 @@ for spec in "-vk vk" "-vkr vkr" "-hip hip"; do
   fi
 done
 
+for spec in "-cuda cuda" "-hip hip"; do
+  set -- $spec
+  render_shared "$1" "$2"
+  rc=$?
+  [ "$rc" -eq 2 ] && fail=1
+  [ "$rc" -eq 0 ] && ok=$((ok + 1))
+done
+
 [ "$fail" -ne 0 ] && exit 1
 if [ "$ok" -eq 0 ]; then
   echo "SKIP: no GPU backend available in this environment"
@@ -239,6 +392,9 @@ if [ "$ok" -eq 0 ]; then
 fi
 render_profile || exit 1
 render_gpu_shade_preview || exit 1
+render_vkr_materialx_graph || exit 1
+render_vkr_geometry_light || exit 1
+render_vkr_path_trace || exit 1
 render_vkr_forced_fallback || exit 1
 render_explicit_threads || exit 1
 

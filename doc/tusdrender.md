@@ -16,6 +16,54 @@
   `trace_bvh.comp`** compiled at runtime with hiprtc, so it traverses the
   serialized LRTS BVH bit-for-bit identically to the Vulkan compute path
   (`-hip` ≈ `-vk`). Verified on AMD Radeon RX 9070 XT (gfx1201).
+
+## Shared tusdview RT materials (Vulkan, CUDA, and HIP)
+
+`-cuda`, `-vkr`, and the default `-hip` mode use the GUI-free RT core shared with
+`tusdview`. The streamed tusdrender scene is adapted directly to `DrawScene`,
+including semantic textures, UV transforms, alpha modes, the canonical OpenPBR
+parameter block, and retained MaterialX node-graph JSON. Arbitrary MaterialX
+image nodes are resolved relative to the input layer and baked into the shared
+texture table. Authored point, sphere, rect, disk, cylinder, distant, and dome
+lights are converted to the same shared RT light records; a neutral distant key
+is used only when the stage has no authored light. Use `-gpuShade cpu` with `-hip` to select the older LightRT
+shade-after-hit path explicitly.
+
+The same CLI can exercise preview and production modes without a display:
+
+```sh
+tusdrender scene.usda preview.png -cuda -gpuShade preview -autoframe
+tusdrender scene.usda vk-final.png -vkr --path-trace --pt-samples 256 -autoframe
+tusdrender scene.usda final.png -cuda --path-trace --pt-quality final \
+  --pt-samples 1024 --pt-max-depth 12 -autoframe
+tusdrender scene.usda hip.png -hip --path-trace --pt-samples 256 -autoframe
+```
+
+CUDA, HIP, and Vulkan runtimes are loaded dynamically. The CTest GPU regression exits
+with the standard skip code when no suitable device is present. Vulkan
+ray-query uses descriptor-backed geometry, canonical MaterialX graph IR,
+texture data, OpenPBR constants, and lights for both `-gpuShade preview` and
+`--path-trace`; it needs no window system. `-vk` and `-gpuShade cpu` retain the
+older LightRT compute/shade-after-hit reference paths.
+
+The default `next` material converter retains connected MaterialX NodeGraphs
+as executable IR rather than reducing them to constant/image fallbacks. The
+Vulkan path evaluates the graph once per surface hit, routes 48 canonical and
+advanced OpenPBR inputs (including live anisotropy, thin-film, dispersion,
+transmission-medium, coat-IOR, subsurface-scale, and volume controls), and
+supports packed multi-tile UDIM textures. Its production
+integrator includes rotated anisotropic GGX, coat/sheen/subsurface and
+transmission events, thin-film response, hero-wavelength dispersion, bounded
+homogeneous volume attenuation/emission plus Henyey-Greenstein scattering,
+analytic and emissive-triangle lights, and dome-environment MIS. Run the focused
+headless gate with `ctest --test-dir build_ninja -R
+tool-tusdrender-gpu-render --output-on-failure`; its graph fixture asserts that
+non-empty executable graph topology reached the descriptor renderer.
+The shared CUDA and HIP production path consumes the same 48-route graph ABI,
+including the advanced and volume controls, and performs homogeneous
+free-flight/Henyey-Greenstein scattering. The same headless gate renders the
+MaterialX graph fixture through each available shared backend and checks that
+non-empty executable graph topology reached it.
 - **Direct3D 11** (`-d3d`) — `src/external/lightrt/lightrt_c_d3d11.cpp`, driven
   by `tusdr_d3d.cc`. Windows-only, on by default
   (`-DTUSDRENDER_WITH_D3D11=ON`); d3d11/dxgi/d3dcompiler ship with the OS, so no
@@ -32,8 +80,7 @@ tusdrender models/suzanne-pbr.usda cpu.png -rtPreview -w 320 -height 240 -autofr
 tusdrender models/suzanne-pbr.usda vk.png  -vk  -w 320 -height 240 -autoframe
 # Vulkan hardware ray query (RDNA2+; else falls back to compute trace):
 tusdrender models/suzanne-pbr.usda vkr.png -vkr -w 320 -height 240 -autoframe
-# GPU shading mode. cpu is the current reference path; preview is accepted for
-# upcoming fast GPU material preview and currently falls back to cpu with a log.
+# GPU material preview (the default); use `-gpuShade cpu` for flat reference.
 tusdrender models/suzanne-pbr.usda vk-preview.png -vkr -gpuShade preview \
   -w 320 -height 240 -autoframe
 # Large-scene preset for Vulkan batch/validation runs. Explicit backend, LOD,

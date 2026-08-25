@@ -1139,20 +1139,49 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "atan2" || cat == "arctan2") out.op = MaterialXGraphOpCPU::Atan2;
     else if (cat == "sign" || cat == "signum") out.op = MaterialXGraphOpCPU::Sign;
     else if (cat == "round") out.op = MaterialXGraphOpCPU::Round;
+    else if (cat == "combine2" || cat == "combine3" || cat == "combine4")
+      out.op = MaterialXGraphOpCPU::Combine;
+    else if (cat == "extract" || cat == "separate")
+      out.op = MaterialXGraphOpCPU::Extract;
+    else if (cat.rfind("convert", 0) == 0)
+      out.op = MaterialXGraphOpCPU::Convert;
+    else if (cat == "position") out.op = MaterialXGraphOpCPU::Position;
+    else if (cat == "hsvadjust") {
+      out.op = MaterialXGraphOpCPU::HsvAdjust;
+      out.value[1][1] = out.value[1][2] = 1.0f;
+    }
+    else if (cat == "heighttonormal")
+      out.op = MaterialXGraphOpCPU::HeightToNormal;
+    else if (cat == "fractal3d" || cat == "fractal")
+      out.op = MaterialXGraphOpCPU::Noise3D;
+    if (out.op == MaterialXGraphOpCPU::Unknown) {
+      if (err) *err = "Unsupported MaterialX graph node category: " + cat;
+      return false;
+    }
     if (out.op == MaterialXGraphOpCPU::Image ||
         out.op == MaterialXGraphOpCPU::TiledImage)
       out.value[2][3] = -1.0f;
     const auto inputsIt = node.find("inputs");
     int nextInput = 0;
     int uvInput = -1;
+    bool usedInput[3]{false, false, false};
     if (inputsIt != node.end() && inputsIt->is_array()) {
       for (const nlohmann::json& input : *inputsIt) {
         const std::string inputName = JsonString(input, "name");
         const auto valueIt = input.find("value");
+        const std::string inputType = NormalizeMtlxType(JsonString(input, "type"));
+        if (inputName == "file" || inputType == "filename") {
+          out.imagePath = JsonString(input, "value");
+          if (!out.imagePath.empty()) graph.hasImages = true;
+          continue;
+        }
         // Tiled-image graphs commonly author a local UV scale/offset on the
         // image node. Keep these controls out of the value-input arity so the
         // graph's arithmetic inputs retain their canonical indices.
-        if (valueIt != input.end() && valueIt->is_array() &&
+        const bool uvControlNode = cat == "image" || cat == "tiledimage" ||
+            cat == "hextiledimage" || cat == "transform2d" ||
+            cat == "place2d" || cat == "place2dtransform";
+        if (uvControlNode && valueIt != input.end() && valueIt->is_array() &&
             (inputName == "scale" || inputName == "uv_scale" ||
              inputName == "offset" || inputName == "uv_offset")) {
           float* dst = (inputName == "offset" || inputName == "uv_offset")
@@ -1172,6 +1201,39 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           out.value[2][3] = valueIt->get<float>();
           continue;
         }
+        int inputSlot = -1;
+        if ((cat == "rotate3d" || cat == "rotate") && inputName == "amount")
+          inputSlot = 0;
+        else if ((cat == "rotate3d" || cat == "rotate") && inputName == "axis")
+          inputSlot = 1;
+        else if ((cat == "rotate3d" || cat == "rotate") && inputName == "in")
+          inputSlot = 2;
+        else if (cat == "clamp" && inputName == "low") inputSlot = 1;
+        else if (cat == "clamp" && inputName == "high") inputSlot = 2;
+        else if (cat == "mix" && (inputName == "bg" || inputName == "in1"))
+          inputSlot = 0;
+        else if (cat == "mix" && (inputName == "fg" || inputName == "in2"))
+          inputSlot = 1;
+        else if (cat == "mix" && (inputName == "mix" || inputName == "amount"))
+          inputSlot = 2;
+        else if (inputName == "in" || inputName == "in1" ||
+            inputName == "value" || inputName == "color" ||
+            inputName == "position" || inputName == "texcoord" ||
+            inputName == "uv" || inputName == "st" || inputName == "coord")
+          inputSlot = 0;
+        else if (inputName == "in2" || inputName == "amount" ||
+                 inputName == "index" || inputName == "lacunarity" ||
+                 inputName == "scale")
+          inputSlot = 1;
+        else if (inputName == "in3" || inputName == "octaves")
+          inputSlot = 2;
+        if (inputSlot < 0) {
+          while (nextInput < 3 && usedInput[nextInput]) ++nextInput;
+          inputSlot = nextInput;
+        }
+        if (inputSlot < 0 || inputSlot >= 3) continue;
+        usedInput[inputSlot] = true;
+        nextInput = std::max(nextInput, inputSlot + 1);
         // Preserve connected graph coordinates for image nodes. The runtime
         // interpreters use this metadata instead of silently sampling the hit
         // UV whenever an image has a texcoord/place2d input.
@@ -1179,28 +1241,21 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
              inputName == "st" || inputName == "coord") &&
             (cat == "image" || cat == "tiledimage" ||
              cat == "hextiledimage")) {
-          uvInput = nextInput;
+          uvInput = inputSlot;
         }
-        if (nextInput >= 3) continue;
         const std::string source = JsonString(input, "nodename");
         if (!source.empty()) {
           const auto found = nodeIds.find(source);
-          if (found != nodeIds.end()) out.input[nextInput] = found->second;
+          if (found != nodeIds.end()) out.input[inputSlot] = found->second;
         }
         if (valueIt != input.end()) {
-          if (valueIt->is_number()) out.value[nextInput][0] = valueIt->get<float>();
+          if (valueIt->is_number()) out.value[inputSlot][0] = valueIt->get<float>();
           else if (valueIt->is_array()) {
             for (size_t c = 0; c < valueIt->size() && c < 4; ++c)
               if ((*valueIt)[c].is_number())
-                out.value[nextInput][c] = (*valueIt)[c].get<float>();
+                out.value[inputSlot][c] = (*valueIt)[c].get<float>();
           }
         }
-        const std::string inputType = NormalizeMtlxType(JsonString(input, "type"));
-        if (inputName == "file" || inputType == "filename") {
-          out.imagePath = JsonString(input, "value");
-          if (!out.imagePath.empty()) graph.hasImages = true;
-        }
-        ++nextInput;
       }
     }
     if (uvInput >= 0) out.value[2][3] = static_cast<float>(uvInput);
@@ -1252,6 +1307,43 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       else if (input == "fuzz_roughness" || input == "sheen_roughness")
         destination = &graph.output[18];
       else if (input == "specular_ior") destination = &graph.output[19];
+      else if (input == "base_weight") destination = &graph.output[20];
+      else if (input == "base_diffuse_roughness" ||
+               input == "diffuse_roughness") destination = &graph.output[21];
+      else if (input == "transmission_scatter") destination = &graph.output[22];
+      else if (input == "transmission_depth") destination = &graph.output[23];
+      else if (input == "transmission_scatter_anisotropy")
+        destination = &graph.output[24];
+      else if (input == "subsurface_scale" ||
+               input == "subsurface_radius_scale") destination = &graph.output[25];
+      else if (input == "subsurface_anisotropy" ||
+               input == "subsurface_scatter_anisotropy")
+        destination = &graph.output[26];
+      else if (input == "coat_ior") destination = &graph.output[27];
+      else if (input == "thin_film_weight") destination = &graph.output[28];
+      else if (input == "thin_film_thickness") destination = &graph.output[29];
+      else if (input == "thin_film_ior") destination = &graph.output[30];
+      else if (input == "specular_anisotropy") destination = &graph.output[31];
+      else if (input == "specular_rotation") destination = &graph.output[32];
+      else if (input == "specular_roughness_anisotropy")
+        destination = &graph.output[33];
+      else if (input == "transmission_dispersion") destination = &graph.output[34];
+      else if (input == "transmission_dispersion_abbe_number")
+        destination = &graph.output[35];
+      else if (input == "transmission_dispersion_scale")
+        destination = &graph.output[36];
+      else if (input == "coat_anisotropy") destination = &graph.output[37];
+      else if (input == "coat_rotation") destination = &graph.output[38];
+      else if (input == "coat_roughness_anisotropy")
+        destination = &graph.output[39];
+      else if (input == "volume_density") destination = &graph.output[40];
+      else if (input == "volume_albedo") destination = &graph.output[41];
+      else if (input == "volume_emission_color") destination = &graph.output[42];
+      else if (input == "volume_emission_scale") destination = &graph.output[43];
+      else if (input == "emission_luminance") destination = &graph.output[44];
+      else if (input == "coat_affect_color") destination = &graph.output[45];
+      else if (input == "coat_affect_roughness") destination = &graph.output[46];
+      else if (input == "coat_darkening") destination = &graph.output[47];
       if (destination) *destination = nodeIt->second;
     }
   }
@@ -1338,7 +1430,7 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
     const MaterialXGraphNodeCPU& source = mat->materialXGraph.nodes[static_cast<size_t>(index)];
     for (int input : source.input) markSrgb(input);
   };
-  for (int route : {0, 4, 7, 10, 12, 14, 17})
+  for (int route : {0, 4, 7, 10, 12, 14, 17, 22, 41, 42})
     markSrgb(mat->materialXGraph.output[route]);
 
   for (size_t nodeIndex = 0; nodeIndex < mat->materialXGraph.nodes.size();
