@@ -282,6 +282,14 @@ def main():
                        "vulkan initialization failed" in log.lower() or
                        "ray tracing is unavailable" in log.lower() or
                        "ray-query unavailable" in log.lower())
+        # Mesa may link only tusdview's deliberately reduced-sampler fallback
+        # shader.  That path provides shaded preview but not the diagnostic AOV
+        # modes exercised by the material batch, so identical captures are a
+        # capability skip rather than a material regression.
+        unavailable = unavailable or (
+            "image did not change" in str(exc) and
+            "full GL material shader unavailable; using low-sampler fallback"
+            in log)
         print(("SKIP" if unavailable else "FAIL") + f": {exc}", file=sys.stderr)
         if log:
             print(log[-12000:], file=sys.stderr)

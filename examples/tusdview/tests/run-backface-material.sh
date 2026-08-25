@@ -17,11 +17,13 @@ else
   trap 'rm -rf "$OUT"' EXIT
 fi
 RUN=()
-if [ -n "${DISPLAY:-}" ] && command -v xdpyinfo >/dev/null 2>&1 &&
+if [ "${TUSDVIEW_XVFB:-0}" = 1 ] && command -v xvfb-run >/dev/null 2>&1; then
+  RUN=(xvfb-run -a --server-num="${TUSDVIEW_XVFB_BASE:-300}")
+elif [ -n "${DISPLAY:-}" ] && command -v xdpyinfo >/dev/null 2>&1 &&
    xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
   :
 elif command -v xvfb-run >/dev/null 2>&1; then
-  RUN=(xvfb-run -a)
+  RUN=(xvfb-run -a --server-num="${TUSDVIEW_XVFB_BASE:-300}")
 fi
 
 run_bounded() {

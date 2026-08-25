@@ -232,6 +232,9 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
               << written.error() << "\n";
     return false;
   }
+  if (opt.stats) {
+    std::cerr << "triangles: " << geometry.ntris << "\n";
+  }
   std::cerr << "backend: LightRT VK (ray_query, descriptor MaterialX, "
             << (opt.path_trace ? "production path" : "OpenPBR preview")
             << ", samples=" << desc.samples << ")\n";
