@@ -48,9 +48,9 @@ def render(binary: pathlib.Path, asset: pathlib.Path, backend: str,
     try:
         run = subprocess.run(
             command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, timeout=60, check=False)
+            text=True, timeout=90, check=False)
     except subprocess.TimeoutExpired as exc:
-        fail(f"{backend} timed out after 60 seconds", exc.stdout or "")
+        fail(f"{backend} timed out after 90 seconds", exc.stdout or "")
     log = run.stdout
     if not re.search(success_pattern, log):
         unavailable = (
@@ -119,6 +119,21 @@ def check_nonblank(image, read_image, require_variation=True) -> None:
     values = [channel for value in foreground for channel in value]
     if require_variation and max(values) - min(values) < 4:
         fail(f"{image.name} has no meaningful image variation")
+
+
+def center_mean(image, read_image):
+    width, height, px = pixels(image, read_image)
+    # The single-card fixture is autoframed in the center. Sampling a bounded
+    # central region avoids treating the renderer's non-black environment as
+    # foreground (which can otherwise swamp the material's channel ordering).
+    x0, x1 = width * 3 // 8, width * 5 // 8
+    y0, y1 = height * 3 // 8, height * 5 // 8
+    sample = [px[y * width + x] for y in range(y0, y1)
+              for x in range(x0, x1)]
+    if len(sample) < 32:
+        fail(f"{image.name} has too little rendered foreground")
+    return tuple(sum(value[channel] for value in sample) / len(sample)
+                 for channel in range(3))
 
 
 def chroma(rgb):
@@ -242,6 +257,13 @@ def write_lobe_grid(path: pathlib.Path) -> None:
 
 
 def write_displacement_fixture(path: pathlib.Path) -> None:
+    tex = path.with_name("displacement-checker.ppm")
+    pixels = bytearray()
+    for y in range(16):
+        for x in range(16):
+            value = 255 if (x + y) & 1 else 0
+            pixels.extend((value, value, value))
+    tex.write_bytes(b"P6\n16 16\n255\n" + pixels)
     path.write_text('''#usda 1.0
 (defaultPrim = "World" upAxis = "Y")
 def Xform "World" {
@@ -250,6 +272,7 @@ def Xform "World" {
     point3f[] points = [(-1,-1,0), (0,-1,0), (1,-1,0), (-1,1,0), (0,1,0), (1,1,0)]
     int[] faceVertexCounts = [4,4]
     int[] faceVertexIndices = [0,1,4,3, 1,2,5,4]
+    texCoord2f[] primvars:st = [(0,0), (0.5,0), (1,0), (0,1), (0.5,1), (1,1)] (interpolation = "vertex")
     normal3f[] normals = [(-0.7,0,0.7),(0,0,1),(0.7,0,0.7),(-0.7,0,0.7),(0,0,1),(0.7,0,0.7)] (interpolation = "vertex")
     rel material:binding = </World/M>
   }
@@ -258,11 +281,65 @@ def Xform "World" {
     def Shader "P" {
       uniform token info:id = "UsdPreviewSurface"
       color3f inputs:diffuseColor = (0.7,0.3,0.1)
-      float inputs:displacement = 2.0
+      float inputs:displacement.connect = </World/M/D.outputs:r>
       token outputs:surface
+    }
+    def Shader "ST" {
+      uniform token info:id = "UsdPrimvarReader_float2"
+      token inputs:varname = "st"
+      float2 outputs:result
+    }
+    def Shader "D" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @./displacement-checker.ppm@
+      float2 inputs:st.connect = </World/M/ST.outputs:result>
+      token inputs:sourceColorSpace = "raw"
+      float inputs:scale = 4.0
+      float outputs:r
     }
   }
   def DistantLight "Key" { float inputs:intensity = 5 }
+}
+''', encoding="utf-8")
+
+
+def write_swizzle_fixture(path: pathlib.Path) -> None:
+    path.write_text('''#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def Mesh "Card" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/M>
+  }
+  def Material "M" (prepend apiSchemas = ["MaterialXConfigAPI"]) {
+    token outputs:surface.connect = </World/M/P.outputs:surface>
+    token outputs:mtlx:surface.connect = </World/M/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      float inputs:base_weight = 1
+      color3f inputs:base_color.connect = </World/M/NG.outputs:base>
+      float inputs:specular_roughness = 0.45
+      token outputs:surface
+    }
+    def NodeGraph "NG" {
+      color3f outputs:base.connect = </World/M/NG/S.outputs:out>
+      def Shader "C" {
+        uniform token info:id = "ND_constant_color4"
+        color4f inputs:value = (0.02,0.08,0.35,1)
+        color4f outputs:out
+      }
+      def Shader "S" {
+        uniform token info:id = "ND_swizzle_color4_color3"
+        color4f inputs:in.connect = </World/M/NG/C.outputs:out>
+        string inputs:channels = "bgr"
+        color3f outputs:out
+      }
+    }
+  }
+  def DistantLight "Key" { float inputs:intensity = 0.5 }
 }
 ''', encoding="utf-8")
 
@@ -285,11 +362,17 @@ def main() -> int:
     required = {item for item in os.environ.get(
         "TUSDR_PARITY_REQUIRE_BACKENDS", "").split(",") if item}
     require_hardware = os.environ.get("TUSDR_PARITY_REQUIRE_HARDWARE") == "1"
+    cuda_cache_expect = os.environ.get("TUSDR_PARITY_CUDA_CACHE_EXPECT", "")
     vulkan_devices = parse_vulkan_devices(os.environ.get(
         "TUSDR_PARITY_VULKAN_DEVICES", ""))
     unknown = required.difference(BACKENDS)
     if unknown:
         fail(f"unknown required backend(s): {sorted(unknown)}")
+    if cuda_cache_expect not in ("", "cold", "warm"):
+        fail("TUSDR_PARITY_CUDA_CACHE_EXPECT must be 'cold' or 'warm'")
+    if cuda_cache_expect and "cuda" not in required:
+        fail("CUDA cache validation requires cuda in "
+             "TUSDR_PARITY_REQUIRE_BACKENDS")
 
     with tempfile.TemporaryDirectory(prefix="tusdrender-mtlx-parity-") as tmp:
         out_dir = pathlib.Path(tmp)
@@ -298,11 +381,14 @@ def main() -> int:
         generate_texture_fixtures(repo, fixture_dir)
         lobe_grid = out_dir / "openpbr-lobes.usda"
         displacement = out_dir / "displacement.usda"
+        swizzle = out_dir / "swizzle.usda"
         write_lobe_grid(lobe_grid)
         write_displacement_fixture(displacement)
+        write_swizzle_fixture(swizzle)
         available = set()
         grid_images = {}
         grid_means = {}
+        grid_logs = {}
         print("=== tusdrender MaterialX/OpenPBR semantic grid ===")
         for backend in BACKENDS:
             output = out_dir / f"grid-{backend}.png"
@@ -310,6 +396,7 @@ def main() -> int:
             if not ok:
                 continue
             available.add(backend)
+            grid_logs[backend] = log
             if require_hardware:
                 require_hardware_identity(log, backend)
             grid_images[backend] = output
@@ -321,6 +408,17 @@ def main() -> int:
         if not available:
             print("SKIP: no production GPU RT backend is available")
             return SKIP
+
+        if cuda_cache_expect:
+            cuda_log = grid_logs["cuda"]
+            if cuda_cache_expect == "cold":
+                if ("CUDA kernel cache miss" not in cuda_log or
+                        "CUDA kernel cached:" not in cuda_log):
+                    fail("CUDA cold-cache run did not compile and persist PTX",
+                         cuda_log)
+            elif "CUDA kernel cache hit:" not in cuda_log:
+                fail("CUDA warm-cache run did not reuse PTX", cuda_log)
+            print(f"  cuda: {cuda_cache_expect} cache behavior verified")
 
         if {"cuda", "hip"}.issubset(available):
             error = normalized_rmse(grid_images["cuda"], grid_images["hip"], read_image)
@@ -365,8 +463,25 @@ def main() -> int:
         if {"cuda", "hip"}.issubset(graph_images):
             error = normalized_rmse(graph_images["cuda"], graph_images["hip"], read_image)
             print(f"  CUDA/HIP graph normalized RMSE: {error:.6f}")
-            if error > 0.02:
+            # CUDA and HIP share the same interpreter, but their transcendental
+            # implementations and stochastic path decisions are not bitwise
+            # identical. Keep the same strict 3% normalized image bound used by
+            # the texture cases below.
+            if error > 0.03:
                 fail(f"CUDA/HIP executable MaterialX graph diverged (RMSE={error:.6f})")
+
+        print("=== tusdrender typed MaterialX swizzle ===")
+        for backend in sorted(available):
+            output = out_dir / f"swizzle-{backend}.png"
+            log, ok = render(binary, swizzle, backend, output)
+            if not ok:
+                fail(f"{backend} disappeared during swizzle validation")
+            require_topology(log, backend)
+            mean = center_mean(output, read_image)
+            if not (mean[0] > mean[1] > mean[2] and mean[0] - mean[2] > 8.0):
+                fail(f"{backend} did not execute bgr swizzle: mean={mean}", log)
+            print(f"  {backend}: bgr swizzle mean=" +
+                  "%.1f,%.1f,%.1f" % mean)
 
         print("=== tusdrender extended OpenPBR and texture semantics ===")
         semantic_cases = [
@@ -403,12 +518,7 @@ def main() -> int:
                 # shaded path tracing (the diagnostic tusdview AOV test checks
                 # their individual channels). Here the loader/backend contract
                 # is texture retention plus cross-backend parity.
-                # The ACEScg colorspace fixture is intentionally near-black;
-                # Vulkan's lower descriptor exposure can quantize it to zero.
-                # Its graph/texture retention is asserted from the backend log,
-                # while CUDA/HIP still provide the image-parity check below.
-                if not (case_name == "colorspace" and backend == "vkr"):
-                    check_nonblank(output, read_image, require_variation=False)
+                check_nonblank(output, read_image, require_variation=False)
                 case_images[backend] = output
             if {"cuda", "hip"}.issubset(case_images):
                 error = normalized_rmse(

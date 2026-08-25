@@ -363,17 +363,20 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       base + kRtMaterialGraphHeaderFloats > scene.matGraph.size()) return zero;
   const int count = std::clamp(static_cast<int>(scene.matGraph[base]), 0,
                                kRtMaterialGraphMaxNodes);
-  const int wanted = static_cast<int>(scene.matGraph[base + 1 + route] + 0.5f);
+  const int wanted = static_cast<int>(std::floor(
+      scene.matGraph[base + 1 + route] + 0.5f));
   if (count <= 0 || wanted < 0 || wanted >= count) return zero;
   std::array<std::array<float, 4>, kRtMaterialGraphMaxNodes> values{};
-  for (int pass = 0; pass < kRtMaterialGraphMaxNodes; ++pass) {
-    for (int i = 0; i < count; ++i) {
+  // CompileMaterialXGraphRuntime canonicalizes dependencies before consumers
+  // and rejects cycles, so one pass is sufficient. The historical 64-pass
+  // fixed-point loop multiplied graph shading cost without changing results.
+  for (int i = 0; i < count; ++i) {
       const size_t p = base + kRtMaterialGraphHeaderFloats +
                        static_cast<size_t>(i) * kRtMaterialGraphNodeFloats;
       const int op = static_cast<int>(scene.matGraph[p] + 0.5f);
-      const int ia = static_cast<int>(scene.matGraph[p + 1] + 0.5f);
-      const int ib = static_cast<int>(scene.matGraph[p + 2] + 0.5f);
-      const int ic = static_cast<int>(scene.matGraph[p + 3] + 0.5f);
+      const int ia = static_cast<int>(std::floor(scene.matGraph[p + 1] + 0.5f));
+      const int ib = static_cast<int>(std::floor(scene.matGraph[p + 2] + 0.5f));
+      const int ic = static_cast<int>(std::floor(scene.matGraph[p + 3] + 0.5f));
       const auto fallback = [&](int input) {
         return std::array<float, 4>{
             scene.matGraph[p + 4 + input * 4],
@@ -384,7 +387,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       const auto a = ia >= 0 && ia < count ? values[ia] : fallback(0);
       const auto b = ib >= 0 && ib < count ? values[ib] : fallback(1);
       const auto c = ic >= 0 && ic < count ? values[ic] : fallback(2);
-      const int textureId = static_cast<int>(scene.matGraph[p + 16] + 0.5f);
+      const int textureId = static_cast<int>(std::floor(
+          scene.matGraph[p + 16] + 0.5f));
       auto& dst = values[i];
       if (op == static_cast<int>(MaterialXGraphOpCPU::Constant)) dst = fallback(0);
       else if (op == static_cast<int>(MaterialXGraphOpCPU::Image) ||
@@ -561,8 +565,23 @@ std::array<float, 4> EvalCpuMaterialXGraph(
                rgb[sector][2] + m, a[3]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::HeightToNormal)) {
         dst = {0.5f, 0.5f, 1.0f, 1.0f};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Arcsine)) {
+        for (int cidx = 0; cidx < 4; ++cidx)
+          dst[cidx] = std::asin(std::clamp(a[cidx], -1.0f, 1.0f));
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Arccosine)) {
+        for (int cidx = 0; cidx < 4; ++cidx)
+          dst[cidx] = std::acos(std::clamp(a[cidx], -1.0f, 1.0f));
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Contrast)) {
+        for (int cidx = 0; cidx < 4; ++cidx)
+          dst[cidx] = (a[cidx] - c[cidx]) * b[cidx] + c[cidx];
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Swizzle)) {
+        for (int cidx = 0; cidx < 4; ++cidx) {
+          const int selector = std::clamp(
+              static_cast<int>(std::floor(b[cidx] + 0.5f)), 0, 5);
+          dst[cidx] = selector < 4 ? a[selector]
+                                   : (selector == 5 ? 1.0f : 0.0f);
+        }
       } else dst = fallback(0);
-    }
   }
   return values[wanted];
 }

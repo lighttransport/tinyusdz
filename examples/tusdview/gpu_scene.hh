@@ -456,6 +456,10 @@ enum class MaterialXGraphOpCPU : uint32_t {
   Position,
   HsvAdjust,
   HeightToNormal,
+  Arcsine,
+  Arccosine,
+  Contrast,
+  Swizzle,
   Unknown,
 };
 

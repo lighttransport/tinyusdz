@@ -1,3 +1,11 @@
+#define TUSD_GPU_OPENPBR_FLOATS 80
+#define TUSD_GPU_MATERIAL_TEX_PARAM_FLOATS 155
+#define TUSD_GPU_MATERIAL_TEX_SLOTS 12
+#define TUSD_GPU_GRAPH_FLOATS 1394
+#define TUSD_GPU_GRAPH_HEADER_FLOATS 50
+#define TUSD_GPU_GRAPH_NODE_FLOATS 21
+#define TUSD_GPU_GRAPH_MAX_NODES 64
+
 struct Node { float bmin[3]; float bmax[3]; int left; int right; int count; };
 struct PointBvhChunk { int first; int count; int orderFirst; int bvhFirst; int bvhCount; };
 struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; float sceneMin[4]; float sceneExtent[4]; float vp[16]; float lens[4]; float pathLimits[4]; };
@@ -123,23 +131,27 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
                                     float u, float v, float u1, float v1, int face,
                                  const unsigned char* texels,
                                  const TexDesc* textures, int numTextures) {
-  const int stride = 1394;
+  const int stride = TUSD_GPU_GRAPH_FLOATS;
   const int base = mid * stride;
   if (!graph || mid < 0 || route < 0 || base + 7 >= 0x3fffffff) return mk4(0.f,0.f,0.f,0.f);
-  int count = (int)fminf(fmaxf(graph[base], 0.f), 64.f);
-  int wanted = (int)(graph[base + 1 + route] + 0.5f);
+  int count = (int)fminf(fmaxf(graph[base], 0.f), (float)TUSD_GPU_GRAPH_MAX_NODES);
+  int wanted = (int)floorf(graph[base + 1 + route] + 0.5f);
   if (count <= 0 || wanted < 0 || wanted >= count) return mk4(0.f,0.f,0.f,0.f);
-  F4 values[64];
+  F4 values[TUSD_GPU_GRAPH_MAX_NODES];
   for (int i=0; i<count; ++i) {
-      const int p=base+46+i*21;
+      const int p=base+TUSD_GPU_GRAPH_HEADER_FLOATS+i*TUSD_GPU_GRAPH_NODE_FLOATS;
       const int op=(int)(graph[p]+0.5f);
-      const int ia=(int)(graph[p+1]+0.5f), ib=(int)(graph[p+2]+0.5f),
-                ic=(int)(graph[p+3]+0.5f);
+      // floor(x + 0.5) preserves the packed -1 sentinel. A plain C cast
+      // truncates -0.5 toward zero, turning constant inputs into self/slot-0
+      // graph references and absent textures into texture zero.
+      const int ia=(int)floorf(graph[p+1]+0.5f),
+                ib=(int)floorf(graph[p+2]+0.5f),
+                ic=(int)floorf(graph[p+3]+0.5f);
       const F4 a=(ia>=0&&ia<count)?values[ia]:mk4(graph[p+4],graph[p+5],graph[p+6],graph[p+7]);
       const F4 b=(ib>=0&&ib<count)?values[ib]:mk4(graph[p+8],graph[p+9],graph[p+10],graph[p+11]);
       const F4 c=(ic>=0&&ic<count)?values[ic]:mk4(graph[p+12],graph[p+13],graph[p+14],graph[p+15]);
       const F4 fallback=a;
-      const int tex=(int)(graph[p+16]+0.5f);
+      const int tex=(int)floorf(graph[p+16]+0.5f);
       if (op==0) values[i]=fallback;
       else if (op==1 || op==2)
       {
@@ -216,6 +228,10 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
       else if (op==46 || op==48) values[i]=a;
       else if (op==47) values[i]=mk4(0.f,0.f,0.f,1.f);
       else if (op==49) values[i]=mk4(.5f,.5f,1.f,1.f);
+      else if (op==50) values[i]=mk4(asinf(fminf(fmaxf(a.x,-1.f),1.f)),asinf(fminf(fmaxf(a.y,-1.f),1.f)),asinf(fminf(fmaxf(a.z,-1.f),1.f)),asinf(fminf(fmaxf(a.w,-1.f),1.f)));
+      else if (op==51) values[i]=mk4(acosf(fminf(fmaxf(a.x,-1.f),1.f)),acosf(fminf(fmaxf(a.y,-1.f),1.f)),acosf(fminf(fmaxf(a.z,-1.f),1.f)),acosf(fminf(fmaxf(a.w,-1.f),1.f)));
+      else if (op==52) values[i]=mk4((a.x-c.x)*b.x+c.x,(a.y-c.y)*b.y+c.y,(a.z-c.z)*b.z+c.z,(a.w-c.w)*b.w+c.w);
+      else if (op==53) { const float q[6]={a.x,a.y,a.z,a.w,0.f,1.f}; int sx=(int)(b.x+.5f),sy=(int)(b.y+.5f),sz=(int)(b.z+.5f),sw=(int)(b.w+.5f); sx=sx<0?0:(sx>5?5:sx);sy=sy<0?0:(sy>5?5:sy);sz=sz<0?0:(sz>5?5:sz);sw=sw<0?0:(sw>5?5:sw);values[i]=mk4(q[sx],q[sy],q[sz],q[sw]); }
       else values[i]=fallback;
   }
   (void)face;
@@ -691,7 +707,7 @@ __device__ bool cutoutAllowsHit(
     if (dot3(cross3(sub(p1,p0),sub(p2,p0)),rayDir)>0.f) mid=backMats[ht];
   }
   if (mid<0 || mid>=numMats || !matLightRt) return true;
-  const float* lrt=&matLightRt[mid*80];
+  const float* lrt=&matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS];
   float alphaMode=lrt[54];
   if (!(alphaMode>0.5f && alphaMode<1.5f)) return true;
   float w0=1.f-bu-bv;
@@ -704,28 +720,28 @@ __device__ bool cutoutAllowsHit(
     u1=uvh1[0]*w0+uvh1[2]*bu+uvh1[4]*bv;
     v1=uvh1[1]*w0+uvh1[3]*bu+uvh1[5]*bv;
   }
-  const float* tp=matTexParam?&matTexParam[mid*155]:0;
+  const float* tp=matTexParam?&matTexParam[mid*TUSD_GPU_MATERIAL_TEX_PARAM_FLOATS]:0;
   int uvbits=tp?(int)(tp[69]+0.5f):0;
   float buu=u,bvv=v,ouu=u,ovv=v;
   if (tp){
     xformUv(tp,0,(uvbits&1)?u1:u,(uvbits&1)?v1:v,&buu,&bvv);
     xformUv(tp,30,(uvbits&32)?u1:u,(uvbits&32)?v1:v,&ouu,&ovv);
   }
-  int baseTex=matTex?matTex[mid*12+0]:-1;
+  int baseTex=matTex?matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+0]:-1;
   F4 bt=sampleMaterialTexture(texels,textures,numTextures,baseTex,buu,bvv,
                               (unsigned int)ht,0.f,mk4(1.f,1.f,1.f,1.f));
   if (tp) bt=mk4(bt.x*tp[36]+tp[40],bt.y*tp[37]+tp[41],
                  bt.z*tp[38]+tp[42],bt.w*tp[39]+tp[43]);
   float opacity=(lrt[51]>0.5f)?lrt[39]:matPbr[mid*6+5];
   opacity*=bt.w;
-  int opacityTex=matTex?matTex[mid*12+5]:-1;
+  int opacityTex=matTex?matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+5]:-1;
   if (opacityTex>=0){
     F4 ot=sampleMaterialTexture(texels,textures,numTextures,opacityTex,ouu,ovv,
                                 (unsigned int)ht,0.f,mk4(1.f,1.f,1.f,1.f));
     int ch=tp?(int)(tp[66]+0.5f):0;
     opacity*=channel4(ot,ch)*(tp?tp[67]:1.f)+(tp?tp[68]:0.f);
   }
-  if (matGraph && matGraph[mid*1394+4] >= 0.f) {
+  if (matGraph && matGraph[mid*TUSD_GPU_GRAPH_FLOATS+4] >= 0.f) {
     opacity=evalMaterialXGraph(matGraph,mid,3,ouu,ovv,(unsigned int)ht,
                                texels,textures,numTextures).x;
   }
@@ -896,12 +912,12 @@ __device__ PtMat ptResolveMaterial(
   u1=u;v1=v;if(uvs1){const float* q=&uvs1[tri*6];u1=q[0]*w0+q[2]*bu+q[4]*bv;v1=q[1]*w0+q[3]*bu+q[5]*bv;}
   if(mid>=0&&mid<numMats){
     if(matPbr){m.metal=fminf(fmaxf(matPbr[mid*6],0.f),1.f);m.rough=fminf(fmaxf(matPbr[mid*6+1],.02f),1.f);m.emission=mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]);}
-    if(matLightRt){const float* p=&matLightRt[mid*80];if(p[51]>.5f){
+    if(matLightRt){const float* p=&matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS];if(p[51]>.5f){
       m.base=scale(mk(p[0],p[1],p[2]),p[3]);m.specularColor=mk(p[4],p[5],p[6]);m.specularWeight=fminf(fmaxf(p[7],0.f),1.f);m.transmissionColor=mk(p[8],p[9],p[10]);m.transmission=fminf(fmaxf(p[11],0.f),1.f);m.transmissionScatter=mk(fmaxf(p[12],0.f),fmaxf(p[13],0.f),fmaxf(p[14],0.f));m.transmissionDepth=fmaxf(p[15],0.f);m.opacity=fminf(fmaxf(p[39],0.f),1.f);m.alphaMode=p[54];
       m.subsurfaceColor=mk(p[16],p[17],p[18]);m.subsurface=fminf(fmaxf(p[19],0.f),1.f);m.radius=scale(mk(fmaxf(p[20],1e-5f),fmaxf(p[21],1e-5f),fmaxf(p[22],1e-5f)),fmaxf(p[23],1e-5f));m.coatColor=mk(p[24],p[25],p[26]);m.coatWeight=fminf(fmaxf(p[27],0.f),1.f);m.sheenColor=mk(p[28],p[29],p[30]);m.sheenWeight=fminf(fmaxf(p[31],0.f),1.f);m.ior=fmaxf(p[43],1.0001f);m.coatRoughness=fminf(fmaxf(p[44],.02f),1.f);m.coatIor=fmaxf(p[45],1.0001f);m.sheenRoughness=fminf(fmaxf(p[46],.02f),1.f);m.transmissionScatterG=fminf(fmaxf(p[47],-.95f),.95f);m.subsurfaceAnisotropy=fminf(fmaxf(p[64],-.95f),.95f);m.anisotropy=fminf(fmaxf(p[57]+.5f*p[59],-.95f),.95f);m.anisotropyRotation=p[58];m.coatAnisotropy=fminf(fmaxf(p[65]+.5f*p[69],-.95f),.95f);m.coatRotation=p[66];m.coatAffectColor=fminf(fmaxf(p[67],0.f),1.f);m.coatAffectRoughness=fminf(fmaxf(p[68],0.f),1.f);m.coatDarkening=fminf(fmaxf(p[70],0.f),1.f);m.thinFilmWeight=fminf(fmaxf(p[48],0.f),1.f);m.thinFilmThickness=fmaxf(p[49],0.f)*1e-3f;m.thinFilmIor=fmaxf(p[50],1.f);m.dispersion=fmaxf(p[60]*p[62],0.f);m.dispersionAbbe=fmaxf(p[61],0.f);m.volumeAlbedo=mk(fmaxf(p[72],0.f),fmaxf(p[73],0.f),fmaxf(p[74],0.f));m.volumeDensity=fmaxf(p[75],0.f);m.volumeEmission=scale(mk(fmaxf(p[76],0.f),fmaxf(p[77],0.f),fmaxf(p[78],0.f)),fmaxf(p[79],0.f));m.emission=add(m.emission,scale(mk(p[32],p[33],p[34]),fmaxf(p[35],0.f)));}}
-    if(matTex){int tid=matTex[mid*12];F4 q=sampleMaterialTexture(texels,textures,numTextures,tid,u,v,(unsigned)tri,0.f,mk4(1.f,1.f,1.f,1.f));m.base=mk(m.base.x*q.x,m.base.y*q.y,m.base.z*q.z);m.opacity*=q.w;int opacityTid=matTex[mid*12+5];if(opacityTid>=0){F4 oq=sampleMaterialTexture(texels,textures,numTextures,opacityTid,u,v,(unsigned)tri,0.f,mk4(1.f,1.f,1.f,1.f));const float* tp=matTexParam?&matTexParam[mid*155]:0;int ch=tp?(int)(tp[66]+.5f):0;float sample=ch==1?oq.y:(ch==2?oq.z:(ch==3?oq.w:oq.x));m.opacity*=sample*(tp?tp[67]:1.f)+(tp?tp[68]:0.f);}}
+    if(matTex){int tid=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS];F4 q=sampleMaterialTexture(texels,textures,numTextures,tid,u,v,(unsigned)tri,0.f,mk4(1.f,1.f,1.f,1.f));m.base=mk(m.base.x*q.x,m.base.y*q.y,m.base.z*q.z);m.opacity*=q.w;int opacityTid=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+5];if(opacityTid>=0){F4 oq=sampleMaterialTexture(texels,textures,numTextures,opacityTid,u,v,(unsigned)tri,0.f,mk4(1.f,1.f,1.f,1.f));const float* tp=matTexParam?&matTexParam[mid*TUSD_GPU_MATERIAL_TEX_PARAM_FLOATS]:0;int ch=tp?(int)(tp[66]+.5f):0;float sample=ch==1?oq.y:(ch==2?oq.z:(ch==3?oq.w:oq.x));m.opacity*=sample*(tp?tp[67]:1.f)+(tp?tp[68]:0.f);}}
     if(matGraph){int gb=mid*1394;if(matGraph[gb+1]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,0,u,v,u1,v1,tri,texels,textures,numTextures);m.base=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+2]>=0.f)m.metal=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+3]>=0.f)m.rough=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+4]>=0.f)m.opacity=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,3,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+5]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,4,u,v,u1,v1,tri,texels,textures,numTextures);m.emission=scale(mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f)),matLightRt?fmaxf(matLightRt[mid*80+35],0.f):1.f);}if(matGraph[gb+7]>=0.f)m.subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+8]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,7,u,v,u1,v1,tri,texels,textures,numTextures);m.subsurfaceColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+9]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,8,u,v,u1,v1,tri,texels,textures,numTextures);m.radius=mk(fmaxf(q.x,1e-5f),fmaxf(q.y,1e-5f),fmaxf(q.z,1e-5f));}if(matGraph[gb+10]>=0.f)m.specularWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,9,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+11]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,10,u,v,u1,v1,tri,texels,textures,numTextures);m.specularColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+12]>=0.f)m.transmission=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,11,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+13]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,12,u,v,u1,v1,tri,texels,textures,numTextures);m.transmissionColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+14]>=0.f)m.coatWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,13,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+15]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,14,u,v,u1,v1,tri,texels,textures,numTextures);m.coatColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+16]>=0.f)m.coatRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,15,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+17]>=0.f)m.sheenWeight=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,16,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);if(matGraph[gb+18]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,17,u,v,u1,v1,tri,texels,textures,numTextures);m.sheenColor=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}if(matGraph[gb+19]>=0.f)m.sheenRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,18,u,v,u1,v1,tri,texels,textures,numTextures).x,.02f),1.f);if(matGraph[gb+20]>=0.f)m.ior=fmaxf(evalMaterialXGraphUv(matGraph,mid,19,u,v,u1,v1,tri,texels,textures,numTextures).x,1.0001f);}
-    if(matGraph){int gb=mid*1394;
+    if(matGraph){int gb=mid*TUSD_GPU_GRAPH_FLOATS;
       if(matGraph[gb+21]>=0.f)m.base=scale(m.base,fmaxf(evalMaterialXGraphUv(matGraph,mid,20,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f));
       if(matGraph[gb+22]>=0.f)m.rough=fminf(fmaxf(fmaxf(m.rough,evalMaterialXGraphUv(matGraph,mid,21,u,v,u1,v1,tri,texels,textures,numTextures).x),.02f),1.f);
       if(matGraph[gb+23]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,22,u,v,u1,v1,tri,texels,textures,numTextures);m.transmissionScatter=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}
@@ -924,15 +940,15 @@ __device__ PtMat ptResolveMaterial(
       if(matGraph[gb+40]>=0.f)m.coatAnisotropy=fminf(fmaxf(m.coatAnisotropy+.5f*evalMaterialXGraphUv(matGraph,mid,39,u,v,u1,v1,tri,texels,textures,numTextures).x,-.95f),.95f);
       if(matGraph[gb+41]>=0.f)m.volumeDensity=fmaxf(evalMaterialXGraphUv(matGraph,mid,40,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);
       if(matGraph[gb+42]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,41,u,v,u1,v1,tri,texels,textures,numTextures);m.volumeAlbedo=mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f));}
-      if(matGraph[gb+43]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,42,u,v,u1,v1,tri,texels,textures,numTextures);float s=matLightRt?fmaxf(matLightRt[mid*80+79],0.f):1.f;m.volumeEmission=scale(mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f)),s);}
-      if(matGraph[gb+44]>=0.f){float s=fmaxf(evalMaterialXGraphUv(matGraph,mid,43,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);F3 c=matLightRt?mk(matLightRt[mid*80+76],matLightRt[mid*80+77],matLightRt[mid*80+78]):mk(1.f,1.f,1.f);m.volumeEmission=scale(c,s);}
-      if(matGraph[gb+45]>=0.f){float s=fmaxf(evalMaterialXGraphUv(matGraph,mid,44,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);F3 c=matGraph[gb+5]>=0.f?m.emission:(matLightRt?mk(matLightRt[mid*80+32],matLightRt[mid*80+33],matLightRt[mid*80+34]):mk(1.f,1.f,1.f));m.emission=scale(c,s);}
+      if(matGraph[gb+43]>=0.f){F4 q=evalMaterialXGraphUv(matGraph,mid,42,u,v,u1,v1,tri,texels,textures,numTextures);float s=matLightRt?fmaxf(matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+79],0.f):1.f;m.volumeEmission=scale(mk(fmaxf(q.x,0.f),fmaxf(q.y,0.f),fmaxf(q.z,0.f)),s);}
+      if(matGraph[gb+44]>=0.f){float s=fmaxf(evalMaterialXGraphUv(matGraph,mid,43,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);F3 c=matLightRt?mk(matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+76],matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+77],matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+78]):mk(1.f,1.f,1.f);m.volumeEmission=scale(c,s);}
+      if(matGraph[gb+45]>=0.f){float s=fmaxf(evalMaterialXGraphUv(matGraph,mid,44,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f);F3 c=matGraph[gb+5]>=0.f?m.emission:(matLightRt?mk(matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+32],matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+33],matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+34]):mk(1.f,1.f,1.f));m.emission=scale(c,s);}
       if(matGraph[gb+46]>=0.f)m.coatAffectColor=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,45,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);
       if(matGraph[gb+47]>=0.f)m.coatAffectRoughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,46,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);
       if(matGraph[gb+48]>=0.f)m.coatDarkening=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,47,u,v,u1,v1,tri,texels,textures,numTextures).x,0.f),1.f);
     }
-    if(matGraph&&matLightRt&&matGraph[mid*1394+9]>=0.f)
-      m.radius=scale(m.radius,fmaxf(matLightRt[mid*80+23],0.f));
+    if(matGraph&&matLightRt&&matGraph[mid*TUSD_GPU_GRAPH_FLOATS+9]>=0.f)
+      m.radius=scale(m.radius,fmaxf(matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+23],0.f));
     float coatColorMix=fminf(fmaxf(m.coatWeight*m.coatAffectColor,0.f),1.f);
     m.base=mk(m.base.x*(1.f+(m.coatColor.x-1.f)*coatColorMix),m.base.y*(1.f+(m.coatColor.y-1.f)*coatColorMix),m.base.z*(1.f+(m.coatColor.z-1.f)*coatColorMix));
     m.base=scale(m.base,1.f-.2f*fminf(fmaxf(m.coatWeight*m.coatDarkening,0.f),1.f));
@@ -1041,7 +1057,7 @@ __device__ F3 productionPath(
     F3 coatN=n;int mid=mats?mats[tri]:-1;if(!front&&backMats&&backMats[tri]>=0)mid=backMats[tri];
     if(mid>=0&&mid<numMats&&uvs){
       const float* uv0=&uvs[tri*6];const float* uv1v=uvs1?&uvs1[tri*6]:uv0;
-      const float* tp=matTexParam?&matTexParam[mid*155]:0;
+      const float* tp=matTexParam?&matTexParam[mid*TUSD_GPU_MATERIAL_TEX_PARAM_FLOATS]:0;
       int uvbits=tp?(int)(tp[69]+.5f):0;
       const float* nuv=((uvbits&8)&&uvs1)?uv1v:uv0;
       float tu0=nuv[0],tv0=nuv[1],tu1=nuv[2],tv1=nuv[3],tu2=nuv[4],tv2=nuv[5];
@@ -1050,13 +1066,13 @@ __device__ F3 productionPath(
       F3 tangent=fabsf(det)>1e-12f?norm3(scale(sub(scale(sub(p1,p0),dv2),scale(sub(p2,p0),dv1)),1.f/det)):
           norm3(cross3(fabsf(n.z)<.999f?mk(0.f,0.f,1.f):mk(0.f,1.f,0.f),n));
       F3 bitangent=norm3(cross3(n,tangent));F3 tangentNormal=mk(0.f,0.f,1.f);bool hasTangentNormal=false;
-      int normalTex=matTex?matTex[mid*12+3]:-1;
+      int normalTex=matTex?matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+3]:-1;
       if(normalTex>=0){float uu=tu0*w0+tu1*bu+tu2*bv,vv=tv0*w0+tv1*bu+tv2*bv;
         F4 nt=sampleMaterialTexture(texels,textures,numTextures,normalTex,uu,vv,(unsigned)tri,0.f,mk4(.5f,.5f,1.f,1.f));
         tangentNormal=tp?mk(nt.x*tp[44]+tp[48],nt.y*tp[45]+tp[49],nt.z*tp[46]+tp[50]):mk(nt.x*2.f-1.f,nt.y*2.f-1.f,nt.z*2.f-1.f);hasTangentNormal=true;}
-      int gb=mid*1394;if(matGraph&&matGraph[gb+6]>=0.f){float u=uv0[0]*w0+uv0[2]*bu+uv0[4]*bv,v=uv0[1]*w0+uv0[3]*bu+uv0[5]*bv,u1=uv1v[0]*w0+uv1v[2]*bu+uv1v[4]*bv,v1=uv1v[1]*w0+uv1v[3]*bu+uv1v[5]*bv;F4 q=evalMaterialXGraphUv(matGraph,mid,5,u,v,u1,v1,tri,texels,textures,numTextures);tangentNormal=mk(q.x*2.f-1.f,q.y*2.f-1.f,q.z*2.f-1.f);hasTangentNormal=true;}
+      int gb=mid*TUSD_GPU_GRAPH_FLOATS;if(matGraph&&matGraph[gb+6]>=0.f){float u=uv0[0]*w0+uv0[2]*bu+uv0[4]*bv,v=uv0[1]*w0+uv0[3]*bu+uv0[5]*bv,u1=uv1v[0]*w0+uv1v[2]*bu+uv1v[4]*bv,v1=uv1v[1]*w0+uv1v[3]*bu+uv1v[5]*bv;F4 q=evalMaterialXGraphUv(matGraph,mid,5,u,v,u1,v1,tri,texels,textures,numTextures);tangentNormal=mk(q.x*2.f-1.f,q.y*2.f-1.f,q.z*2.f-1.f);hasTangentNormal=true;}
       if(hasTangentNormal)n=norm3(add(add(scale(tangent,tangentNormal.x),scale(bitangent,tangentNormal.y)),scale(n,tangentNormal.z)));
-      coatN=n;int coatNormalTex=matTex?matTex[mid*12+11]:-1;if(coatNormalTex>=0&&tp){const float* cuv=(int)(tp[146]+.5f)==1&&uvs1?uv1v:uv0;float cu=cuv[0]*w0+cuv[2]*bu+cuv[4]*bv,cv=cuv[1]*w0+cuv[3]*bu+cuv[5]*bv;xformUv(tp,140,cu,cv,&cu,&cv);F4 cn=sampleMaterialTexture(texels,textures,numTextures,coatNormalTex,cu,cv,(unsigned)tri,0.f,mk4(.5f,.5f,1.f,1.f));F3 ctn=mk(cn.x*tp[147]+tp[151],cn.y*tp[148]+tp[152],cn.z*tp[149]+tp[153]);coatN=norm3(add(add(scale(tangent,ctn.x),scale(bitangent,ctn.y)),scale(n,ctn.z)));}
+      coatN=n;int coatNormalTex=matTex?matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+11]:-1;if(coatNormalTex>=0&&tp){const float* cuv=(int)(tp[146]+.5f)==1&&uvs1?uv1v:uv0;float cu=cuv[0]*w0+cuv[2]*bu+cuv[4]*bv,cv=cuv[1]*w0+cuv[3]*bu+cuv[5]*bv;xformUv(tp,140,cu,cv,&cu,&cv);F4 cn=sampleMaterialTexture(texels,textures,numTextures,coatNormalTex,cu,cv,(unsigned)tri,0.f,mk4(.5f,.5f,1.f,1.f));F3 ctn=mk(cn.x*tp[147]+tp[151],cn.y*tp[148]+tp[152],cn.z*tp[149]+tp[153]);coatN=norm3(add(add(scale(tangent,ctn.x),scale(bitangent,ctn.y)),scale(n,ctn.z)));}
     }
     L=add(L,ptMul(beta,m.emission));
     if(lightParams&&numLights>0){
@@ -1199,27 +1215,27 @@ __device__ F3 approxPrimaryLayer(
   if (mid >= 0 && mid < numMats) {
     if (matBase) base = mk(matBase[mid * 3], matBase[mid * 3 + 1],
                             matBase[mid * 3 + 2]);
-    if (matLightRt && matLightRt[mid * 80 + 51] > 0.5f)
-      base = scale(mk(matLightRt[mid * 80], matLightRt[mid * 80 + 1],
-                      matLightRt[mid * 80 + 2]), matLightRt[mid * 80 + 3]);
+    if (matLightRt && matLightRt[mid * TUSD_GPU_OPENPBR_FLOATS + 51] > 0.5f)
+      base = scale(mk(matLightRt[mid * TUSD_GPU_OPENPBR_FLOATS], matLightRt[mid * TUSD_GPU_OPENPBR_FLOATS + 1],
+                      matLightRt[mid * TUSD_GPU_OPENPBR_FLOATS + 2]), matLightRt[mid * TUSD_GPU_OPENPBR_FLOATS + 3]);
     if (matPbr) emission = mk(matPbr[mid * 6 + 2], matPbr[mid * 6 + 3],
                               matPbr[mid * 6 + 4]);
     const float* uv = &uvs[ht * 6];
     float u = uv[0] * (1.f - bu - bv) + uv[2] * bu + uv[4] * bv;
     float v = uv[1] * (1.f - bu - bv) + uv[3] * bu + uv[5] * bv;
-    int tex = matTex ? matTex[mid * 12] : -1;
+    int tex = matTex ? matTex[mid * TUSD_GPU_MATERIAL_TEX_SLOTS] : -1;
     F4 t = sampleMaterialTexture(texels, textures, numTextures, tex, u, v,
                                  (unsigned int)ht, 0.f,
                                  mk4(1.f, 1.f, 1.f, 1.f));
     base = mk(base.x * t.x, base.y * t.y, base.z * t.z);
-    if (matGraph && matGraph[mid * 1394 + 1] >= 0.f) {
+    if (matGraph && matGraph[mid * TUSD_GPU_GRAPH_FLOATS + 1] >= 0.f) {
       F4 g = evalMaterialXGraph(matGraph, mid, 0, u, v, ht, texels,
                                 textures, numTextures);
       base = mk(g.x, g.y, g.z);
     }
     if (matTex && matTexParam) {
-      int et = matTex[mid * 12 + 4];
-      const float* p = &matTexParam[mid * 155];
+      int et = matTex[mid * TUSD_GPU_MATERIAL_TEX_SLOTS + 4];
+      const float* p = &matTexParam[mid * TUSD_GPU_MATERIAL_TEX_PARAM_FLOATS];
       F4 e = sampleMaterialTexture(texels, textures, numTextures, et, u, v,
                                    (unsigned int)ht, 0.f,
                                    mk4(1.f, 1.f, 1.f, 1.f));
@@ -1227,7 +1243,7 @@ __device__ F3 approxPrimaryLayer(
               e.z * p[54] + p[58], e.w * p[55] + p[59]);
       emission = mk(emission.x * e.x, emission.y * e.y, emission.z * e.z);
     }
-    if (matGraph && matGraph[mid * 1394 + 5] >= 0.f) {
+    if (matGraph && matGraph[mid * TUSD_GPU_GRAPH_FLOATS + 5] >= 0.f) {
       F4 g = evalMaterialXGraph(matGraph, mid, 4, u, v, ht, texels,
                                 textures, numTextures);
       emission = mk(fmaxf(g.x, 0.f), fmaxf(g.y, 0.f), fmaxf(g.z, 0.f));
@@ -1246,7 +1262,7 @@ __device__ F3 primaryLayerTransmissionTint(
   if (!mats || !matLightRt || tri < 0) return mk(1.f, 1.f, 1.f);
   int mid = mats[tri];
   if (mid < 0 || mid >= numMats) return mk(1.f, 1.f, 1.f);
-  const float* p = &matLightRt[mid * 80];
+  const float* p = &matLightRt[mid * TUSD_GPU_OPENPBR_FLOATS];
   float w = fminf(fmaxf(p[11], 0.f), 1.f);
   float depth = fmaxf(p[15], 0.f);
   float dispersion=fminf(fmaxf(p[60]*p[62],0.f),1.f);
@@ -1292,7 +1308,7 @@ __device__ F3 primaryLayerRefractedColor(
     const float normalDir = dot3(n, currentDir);
     const bool entering = normalDir < 0.f;
     if (normalDir > 0.f) n = scale(n, -1.f);
-    const float ior = fmaxf(matLightRt[mid * 80 + 43], 1.f);
+    const float ior = fmaxf(matLightRt[mid * TUSD_GPU_OPENPBR_FLOATS + 43], 1.f);
     const float eta = entering ? 1.f / ior : ior;
     const float cosi = -dot3(n, currentDir);
     const float k = 1.f - eta * eta * (1.f - cosi * cosi);
@@ -1586,13 +1602,13 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     int emissiveTex=-1, opacityTex=-1;
     const float* tp = 0;
     if (matTex && mid>=0 && mid<numMats){
-      baseTex=matTex[mid*12+0]; metallicTex=matTex[mid*12+1];
-      roughnessTex=matTex[mid*12+2]; normalTex=matTex[mid*12+3];
-      emissiveTex=matTex[mid*12+4]; opacityTex=matTex[mid*12+5];
-      if (matTexParam) tp=&matTexParam[mid*155];
+      baseTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+0]; metallicTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+1];
+      roughnessTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+2]; normalTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+3];
+      emissiveTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+4]; opacityTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+5];
+      if (matTexParam) tp=&matTexParam[mid*TUSD_GPU_MATERIAL_TEX_PARAM_FLOATS];
     }
     const float* lrt = (matLightRt && mid>=0 && mid<numMats &&
-                        matLightRt[mid*80+51] > 0.5f) ? &matLightRt[mid*80] : 0;
+                        matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+51] > 0.5f) ? &matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS] : 0;
     if (mid>=0 && mid<numMats && matBase) {
       F3 mb=mk(matBase[mid*3],matBase[mid*3+1],matBase[mid*3+2]);
       if (lrt) mb=scale(mk(lrt[0],lrt[1],lrt[2]),lrt[3]);
@@ -1619,8 +1635,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     float metallic=(mid>=0&&mid<numMats)?matPbr[mid*6+0]:0.f;
     float roughness=(mid>=0&&mid<numMats)?matPbr[mid*6+1]:0.5f;
     float opacity=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f;
-    float alphaMode=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*80+54]:0.f;
-    float alphaCutoff=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*80+55]:0.5f;
+    float alphaMode=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+54]:0.f;
+    float alphaCutoff=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*TUSD_GPU_OPENPBR_FLOATS+55]:0.5f;
     float specWeight=1.f, specIor=1.5f, specAnisotropy=0.f,
           specRotation=0.f, coatWeight=0.f, coatRoughness=0.1f;
     float sheenWeight=0.f, sheenRoughness=0.3f;
@@ -1699,10 +1715,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     int occlusionTex=-1, coatWeightTex=-1, coatColorTex=-1, coatRoughTex=-1;
     int specularColorTex=-1, coatNormalTex=-1;
     if (matTex && mid>=0 && mid<numMats){
-      occlusionTex=matTex[mid*12+6]; coatWeightTex=matTex[mid*12+7];
-      coatColorTex=matTex[mid*12+8]; coatRoughTex=matTex[mid*12+9];
-      specularColorTex=matTex[mid*12+10];
-      coatNormalTex=matTex[mid*12+11];
+      occlusionTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+6]; coatWeightTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+7];
+      coatColorTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+8]; coatRoughTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+9];
+      specularColorTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+10];
+      coatNormalTex=matTex[mid*TUSD_GPU_MATERIAL_TEX_SLOTS+11];
     }
     float occluu=uu,occlvv=vv2,cwuu=uu,cwvv=vv2;
     float ccuu=uu,ccvv=vv2,cruu=uu,crvv=vv2;
@@ -1868,7 +1884,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     // output is authoritative for that lane; unconnected lanes retain the
     // regular material path above.
     if (matGraph && mid >= 0 && mid < numMats) {
-      const int gb=mid*1394;
+      const int gb=mid*TUSD_GPU_GRAPH_FLOATS;
       if (matGraph[gb+1]>=0.f) {
         F4 g=evalMaterialXGraphUv(matGraph,mid,0,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
         base=mk(g.x,g.y,g.z);
@@ -1914,6 +1930,12 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                      scale(gN,gn.z*2.f-1.f)));
       }
     }
+
+    // Graph opacity is authoritative, but it must still obey the material's
+    // authored alpha mode. Previously CUDA/HIP applied MASK before evaluating
+    // the graph, so a connected opacity graph silently bypassed alphaCutoff.
+    if (alphaMode > 0.5f && alphaMode < 1.5f)
+      materialOpacity=(materialOpacity >= alphaCutoff) ? 1.f : 0.f;
 
     // Default shaded view: realtime OpenPBR preview. It consumes the canonical
     // packed material block while preserving the existing texture sampling and
@@ -2140,7 +2162,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
         F3 throughput=scale(topTint,1.f-materialOpacity);
         F3 throughColor=mk(cam.clear[0],cam.clear[1],cam.clear[2]);
         float topTransmission = (matLightRt && mats[ht] >= 0)
-            ? fminf(fmaxf(matLightRt[mats[ht]*80+11],0.f),1.f) : 0.f;
+            ? fminf(fmaxf(matLightRt[mats[ht]*TUSD_GPU_OPENPBR_FLOATS+11],0.f),1.f) : 0.f;
         F3 refractedOrigin=o, refractedDir=d;
         F3 topRefr=primaryLayerRefractedColor(
             ht,bu,bv,hitInst,tris,insts,mats,matLightRt,numMats,tlas,blas,
@@ -2170,8 +2192,8 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
           if (nmid>=0 && nmid<numMats) {
             na=matPbr ? matPbr[nmid*6+5] : 1.f;
             if (matLightRt) {
-              nam=matLightRt[nmid*80+54];
-              if (matLightRt[nmid*80+51]>0.5f) na=matLightRt[nmid*80+39];
+              nam=matLightRt[nmid*TUSD_GPU_OPENPBR_FLOATS+54];
+              if (matLightRt[nmid*TUSD_GPU_OPENPBR_FLOATS+51]>0.5f) na=matLightRt[nmid*TUSD_GPU_OPENPBR_FLOATS+39];
               if (nam>0.5f && nam<1.5f) na=1.f;
             }
             const float* nc=&cols[nht*12];

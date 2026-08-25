@@ -50,14 +50,31 @@ ctest --test-dir build_ninja \
 ```
 
 It checks PreviewSurface/OpenPBR/standard_surface color semantics, executable
-MaterialX graph retention, tight CUDA/HIP image parity, and exposure-independent
-Vulkan/shared-backend chromaticity parity. To turn missing hardware into a
-failure for a GPU validation host, set
+MaterialX graph retention, a typed `color4` to `color3` swizzle result, tight
+CUDA/HIP image parity, and exposure-independent Vulkan/shared-backend
+chromaticity parity. To turn missing hardware into a failure for a GPU
+validation host, set
 `TUSDR_PARITY_REQUIRE_BACKENDS=vkr,cuda,hip`. Set
 `TUSDR_PARITY_REQUIRE_HARDWARE=1` to require NVIDIA identity on CUDA and AMD
 identity on HIP. Multi-GPU Vulkan validation accepts an explicit index/vendor
 matrix such as `TUSDR_PARITY_VULKAN_DEVICES=0:NVIDIA,1:AMD`; every listed
 device must expose hardware ray query and pass the semantic grid.
+
+CUDA cache transitions can be made part of the same headless gate. Point
+`XDG_CACHE_HOME` at an empty temporary directory and set
+`TUSDR_PARITY_CUDA_CACHE_EXPECT=cold` for the first run; repeat with `warm` and
+the same directory. The cold run requires an NVRTC cache miss followed by a
+persisted PTX entry, while the warm run requires an actual cache hit. Both also
+run the typed graph-output checks. Include `cuda` in
+`TUSDR_PARITY_REQUIRE_BACKENDS` so an unavailable device cannot turn this gate
+into a skip.
+
+The strict hardware wrapper can perform both passes automatically:
+
+```sh
+TUSDR_CI_CUDA_CACHE_CYCLE=1 \
+  scripts/run-tusdrender-materialx-hardware-matrix.sh build_ninja
+```
 
 Texture decode is bounded for ordinary `-rtPreview` runs as well as the named
 large-scene profiles. The derived cap applies before material conversion, and
@@ -137,6 +154,17 @@ inputs resolve through Material/NodeGraph interfaces and MaterialX constant
 nodes. Constant add/subtract/multiply/divide/min/max, clamp, and mix graphs are
 evaluated without baking. Texture, noise, and other spatial procedural volume
 graphs remain unsupported.
+
+For a strict GPU CI gate covering Vulkan ray query on both configured physical
+devices, CUDA on NVIDIA, and HIP on AMD, run:
+
+```sh
+scripts/run-tusdrender-materialx-hardware-matrix.sh build_ninja
+```
+
+The default Vulkan mapping is `0:NVIDIA,1:AMD`; heterogeneous workers can set
+`TUSDR_CI_VULKAN_DEVICES` to the detected `INDEX:VENDOR` pairs. The gate rejects
+software fallbacks and missing required backends rather than silently skipping.
 The vendored TinyVDB reader accepts OpenVDB 1.x through 13.x scalar grids
 (`bool`, integer, half, float, and double). Vec3 grids are reduced to vector
 magnitude for the single-channel density renderer. ZIP, active-mask, BLOSC/LZ4,

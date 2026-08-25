@@ -3647,6 +3647,16 @@ if(TINYUSDZ_BUILD_TESTS)
                          LABELS "tusdview;rt;openpbr")
 
     add_test(
+      NAME tusdview-cpu-rt-materialx-swizzle
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cpu-rt-materialx-swizzle.sh"
+    )
+    set_tests_properties(tusdview-cpu-rt-materialx-swizzle PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180
+                         LABELS "tusdview;rt;materialx;openpbr")
+
+    add_test(
       NAME tusdview-openchess-materials
       COMMAND ${CMAKE_COMMAND} -E env
               "TUSDVIEW=$<TARGET_FILE:tusdview>"
@@ -4302,7 +4312,12 @@ if(TINYUSDZ_BUILD_TESTS)
                    RESOURCE_LOCK tusdview_gl_gpu)
       list(APPEND _tinyusdz_tusdview_tests tusdview-nvidia-gl-warmup)
       foreach(_tinyusdz_test IN LISTS _tinyusdz_tusdview_tests)
-        if(_tinyusdz_test MATCHES "^tusdview-")
+        # CPU RT uses Vulkan only to provide a windowless presentation shell;
+        # it neither needs GL shader warmup nor an NVIDIA device. Keeping these
+        # tests automatic lets them run on RADV/llvmpipe when PRIME state or a
+        # configure-time Xvfb display later disappears.
+        if(_tinyusdz_test MATCHES "^tusdview-" AND
+           NOT _tinyusdz_test MATCHES "^tusdview-cpu-rt-")
           get_property(_tinyusdz_test_env TEST "${_tinyusdz_test}"
                        PROPERTY ENVIRONMENT)
           if(NOT _tinyusdz_test_env)

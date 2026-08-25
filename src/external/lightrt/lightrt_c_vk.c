@@ -3235,7 +3235,13 @@ int lrt_vk_rtx_scene_render_materialx_path(
     sizes[4]=(size_t)d->nmaterials*d->graph_stride_floats*sizeof(float); data[4]=d->graphs;
     sizes[5]=(size_t)d->ntexels*sizeof(uint32_t); data[5]=d->texels;
     sizes[6]=(size_t)d->ntextures*8u*sizeof(int32_t); data[6]=d->texture_descs;
-    sizes[7]=(size_t)d->nlights*8u*sizeof(float); data[7]=d->lights;
+    /* Keep this in lockstep with lrt_vk_material_path_desc and
+     * trace_materialx_path.comp: every analytic/environment light occupies
+     * position/type, direction/radius, radiance/shape, and auxiliary fields
+     * (16 floats). The old 8-float upload truncated radiance to zero and made
+     * descriptor-backed Vulkan materials render black. */
+    sizes[7]=(size_t)d->nlights*LRT_VK_MATERIAL_PATH_LIGHT_FLOATS*sizeof(float);
+    data[7]=d->lights;
     sizes[8]=(size_t)pixels*4u*sizeof(float); data[8]=NULL;
     stage = "buffers"; for (i=0;i<9;++i) {
         size_t n=sizes[i]?sizes[i]:4u;

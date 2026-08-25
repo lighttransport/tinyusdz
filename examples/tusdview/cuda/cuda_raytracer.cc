@@ -186,9 +186,15 @@ uint64_t HashBytes(uint64_t hash, const void* data, size_t size) {
 }
 
 std::string CacheKey(int nvrtcMajor, int nvrtcMinor, int compileArch) {
+  // Increment when the host/kernel launch ABI or packed GPU records change.
+  // The source hash normally invalidates PTX, but an explicit schema keeps a
+  // loadable kernel compiled against an older argument/record contract from
+  // surviving an ABI migration through copied or otherwise stale caches.
+  constexpr const char* kCacheSchema = "tusdview-cuda-ptx-v2";
   uint64_t hash = UINT64_C(14695981039346656037);
   hash = HashBytes(hash, kKernelSrc, std::strlen(kKernelSrc));
-  const std::string settings = std::to_string(nvrtcMajor) + "." +
+  const std::string settings = std::string(kCacheSchema) + ":" +
+      std::to_string(nvrtcMajor) + "." +
       std::to_string(nvrtcMinor) + ":compute_" + std::to_string(compileArch) +
       ":--use_fast_math";
   hash = HashBytes(hash, settings.data(), settings.size());

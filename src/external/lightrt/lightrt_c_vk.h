@@ -262,6 +262,9 @@ typedef struct lrt_vk_material_path_desc {
     uint32_t samples, max_depth, rr_depth, seed;
 } lrt_vk_material_path_desc;
 
+/* Packed light ABI consumed by trace_materialx_path.comp. */
+#define LRT_VK_MATERIAL_PATH_LIGHT_FLOATS 16u
+
 int lrt_vk_rtx_scene_render_materialx_path(
     lrt_vk_engine *e, lrt_vk_rtx_scene *s,
     const lrt_vk_material_path_desc *desc, float *out_rgba,

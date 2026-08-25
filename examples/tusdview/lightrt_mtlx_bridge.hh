@@ -3,6 +3,7 @@
 
 #include <string>
 
+#include "gpu_material_abi.h"
 #include "gpu_scene.hh"
 
 namespace tusdview {
@@ -11,6 +12,8 @@ constexpr int kLightRtOpenPBRVec4s =
     tinyusdz::tydra::kLightRtOpenPBRVec4s;
 constexpr int kLightRtOpenPBRFloats =
     tinyusdz::tydra::kLightRtOpenPBRFloats;
+static_assert(kLightRtOpenPBRFloats == TUSD_GPU_OPENPBR_FLOATS,
+              "canonical OpenPBR GPU ABI drift");
 // Floats 0-71 are the original 6-slot layout (slots 0-5 = base, metallic,
 // roughness, normal, emissive, opacity). Floats 72-95 add UV transforms for
 // slot 12 = occlusion, 13 = coat weight, 14 = coat color, 15 = coat roughness
@@ -22,27 +25,34 @@ constexpr int kLightRtOpenPBRFloats =
 // 131 the specular-workflow flag, and 132-139 its scale/bias.
 // 140-145 carry coat-normal UV transform, 146 its UV set, and 147-154 its
 // scale/bias vectors.
-constexpr int kRtMaterialTextureParamFloats = 155;
+constexpr int kRtMaterialTextureParamFloats =
+    TUSD_GPU_MATERIAL_TEX_PARAM_FLOATS;
 // Fixed-size GPU RT graph block. The header contains node count, all canonical
 // OpenPBR output routes, and one reserved float; each node then
 // occupies op, three input indices, three vec4 constants, resolved texture id,
 // and UV scale/offset.
-constexpr int kRtMaterialGraphMaxNodes = 64;
+constexpr int kRtMaterialGraphMaxNodes = TUSD_GPU_GRAPH_MAX_NODES;
 constexpr int kRtMaterialGraphOutputCount =
     MaterialXGraphRuntimeCPU::kOutputCount;
+static_assert(kRtMaterialGraphOutputCount == TUSD_GPU_GRAPH_OUTPUTS,
+              "MaterialX output-route ABI drift");
 constexpr int kRtMaterialGraphHeaderFloats =
     2 + kRtMaterialGraphOutputCount;
+static_assert(kRtMaterialGraphHeaderFloats == TUSD_GPU_GRAPH_HEADER_FLOATS,
+              "MaterialX graph-header ABI drift");
 // op + 3 input indices + 3 vec4 fallbacks + texture id + uv scale/offset.
-constexpr int kRtMaterialGraphNodeFloats = 21;
+constexpr int kRtMaterialGraphNodeFloats = TUSD_GPU_GRAPH_NODE_FLOATS;
 constexpr int kRtMaterialGraphFloats =
     kRtMaterialGraphHeaderFloats +
     kRtMaterialGraphMaxNodes * kRtMaterialGraphNodeFloats;
+static_assert(kRtMaterialGraphFloats == TUSD_GPU_GRAPH_FLOATS,
+              "MaterialX graph-stride ABI drift");
 constexpr int kRasterMaterialGraphImageCount = 8;
 // Per-material texture-id slots in RtHostScene::matTex. 0-5 as above, then
 // 6 = occlusion, 7 = coat weight, 8 = coat color, 9 = coat roughness,
 // 10 = specular-workflow color.
 // 11 = dedicated coat-normal map.
-constexpr int kRtMaterialTexSlots = 12;
+constexpr int kRtMaterialTexSlots = TUSD_GPU_MATERIAL_TEX_SLOTS;
 // Rows 20-24 add opacity sampling and scene-wide UDIM-atlas row selectors;
 // rows 25-26 carry the independent roughness UV transform. Keep
 // in lockstep with MaterialTexParam in every Vulkan mesh shader stage.
