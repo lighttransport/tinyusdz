@@ -928,12 +928,16 @@ int main() {
       {"name":"atan", "category":"atan2", "inputs":[{"value":1.0},{"value":2.0}]},
       {"name":"sgn", "category":"sign", "inputs":[{"value":-2.0}]},
       {"name":"rnd", "category":"round", "inputs":[{"value":1.6}]},
-      {"name":"sat", "category":"saturate", "inputs":[{"value":-0.5}]}
+      {"name":"sat", "category":"saturate", "inputs":[{"value":-0.5}]},
+      {"name":"asin", "category":"arcsin", "inputs":[{"value":0.5}]},
+      {"name":"acos", "category":"arccos", "inputs":[{"value":0.5}]},
+      {"name":"contrast", "category":"contrast", "inputs":[{"value":0.25},{"value":2.0},{"value":0.5}]},
+      {"name":"swizzle", "category":"ND_swizzle_color4_color3", "type":"color3", "inputs":[{"name":"in","value":[0.1,0.2,0.3,0.4]},{"name":"channels","value":"bgr1"}]}
     ], "outputs": []}, "connections": []
   })json";
   std::string scalarError;
   if (!tusdview::CompileMaterialXGraphRuntime(&scalarGraphMat, &scalarError) ||
-      scalarGraphMat.materialXGraph.nodes.size() != 4 ||
+      scalarGraphMat.materialXGraph.nodes.size() != 8 ||
       scalarGraphMat.materialXGraph.nodes[0].op !=
           tusdview::MaterialXGraphOpCPU::Atan2 ||
       scalarGraphMat.materialXGraph.nodes[1].op !=
@@ -942,9 +946,43 @@ int main() {
           tusdview::MaterialXGraphOpCPU::Round ||
       scalarGraphMat.materialXGraph.nodes[3].op !=
           tusdview::MaterialXGraphOpCPU::Clamp ||
+      scalarGraphMat.materialXGraph.nodes[4].op !=
+          tusdview::MaterialXGraphOpCPU::Arcsine ||
+      scalarGraphMat.materialXGraph.nodes[5].op !=
+          tusdview::MaterialXGraphOpCPU::Arccosine ||
+      scalarGraphMat.materialXGraph.nodes[6].op !=
+          tusdview::MaterialXGraphOpCPU::Contrast ||
+      scalarGraphMat.materialXGraph.nodes[7].op !=
+          tusdview::MaterialXGraphOpCPU::Swizzle ||
+      !Near(scalarGraphMat.materialXGraph.nodes[7].value[1][0], 2.0f) ||
+      !Near(scalarGraphMat.materialXGraph.nodes[7].value[1][3], 5.0f) ||
       !Near(scalarGraphMat.materialXGraph.nodes[3].value[2][0], 1.0f)) {
     std::fprintf(stderr, "MaterialX scalar procedural operators failed: %s\n",
                  scalarError.c_str());
+    return 1;
+  }
+
+  // MaterialX connections may reference a node authored later. GPU graph
+  // evaluators are single-pass, so compilation must pack dependencies first.
+  tusdview::DrawMaterialCPU forwardGraphMat;
+  forwardGraphMat.materialXNodeGraphJson = R"json({
+    "nodegraph": {"nodes": [
+      {"name":"consumer", "category":"invert", "type":"color3",
+       "inputs":[{"name":"in", "nodename":"source"}]},
+      {"name":"source", "category":"constant", "type":"color3",
+       "inputs":[{"name":"value", "value":[0.2,0.4,0.8]}]}
+    ], "outputs":[{"name":"base", "nodename":"consumer"}]},
+    "connections":[{"input":"base_color", "output":"base"}]
+  })json";
+  std::string forwardError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&forwardGraphMat, &forwardError) ||
+      forwardGraphMat.materialXGraph.nodes.size() != 2 ||
+      forwardGraphMat.materialXGraph.nodes[0].name != "source" ||
+      forwardGraphMat.materialXGraph.nodes[1].name != "consumer" ||
+      forwardGraphMat.materialXGraph.nodes[1].input[0] != 0 ||
+      forwardGraphMat.materialXGraph.output[0] != 1) {
+    std::fprintf(stderr, "MaterialX dependency ordering failed: %s\n",
+                 forwardError.c_str());
     return 1;
   }
 

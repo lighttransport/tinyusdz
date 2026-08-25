@@ -480,6 +480,57 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
          size_t(displacement_tex_id) < tex_pool->size())
             ? &(*tex_pool)[size_t(displacement_tex_id)]
             : nullptr;
+    // Choose a displacement mip from the actual mesh/UV sampling density.
+    // Sampling level zero at sparse vertices aliases high-frequency height maps
+    // into arbitrary spikes. The longest incident edge footprint is a bounded,
+    // topology-aware estimate of the texel area represented by each vertex;
+    // dense meshes naturally retain level zero while coarse meshes low-pass.
+    std::vector<float> displacement_lod(npts, 0.0f);
+    const bool displacement_has_mips = dtex &&
+        (!dtex->mips.empty() ||
+         std::any_of(dtex->udim_tiles.begin(), dtex->udim_tiles.end(),
+                     [](const Texture::UdimTile &tile) {
+                       return !tile.mips.empty();
+                     }));
+    if (displacement_has_mips && have_st) {
+      int texture_width = dtex->width;
+      int texture_height = dtex->height;
+      for (const Texture::UdimTile &tile : dtex->udim_tiles) {
+        texture_width = std::max(texture_width, tile.width);
+        texture_height = std::max(texture_height, tile.height);
+      }
+      const float tex_w = float(std::max(1, texture_width));
+      const float tex_h = float(std::max(1, texture_height));
+      cur = 0;
+      for (int32_t c : counts) {
+        if (c >= 2 && cur + size_t(c) <= indices.size()) {
+          for (int32_t j = 0; j < c; ++j) {
+            const size_t a_fv = cur + size_t(j);
+            const size_t b_fv = cur + size_t((j + 1) % c);
+            const int32_t a = indices[a_fv], b = indices[b_fv];
+            if (a < 0 || b < 0 || size_t(a) >= npts || size_t(b) >= npts)
+              continue;
+            std::pair<float, float> auv = uv_at(a_fv, a);
+            std::pair<float, float> buv = uv_at(b_fv, b);
+            uv_xform.apply(&auv.first, &auv.second);
+            uv_xform.apply(&buv.first, &buv.second);
+            // Use authored (unwrapped) UV deltas. A triangle spanning exactly
+            // one repeat period genuinely covers a full tile; folding the
+            // delta to its shortest wrapped distance would incorrectly select
+            // level zero for that common mapping.
+            const float du = (buv.first - auv.first) * tex_w;
+            const float dv = (buv.second - auv.second) * tex_h;
+            const float lod = std::max(0.0f, std::log2(std::max(
+                std::sqrt(du * du + dv * dv), 1.0f)));
+            displacement_lod[size_t(a)] =
+                std::max(displacement_lod[size_t(a)], lod);
+            displacement_lod[size_t(b)] =
+                std::max(displacement_lod[size_t(b)], lod);
+          }
+        }
+        cur += size_t(std::max<int32_t>(0, c));
+      }
+    }
     for (size_t i = 0; i < npts; i++) {
       if (Length(vn[i]) < 1.0e-12f) continue;
       Vec3 n = Normalize(vn[i]);
@@ -490,7 +541,8 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                 ? uv_at(size_t(first_fv[i]), int32_t(i))
                 : uv_at(0, int32_t(i));
         uv_xform.apply(&uv.first, &uv.second);
-        d = dtex->sample_channel(uv.first, uv.second, 0.0f, displacement_ch) *
+        d = dtex->sample_channel(uv.first, uv.second, displacement_lod[i],
+                                 displacement_ch) *
                 displacement_tex_scale +
             displacement_tex_bias;
       }

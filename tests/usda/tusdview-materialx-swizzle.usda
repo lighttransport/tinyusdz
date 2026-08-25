@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Mesh "Card"
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+        rel material:binding = </World/Material>
+    }
+
+    def Material "Material" (prepend apiSchemas = ["MaterialXConfigAPI"])
+    {
+        token outputs:mtlx:surface.connect = </World/Material/Surface.outputs:surface>
+        token outputs:surface.connect = </World/Material/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color.connect = </World/Material/Graph.outputs:base>
+            float inputs:base_weight = 1
+            float inputs:specular_weight = 0
+            float inputs:specular_roughness = 0.45
+            token outputs:surface
+        }
+
+        def NodeGraph "Graph"
+        {
+            color3f outputs:base.connect = </World/Material/Graph/Swizzle.outputs:out>
+
+            def Shader "Constant"
+            {
+                uniform token info:id = "ND_constant_color4"
+                color4f inputs:value = (0.01, 0.08, 0.6, 1)
+                color4f outputs:out
+            }
+
+            def Shader "Swizzle"
+            {
+                uniform token info:id = "ND_swizzle_color4_color3"
+                string inputs:channels = "bgr"
+                color4f inputs:in.connect = </World/Material/Graph/Constant.outputs:out>
+                color3f outputs:out
+            }
+        }
+    }
+
+    def DistantLight "Key"
+    {
+        float inputs:intensity = 0.5
+    }
+}

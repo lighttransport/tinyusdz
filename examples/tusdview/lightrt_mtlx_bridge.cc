@@ -698,6 +698,10 @@ std::string NormalizeMtlxCategory(const std::string& category,
     if (stem == "gltf_colorimage") return "gltf_colorimage";
     if (stem == "gltf_image") return "gltf_image";
     if (stem == "gltf_normalmap") return "gltf_normalmap";
+    // Swizzle nodedef names carry both input and output types (for example
+    // ND_swizzle_color4_color3). Removing only the output suffix leaves the
+    // input type in the stem; the runtime operation itself is type-agnostic.
+    if (stem.rfind("swizzle_", 0) == 0) return "swizzle";
     if (stem == "open_pbr_surface_surfaceshader") return "open_pbr_surface";
     if (stem == "standard_surface_surfaceshader") return "standard_surface";
     if (stem == "UsdPreviewSurface_surfaceshader") return "UsdPreviewSurface";
@@ -1152,6 +1156,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     }
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
+    else if (cat == "asin" || cat == "arcsin")
+      out.op = MaterialXGraphOpCPU::Arcsine;
+    else if (cat == "acos" || cat == "arccos")
+      out.op = MaterialXGraphOpCPU::Arccosine;
+    else if (cat == "contrast")
+      out.op = MaterialXGraphOpCPU::Contrast;
+    else if (cat == "swizzle" || cat.rfind("swizzle_", 0) == 0) {
+      out.op = MaterialXGraphOpCPU::Swizzle;
+      out.value[1][0] = 0.0f;
+      out.value[1][1] = 1.0f;
+      out.value[1][2] = 2.0f;
+      out.value[1][3] = 3.0f;
+    }
     else if (cat == "fractal3d" || cat == "fractal")
       out.op = MaterialXGraphOpCPU::Noise3D;
     if (out.op == MaterialXGraphOpCPU::Unknown) {
@@ -1170,6 +1187,25 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         const std::string inputName = JsonString(input, "name");
         const auto valueIt = input.find("value");
         const std::string inputType = NormalizeMtlxType(JsonString(input, "type"));
+        if ((cat == "swizzle" || cat.rfind("swizzle_", 0) == 0) &&
+            inputName == "channels" &&
+            valueIt != input.end() && valueIt->is_string()) {
+          const std::string channels = valueIt->get<std::string>();
+          auto selector = [](char ch) -> float {
+            switch (ch) {
+              case 'r': case 'x': return 0.0f;
+              case 'g': case 'y': return 1.0f;
+              case 'b': case 'z': return 2.0f;
+              case 'a': case 'w': return 3.0f;
+              case '0': return 4.0f;
+              case '1': return 5.0f;
+              default: return 0.0f;
+            }
+          };
+          for (size_t lane = 0; lane < channels.size() && lane < 4; ++lane)
+            out.value[1][lane] = selector(channels[lane]);
+          continue;
+        }
         if (inputName == "file" || inputType == "filename") {
           out.imagePath = JsonString(input, "value");
           if (!out.imagePath.empty()) graph.hasImages = true;

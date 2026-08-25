@@ -322,15 +322,15 @@ same DrawScene→world-space-triangle-soup flattener the CUDA/HIP tracers alread
 use) and builds one BVH over the result with the vendored `lightrt_c` library
 (`src/external/lightrt/lightrt_c_tri.*`) — the same CMake target
 `tools/tusdrender` already defines, linked into `tusdview` via a guarded
-`add_subdirectory`. Tracing runs on a `std::thread` pool, one sample per pixel,
-flat Lambertian + a hard shadow ray (Normals/MaterialId/Depth AOVs also
-supported); there is no refit (unlike HIP, `lightrt_c_tri` has no per-vertex BVH
-refit API), so a deformable scene's re-pose always rebuilds — the same
-simplification `CudaRayTracer` already accepts. **Known limitations (v1):** no
-textures/materials (flat/vertex-color shading only), no progressive
-accumulation (each frame is a fresh 1-sample trace), and no headless one-shot
-`--cpu-rt --screenshot` path yet (a headless run falls back to the normal
-raster screenshot).
+`add_subdirectory`. Tracing runs on a `std::thread` pool and supports the shared
+OpenPBR/MaterialX graph representation, textures, stacked transparency, and the
+standard RT AOVs. Graphs are dependency-sorted and evaluated in one bounded
+pass, matching the Vulkan/CUDA/HIP packed ABI. Headless
+`--cpu-rt --screenshot` output is covered by dedicated CTests, including
+OpenPBR lobes and typed MaterialX swizzle. There is no refit (unlike HIP,
+`lightrt_c_tri` has no per-vertex BVH refit API), so a deformable scene's re-pose
+always rebuilds. Accumulation is not progressive: each frame is a fresh bounded
+sample set.
 
 ```sh
 ./build/tusdview model.usda                    # GL raster; View > Render Technique to switch live

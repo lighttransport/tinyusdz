@@ -203,6 +203,11 @@ Vulkan ICD or `/dev/nvidia0`, CMake leaves Vulkan selection automatic so the
 tests can use another device or return their normal skip code. Check the
 configure message before interpreting a Vulkan result.
 
+The `tusdview-cpu-rt-*` tests are intentionally exempt from the NVIDIA GL
+shader-cache warmup and PRIME environment. They use Vulkan only as a windowless
+presentation shell and must remain runnable on the automatically selected
+device if an Xvfb display or NVIDIA driver disappears after configuration.
+
 The three GLVND variables route OpenGL only. `TUSDVIEW_VK_DEVICE=nvidia` is a
 test-harness variable that forwards `--vk-device nvidia`; direct viewer runs
 should use the command-line option. True headless Vulkan/CUDA/HIP tests do not

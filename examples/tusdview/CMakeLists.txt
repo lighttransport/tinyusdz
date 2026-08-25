@@ -502,6 +502,15 @@ if(TINYUSDZ_BUILD_TESTS)
       add_sanitizers(${tv_test})
     endif()
   endforeach()
+
+  find_program(TUSDVIEW_PYTHON NAMES python3 python)
+  if(TUSDVIEW_PYTHON)
+    add_test(NAME tusdview-gpu-material-abi
+      COMMAND ${TUSDVIEW_PYTHON}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_gpu_material_abi.py
+        ${PROJECT_SOURCE_DIR})
+    set_tests_properties(tusdview-gpu-material-abi PROPERTIES LABELS "tusdview")
+  endif()
 endif()
 
 # Vendored texture tools (tir/texcomp/texpipe/envmap). All calls are routed
