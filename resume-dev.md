@@ -195,6 +195,8 @@ Passed:
 - Matrix geomprop bridge/packing, Release rebuild, Vulkan render, geometry
   primvar, and GPU ABI checks: 5/5 passed; Vulkan shaders were regenerated
   from source.
+- Stable `build-next` rebuild and full regression after matrix format support:
+  40/40 passed.
 - Stable `next` regression after wrapper changes: 40/40 passed
 - Viewer rebuild plus focused geomprop/bridge/ABI/nonmesh/safety checks: 6/6
   passed after generic geomprop stream preservation (`3228d85cd`)
