@@ -127,6 +127,12 @@ bool EvaluateMaterialXStringToLightRtVolume(const char* xml,
                                             DrawMaterialCPU* out,
                                             std::string* err);
 
+// Volume variant rooted at the owning asset directory so image nodes resolve
+// the same way as surface MaterialX graphs.
+bool EvaluateMaterialXStringToLightRtVolumeWithBaseDir(
+    const char* xml, const char* materialName, const char* baseDir,
+    DrawMaterialCPU* out, std::string* err);
+
 // Pack DrawLightRtOpenPBRCPU into the vec4-friendly SSBO/kernel layout consumed
 // by the Vulkan, CUDA and HIP RT preview paths. `dst` must hold
 // kLightRtOpenPBRFloats floats.

@@ -286,6 +286,9 @@ Passed:
 - Full configured native/viewer/tusdrender regression after the generalized
   Schlick correction: 298/298 passed in 1107.81 seconds; the same 24
   documented capability/asset profiles remained skipped.
+- Volume MaterialX graph baking now roots texture evaluation at the owning
+  asset directory through a base-directory-aware evaluator; a relative
+  density texture regression passes in the bridge test.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test

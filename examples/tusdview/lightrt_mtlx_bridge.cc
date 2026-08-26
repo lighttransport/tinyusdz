@@ -1001,8 +1001,14 @@ bool EvaluateMaterialXJsonGraphForVolume(const DrawMaterialCPU& mat,
   graph.materialXNodeGraphJson = mat.volumeMaterialXNodeGraphJson;
   std::string xml;
   if (!BuildMaterialXXmlFromJsonGraph(graph, &xml, err, true)) return false;
-  return EvaluateMaterialXStringToLightRtVolume(
-      xml.c_str(), "tusdview_material", out, err);
+  std::string baseDir = ".";
+  const size_t slash = mat.absPath.find_last_of("/\\");
+  if (slash != std::string::npos) {
+    baseDir = mat.absPath.substr(0, slash);
+    if (baseDir.empty()) baseDir = ".";
+  }
+  return EvaluateMaterialXStringToLightRtVolumeWithBaseDir(
+      xml.c_str(), "tusdview_material", baseDir.c_str(), out, err);
 }
 
 int FindSurfaceNode(const MtlxDoc* doc, const char* materialName,
@@ -1136,6 +1142,13 @@ bool EvaluateMaterialXStringToLightRtVolume(const char* xml,
                                             const char* materialName,
                                             DrawMaterialCPU* out,
                                             std::string* err) {
+  return EvaluateMaterialXStringToLightRtVolumeWithBaseDir(
+      xml, materialName, nullptr, out, err);
+}
+
+bool EvaluateMaterialXStringToLightRtVolumeWithBaseDir(
+    const char* xml, const char* materialName, const char* baseDir,
+    DrawMaterialCPU* out, std::string* err) {
   if (err) err->clear();
   if (!xml || !xml[0] || !out) {
     if (err) *err = !out ? "Output pointer is null" :
@@ -1154,8 +1167,13 @@ bool EvaluateMaterialXStringToLightRtVolume(const char* xml,
     mtlx_free(doc);
     return false;
   }
+  TextureCache* tex = texcache_create(baseDir);
   ShadeContext ctx{};
   ctx.doc = doc;
+  ctx.tex = tex;
+  ctx.uv[0] = 0.5f;
+  ctx.uv[1] = 0.5f;
+  ctx.P = v3_make(0.0f, 0.0f, 0.0f);
   ctx.Ns = v3_make(0.0f, 0.0f, 1.0f);
   ctx.Ng = ctx.Ns;
   ctx.V = ctx.Ns;
@@ -1166,6 +1184,7 @@ bool EvaluateMaterialXStringToLightRtVolume(const char* xml,
   MtlxVolumeParams volume{};
   const bool ok = mtlx_eval_volume(
       &ctx, doc->mats[material].volume_node, &volume) == 0;
+  texcache_free(tex);
   mtlx_free(doc);
   if (!ok) {
     if (err) *err = "mtlx_eval_volume failed";
