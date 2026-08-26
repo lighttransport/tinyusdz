@@ -5385,7 +5385,9 @@ static void ResolveNextSurfaceVolumeMaterial(const tnext::Stage& stage,
 static void ResolveNextDisplacementMaterial(const tnext::Stage& stage,
                                             const tnext::UsdPrim& material,
                                             DrawMaterialCPU* out) {
-  if (!out || !out->hasDisplacementOutput || out->hasDisplacement()) return;
+  if (!out || !out->hasDisplacementOutput || out->displacementTex >= 0 ||
+      out->displacementConst != 0.0f)
+    return;
   const std::string shaderPath = tnext::GetDisplacementShader(stage, material);
   if (shaderPath.empty()) return;
   const tnext::UsdPrim shader = stage.GetPrimAtPath(shaderPath);

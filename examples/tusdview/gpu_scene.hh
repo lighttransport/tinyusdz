@@ -702,7 +702,13 @@ struct DrawMaterialCPU {
   // map). Identity (1, 0) when unauthored or for constant displacement.
   float displacementTexScale{1.0f};
   float displacementTexBias{0.0f};
-  bool hasDisplacement() const { return displacementTex >= 0 || displacementConst != 0.0f; }
+  // A material terminal is an authored displacement output even when its
+  // resolved constant happens to be zero. Keep that distinction from an
+  // absent terminal so the geometry path does not silently skip the output.
+  bool hasDisplacement() const {
+    return hasDisplacementOutput || displacementTex >= 0 ||
+           displacementConst != 0.0f;
+  }
 };
 
 enum class DrawCompressedFormat : int {

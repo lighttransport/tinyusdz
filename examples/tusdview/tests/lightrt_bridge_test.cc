@@ -2003,6 +2003,20 @@ int main() {
     return 1;
   }
 
+  // A separate displacement terminal remains present even when its resolved
+  // scalar is exactly zero; do not collapse that authored output into the
+  // absent-terminal case used by the geometry bake path.
+  tusdview::DrawMaterialCPU zeroDisplacement;
+  if (zeroDisplacement.hasDisplacement()) {
+    std::fprintf(stderr, "uninitialized displacement was reported\n");
+    return 1;
+  }
+  zeroDisplacement.hasDisplacementOutput = true;
+  if (!zeroDisplacement.hasDisplacement()) {
+    std::fprintf(stderr, "zero displacement terminal was dropped\n");
+    return 1;
+  }
+
   // Direct closure connections are lowered into the shared OpenPBR lanes.
   // Keep these graphs intentionally small: this verifies the Shader-to-Shader
   // connection shape used by imported MaterialX nodegraphs without relying on
