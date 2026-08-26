@@ -347,6 +347,36 @@ int main(void) {
   ok = check3("split-tb-bottom", eval_named(&ctx, "split_tb"), 0.0f, 0.0f,
               1.0f) && ok;
   free(ctx.memo); free(ctx.memo_done); mtlx_free(doc);
+
+  /* Cyclic graph edges must terminate through the evaluator's zero sentinel
+   * instead of recursing indefinitely. */
+  {
+    const char *cycle_xml =
+        "<materialx version=\"1.39\"><nodegraph name=\"Cycle\">"
+        "<add name=\"a\" type=\"float\"><input name=\"in1\" nodename=\"b\"/>"
+        "<input name=\"in2\" value=\"1\"/></add>"
+        "<add name=\"b\" type=\"float\"><input name=\"in1\" nodename=\"a\"/>"
+        "<input name=\"in2\" value=\"2\"/></add></nodegraph></materialx>";
+    MtlxDoc *cycle_doc = mtlx_load_string(cycle_xml);
+    ShadeContext cycle_ctx = {0};
+    int cycle_id = cycle_doc ? mtlx_find_node(cycle_doc, 0, "a") : -1;
+    if (cycle_doc) {
+      cycle_ctx.doc = cycle_doc;
+      cycle_ctx.memo = (MtlxValue *)calloc((size_t)cycle_doc->nnode,
+                                            sizeof(MtlxValue));
+      cycle_ctx.memo_done = (char *)calloc((size_t)cycle_doc->nnode, 1);
+    }
+    if (!cycle_doc || cycle_id < 0 || !cycle_ctx.memo || !cycle_ctx.memo_done ||
+        !nearf_eps(mtlx_eval_node_test(&cycle_ctx, cycle_id).v[0], 3.0f)) {
+      fprintf(stderr, "cyclic MaterialX graph did not terminate safely\n");
+      ok = 0;
+    }
+    if (cycle_doc) {
+      free(cycle_ctx.memo);
+      free(cycle_ctx.memo_done);
+      mtlx_free(cycle_doc);
+    }
+  }
   if (!ok) fprintf(stderr, "MaterialX graph evaluation suite failed\n");
   return ok ? 0 : 1;
 }

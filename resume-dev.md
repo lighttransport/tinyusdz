@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `b8dd11c88` (`Match conical EDF angle semantics`)
+- HEAD: `dd77cd339` (`Harden Vulkan RT semantic preflight`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -358,6 +358,8 @@ Passed:
   texture-semantic-AOV test stalls in software Vulkan initialization; the
   older 298/298 result below predates the latest texture changes and remains
   historical evidence only.
+- The graph evaluator regression now includes a cyclic two-node graph and
+  verifies that the memo sentinel terminates it safely; the focused test passes.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
@@ -399,7 +401,7 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    now covered for regular, latlong, triplanar, and UDIM-capable image paths;
    sRGB RGB conversion and RGBA alpha preservation are covered as well.
 6. Add graph connection/evaluation/render tests for closure composition, wrapper
-   nesting, multi-output selectors, cycles, missing inputs, type conversion,
+   nesting, multi-output selectors, missing inputs, type conversion,
    direct Shader-to-Shader graphs, and the 64-node limit.
 7. Run focused CUDA/NVIDIA, HIP, and hardware Vulkan RT checks on capable
    machines; this environment exposes llvmpipe only, so the RT semantic sweep
