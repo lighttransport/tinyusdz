@@ -152,6 +152,9 @@ int main(void) {
       " <glossiness_anisotropy name=\"gloss_aniso\" type=\"vector2\"><input name=\"glossiness\" type=\"float\" value=\"0.5\"/><input name=\"anisotropy\" type=\"float\" value=\"0.75\"/></glossiness_anisotropy>"
       " <artistic_ior name=\"artistic\" type=\"multioutput\"><input name=\"reflectivity\" type=\"color3\" value=\"0.25,0.25,0.25\"/><input name=\"edge_color\" type=\"color3\" value=\"1,1,1\"/></artistic_ior>"
       " <multiply name=\"artistic_extinction\" type=\"color3\"><input name=\"in1\" type=\"color3\" nodename=\"artistic\" output=\"extinction\"/><input name=\"in2\" type=\"float\" value=\"1\"/></multiply>"
+      " <deon_hair_absorption_from_melanin name=\"deon_hair\" type=\"vector3\"><input name=\"melanin_concentration\" type=\"float\" value=\"1\"/><input name=\"melanin_redness\" type=\"float\" value=\"0\"/><input name=\"eumelanin_color\" type=\"color3\" value=\"0.367879441,0.367879441,0.367879441\"/></deon_hair_absorption_from_melanin>"
+      " <chiang_hair_absorption_from_color name=\"chiang_absorption\" type=\"vector3\"><input name=\"color\" type=\"color3\" value=\"0.5,0.5,0.5\"/><input name=\"azimuthal_roughness\" type=\"float\" value=\"0.2\"/></chiang_hair_absorption_from_color>"
+      " <chiang_hair_roughness name=\"chiang_roughness\" type=\"multioutput\"><input name=\"longitudinal\" type=\"float\" value=\"0.1\"/><input name=\"azimuthal\" type=\"float\" value=\"0.2\"/></chiang_hair_roughness>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -257,7 +260,12 @@ int main(void) {
        check3("roughness-dual",eval_named(&ctx,"rough_dual"),.25f,.25f,0) &&
        check3("glossiness-anisotropy",eval_named(&ctx,"gloss_aniso"),.5f,.125f,0) &&
        check3("artistic-ior",eval_named(&ctx,"artistic"),.6f,.6f,.6f) &&
-       check3("artistic-extinction",eval_named(&ctx,"artistic_extinction"),.8f,.8f,.8f) && ok;
+       check3("artistic-extinction",eval_named(&ctx,"artistic_extinction"),.8f,.8f,.8f) &&
+       check3("deon-hair-absorption",eval_named(&ctx,"deon_hair"),1,1,1) &&
+       check3("chiang-hair-roughness",eval_named(&ctx,"chiang_roughness"),0,0,0) && ok;
+  { MtlxValue absorption=eval_named(&ctx,"chiang_absorption");
+    if(!(absorption.v[0]>0&&nearf_eps(absorption.v[0],absorption.v[1])&&nearf_eps(absorption.v[1],absorption.v[2]))){fprintf(stderr,"Chiang hair absorption invalid\n");ok=0;}
+  }
   { MtlxValue warm=eval_named(&ctx,"blackbody_warm");
     if(!(warm.v[0]>warm.v[1]&&warm.v[1]>=warm.v[2]&&warm.v[2]>=0)){
       fprintf(stderr,"blackbody warm spectrum invalid: %g %g %g\n",warm.v[0],warm.v[1],warm.v[2]);ok=0;

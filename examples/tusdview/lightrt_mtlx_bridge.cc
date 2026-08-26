@@ -1633,6 +1633,35 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
               inputNamed(node,"anisotropy",{{"value",0.0}})})}});
       continue;
     }
+    if(cat=="deon_hair_absorption_from_melanin"&&!name.empty()){
+      const std::string euLog=name+"__eu_log",euAbs=name+"__eu_abs",
+                        phLog=name+"__ph_log",phAbs=name+"__ph_abs",
+                        blend=name+"__blend",result=name+"__absorption";
+      runtimeNodes.push_back({{"name",euLog},{"category","ln"},{"type","color3"},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,"eumelanin_color",{{"value",nlohmann::json::array({.657704,.498077,.254107})}}),"in")})}});
+      runtimeNodes.push_back({{"name",euAbs},{"category","multiply"},{"type","color3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",euLog}},nlohmann::json{{"name","in2"},{"value",-1.0}}})}});
+      runtimeNodes.push_back({{"name",phLog},{"category","ln"},{"type","color3"},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,"pheomelanin_color",{{"value",nlohmann::json::array({.829444,.67032,.349938})}}),"in")})}});
+      runtimeNodes.push_back({{"name",phAbs},{"category","multiply"},{"type","color3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",phLog}},nlohmann::json{{"name","in2"},{"value",-1.0}}})}});
+      runtimeNodes.push_back({{"name",blend},{"category","mix"},{"type","color3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",euAbs}},nlohmann::json{{"name","in2"},{"nodename",phAbs}},renamedInput(inputNamed(node,"melanin_redness",{{"value",.5}}),"mix")})}});
+      runtimeNodes.push_back({{"name",result},{"category","multiply"},{"type","color3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",blend}},renamedInput(inputNamed(node,"melanin_concentration",{{"value",.25}}),"in2")})}});
+      runtimeNodes.push_back({{"name",name},{"category","convert"},{"type","vector3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",result}}})}});
+      continue;
+    }
+    if(cat=="chiang_hair_roughness"&&!name.empty()){
+      const char* outputs[3]={"roughness_R","roughness_TT","roughness_TRT"};
+      for(const char* output:outputs)runtimeNodes.push_back({{"name",name+"__"+output},{"category","constant"},{"type","vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","value"},{"value",nlohmann::json::array({0,0})}}})}});
+      runtimeNodes.push_back({{"name",name},{"category","convert"},{"type","vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",name+"__roughness_R"}}})}});
+      continue;
+    }
+    if(cat=="chiang_hair_absorption_from_color"&&!name.empty()){
+      const std::string result=name+"__absorption";
+      runtimeNodes.push_back({{"name",result},{"category","chianghairabsorptioncore"},
+          {"type","vector3"},{"inputs",nlohmann::json::array({
+              inputNamed(node,"color",{{"value",nlohmann::json::array({1,1,1})}}),
+              inputNamed(node,"azimuthal_roughness",{{"value",.2}})})}});
+      runtimeNodes.push_back({{"name",name},{"category","convert"},{"type","vector3"},
+          {"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",result}}})}});
+      continue;
+    }
     if (cat == "randomcolor" && !name.empty()) {
       const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
       const nlohmann::json seed=inputNamed(node,"seed",{{"value",0}});
@@ -1813,6 +1842,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.op = MaterialXGraphOpCPU::RoughnessDual;
     else if (cat == "artisticiorcore")
       out.op = MaterialXGraphOpCPU::ArtisticIor;
+    else if (cat == "chianghairabsorptioncore")
+      out.op = MaterialXGraphOpCPU::ChiangHairAbsorption;
     else if (cat == "hsvadjust") {
       out.op = MaterialXGraphOpCPU::HsvAdjust;
       out.value[1][1] = out.value[1][2] = 1.0f;

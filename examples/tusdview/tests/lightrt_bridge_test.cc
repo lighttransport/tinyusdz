@@ -1131,11 +1131,14 @@ int main() {
     {"name":"aniso","category":"roughness_anisotropy","type":"vector2","inputs":[{"name":"roughness","value":0.5},{"name":"anisotropy","value":0.75}]},
     {"name":"dual","category":"roughness_dual","type":"vector2","inputs":[{"name":"roughness","value":[0.5,-1]}]},
     {"name":"artistic","category":"artistic_ior","type":"multioutput","inputs":[{"name":"reflectivity","value":[0.25,0.25,0.25]},{"name":"edge_color","value":[1,1,1]}]},
-    {"name":"gloss","category":"glossiness_anisotropy","type":"vector2","inputs":[{"name":"glossiness","value":0.5},{"name":"anisotropy","value":0.75}]}
+    {"name":"gloss","category":"glossiness_anisotropy","type":"vector2","inputs":[{"name":"glossiness","value":0.5},{"name":"anisotropy","value":0.75}]},
+    {"name":"deon","category":"deon_hair_absorption_from_melanin","type":"vector3","inputs":[{"name":"melanin_concentration","value":1},{"name":"melanin_redness","value":0},{"name":"eumelanin_color","value":[0.367879441,0.367879441,0.367879441]}]},
+    {"name":"chiang_abs","category":"chiang_hair_absorption_from_color","type":"vector3","inputs":[{"name":"color","value":[0.5,0.5,0.5]},{"name":"azimuthal_roughness","value":0.2}]},
+    {"name":"chiang_rough","category":"chiang_hair_roughness","type":"multioutput","inputs":[{"name":"longitudinal","value":0.1},{"name":"azimuthal","value":0.2}]}
   ],"outputs":[]},"connections":[]})json";
   std::string contextError;
   if(!tusdview::CompileMaterialXGraphRuntime(&contextMat,&contextError)||
-     contextMat.materialXGraph.nodes.size()!=13||
+     contextMat.materialXGraph.nodes.size()!=26||
      contextMat.materialXGraph.nodes[0].op!=tusdview::MaterialXGraphOpCPU::ViewDirection||
      contextMat.materialXGraph.nodes[1].op!=tusdview::MaterialXGraphOpCPU::Time||
      contextMat.materialXGraph.nodes[2].op!=tusdview::MaterialXGraphOpCPU::Frame||
@@ -1150,7 +1153,11 @@ int main() {
      contextMat.materialXGraph.nodes[10].op!=tusdview::MaterialXGraphOpCPU::Convert||
      !Near(contextMat.materialXGraph.nodes[9].auxValue[0],1.0f)||
      contextMat.materialXGraph.nodes[11].op!=tusdview::MaterialXGraphOpCPU::Invert||
-     contextMat.materialXGraph.nodes[12].op!=tusdview::MaterialXGraphOpCPU::RoughnessAnisotropy){
+     contextMat.materialXGraph.nodes[12].op!=tusdview::MaterialXGraphOpCPU::RoughnessAnisotropy||
+     contextMat.materialXGraph.nodes[20].op!=tusdview::MaterialXGraphOpCPU::ChiangHairAbsorption||
+     contextMat.materialXGraph.nodes[21].op!=tusdview::MaterialXGraphOpCPU::Convert||
+     contextMat.materialXGraph.nodes[22].op!=tusdview::MaterialXGraphOpCPU::Constant||
+     contextMat.materialXGraph.nodes[25].op!=tusdview::MaterialXGraphOpCPU::Convert){
     std::fprintf(stderr,"MaterialX runtime context lowering failed: %s (nodes=%zu)\n",contextError.c_str(),contextMat.materialXGraph.nodes.size());return 1;
   }
   tusdview::DrawMaterialCPU latlongMat;
