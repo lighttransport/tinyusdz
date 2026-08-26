@@ -367,6 +367,9 @@ Passed:
   absorption VDF, in addition to the existing constant and composed VDF tests.
 - The focused nine-test MaterialX/bridge/parity matrix passes 9/9 after the
   latlong and volume changes, including the GL warm-up dependency.
+- The standard `diffuse_bsdf` closure category is now accepted alongside
+  Oren–Nayar and Burley diffuse closures in both evaluator and bridge paths;
+  the evaluator and bridge regressions pass.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
@@ -385,7 +388,8 @@ capability-skipped in this environment.
 ## Remaining work, in priority order
 
 1. Finish and validate remaining bridge closure fidelity, especially any
-   schema-specific closure parameter mappings; generalized-Schlick and
+   schema-specific closure parameter mappings; standard diffuse,
+   generalized-Schlick and
    measured-EDF fallback behavior are now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation
    permits it; vector2 roughness extraction, exact scatter-mode handling,

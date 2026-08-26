@@ -1452,7 +1452,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       multiplyLane("volume_emission_color", "color3", gain);
       multiplyLane("emission_luminance", "float", exposure);
       multiplyLane("volume_emission_scale", "float", exposure);
-    } else if (cat == "oren_nayar_diffuse_bsdf" ||
+    } else if (cat == "diffuse_bsdf" ||
+               cat == "oren_nayar_diffuse_bsdf" ||
                cat == "burley_diffuse_bsdf") {
       emitLeaf("base_weight", "weight", 1.0, "float");
       emitLeaf("base_color", "color", nlohmann::json::array({0.18,0.18,0.18}), "color3");
