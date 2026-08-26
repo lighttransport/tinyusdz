@@ -101,6 +101,9 @@ nodegraph-backed `surfacematerial` outputs. Host-side generic float/vector and
 integer/unsigned scalar/vector geomprops are retained by the next scene loader;
 CPU RT, Vulkan hardware ray-query, the shared CUDA/HIP kernel, and compute-BVH
 evaluate the supported streams. Matrix-valued transport remains open.
+The CPU LightRT texture sampler now honors MaterialX periodic, clamp, and
+mirror address modes (and returns a neutral missing-texture value for constant
+outside samples); the legacy periodic entry point remains unchanged.
 
 ## Verified tests after HEAD
 
@@ -133,6 +136,8 @@ Passed:
 - `tusdview` rebuild plus focused GPU material ABI and SWBVH checks after
   integer/unsigned scalar-vector geomprop ingestion: build passed, ABI passed,
   SWBVH profile environment-skipped
+- `tusdview` rebuild plus texture pipeline, LightRT evaluator, and graph
+  evaluation tests after address-mode sampling update: 3/3 passed
 - Full configured native CTest rerun after conductor and generalized-Schlick
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
