@@ -1705,6 +1705,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       runtimeNodes.push_back({{"name",albedo},{"category","divide"},{"type","color3"},
                               {"inputs",nlohmann::json::array({renamedInput(scattering,"in1"),nlohmann::json{{"name","in2"},{"nodename",extinction}}})}});
       lanes["volume_albedo"] = albedo;
+      emitClosureLane(name, "transmission_scatter_anisotropy",
+                      nodeInput(node, "anisotropy", 0.0), "float");
     }
     closureVisiting.erase(name);
     return lanes;

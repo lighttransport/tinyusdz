@@ -2256,7 +2256,7 @@ int main() {
         {"name":"anisotropy","value":0.2}]}
     ],"outputs":[{"name":"shader","type":"VDF","nodename":"subsurface"}]},
     "connections":[{"input":"vdf","output":"shader"}]})json",
-      "direct subsurface VDF", {40, 41})) {
+      "direct subsurface VDF", {24, 40, 41})) {
     return 1;
   }
   if (!CheckDirectClosure(R"json({

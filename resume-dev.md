@@ -407,6 +407,9 @@ Passed:
   the five core MaterialX/bridge tests pass 5/5. The non-RT aggregate again
   reaches `tool-tusdrender-materialx-openpbr-parity` and stalls before CTest
   reports the child timeout, so no new aggregate pass is claimed.
+- Direct absorption, anisotropic, and subsurface VDF closure lowering now
+  emits anisotropy into the shared transmission-scatter medium lane; the
+  direct VDF bridge regression passes after rebuilding the bridge target.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
