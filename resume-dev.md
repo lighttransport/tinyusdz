@@ -435,6 +435,12 @@ Passed:
   the mixed-graph fix. The source object and viewer relink both compile; the
   full displacement-UDIM image comparison still needs a capable, stable
   Vulkan runtime to certify the pixel MAD and packaged/legacy parity.
+- The mixed-graph fix is now applied after runtime graph compilation, removing
+  constant surface lanes that were retained only because an unrelated
+  displacement image kept the graph alive. After refreshing the static bridge
+  archive, the complete 16-image displacement-UDIM matrix passes on llvmpipe:
+  Standard MAD 2.6539, Preview MAD 2.6539, loader parity 0.0000, and USDZ
+  package parity 0.0000. Hardware Vulkan validation remains pending.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -479,10 +485,9 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    registered hardware Vulkan RT semantic sweep still requires a clean cold
    NVIDIA validation run and AMD hardware remains unavailable.
 8. Complete a clean full native/viewer/tusdrender regression after the RT
-   semantic harness can finish on a hardware Vulkan environment; the latest
-   run excluding that sweep has one remaining displacement-UDIM loader
-   parity failure (MAD 28.4950), while the focused matrix and CUDA/HIP
-   semantic checks are green.
+   semantic harness can finish on a hardware Vulkan environment; the focused
+   displacement-UDIM matrix is now green, while the full aggregate and clean
+   hardware Vulkan RT semantic sweep remain pending.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
