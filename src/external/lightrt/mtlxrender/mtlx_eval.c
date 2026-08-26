@@ -1009,6 +1009,38 @@ static const MtlxNode *input_node(ShadeContext *ctx, const MtlxNode *n,
 static v3 eval_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
     if (!n || depth > 32) return v3_splat(0.0f);
     const char *cat = n->category;
+    if (!strcmp(cat, "add") || !strcmp(cat, "layer")) {
+        const char *a_name = !strcmp(cat, "layer") ? "base" : "in1";
+        const char *b_name = !strcmp(cat, "layer") ? "top" : "in2";
+        return v3_add(eval_edf(ctx, input_node(ctx, n, a_name), depth + 1),
+                      eval_edf(ctx, input_node(ctx, n, b_name), depth + 1));
+    }
+    if (!strcmp(cat, "mix")) {
+        const float amount = fmaxf(0.0f, fminf(1.0f,
+            in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.5f))));
+        const v3 bg = eval_edf(ctx, input_node(ctx, n, "bg"), depth + 1);
+        const v3 fg = eval_edf(ctx, input_node(ctx, n, "fg"), depth + 1);
+        return v3_lerp(bg, fg, amount);
+    }
+    if (!strcmp(cat, "multiply")) {
+        const MtlxNode *a = input_node(ctx, n, "in1");
+        const MtlxNode *b = input_node(ctx, n, "in2");
+        const MtlxInput *a_input = find_input(n, "in1");
+        const MtlxInput *b_input = find_input(n, "in2");
+        if (a && b && a_input && b_input && a_input->src_node >= 0 &&
+            b_input->src_node >= 0) {
+            return v3_mul(eval_edf(ctx, a, depth + 1),
+                          eval_edf(ctx, b, depth + 1));
+        }
+        const MtlxInput *scalar = a ? b_input : a_input;
+        if (scalar) {
+            MtlxValue value = eval_input(ctx, scalar);
+            return v3_mul(eval_edf(ctx, a ? a : b, depth + 1),
+                          mv_as_v3(&value));
+        }
+        return v3_mul(eval_edf(ctx, a, depth + 1),
+                      eval_edf(ctx, b, depth + 1));
+    }
     if (!strcmp(cat, "uniform_edf") || !strcmp(cat, "measured_edf"))
         return in_color(ctx, n, "color", v3_splat(1.0f));
     if (!strcmp(cat, "conical_edf")) {
