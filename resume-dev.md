@@ -309,6 +309,10 @@ Passed:
   conductor, sheen, and hair lanes; scalar closure multiplication leaves
   roughness unchanged while scaling the lobe weight. Evaluator and bridge
   graph regressions pass.
+- Bridge closure color lanes are now weight-averaged for base, specular,
+  transmission, subsurface, and sheen compositions; emission remains additive,
+  and scalar closure multiplication leaves these colors unchanged. The
+  rebuilt focused nine-test matrix remains green.
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
