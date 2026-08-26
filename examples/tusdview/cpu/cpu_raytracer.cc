@@ -948,6 +948,18 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const int start=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+17]+.5f)),0,count-1);
         const int output=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+18]+.5f)),0,3);
         dst=MtlxFlake(values.data(),start,count,output);
+      } else if(op>=static_cast<int>(MaterialXGraphOpCPU::MatrixTransform)&&
+                op<=static_cast<int>(MaterialXGraphOpCPU::MatrixDeterminant)){
+        const int start=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+17]+.5f)),0,count-1);
+        const int dim=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+18]+.5f)),3,4);
+        const int column=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+19]+.5f)),0,dim-1);
+        const int outputComponents=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+20]+.5f)),1,4);
+        float matrix[4][4]{};for(int col=0;col<dim;col++)for(int row=0;row<dim;row++)matrix[row][col]=values[std::min(start+col,count-1)][row];
+        auto invert=[&](){float aug[4][8]{};for(int row=0;row<dim;row++){for(int col=0;col<dim;col++)aug[row][col]=matrix[row][col];aug[row][dim+row]=1;}for(int col=0;col<dim;col++){int pivot=col;for(int row=col+1;row<dim;row++)if(std::fabs(aug[row][col])>std::fabs(aug[pivot][col]))pivot=row;if(std::fabs(aug[pivot][col])<1e-12f)return false;if(pivot!=col)for(int k=0;k<2*dim;k++)std::swap(aug[col][k],aug[pivot][k]);const float q=aug[col][col];for(int k=0;k<2*dim;k++)aug[col][k]/=q;for(int row=0;row<dim;row++)if(row!=col){const float f=aug[row][col];for(int k=0;k<2*dim;k++)aug[row][k]-=f*aug[col][k];}}for(int row=0;row<dim;row++)for(int col=0;col<dim;col++)matrix[row][col]=aug[row][dim+col];return true;};
+        if(op==static_cast<int>(MaterialXGraphOpCPU::MatrixTransform)){dst={0,0,0,0};for(int row=0;row<outputComponents;row++)for(int col=0;col<dim;col++)dst[row]+=matrix[row][col]*(col<outputComponents?a[col]:((col==dim-1&&outputComponents+1==dim)?1.0f:0.0f));}
+        else if(op==static_cast<int>(MaterialXGraphOpCPU::MatrixTranspose)){dst={0,0,0,0};for(int row=0;row<dim;row++)dst[row]=matrix[column][row];}
+        else if(op==static_cast<int>(MaterialXGraphOpCPU::MatrixInverse)){dst=values[std::min(start+column,count-1)];if(invert())for(int row=0;row<dim;row++)dst[row]=matrix[row][column];}
+        else{float determinant=1;for(int col=0;col<dim;col++){int pivot=col;for(int row=col+1;row<dim;row++)if(std::fabs(matrix[row][col])>std::fabs(matrix[pivot][col]))pivot=row;if(std::fabs(matrix[pivot][col])<1e-12f){determinant=0;break;}if(pivot!=col){for(int k=0;k<dim;k++)std::swap(matrix[col][k],matrix[pivot][k]);determinant=-determinant;}const float q=matrix[col][col];determinant*=q;for(int row=col+1;row<dim;row++){const float f=matrix[row][col]/q;for(int k=col+1;k<dim;k++)matrix[row][k]-=f*matrix[col][k];}}dst={determinant,determinant,determinant,determinant};}
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);

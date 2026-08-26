@@ -1071,6 +1071,27 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     input["name"] = name;
     return input;
   };
+  auto emitMatrixInput = [&](const nlohmann::json& node,const char* inputName,
+                             const std::string& owner,int dim)->std::string {
+    nlohmann::json input=inputNamed(node,inputName,nlohmann::json::object());
+    const std::string source=JsonString(input,"nodename");
+    if(!source.empty())return source+"__col0";
+    nlohmann::json values=nlohmann::json::array();
+    const auto valueIt=input.find("value");
+    if(valueIt!=input.end()&&valueIt->is_array())values=*valueIt;
+    for(int col=0;col<dim;col++){
+      nlohmann::json column=nlohmann::json::array();
+      for(int row=0;row<dim;row++){
+        const size_t index=static_cast<size_t>(col*dim+row);
+        column.push_back(index<values.size()&&values[index].is_number()
+                             ?values[index]:nlohmann::json(col==row?1:0));
+      }
+      runtimeNodes.push_back({{"name",owner+"__literal_col"+std::to_string(col)},
+          {"category","constant"},{"type",dim==3?"vector3":"vector4"},
+          {"inputs",nlohmann::json::array({nlohmann::json{{"name","value"},{"value",column}}})}});
+    }
+    return owner+"__literal_col0";
+  };
   auto emitRandomFloat = [&](const std::string& base, nlohmann::json input,
                              nlohmann::json seed, nlohmann::json minimum,
                              nlohmann::json maximum, bool scaleInput) {
@@ -1117,6 +1138,52 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     const std::string name = JsonString(node, "name");
     const std::string type = JsonString(node, "type");
     const std::string cat = NormalizeMtlxCategory(JsonString(node, "category"), type);
+    if(cat.rfind("creatematrix",0)==0&&!name.empty()){
+      const int dim=type=="matrix33"?3:4;
+      for(int col=0;col<dim;col++){
+        const std::string inputName="in"+std::to_string(col+1);
+        nlohmann::json source=inputNamed(node,inputName.c_str(),
+            {{"name",inputName},{"value",nlohmann::json::array()}});
+        const auto valueIt=source.find("value");
+        if(valueIt!=source.end()&&valueIt->is_array()){
+          nlohmann::json value=*valueIt;
+          while(value.size()<static_cast<size_t>(dim))
+            value.push_back(dim==4&&col==3&&value.size()==3?1:0);
+          source["value"]=std::move(value);
+        }
+        runtimeNodes.push_back({{"name",name+"__col"+std::to_string(col)},
+            {"category","convert"},{"type",dim==3?"vector3":"vector4"},
+            {"inputs",nlohmann::json::array({renamedInput(source,"in")})}});
+      }
+      continue;
+    }
+    if((cat.rfind("transpose",0)==0||cat.rfind("invertmatrix",0)==0)&&!name.empty()){
+      const int dim=type=="matrix33"?3:4;
+      const std::string source=emitMatrixInput(node,"in",name,dim);
+      for(int col=0;col<dim;col++)runtimeNodes.push_back({
+          {"name",name+"__col"+std::to_string(col)},
+          {"category",cat.rfind("transpose",0)==0?"matrixtransposecore":"matrixinversecore"},
+          {"type",dim==3?"vector3":"vector4"},{"inputs",nlohmann::json::array()},
+          {"matrix_source",source},{"matrix_dim",dim},{"matrix_column",col}});
+      continue;
+    }
+    if(cat.rfind("determinant",0)==0&&!name.empty()){
+      int dim=4;const nlohmann::json input=inputNamed(node,"in",nlohmann::json::object());
+      if(JsonString(input,"type")=="matrix33")dim=3;
+      const std::string source=emitMatrixInput(node,"in",name,dim);
+      runtimeNodes.push_back({{"name",name},{"category","matrixdeterminantcore"},
+          {"type","float"},{"inputs",nlohmann::json::array()},
+          {"matrix_source",source},{"matrix_dim",dim}});continue;
+    }
+    if(cat.rfind("transformmatrix",0)==0&&!name.empty()){
+      const nlohmann::json matrix=inputNamed(node,"mat",nlohmann::json::object());
+      int dim=JsonString(matrix,"type")=="matrix33"?3:4;
+      const std::string source=emitMatrixInput(node,"mat",name,dim);
+      runtimeNodes.push_back({{"name",name},{"category","matrixtransformcore"},
+          {"type",type},{"inputs",nlohmann::json::array({renamedInput(
+              inputNamed(node,"in",{{"value",0}}),"in")})},
+          {"matrix_source",source},{"matrix_dim",dim}});continue;
+    }
     if (cat == "ramp4" && !name.empty()) {
       const std::string st = name + "__st";
       const std::string u = name + "__u";
@@ -1622,6 +1689,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if(cat=="rampcore")out.op=MaterialXGraphOpCPU::Ramp;
     else if(cat=="rampgradientcore")out.op=MaterialXGraphOpCPU::RampGradient;
     else if(cat=="flakecore")out.op=MaterialXGraphOpCPU::Flake;
+    else if(cat=="matrixtransformcore")out.op=MaterialXGraphOpCPU::MatrixTransform;
+    else if(cat=="matrixtransposecore")out.op=MaterialXGraphOpCPU::MatrixTranspose;
+    else if(cat=="matrixinversecore")out.op=MaterialXGraphOpCPU::MatrixInverse;
+    else if(cat=="matrixdeterminantcore")out.op=MaterialXGraphOpCPU::MatrixDeterminant;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1938,6 +2009,16 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       if(first!=nodeIds.end())out.auxValue[0]=static_cast<float>(first->second);
       out.auxValue[1]=node.value("flake_output",0);
       out.auxValue[2]=node.value("flake_3d",false)?1.0f:0.0f;
+    }
+    if(cat=="matrixtransformcore"||cat=="matrixtransposecore"||
+       cat=="matrixinversecore"||cat=="matrixdeterminantcore"){
+      const auto source=nodeIds.find(node.value("matrix_source",std::string()));
+      if(source!=nodeIds.end())out.auxValue[0]=static_cast<float>(source->second);
+      out.auxValue[1]=static_cast<float>(node.value("matrix_dim",4));
+      out.auxValue[2]=static_cast<float>(node.value("matrix_column",0));
+      out.auxValue[3]=(type.find('4')!=std::string::npos)?4.0f:
+                      (type.find('3')!=std::string::npos)?3.0f:
+                      (type.find('2')!=std::string::npos)?2.0f:1.0f;
     }
     if (uvInput >= 0) out.value[2][3] = static_cast<float>(uvInput);
     graph.nodes.push_back(std::move(out));
@@ -2689,7 +2770,11 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
                               node.op == MaterialXGraphOpCPU::TiledHexagons;
     const bool usesRampTable=node.op==MaterialXGraphOpCPU::Ramp||
                              node.op==MaterialXGraphOpCPU::RampGradient||
-                             node.op==MaterialXGraphOpCPU::Flake;
+                             node.op==MaterialXGraphOpCPU::Flake||
+                             node.op==MaterialXGraphOpCPU::MatrixTransform||
+                             node.op==MaterialXGraphOpCPU::MatrixTranspose||
+                             node.op==MaterialXGraphOpCPU::MatrixInverse||
+                             node.op==MaterialXGraphOpCPU::MatrixDeterminant;
     int textureId = (usesAuxInput||usesRampTable) ? node.auxInput : node.textureId;
     if (!usesAuxInput && sourceToTable && textureId >= 0 &&
         static_cast<size_t>(textureId) < sourceToTable->size()) {
@@ -2766,7 +2851,11 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
         node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
         node.op == MaterialXGraphOpCPU::TiledHexagons ||
         node.op == MaterialXGraphOpCPU::Ramp || node.op == MaterialXGraphOpCPU::RampGradient ||
-        node.op == MaterialXGraphOpCPU::Flake) {
+        node.op == MaterialXGraphOpCPU::Flake ||
+        node.op == MaterialXGraphOpCPU::MatrixTransform ||
+        node.op == MaterialXGraphOpCPU::MatrixTranspose ||
+        node.op == MaterialXGraphOpCPU::MatrixInverse ||
+        node.op == MaterialXGraphOpCPU::MatrixDeterminant) {
       dst[base + 16] = static_cast<float>(node.auxInput);
       if (node.op == MaterialXGraphOpCPU::IfGreater ||
           node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
@@ -2777,7 +2866,11 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
           node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
           node.op == MaterialXGraphOpCPU::TiledHexagons ||
           node.op == MaterialXGraphOpCPU::Ramp || node.op == MaterialXGraphOpCPU::RampGradient ||
-          node.op == MaterialXGraphOpCPU::Flake)
+          node.op == MaterialXGraphOpCPU::Flake ||
+          node.op == MaterialXGraphOpCPU::MatrixTransform ||
+          node.op == MaterialXGraphOpCPU::MatrixTranspose ||
+          node.op == MaterialXGraphOpCPU::MatrixInverse ||
+          node.op == MaterialXGraphOpCPU::MatrixDeterminant)
         for (int lane = 0; lane < 4; ++lane)
           dst[base + 17 + lane] = node.auxValue[lane];
       continue;

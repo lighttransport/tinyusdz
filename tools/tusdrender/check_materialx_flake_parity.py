@@ -35,7 +35,7 @@ def Xform "World" {
       token outputs:surface
     }
     def NodeGraph "NG" {
-      color3f outputs:base.connect = </World/M/NG/Color.outputs:out>
+      color3f outputs:base.connect = </World/M/NG/Tint.outputs:out>
       def Shader "Flakes" {
         uniform token info:id = "ND_flake2d"
         float inputs:size = 0.08
@@ -46,12 +46,24 @@ def Xform "World" {
         float outputs:presence
         float3 outputs:flakenormal
       }
-      def Shader "Color" {
-        uniform token info:id = "ND_combine3_color3"
-        float inputs:in1.connect = </World/M/NG/Flakes.outputs:presence>
-        float inputs:in2.connect = </World/M/NG/Flakes.outputs:rand>
-        float inputs:in3 = 0.05
-        color3f outputs:out
+      def Shader "Matrix" {
+        uniform token info:id = "ND_creatematrix_vector3_matrix33"
+        float3 inputs:in1 = (2,0,0)
+        float3 inputs:in2 = (0,3,0)
+        float3 inputs:in3 = (0,0,4)
+        matrix3d outputs:out
+      }
+      def Shader "Transform" {
+        uniform token info:id = "ND_transformmatrix_vector3"
+        float3 inputs:in = (0.35,0.2,0.1)
+        matrix3d inputs:mat.connect = </World/M/NG/Matrix.outputs:out>
+        float3 outputs:out
+      }
+      def Shader "Tint" {
+        uniform token info:id = "ND_multiply_vector3FA"
+        float3 inputs:in1.connect = </World/M/NG/Transform.outputs:out>
+        float inputs:in2.connect = </World/M/NG/Flakes.outputs:presence>
+        float3 outputs:out
       }
     }
   }
