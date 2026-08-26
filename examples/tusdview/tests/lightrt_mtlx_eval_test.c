@@ -380,5 +380,26 @@ int main(void) {
     return 1;
   }
 
+  const char *subsurface_volume_xml =
+      "<materialx version=\"1.39\">"
+      " <subsurface_vdf name=\"Subsurface\" type=\"VDF\">"
+      "  <input name=\"scattering\" type=\"color3\" value=\"0.3,0.5,0.7\"/>"
+      "  <input name=\"anisotropy\" type=\"float\" value=\"0.2\"/>"
+      " </subsurface_vdf>"
+      " <volume name=\"SubsurfaceVolume\" type=\"volumeshader\">"
+      "  <input name=\"vdf\" type=\"VDF\" nodename=\"Subsurface\"/>"
+      " </volume>"
+      " <volumematerial name=\"SubsurfaceMat\" type=\"material\">"
+      "  <input name=\"volumeshader\" type=\"volumeshader\" nodename=\"SubsurfaceVolume\"/>"
+      " </volumematerial></materialx>";
+  if (!eval_volume_xml(subsurface_volume_xml, &volume) ||
+      !nearf(volume.scattering.x, 0.3f) ||
+      !nearf(volume.scattering.y, 0.5f) ||
+      !nearf(volume.scattering.z, 0.7f) ||
+      !nearf(volume.anisotropy, 0.2f)) {
+    fprintf(stderr, "MaterialX subsurface VDF was not evaluated\n");
+    return 1;
+  }
+
   return 0;
 }

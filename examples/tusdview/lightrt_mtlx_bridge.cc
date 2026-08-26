@@ -1547,7 +1547,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       emitClosureLane(name, "emission_luminance", nlohmann::json{{"value",1.0}}, "float");
       emitClosureLane(name, "volume_emission_color", nodeInput(node, "color", nlohmann::json::array({1,1,1})), "color3");
       emitClosureLane(name, "volume_emission_scale", nlohmann::json{{"value",1.0}}, "float");
-    } else if (cat == "absorption_vdf" || cat == "anisotropic_vdf") {
+    } else if (cat == "absorption_vdf" || cat == "anisotropic_vdf" ||
+               cat == "subsurface_vdf") {
       const nlohmann::json absorption = nodeInput(node, "absorption", nlohmann::json::array({0,0,0}));
       const nlohmann::json scattering = nodeInput(node, "scattering", nlohmann::json::array({0,0,0}));
       const std::string extinction = name + "__closure_extinction";
