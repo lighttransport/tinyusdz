@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `af8e14748` (`Test Chiang hair lobe scale outputs`)
+- HEAD: `7f01474c1` (`Preserve subsurface BSDF scale`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
