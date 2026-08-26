@@ -313,6 +313,10 @@ Passed:
   physical device matching `nvidia`. The RT semantic case is therefore
   capability-skipped here pending a machine with the configured NVIDIA Vulkan
   ICD.
+- The texture semantic harness now detects software Vulkan during both its
+  mode-sweep and per-case paths, preventing llvmpipe RT runs from entering the
+  full expensive matrix. A direct Vulkan-RT albedo profile completes; the
+  cold coat-normal variant remains hardware-dependent.
 - A fresh full configured regression at this HEAD is not clean: the aggregate
   GL/Vulkan parity test reports the unsupported-real-time-lobes comparison
   failing (19.6% of pixels), while its standalone test passes; the subsequent
