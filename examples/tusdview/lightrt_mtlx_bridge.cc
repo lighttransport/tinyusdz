@@ -1210,9 +1210,13 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       std::set<std::string> keys;
       for (const auto& item : a) keys.insert(item.first);
       for (const auto& item : b) keys.insert(item.first);
+      const char* scalarInput = nullptr;
+      if (cat == "mix") scalarInput = "mix";
+      else if (cat == "multiply")
+        scalarInput = aName.empty() ? "in1" : "in2";
       const nlohmann::json factor = cat == "mix"
-          ? nodeInput(node, "mix", 0.5)
-          : nodeInput(node, aName.empty() ? "in1" : "in2", 1.0);
+          ? nodeInput(node, scalarInput, 0.5)
+          : nodeInput(node, scalarInput ? scalarInput : "in2", 1.0);
       for (const std::string& lane : keys) {
         const auto ai = a.find(lane), bi = b.find(lane);
         const std::string output = name + "__closure_" + lane;

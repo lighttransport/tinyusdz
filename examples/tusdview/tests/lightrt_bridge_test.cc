@@ -2018,6 +2018,19 @@ int main() {
   }
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
+      {"name":"diff","category":"oren_nayar_diffuse_bsdf","type":"BSDF",
+       "inputs":[{"name":"weight","value":0.8},
+                 {"name":"color","value":[0.7,0.4,0.2]}]},
+      {"name":"scaled","category":"multiply","type":"BSDF",
+       "inputs":[{"name":"in1","nodename":"diff"},
+                 {"name":"in2","value":0.25}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"scaled"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "closure multiplied by scalar", {0, 20, 21})) {
+    return 1;
+  }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
       {"name":"schlick","category":"generalized_schlick_bsdf","type":"BSDF","inputs":[
         {"name":"weight","value":0.5},{"name":"color0","value":[0.2,0.3,0.4]},
         {"name":"color90","value":[0.8,0.7,0.6]},
