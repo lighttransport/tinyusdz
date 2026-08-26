@@ -6814,8 +6814,12 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     attr.format = comps == 1   ? VertexFormat::Float
                   : comps == 2 ? VertexFormat::Vec2
                   : comps == 3 ? VertexFormat::Vec3
-                               : VertexFormat::Vec4;
-    if (comps > 4) continue;  // matrices etc.: not a vertex attribute
+                  : comps == 4 ? VertexFormat::Vec4
+                  : comps == 9 ? VertexFormat::Matrix33
+                                : comps == 16 ? VertexFormat::Matrix44
+                                              : VertexFormat::Vec4;
+    if (comps != 1 && comps != 2 && comps != 3 && comps != 4 &&
+        comps != 9 && comps != 16) continue;
     attr.interpolation = resolve_interp(
         pv.indices().empty() ? (fdata->size() / comps) : pv.indices().size());
     attr.float_data.append(fdata->data(), fdata->size());

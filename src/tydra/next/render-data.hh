@@ -78,7 +78,9 @@ enum class VertexFormat : uint8_t {
   UInt,
   UVec2,
   UVec3,
-  UVec4
+  UVec4,
+  Matrix33,
+  Matrix44
 };
 
 enum class Interpolation : uint8_t {
@@ -224,6 +226,10 @@ struct VertexAttribute {
         return int_data.size() / 4;
       case VertexFormat::UVec4:
         return uint_data.size() / 4;
+      case VertexFormat::Matrix33:
+        return float_data.size() / 9;
+      case VertexFormat::Matrix44:
+        return float_data.size() / 16;
     }
     return 0;
   }

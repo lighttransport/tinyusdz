@@ -182,18 +182,23 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
         if (geomProps && geomPropValues && geomPropTri >= 0) {
           unsigned int wanted=__float_as_uint(graph[p+17]);
           int components=(int)floorf(graph[p+18]+.5f);
-          components=components<1?1:(components>4?4:components);
+          components=components<1?1:(components>16?16:components);
+          int matrixColumn=(int)floorf(graph[p+19]+.5f);
+          int outputComponents=components==9?3:(components==16?4:components);
+          int matrixDim=components==9?3:4;
+          matrixColumn=matrixColumn<0?0:(matrixColumn>=matrixDim?matrixDim-1:matrixColumn);
           float w0=1.f-u-v;
           for (int j=0; j<geomPropCount; ++j) {
             const GeomPropDesc d=geomProps[j];
             if (d.hash != wanted || (int)d.components != components) continue;
             const unsigned int baseValue=d.valueOffset +
                 (unsigned int)geomPropTri * (unsigned int)(3 * components);
-            for (int lane=0; lane<components; ++lane)
-              (&values[i].x)[lane] = w0 * geomPropValues[baseValue + lane] +
-                u * geomPropValues[baseValue + components + lane] +
-                v * geomPropValues[baseValue + 2 * components + lane];
-            if (components < 4) values[i].w=1.f;
+            unsigned int columnBase=(unsigned int)(matrixColumn*outputComponents);
+            for (int lane=0; lane<outputComponents; ++lane)
+              (&values[i].x)[lane] = w0 * geomPropValues[baseValue + columnBase + lane] +
+                u * geomPropValues[baseValue + components + columnBase + lane] +
+                v * geomPropValues[baseValue + 2 * components + columnBase + lane];
+            if (outputComponents < 4) values[i].w=1.f;
             break;
           }
         }

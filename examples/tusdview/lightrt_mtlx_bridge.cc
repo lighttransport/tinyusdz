@@ -472,6 +472,7 @@ std::string XmlEscape(const std::string& src) {
 bool IsMtlxTypeName(const std::string& s) {
   return s == "float" || s == "color3" || s == "color4" ||
          s == "vector2" || s == "vector3" || s == "vector4" ||
+         s == "matrix33" || s == "matrix44" ||
          s == "integer" || s == "boolean" || s == "string" ||
          s == "filename";
 }
@@ -1966,6 +1967,20 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     }
     if ((cat=="geompropvalue"||cat=="geompropvalueuniform")&&!name.empty()) {
       const std::string prop=JsonString(inputNamed(node,"geomprop",{}),"value");
+      const std::string valueType = NormalizeMtlxType(JsonString(node, "type"));
+      if ((valueType == "matrix33" || valueType == "matrix44") &&
+          !prop.empty()) {
+        const int dim = valueType == "matrix33" ? 3 : 4;
+        for (int column = 0; column < dim; ++column) {
+          nlohmann::json columnNode = node;
+          columnNode["name"] = name + "__col" + std::to_string(column);
+          columnNode["type"] = dim == 3 ? "vector3" : "vector4";
+          columnNode["matrix_column"] = column;
+          columnNode["matrix_components"] = dim * dim;
+          runtimeNodes.push_back(std::move(columnNode));
+        }
+        continue;
+      }
       if(prop!="st"&&prop!="uv"&&prop!="texcoord"&&
          prop!="displayColor"&&prop!="Cd"&&prop!="color"&&
          prop!="P"&&prop!="position"&&prop!="N"&&prop!="normal"&&
@@ -2201,10 +2216,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       else {
         out.op = MaterialXGraphOpCPU::GeomProp;
         out.geomPropName = prop;
+        const bool matrixColumn = node.contains("matrix_column");
+        out.auxValue[1] = matrixColumn
+                              ? node.value("matrix_components", 16.0f)
+                              : 1.0f;
+        out.auxValue[2] = matrixColumn
+                              ? node.value("matrix_column", 0.0f)
+                              : 0.0f;
         const std::string valueType = JsonString(node, "type");
-        out.auxValue[1] = valueType == "vector2" ? 2.0f :
-                          valueType == "vector3" || valueType == "color3" ? 3.0f :
-                          valueType == "vector4" || valueType == "color4" ? 4.0f : 1.0f;
+        if (!matrixColumn) {
+          out.auxValue[1] = valueType == "vector2" ? 2.0f :
+                            valueType == "vector3" || valueType == "color3" ? 3.0f :
+                            valueType == "vector4" || valueType == "color4" ? 4.0f : 1.0f;
+        }
       }
     }
     else if (cat == "viewdirection" || cat == "viewdir")
@@ -3407,6 +3431,7 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
       std::memcpy(&encoded, &hash, sizeof(encoded));
       dst[base + 17] = encoded;
       dst[base + 18] = node.auxValue[1];
+      dst[base + 19] = node.auxValue[2];
       continue;
     }
     if (node.op == MaterialXGraphOpCPU::IfGreater ||

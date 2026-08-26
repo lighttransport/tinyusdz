@@ -603,7 +603,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         float encoded = scene.matGraph[p + 17];
         std::memcpy(&wantedHash, &encoded, sizeof(wantedHash));
         const int components = std::clamp(
-            static_cast<int>(std::floor(scene.matGraph[p + 18] + 0.5f)), 1, 4);
+            static_cast<int>(std::floor(scene.matGraph[p + 18] + 0.5f)), 1, 16);
+        const int matrixColumn = std::clamp(
+            static_cast<int>(std::floor(scene.matGraph[p + 19] + 0.5f)), 0,
+            components == 9 ? 2 : 3);
+        const int outputComponents = components == 9 ? 3 :
+                                     components == 16 ? 4 : components;
         if (geomPropTri >= 0 &&
             static_cast<size_t>(geomPropTri) < scene.triCount) {
           for (const HostGeomProp& prop : scene.geomProps) {
@@ -614,10 +619,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
             if (begin + static_cast<size_t>(components) * 3u > prop.values.size())
               break;
             const float w = 1.0f - u - v;
-            for (int lane = 0; lane < components; ++lane)
-              dst[lane] = w * prop.values[begin + lane] +
-                          u * prop.values[begin + components + lane] +
-                          v * prop.values[begin + 2 * components + lane];
+            const size_t columnBegin = static_cast<size_t>(matrixColumn) *
+                                       static_cast<size_t>(outputComponents);
+            for (int lane = 0; lane < outputComponents; ++lane)
+              dst[lane] = w * prop.values[begin + columnBegin + lane] +
+                          u * prop.values[begin + components + columnBegin + lane] +
+                          v * prop.values[begin + 2 * components + columnBegin + lane];
             dst[3] = components == 4 ?
                          w * prop.values[begin + 3] +
                          u * prop.values[begin + components + 3] +
