@@ -77,6 +77,9 @@ connections and lowers closure leaves plus typed closure composition into
 ordinary bounded graph nodes and OpenPBR lanes. The remaining closure work is
 fidelity review for weighted composition and wrapper nesting; the direct
 closure slice is committed and validated.
+The next MaterialX converter resolves both direct surface bindings and
+nodegraph-backed `surfacematerial` outputs; arbitrary GPU geomprops remain an
+ABI-level gap.
 
 ## Verified tests after HEAD
 
@@ -102,6 +105,7 @@ Passed:
   conversion passed. The aggregate `test_tydra_next` executable still crashes
   in an earlier unrelated `TestChunkedArrayShareCowBudgetFailure` test.
 - `tusdview_lightrt_bridge_test` after latlong default-view fix: passed
+- Stable `next` regression after wrapper changes: 40/40 passed
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
