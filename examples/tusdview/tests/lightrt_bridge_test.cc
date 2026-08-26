@@ -2261,6 +2261,44 @@ int main() {
     return 1;
   }
 
+  const char* volumeTexturePath = "/tmp/tinyusdz_lightrt_volume.ppm";
+  FILE* volumeTexture = std::fopen(volumeTexturePath, "wb");
+  if (!volumeTexture) {
+    std::fprintf(stderr, "could not create volume texture fixture\n");
+    return 1;
+  }
+  std::fputs("P6\n1 1\n255\n", volumeTexture);
+  std::fputc(128, volumeTexture);
+  std::fputc(64, volumeTexture);
+  std::fputc(0, volumeTexture);
+  std::fclose(volumeTexture);
+  const char* texturedVolumeXml =
+      "<materialx version=\"1.39\">"
+      " <image name=\"density\" type=\"color3\"><input name=\"file\""
+      " type=\"filename\" value=\"tinyusdz_lightrt_volume.ppm\"/></image>"
+      " <anisotropic_vdf name=\"Fog\" type=\"VDF\"><input name=\"absorption\""
+      " type=\"color3\" nodename=\"density\"/></anisotropic_vdf>"
+      " <volume name=\"Volume\" type=\"volumeshader\"><input name=\"vdf\""
+      " type=\"VDF\" nodename=\"Fog\"/></volume>"
+      " <volumematerial name=\"VolumeMat\" type=\"material\"><input"
+      " name=\"volumeshader\" type=\"volumeshader\" nodename=\"Volume\"/>"
+      " </volumematerial></materialx>";
+  tusdview::DrawMaterialCPU texturedVolume;
+  std::string texturedVolumeError;
+  const bool texturedVolumeOk =
+      tusdview::EvaluateMaterialXStringToLightRtVolumeWithBaseDir(
+          texturedVolumeXml, "VolumeMat", "/tmp", &texturedVolume,
+          &texturedVolumeError);
+  std::remove(volumeTexturePath);
+  if (!texturedVolumeOk || !Near(texturedVolume.volumeDensity, 128.0f / 255.0f) ||
+      !Near(texturedVolume.volumeAlbedo[0], 0.0f) ||
+      !Near(texturedVolume.volumeAlbedo[1], 0.0f) ||
+      !Near(texturedVolume.volumeAlbedo[2], 0.0f)) {
+    std::fprintf(stderr, "relative volume texture evaluation failed: %s\n",
+                 texturedVolumeError.c_str());
+    return 1;
+  }
+
   const char* volumeXml =
       "<materialx version=\"1.39\">"
       "<anisotropic_vdf name=\"Fog\" type=\"VDF\">"
