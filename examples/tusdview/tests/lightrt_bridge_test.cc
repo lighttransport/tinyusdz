@@ -2052,6 +2052,24 @@ int main() {
     }
     return true;
   };
+  auto CheckNoDirectClosureRoutes = [](const char* json, const char* label) {
+    tusdview::DrawMaterialCPU material;
+    material.materialXNodeGraphJson = json;
+    std::string compileError;
+    if (!tusdview::CompileMaterialXGraphRuntime(&material, &compileError) ||
+        !material.materialXGraph.valid) {
+      std::fprintf(stderr, "%s closure graph failed: %s\n", label,
+                   compileError.c_str());
+      return false;
+    }
+    for (int route : material.materialXGraph.output) {
+      if (route >= 0) {
+        std::fprintf(stderr, "%s emitted an unexpected closure route\n", label);
+        return false;
+      }
+    }
+    return true;
+  };
   auto CheckConicalClosure = []() {
     tusdview::DrawMaterialCPU material;
     material.materialXNodeGraphJson = R"json({
@@ -2217,6 +2235,23 @@ int main() {
     ],"outputs":[{"name":"shader","type":"BSDF","nodename":"schlick"}]},
     "connections":[{"input":"bsdf","output":"shader"}]})json",
       "generalized Schlick RT", {9, 10, 11, 12, 2})) {
+    return 1;
+  }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"glass","category":"dielectric_bsdf","type":"BSDF","inputs":[
+        {"name":"weight","value":0.6},{"name":"scatter_mode","value":"T"},
+        {"name":"roughness","value":[0.2,0.4]}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"glass"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "dielectric transmission-only", {2, 11, 12}) ||
+      !CheckNoDirectClosureRoutes(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"glass","category":"dielectric_bsdf","type":"BSDF","inputs":[
+        {"name":"weight","value":0.6},{"name":"scatter_mode","value":"TR"}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"glass"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "invalid dielectric scatter mode")) {
     return 1;
   }
 

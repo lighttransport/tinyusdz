@@ -532,6 +532,13 @@ std::string JsonString(const nlohmann::json& obj, const char* key,
   return it->get<std::string>();
 }
 
+bool ScatterModeHas(const std::string& mode, char component) {
+  if (mode == "R") return component == 'R';
+  if (mode == "T") return component == 'T';
+  if (mode == "RT") return component == 'R' || component == 'T';
+  return false;
+}
+
 bool IsTextureNodeCategory(const std::string& category) {
   return category == "image" || category == "tiledimage" ||
          category == "hextiledimage" || category == "gltf_image" ||
@@ -1378,11 +1385,11 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       emitLeaf("transmission_color", "color", nlohmann::json::array({1,1,1}), "color3");
     } else if (cat == "dielectric_bsdf") {
       const std::string mode = JsonString(nodeInput(node, "scatter_mode", "R"), "value", "R");
-      if (mode.find('R') != std::string::npos) {
+      if (ScatterModeHas(mode, 'R')) {
         emitLeaf("specular_weight", "weight", 1.0, "float");
         emitLeaf("specular_color", "tint", nlohmann::json::array({1,1,1}), "color3");
       }
-      if (mode.find('T') != std::string::npos) {
+      if (ScatterModeHas(mode, 'T')) {
         emitLeaf("transmission_weight", "weight", 1.0, "float");
         emitLeaf("transmission_color", "tint", nlohmann::json::array({1,1,1}), "color3");
       }
@@ -1435,12 +1442,12 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     } else if (cat == "generalized_schlick_bsdf") {
       const std::string mode = JsonString(
           nodeInput(node, "scatter_mode", "R"), "value", "R");
-      if (mode.find('R') != std::string::npos) {
+      if (ScatterModeHas(mode, 'R')) {
         emitLeaf("specular_weight", "weight", 1.0, "float");
         emitLeaf("specular_color", "color0",
                  nlohmann::json::array({1,1,1}), "color3");
       }
-      if (mode.find('T') != std::string::npos) {
+      if (ScatterModeHas(mode, 'T')) {
         emitLeaf("transmission_weight", "weight", 1.0, "float");
         emitLeaf("transmission_color", "color90",
                  nlohmann::json::array({1,1,1}), "color3");
