@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `dd77cd339` (`Harden Vulkan RT semantic preflight`)
+- HEAD: `c159d14bf` (`Test textured MaterialX volume inputs`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -365,6 +365,8 @@ Passed:
   contexts; the projection evaluator test covers the runtime direction.
 - Volume evaluation now has a texture-backed regression covering an image-fed
   absorption VDF, in addition to the existing constant and composed VDF tests.
+- The focused nine-test MaterialX/bridge/parity matrix passes 9/9 after the
+  latlong and volume changes, including the GL warm-up dependency.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
