@@ -145,7 +145,11 @@ __device__ F4 sampleMaterialTexture(const unsigned char* texels,
 __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
                                     float u, float v, float u1, float v1, int face,
                                  const unsigned char* texels,
-                                 const TexDesc* textures, int numTextures) {
+                                 const TexDesc* textures, int numTextures,
+                                 F3 normal=F3{0.f,0.f,1.f},
+                                 F3 position=F3{0.f,0.f,0.f},
+                                 F3 viewDirection=F3{0.f,0.f,1.f},
+                                 float sceneTime=0.f,float sceneFrame=0.f) {
   const int stride = TUSD_GPU_GRAPH_FLOATS;
   const int base = mid * stride;
   if (!graph || mid < 0 || route < 0 || base + 7 >= 0x3fffffff) return mk4(0.f,0.f,0.f,0.f);
@@ -234,19 +238,22 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
       else if (op==43) values[i]=mk4(roundf(a.x),roundf(a.y),roundf(a.z),roundf(a.w));
       else if (op==34) values[i]=mk4(1.f-a.x,1.f-a.y,1.f-a.z,1.f-a.w);
       else if (op==35) values[i]=mk4((a.x-b.x)/fmaxf(c.x-b.x,1e-6f),(a.y-b.y)/fmaxf(c.y-b.y,1e-6f),(a.z-b.z)/fmaxf(c.z-b.z,1e-6f),(a.w-b.w)/fmaxf(c.w-b.w,1e-6f));
-      else if (op==36) values[i]=mk4(0.f,0.f,1.f,1.f);
+      else if (op==36) values[i]=mk4(normal.x,normal.y,normal.z,1.f);
       else if (op==37) values[i]=mk4(1.f,0.f,0.f,1.f);
       else if (op==38) { F3 axis=norm3(mk(b.x,b.y,b.z)); float ang=a.x*0.0174532925199433f, cs=cosf(ang), sn=sinf(ang), d=axis.x*c.x+axis.y*c.y+axis.z*c.z; F3 q=mk(c.x*cs+(axis.y*c.z-axis.z*c.y)*sn+axis.x*d*(1.f-cs),c.y*cs+(axis.z*c.x-axis.x*c.z)*sn+axis.y*d*(1.f-cs),c.z*cs+(axis.x*c.y-axis.y*c.x)*sn+axis.z*d*(1.f-cs)); values[i]=mk4(q.x,q.y,q.z,c.w); }
       else if (op==39) { float tx=a.x*graph[p+17]+graph[p+19], ty=a.y*graph[p+18]+graph[p+20], ang=graph[p+15]*0.0174532925199433f, cs=cosf(ang), sn=sinf(ang); values[i]=mk4(tx*cs-ty*sn,tx*sn+ty*cs,a.z,a.w); }
       else if (op==44) values[i]=mk4(a.x,b.x,c.x,1.f);
       else if (op==45) { int lane=(int)floorf(b.x+.5f);lane=lane<0?0:(lane>3?3:lane);const float q[4]={a.x,a.y,a.z,a.w};values[i]=mk4(q[lane],q[lane],q[lane],q[lane]); }
       else if (op==46) values[i]=a;
-      else if (op==47) values[i]=mk4(0.f,0.f,0.f,1.f);
+      else if (op==47) values[i]=mk4(position.x,position.y,position.z,1.f);
       else if (op==48) { float mx=fmaxf(a.x,fmaxf(a.y,a.z)),mn=fminf(a.x,fminf(a.y,a.z)),d=mx-mn,h=0.f;if(d>1e-6f){h=mx==a.x?fmodf((a.y-a.z)/d,6.f):(mx==a.y?(a.z-a.x)/d+2.f:(a.x-a.y)/d+4.f);h/=6.f;}h=h+b.x-floorf(h+b.x);float s=fminf(fmaxf((mx>1e-6f?d/mx:0.f)*b.y,0.f),1.f),vv=fmaxf(mx*b.z,0.f),ch=vv*s,x=ch*(1.f-fabsf(fmodf(h*6.f,2.f)-1.f)),m=vv-ch;int k=((int)floorf(h*6.f))%6;float rr=k==0||k==5?ch:(k==1||k==4?x:0.f),gg=k==1||k==2?ch:(k==0||k==3?x:0.f),bb=k==3||k==4?ch:(k==2||k==5?x:0.f);values[i]=mk4(rr+m,gg+m,bb+m,a.w); }
       else if (op==49) {
         values[i]=mk4(.5f,.5f,1.f,1.f);
         int src=ia;for(int hop=0;hop<4&&src>=0&&src<count;hop++){int qp=base+TUSD_GPU_GRAPH_HEADER_FLOATS+src*TUSD_GPU_GRAPH_NODE_FLOATS,qop=(int)(graph[qp]+.5f);if(qop==45||qop==46)src=(int)floorf(graph[qp+1]+.5f);else break;}if(src>=0&&src<count){int sp=base+TUSD_GPU_GRAPH_HEADER_FLOATS+src*TUSD_GPU_GRAPH_NODE_FLOATS,sop=(int)(graph[sp]+.5f),stid=(int)floorf(graph[sp+16]+.5f);if((sop==1||sop==2)&&stid>=0&&stid<numTextures){float gu=ic>=0?c.x:u,gv=ic>=0?c.y:v;gu=gu*graph[sp+17]+graph[sp+19];gv=gv*graph[sp+18]+graph[sp+20];TexDesc td=textures[stid];float du=1.f/fmaxf((float)td.width,1.f),dv=1.f/fmaxf((float)td.height,1.f);F4 xm=sampleMaterialTexture(texels,textures,numTextures,stid,gu-du,gv,(unsigned int)face,0.f,mk4(0,0,0,1)),xp=sampleMaterialTexture(texels,textures,numTextures,stid,gu+du,gv,(unsigned int)face,0.f,mk4(0,0,0,1)),ym=sampleMaterialTexture(texels,textures,numTextures,stid,gu,gv-dv,(unsigned int)face,0.f,mk4(0,0,0,1)),yp=sampleMaterialTexture(texels,textures,numTextures,stid,gu,gv+dv,(unsigned int)face,0.f,mk4(0,0,0,1));float s=b.x*(1.f/16.f),dx=(xp.x-xm.x)*.5f*s,dy=(yp.x-ym.x)*.5f*s,il=rsqrtf(dx*dx+dy*dy+1.f);values[i]=mk4(-dx*il*.5f+.5f,-dy*il*.5f+.5f,il*.5f+.5f,1.f);}}
       }
+      else if(op==114){F3 q=norm3(viewDirection);values[i]=mk4(q.x,q.y,q.z,1.f);}
+      else if(op==115) values[i]=mk4(sceneTime,sceneTime,sceneTime,sceneTime);
+      else if(op==116) values[i]=mk4(sceneFrame,sceneFrame,sceneFrame,sceneFrame);
       else if (op==50) values[i]=mk4(asinf(fminf(fmaxf(a.x,-1.f),1.f)),asinf(fminf(fmaxf(a.y,-1.f),1.f)),asinf(fminf(fmaxf(a.z,-1.f),1.f)),asinf(fminf(fmaxf(a.w,-1.f),1.f)));
       else if (op==51) values[i]=mk4(acosf(fminf(fmaxf(a.x,-1.f),1.f)),acosf(fminf(fmaxf(a.y,-1.f),1.f)),acosf(fminf(fmaxf(a.z,-1.f),1.f)),acosf(fminf(fmaxf(a.w,-1.f),1.f)));
       else if (op==52) values[i]=mk4((a.x-c.x)*b.x+c.x,(a.y-c.y)*b.y+c.y,(a.z-c.z)*b.z+c.z,(a.w-c.w)*b.w+c.w);
@@ -1948,7 +1955,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     if (matGraph && mid >= 0 && mid < numMats) {
       const int gb=mid*TUSD_GPU_GRAPH_FLOATS;
       if (matGraph[gb+1]>=0.f) {
-        F4 g=evalMaterialXGraphUv(matGraph,mid,0,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,0,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,N,hit,scale(d,-1.f),0.f,0.f);
         base=mk(g.x,g.y,g.z);
       }
       if (matGraph[gb+2]>=0.f)

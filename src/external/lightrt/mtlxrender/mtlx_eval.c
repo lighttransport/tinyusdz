@@ -258,7 +258,8 @@ typedef enum {
     OP_GRID, OP_CROSSHATCH, OP_TILEDCIRCLES, OP_TILEDCLOVERLEAFS, OP_TILEDHEXAGONS,
     OP_COLORCORRECT, OP_BLUR, OP_FLAKE2D, OP_FLAKE3D, OP_RANDOMFLOAT,
     OP_RANDOMCOLOR, OP_LATLONGIMAGE, OP_TRIPLANARPROJECTION,
-    OP_HEIGHTTONORMAL, OP_BUMP
+    OP_HEIGHTTONORMAL, OP_BUMP, OP_VIEWDIRECTION, OP_TIME, OP_FRAME,
+    OP_TRANSFORMPOINT, OP_TRANSFORMVECTOR, OP_TRANSFORMNORMAL
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -406,6 +407,12 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "triplanarprojection")) return OP_TRIPLANARPROJECTION;
     if (!strcmp(c, "heighttonormal")) return OP_HEIGHTTONORMAL;
     if (!strcmp(c, "bump")) return OP_BUMP;
+    if (!strcmp(c, "viewdirection") || !strcmp(c, "viewdir")) return OP_VIEWDIRECTION;
+    if (!strcmp(c, "time")) return OP_TIME;
+    if (!strcmp(c, "frame")) return OP_FRAME;
+    if (!strcmp(c, "transformpoint")) return OP_TRANSFORMPOINT;
+    if (!strcmp(c, "transformvector")) return OP_TRANSFORMVECTOR;
+    if (!strcmp(c, "transformnormal")) return OP_TRANSFORMNORMAL;
     return OP_UNKNOWN;
 }
 
@@ -701,6 +708,44 @@ static MtlxValue eval_height_normal(ShadeContext *ctx,const MtlxNode *n,
     float dx=(h[1]-h[0])*.5f*scale/16.0f,dy=(h[3]-h[2])*.5f*scale/16.0f;v3 q=v3_normalize(v3_make(-dx,-dy,1));return mv_vec3(v3_scale(v3_add(q,v3_make(1,1,1)),.5f));
 }
 
+static const char *string_input(const MtlxNode *n,const char *name,
+                                const char *fallback){
+    const MtlxInput *in=find_input(n,name);
+    return in&&in->has_value&&in->value.s?in->value.s:fallback;
+}
+
+static v3 transform_affine(const float m[16],v3 p,float w){
+    return v3_make(m[0]*p.x+m[4]*p.y+m[8]*p.z+m[12]*w,
+                   m[1]*p.x+m[5]*p.y+m[9]*p.z+m[13]*w,
+                   m[2]*p.x+m[6]*p.y+m[10]*p.z+m[14]*w);
+}
+
+static v3 transform_covector(const float inverse[16],v3 n){
+    return v3_make(inverse[0]*n.x+inverse[1]*n.y+inverse[2]*n.z,
+                   inverse[4]*n.x+inverse[5]*n.y+inverse[6]*n.z,
+                   inverse[8]*n.x+inverse[9]*n.y+inverse[10]*n.z);
+}
+
+static v3 transform_space(ShadeContext *ctx,v3 value,const char *from,
+                          const char *to,int kind){
+    if(!ctx->has_space_transforms||!strcmp(from,to))return value;
+    v3 world=value;
+    if(!strcmp(from,"object"))world=kind==2?
+        transform_covector(ctx->world_to_object,value):
+        transform_affine(ctx->object_to_world,value,kind==0?1.0f:0.0f);
+    else if(!strcmp(from,"view"))world=kind==2?
+        transform_covector(ctx->world_to_view,value):
+        transform_affine(ctx->view_to_world,value,kind==0?1.0f:0.0f);
+    v3 result=world;
+    if(!strcmp(to,"object"))result=kind==2?
+        transform_covector(ctx->object_to_world,world):
+        transform_affine(ctx->world_to_object,world,kind==0?1.0f:0.0f);
+    else if(!strcmp(to,"view"))result=kind==2?
+        transform_covector(ctx->view_to_world,world):
+        transform_affine(ctx->world_to_view,world,kind==0?1.0f:0.0f);
+    return kind==2?v3_normalize(result):result;
+}
+
 static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
     if (node_id < 0 || node_id >= ctx->doc->nnode) return mv_zero(MV_NONE);
     if (ctx->memo_done[node_id]) return ctx->memo[node_id];
@@ -716,12 +761,19 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         ctx->memo[node_id] = r;
         return r;
     }
-    switch (classify(n->category)) {
+    NodeOp node_op=classify(n->category);
+    switch (node_op) {
         case OP_IMAGE: r = eval_image(ctx, n); break;
         case OP_LATLONGIMAGE: r = eval_latlongimage(ctx, n); break;
         case OP_TRIPLANARPROJECTION: r=eval_triplanarprojection(ctx,n); break;
         case OP_HEIGHTTONORMAL: {MtlxValue s=in_or(ctx,n,"scale",mv_float(1));r=eval_height_normal(ctx,n,"in",s.v[0]);break;}
         case OP_BUMP: {MtlxValue s=in_or(ctx,n,"scale",mv_float(1)),enc=eval_height_normal(ctx,n,"height",1),nval=in_or(ctx,n,"normal",mv_vec3(ctx->Ns)),tval=in_or(ctx,n,"tangent",mv_vec3(v3_normalize(ctx->dpdu))),bval=in_or(ctx,n,"bitangent",mv_vec3(v3_normalize(ctx->dpdv)));v3 ts=v3_make(enc.v[0]*2-1,enc.v[1]*2-1,enc.v[2]*2-1),nn=mv_as_v3(&nval),tt=mv_as_v3(&tval),bb=mv_as_v3(&bval);ts.x*=s.v[0];ts.y*=s.v[0];r=mv_vec3(v3_normalize(v3_add(v3_add(v3_scale(tt,ts.x),v3_scale(bb,ts.y)),v3_scale(nn,ts.z))));break;}
+        case OP_VIEWDIRECTION: r=mv_vec3(v3_normalize(ctx->V));break;
+        case OP_TIME: r=mv_float(ctx->time);break;
+        case OP_FRAME: r=mv_float(ctx->frame);break;
+        case OP_TRANSFORMPOINT:
+        case OP_TRANSFORMVECTOR:
+        case OP_TRANSFORMNORMAL: {a=in_or(ctx,n,"in",mv_zero(MV_VEC3));int kind=node_op==OP_TRANSFORMPOINT?0:(node_op==OP_TRANSFORMVECTOR?1:2);r=mv_vec3(transform_space(ctx,mv_as_v3(&a),string_input(n,"fromspace","object"),string_input(n,"tospace","world"),kind));break;}
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
         case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;

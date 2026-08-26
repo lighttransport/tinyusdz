@@ -1120,6 +1120,20 @@ int main() {
      !Near(matrix4Mat.materialXGraph.nodes[9].auxValue[0],5)){
     std::fprintf(stderr,"MaterialX matrix44 lowering failed: %s (nodes=%zu)\n",matrix4Error.c_str(),matrix4Mat.materialXGraph.nodes.size());return 1;
   }
+  tusdview::DrawMaterialCPU contextMat;
+  contextMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
+    {"name":"view","category":"viewdirection","type":"vector3","inputs":[]},
+    {"name":"time","category":"time","type":"float","inputs":[]},
+    {"name":"frame","category":"frame","type":"float","inputs":[]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string contextError;
+  if(!tusdview::CompileMaterialXGraphRuntime(&contextMat,&contextError)||
+     contextMat.materialXGraph.nodes.size()!=3||
+     contextMat.materialXGraph.nodes[0].op!=tusdview::MaterialXGraphOpCPU::ViewDirection||
+     contextMat.materialXGraph.nodes[1].op!=tusdview::MaterialXGraphOpCPU::Time||
+     contextMat.materialXGraph.nodes[2].op!=tusdview::MaterialXGraphOpCPU::Frame){
+    std::fprintf(stderr,"MaterialX runtime context lowering failed: %s (nodes=%zu)\n",contextError.c_str(),contextMat.materialXGraph.nodes.size());return 1;
+  }
   tusdview::DrawMaterialCPU latlongMat;
   latlongMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
     {"name":"direction","category":"constant","type":"vector3","inputs":[{"name":"value","value":[1,0,0]}]},

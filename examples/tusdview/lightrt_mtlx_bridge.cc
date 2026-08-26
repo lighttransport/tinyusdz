@@ -959,6 +959,7 @@ bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
   ctx.Ng = v3_make(0.0f, 0.0f, 1.0f);
   ctx.dpdu = v3_make(1.0f, 0.0f, 0.0f);
   ctx.dpdv = v3_make(0.0f, 1.0f, 0.0f);
+  ctx.V = v3_make(0.0f, 0.0f, 1.0f);
   ctx.memo = memo->data();
   ctx.memo_done = memoDone->data();
   OpenPBRParams params;
@@ -1757,6 +1758,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat.rfind("convert", 0) == 0)
       out.op = MaterialXGraphOpCPU::Convert;
     else if (cat == "position") out.op = MaterialXGraphOpCPU::Position;
+    else if (cat == "viewdirection" || cat == "viewdir")
+      out.op = MaterialXGraphOpCPU::ViewDirection;
+    else if (cat == "time") out.op = MaterialXGraphOpCPU::Time;
+    else if (cat == "frame") out.op = MaterialXGraphOpCPU::Frame;
     else if (cat == "hsvadjust") {
       out.op = MaterialXGraphOpCPU::HsvAdjust;
       out.value[1][1] = out.value[1][2] = 1.0f;

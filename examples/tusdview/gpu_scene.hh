@@ -520,6 +520,9 @@ enum class MaterialXGraphOpCPU : uint32_t {
   MatrixTranspose,
   MatrixInverse,
   MatrixDeterminant,
+  ViewDirection,
+  Time,
+  Frame,
   Unknown,
 };
 

@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int nearf_eps(float a, float b) { return fabsf(a - b) <= 1.0e-5f; }
 
@@ -130,6 +131,12 @@ int main(void) {
       " <tiledcircles name=\"tile_circle\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"size\" type=\"float\" value=\"0.4\"/></tiledcircles>"
       " <tiledcloverleafs name=\"tile_clover\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"size\" type=\"float\" value=\"0.4\"/></tiledcloverleafs>"
       " <tiledhexagons name=\"tile_hex\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"size\" type=\"float\" value=\"0.4\"/></tiledhexagons>"
+      " <viewdirection name=\"view_direction\" type=\"vector3\"/>"
+      " <time name=\"scene_time\" type=\"float\"/>"
+      " <frame name=\"scene_frame\" type=\"float\"/>"
+      " <transformpoint name=\"object_point\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformpoint>"
+      " <transformvector name=\"object_vector\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformvector>"
+      " <transformnormal name=\"object_normal\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,1,1\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformnormal>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -141,6 +148,14 @@ int main(void) {
   ctx.uv[0] = 0.25f; ctx.uv[1] = 0.75f;
   ctx.Ns = ctx.Ng = v3_make(0, 0, 1);
   ctx.dpdu = v3_make(1, 0, 0); ctx.dpdv = v3_make(0, 1, 0);
+  ctx.V = v3_make(0, 0, 2); ctx.time = 1.25f; ctx.frame = 42.0f;
+  { const float o2w[16]={2,0,0,0, 0,3,0,0, 0,0,4,0, 5,6,7,1};
+    const float w2o[16]={.5f,0,0,0, 0,1.0f/3.0f,0,0,
+                         0,0,.25f,0, -2.5f,-2,-1.75f,1};
+    memcpy(ctx.object_to_world,o2w,sizeof(o2w));
+    memcpy(ctx.world_to_object,w2o,sizeof(w2o));
+    ctx.has_space_transforms=1;
+  }
   ctx.memo = (MtlxValue *)calloc((size_t)doc->nnode, sizeof(MtlxValue));
   ctx.memo_done = (char *)calloc((size_t)doc->nnode, 1);
   if (!ctx.memo || !ctx.memo_done) {
@@ -213,6 +228,13 @@ int main(void) {
   ok = check3("checkerboard", eval_named(&ctx, "checker"), 0.0f, 0.0f, 1.0f) && ok;
   ok = nearf_eps(eval_named(&ctx, "circle").v[0], 1.0f) && ok;
   ok = nearf_eps(eval_named(&ctx, "line").v[0], 1.0f) && ok;
+  ok = check3("view-direction",eval_named(&ctx,"view_direction"),0,0,1) &&
+       check1("time",eval_named(&ctx,"scene_time"),1.25f) &&
+       check1("frame",eval_named(&ctx,"scene_frame"),42.0f) &&
+       check3("transform-point",eval_named(&ctx,"object_point"),7,12,19) &&
+       check3("transform-vector",eval_named(&ctx,"object_vector"),2,6,12) &&
+       check3("transform-normal",eval_named(&ctx,"object_normal"),
+              0.7682213f,0.5121475f,0.3841106f) && ok;
   ok = check3("difference", eval_named(&ctx, "difference"), 0.4f, 0.45f,
               0.2f) && ok;
   ok = check4("over", eval_named(&ctx, "over"), 0.5f, 0.3f, 0.5f,
