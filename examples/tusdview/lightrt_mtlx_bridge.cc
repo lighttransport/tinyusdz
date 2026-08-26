@@ -3148,6 +3148,30 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
     std::string compileError;
     CompileMaterialXGraphRuntime(mat, &compileError);
   }
+  // A converted surface may retain a graph solely because another terminal
+  // input (for example displacement) is connected.  The compiler still emits
+  // constant lanes for the surface's typed/default inputs, but those lanes
+  // must not replace the authoritative DrawMaterialCPU values at runtime.
+  // Keep non-constant routes executable for genuine graph-driven inputs.
+  if (mat->materialXGraph.valid) {
+    std::function<bool(int)> constantOnly = [&](int index) {
+      if (index < 0 || static_cast<size_t>(index) >=
+                           mat->materialXGraph.nodes.size()) return false;
+      const MaterialXGraphNodeCPU& node =
+          mat->materialXGraph.nodes[static_cast<size_t>(index)];
+      if (node.op == MaterialXGraphOpCPU::Constant) return true;
+      if (node.op == MaterialXGraphOpCPU::Convert)
+        return constantOnly(node.input[0]);
+      return false;
+    };
+    for (size_t lane = 0; lane < 6 &&
+                          lane < mat->materialXGraph.output.size(); ++lane) {
+      const int output = mat->materialXGraph.output[lane];
+      if (constantOnly(output)) {
+        mat->materialXGraph.output[lane] = -1;
+      }
+    }
+  }
   // Bind graph image nodes to the already-resolved DrawScene texture slots.
   // MaterialX JSON stores the authored filename while the scene loader may
   // store an absolute or normalized asset identifier, so accept exact,
