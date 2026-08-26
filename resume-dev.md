@@ -25,6 +25,7 @@ not hand-edit generated headers.
   - `4c5b073b0` Add MaterialX hair helper evaluation
   - `cab4b6aec` Add direct MaterialX closure bridge tests
   - `bab865016` Extract vector roughness in MaterialX closures
+  - `c518d8fc3` Test nested MaterialX closure composition
 
 ## Completed coverage
 
@@ -51,7 +52,9 @@ not hand-edit generated headers.
 The closure bridge now explicitly extracts component zero when a scalar
 OpenPBR lane receives a MaterialX vector2 input (notably vector roughness).
 Direct Shader-to-Shader BSDF, EDF, and VDF graphs assert route indices and
-packed graph-header parity. The change is committed in `bab865016`.
+packed graph-header parity; nested typed BSDF mixing is covered as well. The
+vector extraction change is committed in `bab865016`, with the nested test in
+`c518d8fc3`.
 
 ## Uncommitted work in progress
 
