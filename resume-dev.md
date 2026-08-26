@@ -178,6 +178,12 @@ Passed:
 - Generalized-Schlick EDF bridge lowering now preserves inherited closure
   lanes and applies the runtime angle-dependent emission tint; bridge,
   evaluator, and CPU graph focused tests pass 3/3.
+- Hardware/material gate after the bridge slice: 15/15 passed across NVIDIA
+  GL warmup, Vulkan RT, CUDA, HIP, semantic texture parity, CPU RT, and the
+  GPU material ABI.
+- Complete registered MaterialX graph/parity group: 7/7 passed, including
+  CPU graph, flake/projection/OpenPBR parity, evaluator, connection, and graph
+  evaluation tests.
 - Stable `next` regression after wrapper changes: 40/40 passed
 - Viewer rebuild plus focused geomprop/bridge/ABI/nonmesh/safety checks: 6/6
   passed after generic geomprop stream preservation (`3228d85cd`)
