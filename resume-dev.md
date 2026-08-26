@@ -304,6 +304,11 @@ Passed:
 - LightRT image evaluation now honors `filtertype="nearest"` for regular and
   UDIM-capable image paths while retaining bilinear as the default; a two-texel
   evaluator regression distinguishes nearest selection from bilinear blending.
+- Composed closure roughness is now weight-averaged in both the standalone
+  evaluator and C++ bridge lowering for dielectric, generalized-Schlick,
+  conductor, sheen, and hair lanes; scalar closure multiplication leaves
+  roughness unchanged while scaling the lobe weight. Evaluator and bridge
+  graph regressions pass.
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
@@ -347,8 +352,9 @@ capability-skipped in this environment.
    schema-specific closure parameter mappings; generalized-Schlick and
    measured-EDF fallback behavior are now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation
-   permits it; vector2 roughness extraction and exact scatter-mode handling are
-   now covered by focused tests.
+   permits it; vector2 roughness extraction, exact scatter-mode handling, and
+   composed roughness weighting are now covered by focused tests. Weighted
+   color lowering for all wrapper/layer combinations remains to be audited.
 3. Complete remaining shader constructors/wrappers: `surface`,
    `surfacematerial`, `light`, displacement, and unlit behavior in legacy and
 next converters; volume/volumematerial graph transport is now implemented,
