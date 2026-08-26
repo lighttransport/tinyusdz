@@ -1143,8 +1143,8 @@ int main() {
      contextMat.materialXGraph.nodes[1].op!=tusdview::MaterialXGraphOpCPU::Time||
      contextMat.materialXGraph.nodes[2].op!=tusdview::MaterialXGraphOpCPU::Frame||
      contextMat.materialXGraph.nodes[3].op!=tusdview::MaterialXGraphOpCPU::Texcoord||
-     contextMat.materialXGraph.nodes[4].op!=tusdview::MaterialXGraphOpCPU::Constant||
-     !Near(contextMat.materialXGraph.nodes[4].value[0][0],2700.0f)||
+     contextMat.materialXGraph.nodes[4].op!=tusdview::MaterialXGraphOpCPU::GeomProp||
+     contextMat.materialXGraph.nodes[4].geomPropName!="temperature"||
      contextMat.materialXGraph.nodes[5].op!=tusdview::MaterialXGraphOpCPU::Blackbody||
      contextMat.materialXGraph.nodes[6].op!=tusdview::MaterialXGraphOpCPU::RoughnessAnisotropy||
      contextMat.materialXGraph.nodes[7].op!=tusdview::MaterialXGraphOpCPU::RoughnessDual||

@@ -72,7 +72,7 @@ class CpuRayTracer {
   // lightrt_c has no instance/TLAS traversal API. These are the expanded
   // world-space hit attributes corresponding one-to-one with scene_ triangles.
   std::vector<float> cpuTris_, cpuNrms_, cpuUv_, cpuUv1_;
-  std::vector<int> cpuMat_, cpuInstance_;
+  std::vector<int> cpuMat_, cpuInstance_, cpuSourceTri_;
   lrt_tri_scene* scene_{nullptr};
   size_t triCount_{0};
   bool truncated_{false};

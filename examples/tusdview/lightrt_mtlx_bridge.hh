@@ -45,6 +45,8 @@ constexpr int kRtMaterialGraphNodeFloats = TUSD_GPU_GRAPH_NODE_FLOATS;
 constexpr int kRtMaterialGraphFloats =
     kRtMaterialGraphHeaderFloats +
     kRtMaterialGraphMaxNodes * kRtMaterialGraphNodeFloats;
+
+uint32_t MaterialXGeomPropHash(const std::string& name);
 static_assert(kRtMaterialGraphFloats == TUSD_GPU_GRAPH_FLOATS,
               "MaterialX graph-stride ABI drift");
 constexpr int kRasterMaterialGraphImageCount = 8;

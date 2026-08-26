@@ -153,6 +153,7 @@ void AppendMove(std::vector<T>& dst, std::vector<T>& src) {
 struct MeshBuild {
   bool valid = false;
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
+  std::vector<HostGeomProp> geomProps;
   std::vector<uint8_t> geo, emask;
   std::vector<int> mat, backMat, face, domj;
   std::vector<Node> blas;  // local node/leaf refs (rebased during assembly)
@@ -224,6 +225,13 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   std::vector<uint8_t> lg, le;
   std::vector<int> lm, lmb, lf, ldomj;
   bool anyBackMaterial = false;
+  mb.geomProps.reserve(m.geomProps.size());
+  for (const DrawGeomPropCPU& src : m.geomProps) {
+    HostGeomProp& dst = mb.geomProps.emplace_back();
+    dst.name = src.name;
+    dst.components = src.components;
+    dst.values.reserve((m.indices.size() / 3) * 3 * dst.components);
+  }
   // Most next-loader meshes are world-baked at load time (m.world == identity,
   // the transform already folded into `vertices`), but `animatedWorld` meshes
   // (see gpu_scene.hh) keep a REAL per-frame world matrix on top of a fixed
@@ -321,6 +329,21 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     linfl.insert(linfl.end(), winfl, winfl + 3);
     ldomw.insert(ldomw.end(), wdomw, wdomw + 3);
     ldomj.push_back(domJoint);
+    for (size_t pi = 0; pi < mb.geomProps.size(); ++pi) {
+      const DrawGeomPropCPU& src = m.geomProps[pi];
+      for (int k = 0; k < 3; ++k) {
+        const size_t valueBegin = size_t(m.indices[t + k]) * src.components;
+        if (src.components == 0 ||
+            valueBegin + src.components > src.values.size()) {
+          mb.geomProps[pi].values.insert(mb.geomProps[pi].values.end(),
+                                         src.components, 0.0f);
+        } else {
+          mb.geomProps[pi].values.insert(
+              mb.geomProps[pi].values.end(), src.values.begin() + valueBegin,
+              src.values.begin() + valueBegin + src.components);
+        }
+      }
+    }
     lg.push_back(g);
     const int frontMat = submeshMatId(static_cast<uint32_t>(t));
     // Unbound next-loader instanced prototypes carry their flat/instance tint
@@ -390,6 +413,17 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     if (anyBackMaterial) mb.backMat.push_back(lmb[s]);
     mb.face.push_back(lf[s]);
     mb.domj.push_back(ldomj[s]);
+  }
+  for (size_t pi = 0; pi < mb.geomProps.size(); ++pi) {
+    std::vector<float> reordered;
+    reordered.reserve(mb.geomProps[pi].values.size());
+    const uint32_t comps = mb.geomProps[pi].components;
+    for (int source : bidx) {
+      const size_t begin = size_t(source) * 3 * comps;
+      reordered.insert(reordered.end(), mb.geomProps[pi].values.begin() + begin,
+                       mb.geomProps[pi].values.begin() + begin + 3 * comps);
+    }
+    mb.geomProps[pi].values = std::move(reordered);
   }
   mb.leafOrder = std::move(bidx);
 
@@ -1535,6 +1569,19 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   sourceMeshes.reserve(scene.meshes.size() + nonMeshProxies.size());
   for (const DrawMeshCPU& mesh : scene.meshes) sourceMeshes.push_back(&mesh);
   for (const DrawMeshCPU& mesh : nonMeshProxies) sourceMeshes.push_back(&mesh);
+  out->geomProps.clear();
+  for (const DrawMeshCPU* mesh : sourceMeshes) {
+    for (const DrawGeomPropCPU& source : mesh->geomProps) {
+      auto found = std::find_if(
+          out->geomProps.begin(), out->geomProps.end(),
+          [&](const HostGeomProp& prop) { return prop.name == source.name; });
+      if (found == out->geomProps.end()) {
+        HostGeomProp& prop = out->geomProps.emplace_back();
+        prop.name = source.name;
+        prop.components = source.components;
+      }
+    }
+  }
   std::atomic<size_t> buildDone{0};
   size_t assembleDone = 0;
   auto tickBuild = [&]() {
@@ -1614,6 +1661,19 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     AppendMove(out->uv, mb.uv);
     AppendMove(out->uv1, mb.uv1);
     AppendMove(out->infl, mb.infl);
+    for (HostGeomProp& dst : out->geomProps) {
+      auto found = std::find_if(
+          mb.geomProps.begin(), mb.geomProps.end(),
+          [&](const HostGeomProp& source) { return source.name == dst.name; });
+      const size_t expected = mbTriCount * 3 * dst.components;
+      if (found != mb.geomProps.end() &&
+          found->components == dst.components &&
+          found->values.size() == expected) {
+        AppendMove(dst.values, found->values);
+      } else {
+        dst.values.insert(dst.values.end(), expected, 0.0f);
+      }
+    }
     AppendMove(out->domw, mb.domw);
     AppendMove(out->geo, mb.geo);
     AppendMove(out->emask, mb.emask);
