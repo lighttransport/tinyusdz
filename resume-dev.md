@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `768131bcd` (`Refresh subsurface resume evidence`)
+- HEAD: `5ac5f3030` (`Transport anisotropy for direct VDF graphs`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
