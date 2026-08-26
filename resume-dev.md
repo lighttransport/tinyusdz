@@ -318,6 +318,8 @@ Passed:
   covering both paths.
 - Texture evaluator coverage now verifies sRGB RGB linearization and
   independent RGBA alpha preservation using a minimal 32-bit TGA fixture.
+- The public bridge now has an end-to-end `surfacematerial` to
+  `surface_unlit` regression covering emission, transmission, and opacity.
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
@@ -364,9 +366,10 @@ capability-skipped in this environment.
    permits it; vector2 roughness extraction, exact scatter-mode handling, and
    composed roughness weighting are now covered by focused tests. Weighted
    color lowering for all wrapper/layer combinations remains to be audited.
-3. Complete remaining shader constructors/wrappers: `surface`,
-   `surfacematerial`, `light`, displacement, and unlit behavior in legacy and
-next converters; volume/volumematerial graph transport is now implemented,
+3. Complete remaining shader constructors/wrappers: `surface`, `light`,
+   displacement, and unlit behavior in legacy and next converters; public
+   `surfacematerial`/`surface_unlit` resolution is now covered,
+   volume/volumematerial graph transport is now implemented,
 but texture-driven and schema-specific volume validation remains. Separate
 displacement terminals now resolve authored scalar `displacement`, `height`,
 `dispScalar`, or `value` inputs into the next loader's geometry lane.
