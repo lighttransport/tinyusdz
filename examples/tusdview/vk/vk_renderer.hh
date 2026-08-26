@@ -1245,6 +1245,11 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory swBackMatMem_{VK_NULL_HANDLE};
   VkBuffer swFaceBuf_{VK_NULL_HANDLE};   // HostScene::face (source face/tri)
   VkDeviceMemory swFaceMem_{VK_NULL_HANDLE};
+  VkBuffer swGeomPropDescBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory swGeomPropDescMem_{VK_NULL_HANDLE};
+  VkBuffer swGeomPropValueBuf_{VK_NULL_HANDLE};
+  VkDeviceMemory swGeomPropValueMem_{VK_NULL_HANDLE};
+  uint32_t swGeomPropCount_{0};
   VkBuffer swBlasBuf_{VK_NULL_HANDLE};   // HostScene::blas (Node[])
   VkDeviceMemory swBlasMem_{VK_NULL_HANDLE};
   VkBuffer swTlasBuf_{VK_NULL_HANDLE};   // HostScene::tlas (Node[])

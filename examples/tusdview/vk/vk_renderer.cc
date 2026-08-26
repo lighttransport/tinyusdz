@@ -10248,7 +10248,7 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   // SW-technique-specific (BVH/triangle data) and free to reuse numbers the
   // hardware layout spends on AS(0)/MeshDesc(2)/InstInfo(4)/points(15-18),
   // since the two layouts never coexist in one pipeline.
-  VkDescriptorSetLayoutBinding b[25]{};
+  VkDescriptorSetLayoutBinding b[27]{};
   auto img = [](VkDescriptorSetLayoutBinding& x, uint32_t bnd) {
     x.binding = bnd; x.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     x.descriptorCount = 1; x.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -10293,16 +10293,20 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   b[23].binding = 23;
   b[24] = b[22];
   b[24].binding = 24;
+  b[25] = b[22];
+  b[25].binding = 25;
+  b[26] = b[22];
+  b[26].binding = 26;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 25;
+  lci.bindingCount = 27;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &swRtSetLayout_),
            "sw-rt descriptor set layout");
 
   VkDescriptorPoolSize ps[3]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
-  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 19};
+  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 21};
   ps[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
            3 + TUSDVIEW_RT_PTEXTURE_IMAGE_CAP};
   VkDescriptorPoolCreateInfo pci{};
@@ -10444,6 +10448,10 @@ void VulkanRenderer::destroySwRt() {
   if (swBackMatMem_) { vkFreeMemory(device_, swBackMatMem_, nullptr); swBackMatMem_ = VK_NULL_HANDLE; }
   if (swFaceBuf_) { vkDestroyBuffer(device_, swFaceBuf_, nullptr); swFaceBuf_ = VK_NULL_HANDLE; }
   if (swFaceMem_) { vkFreeMemory(device_, swFaceMem_, nullptr); swFaceMem_ = VK_NULL_HANDLE; }
+  if (swGeomPropDescBuf_) { vkDestroyBuffer(device_, swGeomPropDescBuf_, nullptr); swGeomPropDescBuf_ = VK_NULL_HANDLE; }
+  if (swGeomPropDescMem_) { vkFreeMemory(device_, swGeomPropDescMem_, nullptr); swGeomPropDescMem_ = VK_NULL_HANDLE; }
+  if (swGeomPropValueBuf_) { vkDestroyBuffer(device_, swGeomPropValueBuf_, nullptr); swGeomPropValueBuf_ = VK_NULL_HANDLE; }
+  if (swGeomPropValueMem_) { vkFreeMemory(device_, swGeomPropValueMem_, nullptr); swGeomPropValueMem_ = VK_NULL_HANDLE; }
   if (swBlasBuf_) { vkDestroyBuffer(device_, swBlasBuf_, nullptr); swBlasBuf_ = VK_NULL_HANDLE; }
   if (swBlasMem_) { vkFreeMemory(device_, swBlasMem_, nullptr); swBlasMem_ = VK_NULL_HANDLE; }
   if (swTlasBuf_) { vkDestroyBuffer(device_, swTlasBuf_, nullptr); swTlasBuf_ = VK_NULL_HANDLE; }
@@ -10451,6 +10459,7 @@ void VulkanRenderer::destroySwRt() {
   if (swInstBuf_) { vkDestroyBuffer(device_, swInstBuf_, nullptr); swInstBuf_ = VK_NULL_HANDLE; }
   if (swInstMem_) { vkFreeMemory(device_, swInstMem_, nullptr); swInstMem_ = VK_NULL_HANDLE; }
   swTriCount_ = swBlasNodeCount_ = swTlasNodeCount_ = swInstCount_ = 0;
+  swGeomPropCount_ = 0;
   if (swRtPipeline_) { vkDestroyPipeline(device_, swRtPipeline_, nullptr); swRtPipeline_ = VK_NULL_HANDLE; }
   if (swRtPathPipeline_) { vkDestroyPipeline(device_, swRtPathPipeline_, nullptr); swRtPathPipeline_ = VK_NULL_HANDLE; }
   if (swRtPipelineLayout_) { vkDestroyPipelineLayout(device_, swRtPipelineLayout_, nullptr); swRtPipelineLayout_ = VK_NULL_HANDLE; }
@@ -10601,6 +10610,10 @@ void VulkanRenderer::rebuildSwBvh() {
     if (swBackMatMem_) { vkFreeMemory(device_, swBackMatMem_, nullptr); swBackMatMem_ = VK_NULL_HANDLE; }
     if (swFaceBuf_) { vkDestroyBuffer(device_, swFaceBuf_, nullptr); swFaceBuf_ = VK_NULL_HANDLE; }
     if (swFaceMem_) { vkFreeMemory(device_, swFaceMem_, nullptr); swFaceMem_ = VK_NULL_HANDLE; }
+    if (swGeomPropDescBuf_) { vkDestroyBuffer(device_, swGeomPropDescBuf_, nullptr); swGeomPropDescBuf_ = VK_NULL_HANDLE; }
+    if (swGeomPropDescMem_) { vkFreeMemory(device_, swGeomPropDescMem_, nullptr); swGeomPropDescMem_ = VK_NULL_HANDLE; }
+    if (swGeomPropValueBuf_) { vkDestroyBuffer(device_, swGeomPropValueBuf_, nullptr); swGeomPropValueBuf_ = VK_NULL_HANDLE; }
+    if (swGeomPropValueMem_) { vkFreeMemory(device_, swGeomPropValueMem_, nullptr); swGeomPropValueMem_ = VK_NULL_HANDLE; }
     if (swBlasBuf_) { vkDestroyBuffer(device_, swBlasBuf_, nullptr); swBlasBuf_ = VK_NULL_HANDLE; }
     if (swBlasMem_) { vkFreeMemory(device_, swBlasMem_, nullptr); swBlasMem_ = VK_NULL_HANDLE; }
     if (swTlasBuf_) { vkDestroyBuffer(device_, swTlasBuf_, nullptr); swTlasBuf_ = VK_NULL_HANDLE; }
@@ -10662,6 +10675,32 @@ void VulkanRenderer::rebuildSwBvh() {
   ok = uploadInts(hs.mat, &swMatBuf_, &swMatMem_) && ok;
   ok = uploadInts(hs.backMat, &swBackMatBuf_, &swBackMatMem_) && ok;
   ok = uploadInts(hs.face, &swFaceBuf_, &swFaceMem_) && ok;
+  std::vector<HostGeomPropDesc> geomPropDesc;
+  std::vector<float> geomPropValues;
+  for (const HostGeomProp& prop : hs.geomProps) {
+    if (prop.components < 1 || prop.components > 4 ||
+        prop.values.size() != hs.triCount * 3u * prop.components) continue;
+    HostGeomPropDesc desc;
+    desc.hash = MaterialXGeomPropHash(prop.name);
+    desc.components = prop.components;
+    desc.valueOffset = static_cast<uint32_t>(geomPropValues.size());
+    geomPropDesc.push_back(desc);
+    geomPropValues.insert(geomPropValues.end(), prop.values.begin(), prop.values.end());
+  }
+  const HostGeomPropDesc dummyGeomPropDesc{};
+  const float dummyGeomPropValue = 0.0f;
+  ok = createHostBuffer(geomPropDesc.empty() ? sizeof(dummyGeomPropDesc) :
+                            geomPropDesc.size() * sizeof(HostGeomPropDesc),
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        geomPropDesc.empty() ? static_cast<const void*>(&dummyGeomPropDesc) :
+                                               static_cast<const void*>(geomPropDesc.data()),
+                        &swGeomPropDescBuf_, &swGeomPropDescMem_) && ok;
+  ok = createHostBuffer(geomPropValues.empty() ? sizeof(dummyGeomPropValue) :
+                              geomPropValues.size() * sizeof(float),
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        geomPropValues.empty() ? static_cast<const void*>(&dummyGeomPropValue) :
+                                                 static_cast<const void*>(geomPropValues.data()),
+                        &swGeomPropValueBuf_, &swGeomPropValueMem_) && ok;
   ok = uploadNodes(hs.blas, &swBlasBuf_, &swBlasMem_) && ok;
   ok = uploadNodes(hs.tlas, &swTlasBuf_, &swTlasMem_) && ok;
   ok = uploadInsts(hs.instances, &swInstBuf_, &swInstMem_) && ok;
@@ -10677,6 +10716,7 @@ void VulkanRenderer::rebuildSwBvh() {
   swBlasNodeCount_ = static_cast<uint32_t>(hs.blas.size());
   swTlasNodeCount_ = static_cast<uint32_t>(hs.tlas.size());
   swInstCount_ = static_cast<uint32_t>(hs.instCount);
+  swGeomPropCount_ = static_cast<uint32_t>(geomPropDesc.size());
 
 #if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
   // Same source CPU state as rebuildTlas() uploads for the hardware
@@ -10724,6 +10764,8 @@ void VulkanRenderer::rebuildSwBvh() {
   VkDescriptorBufferInfo swMatIdInfo{swMatBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swBackMatIdInfo{swBackMatBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo swFaceInfo{swFaceBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo swGeomPropDescInfo{swGeomPropDescBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo swGeomPropValueInfo{swGeomPropValueBuf_, 0, VK_WHOLE_SIZE};
 
   const auto bufW = [&](VkWriteDescriptorSet& w, uint32_t bnd,
                         const VkDescriptorBufferInfo* info) {
@@ -10764,7 +10806,7 @@ void VulkanRenderer::rebuildSwBvh() {
                                                         : whiteView_;
     ptexImages[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   }
-  VkWriteDescriptorSet w[25]{};
+  VkWriteDescriptorSet w[27]{};
   bufW(w[0], 0, &tlasInfo);
   imgW(w[1], 1, &outImgInfo);
   bufW(w[2], 2, &blasInfo);
@@ -10789,13 +10831,15 @@ void VulkanRenderer::rebuildSwBvh() {
   bufW(w[21], 22, &graphInfo);
   bufW(w[22], 23, &swUv1Info);
   bufW(w[23], 24, &swBackMatIdInfo);
-  w[24].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  w[24].dstSet = swRtSet_;
-  w[24].dstBinding = 21;
-  w[24].descriptorCount = static_cast<uint32_t>(ptexImages.size());
-  w[24].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  w[24].pImageInfo = ptexImages.data();
-  vkUpdateDescriptorSets(device_, 25, w, 0, nullptr);
+  bufW(w[24], 25, &swGeomPropDescInfo);
+  bufW(w[25], 26, &swGeomPropValueInfo);
+  w[26].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  w[26].dstSet = swRtSet_;
+  w[26].dstBinding = 21;
+  w[26].descriptorCount = static_cast<uint32_t>(ptexImages.size());
+  w[26].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  w[26].pImageInfo = ptexImages.data();
+  vkUpdateDescriptorSets(device_, 27, w, 0, nullptr);
   if (directPtexCount > 0) {
     std::fprintf(stderr, "[vk_swrt] direct compressed Ptex images: %zu\n",
                  directPtexCount);

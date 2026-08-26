@@ -78,6 +78,14 @@ layout(set = 0, binding = 18, scalar) readonly buffer Uv   { float uvs[]; };    
 layout(set = 0, binding = 19, scalar) readonly buffer MatId { int triMat[]; };
 layout(set = 0, binding = 23, scalar) readonly buffer Uv1  { float uvs1[]; };   // 6 floats/tri
 layout(set = 0, binding = 24, scalar) readonly buffer BackMatId { int triBackMat[]; };
+struct GeomPropDesc { uint hash; uint components; uint valueOffset; };
+layout(set = 0, binding = 25, scalar) readonly buffer GeomPropDescs { GeomPropDesc geomPropDescs[]; };
+layout(set = 0, binding = 26, scalar) readonly buffer GeomPropValues { float geomPropValues[]; };
+// Per-invocation hit context used by the bounded graph interpreter. Compute
+// shader globals are private to each invocation, so this avoids threading the
+// fallback's large hit record through every graph-only helper.
+int swGeomPropTri = -1;
+vec2 swGeomPropBc = vec2(0.0);
 
 struct RtTexDesc {
   int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
@@ -438,6 +446,23 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
       graphUv = graphUv * vec2(graphRows[p + 17u], graphRows[p + 18u]) +
                 vec2(graphRows[p + 19u], graphRows[p + 20u]);
       if (op == 0) v[i] = value;
+      else if (op == 123) {
+        v[i] = value;
+        uint wanted = floatBitsToUint(graphRows[p + 17u]);
+        uint components = uint(clamp(floor(graphRows[p + 18u] + 0.5), 1.0, 4.0));
+        if (swGeomPropTri >= 0) for (uint j = 0u; j < uint(geomPropDescs.length()); ++j) {
+          GeomPropDesc d = geomPropDescs[j];
+          if (d.hash != wanted || d.components != components) continue;
+          uint start = d.valueOffset + uint(swGeomPropTri) * 3u * components;
+          float w0 = 1.0 - swGeomPropBc.x - swGeomPropBc.y;
+          for (uint lane = 0u; lane < components; ++lane)
+            v[i][lane] = w0 * geomPropValues[start + lane] +
+                         swGeomPropBc.x * geomPropValues[start + components + lane] +
+                         swGeomPropBc.y * geomPropValues[start + 2u * components + lane];
+          if (components < 4u) v[i].w = 1.0;
+          break;
+        }
+      }
       else if (op == 1 || op == 2) v[i] = tex >= 0
           ? swSampleTexture(tex, graphUv, vec2(0.0), vec2(0.0), face, value) : value;
       else if (op == 3) v[i] = vec4(normalize(av.xyz * 2.0 - 1.0) * 0.5 + 0.5, av.w);
@@ -531,6 +556,8 @@ vec2 swMaterialUv(int mid, int slot, vec2 uv) {
 }
 
 float swOpacityAtHit(int iid, int tri, vec2 bc, out float alphaMode) {
+  swGeomPropTri = tri;
+  swGeomPropBc = bc;
   int mid = triMat[tri];
   alphaMode = 0.0;
   if (mid < 0 || mid >= int(matRows.length() / 3u)) {
@@ -585,6 +612,8 @@ float swOpacityAtHit(int iid, int tri, vec2 bc, out float alphaMode) {
 // correct front-to-back coverage and makes stacked cutouts/blends visible
 // without duplicating the large direct-lighting block in a second function.
 vec3 swApproxLayerColor(int iid, int tri, vec2 bc) {
+  swGeomPropTri = tri;
+  swGeomPropBc = bc;
   int mid = triMat[tri];
   vec3 base = vec3(0.6);
   vec3 tint = insts[iid].tint.rgb;
@@ -1036,6 +1065,8 @@ bool swTraceAccepted(vec3 o, vec3 d, float minT, float maxT,
 
 void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
                         out SwPtSurface s) {
+  swGeomPropTri = tri;
+  swGeomPropBc = bc;
   Inst inst = insts[iid];
   float w0 = 1.0 - bc.x - bc.y;
   vec3 o0 = vec3(tris[tri * 9], tris[tri * 9 + 1], tris[tri * 9 + 2]);
@@ -1568,6 +1599,8 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
       }
       break;
     }
+    swGeomPropTri = tri;
+    swGeomPropBc = bc;
     if (!inSubsurface && mediumDepth > 0) {
       vec3 tr = exp(-mediumSigma[mediumDepth] * hitT);
       vec3 ms = mediumSigma[mediumDepth];
