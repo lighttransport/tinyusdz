@@ -2157,14 +2157,24 @@ int main() {
   nextVolumeGraph.volumeMaterialXNodeGraphJson = R"json({
     "nodegraph":{"nodes":[
       {"name":"densityNode","category":"constant","type":"float",
-       "inputs":[{"name":"value","value":0.75}]}
-    ],"outputs":[{"name":"volume_density","type":"float",
-                   "nodename":"densityNode","output":"out"}]},
-    "connections":[{"input":"volume_density","output":"volume_density"}]})json";
+       "inputs":[{"name":"value","value":0.75}]},
+      {"name":"emissionNode","category":"constant","type":"color3",
+       "inputs":[{"name":"value","value":[0.2,0.3,0.4]}]},
+      {"name":"scaleNode","category":"constant","type":"float",
+       "inputs":[{"name":"value","value":2.0}]}
+    ],"outputs":[
+      {"name":"volume_density","type":"float","nodename":"densityNode","output":"out"},
+      {"name":"volume_emission_color","type":"color3","nodename":"emissionNode","output":"out"},
+      {"name":"volume_emission_scale","type":"float","nodename":"scaleNode","output":"out"}]},
+    "connections":[{"input":"volume_density","output":"volume_density"},
+      {"input":"volume_emission_color","output":"volume_emission_color"},
+      {"input":"volume_emission_scale","output":"volume_emission_scale"}]})json";
   nextVolumeGraph.hasVolumeOutput = true;
   tusdview::BakeRealtimePbrMaterial(&nextVolumeGraph);
   if (!nextVolumeGraph.hasVolumeOutput ||
-      !Near(nextVolumeGraph.volumeDensity, 0.75f)) {
+      !Near(nextVolumeGraph.volumeDensity, 0.75f) ||
+      !Near(nextVolumeGraph.volumeEmission[0], 0.4f) ||
+      !Near(nextVolumeGraph.volumeEmission[2], 0.8f)) {
     std::fprintf(stderr, "next MaterialX volume graph evaluation failed (density=%g)\n",
                  nextVolumeGraph.volumeDensity);
     return 1;

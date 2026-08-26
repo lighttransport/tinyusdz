@@ -898,9 +898,21 @@ bool BuildMaterialXXmlFromJsonGraph(const DrawMaterialCPU& mat,
     }
     ss << "  </anisotropic_vdf>\n";
     const auto emission = connections.find("volume_emission_color");
+    const auto emission_scale = connections.find("volume_emission_scale");
     if (emission != connections.end()) {
+      if (emission_scale != connections.end()) {
+        ss << "  <multiply name=\"tusdview_volume_emission\" type=\"color3\">\n";
+        emit_graph_input("in1", "color3", emission->second);
+        emit_graph_input("in2", "color3", emission_scale->second);
+        ss << "  </multiply>\n";
+      }
       ss << "  <uniform_edf name=\"tusdview_edf\" type=\"EDF\">\n";
-      emit_graph_input("color", "color3", emission->second);
+      if (emission_scale != connections.end()) {
+        ss << "    <input name=\"color\" type=\"color3\" "
+              "nodename=\"tusdview_volume_emission\"/>\n";
+      } else {
+        emit_graph_input("color", "color3", emission->second);
+      }
       ss << "  </uniform_edf>\n";
     }
     ss << "  <volume name=\"tusdview_volume\" type=\"volumeshader\">\n"
