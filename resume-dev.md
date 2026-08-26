@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `5c6d425f5` (`Resolve MaterialX wrapper nodegraph outputs`)
+- HEAD: `eaeafba1c` (`Use runtime view direction for latlong graphs`)
 - Upstream: `origin/dev`
 - Worktree: clean tracked state, plus the two unrelated untracked paths above.
 - Recent completed commits:
@@ -28,6 +28,7 @@ not hand-edit generated headers.
   - `1ffade301` Honor generalized Schlick transmission mode
   - `f74f31384` Fix scalar multiplication of closure graphs
   - `5c6d425f5` Resolve MaterialX wrapper nodegraph outputs
+  - `eaeafba1c` Use runtime view direction for latlong graphs
 
 ## Completed coverage
 
@@ -65,6 +66,8 @@ factor instead of lowering the factor as a second closure (`f74f31384`).
 The next MaterialX converter now resolves `surfacematerial` shader bindings
 through `nodegraph` outputs, including graph-local surface shader nodes
 (`5c6d425f5`).
+Latlong image lowering now uses the runtime view direction when `viewdir` is
+omitted instead of baking a +Z direction (`eaeafba1c`).
 
 ## Current implementation status
 
@@ -98,6 +101,7 @@ Passed:
 - Isolated `TestMaterialXUtilities` validation for nodegraph-backed wrapper
   conversion passed. The aggregate `test_tydra_next` executable still crashes
   in an earlier unrelated `TestChunkedArrayShareCowBudgetFailure` test.
+- `tusdview_lightrt_bridge_test` after latlong default-view fix: passed
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
