@@ -1088,6 +1088,31 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     runtimeNodes.push_back({{"name",ranged},{"category","multiply"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",cell}},nlohmann::json{{"name","in2"},{"nodename",span}}})}});
     runtimeNodes.push_back({{"name",base},{"category","add"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",ranged}},renamedInput(minimum,"in2")})}});
   };
+  auto emitSwitch4 = [&](const std::string& result, const std::string& type,
+                         nlohmann::json which,
+                         const std::array<std::string,4>& choices) {
+    std::string previous;
+    for(int choice=3;choice>=0;--choice){
+      const std::string lowered=choice==0?result:result+"__choice"+std::to_string(choice);
+      nlohmann::json other=previous.empty()?nlohmann::json{{"name","in2"},{"value",0}}:
+          nlohmann::json{{"name","in2"},{"nodename",previous}};
+      runtimeNodes.push_back({{"name",lowered},{"category","ifequal"},{"type",type},
+          {"inputs",nlohmann::json::array({renamedInput(which,"value1"),
+          nlohmann::json{{"name","value2"},{"value",choice}},
+          nlohmann::json{{"name","in1"},{"nodename",choices[choice]}},other})}});
+      previous=lowered;
+    }
+  };
+  auto emitUnifiedRange = [&](const std::string& name,const std::string& selected,
+                              nlohmann::json outmin,nlohmann::json outmax,
+                              nlohmann::json doclamp){
+    const std::string span=name+"__span",scaled=name+"__scaled",fitted=name+"__fitted",clamped=name+"__clamped";
+    runtimeNodes.push_back({{"name",span},{"category","subtract"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(outmax,"in1"),renamedInput(outmin,"in2")})}});
+    runtimeNodes.push_back({{"name",scaled},{"category","multiply"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",selected}},nlohmann::json{{"name","in2"},{"nodename",span}}})}});
+    runtimeNodes.push_back({{"name",fitted},{"category","add"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",scaled}},renamedInput(outmin,"in2")})}});
+    runtimeNodes.push_back({{"name",clamped},{"category","clamp"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",fitted}},renamedInput(outmin,"low"),renamedInput(outmax,"high")})}});
+    runtimeNodes.push_back({{"name",name},{"category","ifequal"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(doclamp,"value1"),nlohmann::json{{"name","value2"},{"value",true}},nlohmann::json{{"name","in1"},{"nodename",clamped}},nlohmann::json{{"name","in2"},{"nodename",fitted}}})}});
+  };
   for (const nlohmann::json& node : *nodesIt) {
     const std::string name = JsonString(node, "name");
     const std::string type = JsonString(node, "type");
@@ -1331,6 +1356,40 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       runtimeNodes.push_back({{"name",name},{"category","multiply"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",core}},renamedInput(inputNamed(node,"amplitude",{{"value",1}}),"in2")})}});
       continue;
     }
+    if ((cat == "fractal3d" || cat == "fractal") && !name.empty()) {
+      const std::string pos=name+"__position",core=name+"__core";
+      nlohmann::json position=inputNamed(node,"position",{{"name","position"},{"nodename",pos}});
+      if(JsonString(position,"nodename")==pos)
+        runtimeNodes.push_back({{"name",pos},{"category","position"},{"type","vector3"},{"inputs",nlohmann::json::array()}});
+      runtimeNodes.push_back({{"name",core},{"category","fractal3dcore"},{"type",type},{"inputs",nlohmann::json::array({renamedInput(position,"position"),renamedInput(inputNamed(node,"octaves",{{"value",3}}),"octaves"),renamedInput(inputNamed(node,"lacunarity",{{"value",2}}),"lacunarity"),renamedInput(inputNamed(node,"diminish",{{"value",0.5}}),"diminish")})}});
+      runtimeNodes.push_back({{"name",name},{"category","multiply"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",core}},renamedInput(inputNamed(node,"amplitude",{{"value",1}}),"in2")})}});
+      continue;
+    }
+    if ((cat == "unifiednoise2d" || cat == "unifiednoise3d") && !name.empty()) {
+      const bool d3=cat=="unifiednoise3d";const char* coordInput=d3?"position":"texcoord";
+      const std::string coord=name+"__coord",applyFreq=name+"__freq",applyOffset=name+"__offset";
+      nlohmann::json source=inputNamed(node,coordInput,{{"name",coordInput},{"nodename",coord}});
+      if(JsonString(source,"nodename")==coord)runtimeNodes.push_back({{"name",coord},{"category",d3?"position":"texcoord"},{"type",d3?"vector3":"vector2"},{"inputs",nlohmann::json::array()}});
+      runtimeNodes.push_back({{"name",applyFreq},{"category","multiply"},{"type",d3?"vector3":"vector2"},{"inputs",nlohmann::json::array({renamedInput(source,"in1"),renamedInput(inputNamed(node,"freq",{{"value",d3?nlohmann::json::array({1,1,1}):nlohmann::json::array({1,1})}}),"in2")})}});
+      runtimeNodes.push_back({{"name",applyOffset},{"category","add"},{"type",d3?"vector3":"vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",applyFreq}},renamedInput(inputNamed(node,"offset",{{"value",d3?nlohmann::json::array({0,0,0}):nlohmann::json::array({0,0})}}),"in2")})}});
+      const std::string jitterMinus=name+"__jitter_minus_one",angle=name+"__jitter_angle",jittered=name+"__jittered";
+      const nlohmann::json jitter=inputNamed(node,"jitter",{{"value",1}});
+      runtimeNodes.push_back({{"name",jitterMinus},{"category","subtract"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(jitter,"in1"),nlohmann::json{{"name","in2"},{"value",1}}})}});
+      runtimeNodes.push_back({{"name",angle},{"category","multiply"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",jitterMinus}},nlohmann::json{{"name","in2"},{"value",90000}}})}});
+      nlohmann::json rotateInputs=nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",applyOffset}},nlohmann::json{{"name","amount"},{"nodename",angle}}});
+      if(d3)rotateInputs.push_back(nlohmann::json{{"name","axis"},{"value",nlohmann::json::array({0.1,1,0})}});
+      runtimeNodes.push_back({{"name",jittered},{"category",d3?"rotate3d":"rotate2d"},{"type",d3?"vector3":"vector2"},{"inputs",std::move(rotateInputs)}});
+      const std::string perlin=name+"__perlin",cell=name+"__cell",worley=name+"__worley",fractal=name+"__fractal";
+      runtimeNodes.push_back({{"name",perlin},{"category",d3?"noise3d":"noise2d"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name",coordInput},{"nodename",jittered}},nlohmann::json{{"name","amplitude"},{"value",0.5}},nlohmann::json{{"name","pivot"},{"value",0.5}}})}});
+      runtimeNodes.push_back({{"name",cell},{"category",d3?"cellnoise3d":"cellnoise2d"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name",coordInput},{"nodename",jittered}}})}});
+      runtimeNodes.push_back({{"name",worley},{"category",d3?"worleynoise3d":"worleynoise2d"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name",coordInput},{"nodename",applyOffset}},renamedInput(jitter,"jitter"),renamedInput(inputNamed(node,"style",{{"value",0}}),"style")})}});
+      std::string fractalPosition=jittered;
+      if(!d3){const std::string x=name+"__x",y=name+"__y";fractalPosition=name+"__fractal_position";runtimeNodes.push_back({{"name",x},{"category","extract"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",applyOffset}},nlohmann::json{{"name","index"},{"value",0}}})}});runtimeNodes.push_back({{"name",y},{"category","extract"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",applyOffset}},nlohmann::json{{"name","index"},{"value",1}}})}});runtimeNodes.push_back({{"name",fractalPosition},{"category","combine3"},{"type","vector3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",x}},nlohmann::json{{"name","in2"},{"nodename",y}},nlohmann::json{{"name","in3"},{"nodename",angle}}})}});}
+      runtimeNodes.push_back({{"name",fractal},{"category","fractal3dcore"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","position"},{"nodename",fractalPosition}},renamedInput(inputNamed(node,"octaves",{{"value",3}}),"octaves"),renamedInput(inputNamed(node,"lacunarity",{{"value",2}}),"lacunarity"),renamedInput(inputNamed(node,"diminish",{{"value",0.5}}),"diminish")})}});
+      const std::string selected=name+"__selected";emitSwitch4(selected,"float",inputNamed(node,"type",{{"value",0}}),{perlin,cell,worley,fractal});
+      emitUnifiedRange(name,selected,inputNamed(node,"outmin",{{"value",0}}),inputNamed(node,"outmax",{{"value",1}}),inputNamed(node,"clampoutput",{{"value",true}}));
+      continue;
+    }
     runtimeNodes.push_back(node);
   }
   std::map<std::string, int> nodeIds;
@@ -1474,6 +1533,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "fractal2dcore") out.op = MaterialXGraphOpCPU::Fractal2D;
     else if (cat == "worleynoise2d") out.op = MaterialXGraphOpCPU::WorleyNoise2D;
     else if (cat == "worleynoise3d") out.op = MaterialXGraphOpCPU::WorleyNoise3D;
+    else if (cat == "fractal3dcore") out.op = MaterialXGraphOpCPU::Fractal3D;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1519,8 +1579,6 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.value[1][2] = 2.0f;
       out.value[1][3] = 3.0f;
     }
-    else if (cat == "fractal3d" || cat == "fractal")
-      out.op = MaterialXGraphOpCPU::Noise3D;
     if (out.op == MaterialXGraphOpCPU::Unknown) {
       if (err) *err = "Unsupported MaterialX graph node category: " + cat;
       return false;
@@ -1542,7 +1600,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         if (((cat == "splitlr" || cat == "splittb") &&
              inputName == "texcoord") ||
             (conditional && inputName == "in2") ||
-            (cat == "fractal2dcore" && inputName == "diminish")) {
+            ((cat == "fractal2dcore" || cat == "fractal3dcore") &&
+             inputName == "diminish")) {
           const std::string source = JsonString(input, "nodename");
           const auto found = nodeIds.find(source);
           if (found != nodeIds.end()) out.auxInput = found->second;
@@ -1639,6 +1698,13 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         else if (cat == "fractal2dcore" && inputName == "texcoord") inputSlot = 0;
         else if (cat == "fractal2dcore" && inputName == "octaves") inputSlot = 1;
         else if (cat == "fractal2dcore" && inputName == "lacunarity") inputSlot = 2;
+        else if (cat == "fractal3dcore" && inputName == "position") inputSlot = 0;
+        else if (cat == "fractal3dcore" && inputName == "octaves") inputSlot = 1;
+        else if (cat == "fractal3dcore" && inputName == "lacunarity") inputSlot = 2;
+        else if ((cat == "noise2d" || cat == "noise3d") &&
+                 (inputName == "texcoord" || inputName == "position")) inputSlot = 0;
+        else if ((cat == "noise2d" || cat == "noise3d") && inputName == "amplitude") inputSlot = 1;
+        else if ((cat == "noise2d" || cat == "noise3d") && inputName == "pivot") inputSlot = 2;
         else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
                  (inputName == "texcoord" || inputName == "position")) inputSlot = 0;
         else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
@@ -1722,12 +1788,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           if (found != nodeIds.end()) out.input[inputSlot] = found->second;
         }
         if (valueIt != input.end()) {
-          if (valueIt->is_number()) {
+          if (valueIt->is_number() || valueIt->is_boolean()) {
             // MaterialX promotes scalar inputs lane-wise when a polymorphic
             // vector/color operation consumes them. Keeping only x made
             // colorcorrect gamma/gain/exposure affect red while green and blue
             // saw the record's unrelated zero/one defaults.
-            const float scalar = valueIt->get<float>();
+            const float scalar = valueIt->is_boolean()
+                                     ? (valueIt->get<bool>() ? 1.0f : 0.0f)
+                                     : valueIt->get<float>();
             for (float& lane : out.value[inputSlot]) lane = scalar;
           }
           else if (valueIt->is_array()) {
@@ -1738,13 +1806,18 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         }
       }
     }
-    if (cat == "fractal2dcore") {
+    if (cat == "fractal2dcore" || cat == "fractal3dcore") {
       out.auxValue[3] = (type.find('4') != std::string::npos) ? 4.0f :
                         (type.find('3') != std::string::npos) ? 3.0f :
                         (type.find('2') != std::string::npos) ? 2.0f : 1.0f;
     }
     if (cat == "worleynoise2d" || cat == "worleynoise3d") {
       out.value[2][1] = (type.find('3') != std::string::npos) ? 3.0f :
+                        (type.find('2') != std::string::npos) ? 2.0f : 1.0f;
+    }
+    if (cat == "noise2d" || cat == "noise3d") {
+      out.value[2][3] = (type.find('4') != std::string::npos) ? 4.0f :
+                        (type.find('3') != std::string::npos) ? 3.0f :
                         (type.find('2') != std::string::npos) ? 2.0f : 1.0f;
     }
     if (uvInput >= 0) out.value[2][3] = static_cast<float>(uvInput);
@@ -2485,7 +2558,8 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
                               node.op == MaterialXGraphOpCPU::IfGreater ||
                               node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
                               node.op == MaterialXGraphOpCPU::IfEqual ||
-                              node.op == MaterialXGraphOpCPU::Fractal2D;
+                              node.op == MaterialXGraphOpCPU::Fractal2D ||
+                              node.op == MaterialXGraphOpCPU::Fractal3D;
     int textureId = usesAuxInput ? node.auxInput : node.textureId;
     if (!usesAuxInput && sourceToTable && textureId >= 0 &&
         static_cast<size_t>(textureId) < sourceToTable->size()) {
@@ -2495,7 +2569,8 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
     if (node.op == MaterialXGraphOpCPU::IfGreater ||
         node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
         node.op == MaterialXGraphOpCPU::IfEqual ||
-        node.op == MaterialXGraphOpCPU::Fractal2D) {
+        node.op == MaterialXGraphOpCPU::Fractal2D ||
+        node.op == MaterialXGraphOpCPU::Fractal3D) {
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 17 + lane] = node.auxValue[lane];
       continue;
@@ -2552,12 +2627,14 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
         node.op == MaterialXGraphOpCPU::IfGreater ||
         node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
         node.op == MaterialXGraphOpCPU::IfEqual ||
-        node.op == MaterialXGraphOpCPU::Fractal2D) {
+        node.op == MaterialXGraphOpCPU::Fractal2D ||
+        node.op == MaterialXGraphOpCPU::Fractal3D) {
       dst[base + 16] = static_cast<float>(node.auxInput);
       if (node.op == MaterialXGraphOpCPU::IfGreater ||
           node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
           node.op == MaterialXGraphOpCPU::IfEqual ||
-          node.op == MaterialXGraphOpCPU::Fractal2D)
+          node.op == MaterialXGraphOpCPU::Fractal2D ||
+          node.op == MaterialXGraphOpCPU::Fractal3D)
         for (int lane = 0; lane < 4; ++lane)
           dst[base + 17 + lane] = node.auxValue[lane];
       continue;

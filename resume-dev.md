@@ -161,6 +161,15 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
     behavior, and Jenkins-derived feature positions. Numerical tests cover 2D
     F1/F2/F3, solid cell color, and 3D F1/F2; the rendered spatial fixture now
     includes live Worley modulation.
+34. Replaced the placeholder hash implementations of `noise2d` and `noise3d`
+    with MaterialX Jenkins/Perlin evaluation for scalar and vector outputs on
+    every renderer backend. Added an exact `fractal3d` bounded-core lowering,
+    including connected diminish and vector amplitude. Added full stdlib
+    lowerings for `unifiednoise2d` and `unifiednoise3d`: frequency/offset,
+    jitter rotation, Perlin/cell/Worley/fractal selection, output fitting, and
+    conditional clamping. Standalone numerical coverage locks every 2D noise
+    selection and 3D fractal selection, while the rendered fixture executes a
+    connected unified Worley graph.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.

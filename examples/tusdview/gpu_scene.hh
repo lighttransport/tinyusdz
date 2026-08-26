@@ -504,6 +504,7 @@ enum class MaterialXGraphOpCPU : uint32_t {
   Fractal2D,
   WorleyNoise2D,
   WorleyNoise3D,
+  Fractal3D,
   Unknown,
 };
 

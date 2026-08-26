@@ -640,9 +640,15 @@ def Xform "World" {
         float outputs:out
       }
       def Shader "Worley" {
-        uniform token info:id = "ND_worleynoise2d_float"
+        uniform token info:id = "ND_unifiednoise2d_float"
         float2 inputs:texcoord.connect = </World/M/NG/CellST.outputs:out>
+        float2 inputs:freq = (1,1)
+        float2 inputs:offset = (0,0)
         float inputs:jitter = 1
+        float inputs:outmin = 0
+        float inputs:outmax = 1
+        bool inputs:clampoutput = 1
+        int inputs:type = 2
         int inputs:style = 0
         float outputs:out
       }
@@ -664,10 +670,40 @@ def Xform "World" {
         float inputs:in2.connect = </World/M/NG/WorleyBias.outputs:out>
         float outputs:out
       }
+      def Shader "Position" {
+        uniform token info:id = "ND_position_vector3"
+        float3 outputs:out
+      }
+      def Shader "Fractal3D" {
+        uniform token info:id = "ND_fractal3d_float"
+        float3 inputs:position.connect = </World/M/NG/Position.outputs:out>
+        float inputs:amplitude = 1
+        int inputs:octaves = 3
+        float inputs:lacunarity = 2
+        float inputs:diminish = 0.5
+        float outputs:out
+      }
+      def Shader "Fractal3DAbs" {
+        uniform token info:id = "ND_absval_float"
+        float inputs:in.connect = </World/M/NG/Fractal3D.outputs:out>
+        float outputs:out
+      }
+      def Shader "Fractal3DBias" {
+        uniform token info:id = "ND_add_float"
+        float inputs:in1.connect = </World/M/NG/Fractal3DAbs.outputs:out>
+        float inputs:in2 = 0.75
+        float outputs:out
+      }
+      def Shader "SpatialNoise" {
+        uniform token info:id = "ND_multiply_float"
+        float inputs:in1.connect = </World/M/NG/AllNoise.outputs:out>
+        float inputs:in2.connect = </World/M/NG/Fractal3DBias.outputs:out>
+        float outputs:out
+      }
       def Shader "Modulated" {
         uniform token info:id = "ND_multiply_float"
         float inputs:in1.connect = </World/M/NG/Wave.outputs:out>
-        float inputs:in2.connect = </World/M/NG/AllNoise.outputs:out>
+        float inputs:in2.connect = </World/M/NG/SpatialNoise.outputs:out>
         float outputs:out
       }
       def Shader "Checker" {

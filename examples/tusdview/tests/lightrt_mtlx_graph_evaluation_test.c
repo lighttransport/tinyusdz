@@ -92,6 +92,13 @@ int main(void) {
       " <worleynoise2d name=\"worley2_distance\" type=\"vector3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"jitter\" type=\"float\" value=\"1\"/><input name=\"style\" type=\"integer\" value=\"0\"/></worleynoise2d>"
       " <worleynoise2d name=\"worley2_solid\" type=\"vector3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"jitter\" type=\"float\" value=\"1\"/><input name=\"style\" type=\"integer\" value=\"1\"/></worleynoise2d>"
       " <worleynoise3d name=\"worley3_distance\" type=\"vector2\"><input name=\"position\" type=\"vector3\" value=\"0.2,0.4,0.7\"/><input name=\"jitter\" type=\"float\" value=\"0.75\"/><input name=\"style\" type=\"integer\" value=\"0\"/></worleynoise3d>"
+      " <noise2d name=\"noise2_color\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"amplitude\" type=\"color3\" value=\"1,2,3\"/><input name=\"pivot\" type=\"color3\" value=\"0.1,0.2,0.3\"/></noise2d>"
+      " <noise3d name=\"noise3_color\" type=\"color3\"><input name=\"position\" type=\"vector3\" value=\"0.2,0.4,0.7\"/><input name=\"amplitude\" type=\"color3\" value=\"1,2,3\"/><input name=\"pivot\" type=\"color3\" value=\"0.1,0.2,0.3\"/></noise3d>"
+      " <unifiednoise2d name=\"unified_perlin\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"freq\" type=\"vector2\" value=\"2,3\"/><input name=\"offset\" type=\"vector2\" value=\"0.1,0.2\"/><input name=\"jitter\" type=\"float\" value=\"0.8\"/><input name=\"outmin\" type=\"float\" value=\"-1\"/><input name=\"outmax\" type=\"float\" value=\"2\"/><input name=\"type\" type=\"integer\" value=\"0\"/></unifiednoise2d>"
+      " <unifiednoise2d name=\"unified_cell\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"jitter\" type=\"float\" value=\"0.8\"/><input name=\"type\" type=\"integer\" value=\"1\"/></unifiednoise2d>"
+      " <unifiednoise2d name=\"unified_worley\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"jitter\" type=\"float\" value=\"0.8\"/><input name=\"type\" type=\"integer\" value=\"2\"/></unifiednoise2d>"
+      " <unifiednoise2d name=\"unified_fractal\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"jitter\" type=\"float\" value=\"0.8\"/><input name=\"type\" type=\"integer\" value=\"3\"/></unifiednoise2d>"
+      " <unifiednoise3d name=\"unified3_fractal\" type=\"float\"><input name=\"position\" type=\"vector3\" value=\"0.2,0.4,0.7\"/><input name=\"jitter\" type=\"float\" value=\"0.8\"/><input name=\"type\" type=\"integer\" value=\"3\"/></unifiednoise3d>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -179,6 +186,20 @@ int main(void) {
               w.v[1], 0.825379968f);
     ok = nearf_eps(w.v[1], 0.825379968f) && ok;
   }
+  ok = check3("noise2d-color", eval_named(&ctx, "noise2_color"),
+              0.377306f, 1.246215f, 0.188793f) && ok;
+  ok = check3("noise3d-color", eval_named(&ctx, "noise3_color"),
+              0.338275f, -0.837646f, 0.669710f) && ok;
+  ok = check1("unified-perlin", eval_named(&ctx, "unified_perlin"),
+              -0.390847325f) && ok;
+  ok = check1("unified-cell", eval_named(&ctx, "unified_cell"),
+              0.860312760f) && ok;
+  ok = check1("unified-worley", eval_named(&ctx, "unified_worley"),
+              0.623227179f) && ok;
+  ok = check1("unified-fractal", eval_named(&ctx, "unified_fractal"),
+              0.475442290f) && ok;
+  ok = check1("unified3-fractal", eval_named(&ctx, "unified3_fractal"),
+              0.079035468f) && ok;
   /* mtlx_eval_node_test must clear memoization between shade points. */
   ctx.uv[0] = 0.8f;
   ctx.uv[1] = 0.9f;
