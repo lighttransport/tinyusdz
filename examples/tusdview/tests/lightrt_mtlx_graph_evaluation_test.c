@@ -64,6 +64,9 @@ int main(void) {
       " <hsvtorgb name=\"rgb\" type=\"color3\"><input name=\"in\" type=\"color3\" nodename=\"hsv\"/></hsvtorgb>"
       " <rotate2d name=\"rotate\" type=\"vector2\"><input name=\"in\" type=\"vector2\" value=\"1,0\"/><input name=\"amount\" type=\"float\" value=\"90\"/></rotate2d>"
       " <ramp4 name=\"quad\" type=\"color3\"><input name=\"valuetl\" type=\"color3\" value=\"1,0,0\"/><input name=\"valuetr\" type=\"color3\" value=\"0,1,0\"/><input name=\"valuebl\" type=\"color3\" value=\"0,0,1\"/><input name=\"valuebr\" type=\"color3\" value=\"1,1,1\"/><input name=\"texcoord\" type=\"vector2\" value=\"0.25,0.75\"/></ramp4>"
+      " <ramp name=\"full_ramp\" type=\"color4\"><input name=\"texcoord\" type=\"vector2\" value=\"0.25,0.5\"/><input name=\"interpolation\" type=\"integer\" value=\"0\"/><input name=\"num_intervals\" type=\"integer\" value=\"3\"/><input name=\"interval1\" type=\"float\" value=\"0\"/><input name=\"color1\" type=\"color4\" value=\"0,0,0,1\"/><input name=\"interval2\" type=\"float\" value=\"0.5\"/><input name=\"color2\" type=\"color4\" value=\"1,0,0,1\"/><input name=\"interval3\" type=\"float\" value=\"1\"/><input name=\"color3\" type=\"color4\" value=\"1,1,1,1\"/></ramp>"
+      " <ramp_gradient name=\"gradient\" type=\"color4\"><input name=\"x\" type=\"float\" value=\"0.25\"/><input name=\"interval1\" type=\"float\" value=\"0\"/><input name=\"interval2\" type=\"float\" value=\"1\"/><input name=\"color1\" type=\"color4\" value=\"0,0,0,1\"/><input name=\"color2\" type=\"color4\" value=\"1,0.5,0,1\"/><input name=\"interpolation\" type=\"integer\" value=\"1\"/><input name=\"prev_color\" type=\"color4\" value=\"0,0,1,1\"/><input name=\"interval_num\" type=\"integer\" value=\"1\"/><input name=\"num_intervals\" type=\"integer\" value=\"2\"/></ramp_gradient>"
+      " <blur name=\"blur\" type=\"color3\"><input name=\"in\" type=\"color3\" nodename=\"src\"/><input name=\"size\" type=\"float\" value=\"0.5\"/><input name=\"filtertype\" type=\"string\" value=\"gaussian\"/></blur>"
       " <switch name=\"pick\" type=\"color3\"><input name=\"which\" type=\"integer\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" nodename=\"quad\"/><input name=\"in3\" type=\"color3\" value=\"0,0,1\"/></switch>"
       " <distance name=\"distance\" type=\"float\"><input name=\"in1\" type=\"vector3\" value=\"1,2,3\"/><input name=\"in2\" type=\"vector3\" value=\"1,5,7\"/></distance>"
       " <reflect name=\"reflect\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,-1,0\"/><input name=\"normal\" type=\"vector3\" value=\"0,1,0\"/></reflect>"
@@ -152,6 +155,12 @@ int main(void) {
   ok = check3("ramp4", eval_named(&ctx, "quad"), 0.375f, 0.25f, 0.75f) &&
        check3("switch-connected", eval_named(&ctx, "pick"), 0.375f, 0.25f,
               0.75f) && ok;
+  ok = check4("ramp", eval_named(&ctx, "full_ramp"), 0.5f, 0.0f, 0.0f,
+              1.0f) &&
+       check4("ramp-gradient", eval_named(&ctx, "gradient"), 0.15625f,
+              0.078125f, 0.0f, 1.0f) && ok;
+  ok = check3("blur-pass-through", eval_named(&ctx, "blur"), 0.2f, 0.4f,
+              0.8f) && ok;
   ok = nearf_eps(eval_named(&ctx, "distance").v[0], 5.0f) &&
        check3("reflect", eval_named(&ctx, "reflect"), 1.0f, 1.0f, 0.0f) &&
        check3("unpremult", eval_named(&ctx, "unpremult"), 0.8f, 0.4f, 0.2f) &&

@@ -1025,6 +1025,45 @@ int main() {
     std::fprintf(stderr, "MaterialX lowered graph routes are incorrect\n");
     return 1;
   }
+  tusdview::DrawMaterialCPU rampMat;
+  rampMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"r","category":"ramp","type":"color4","inputs":[
+      {"name":"texcoord","value":[0.25,0.5]},{"name":"interpolation","value":0},
+      {"name":"num_intervals","value":3},{"name":"interval1","value":0},
+      {"name":"color1","value":[0,0,0,1]},{"name":"interval2","value":0.5},
+      {"name":"color2","value":[1,0,0,1]},{"name":"interval3","value":1},
+      {"name":"color3","value":[1,1,1,1]}]},
+    {"name":"g","category":"ramp_gradient","type":"color4","inputs":[
+      {"name":"x","value":0.25},{"name":"interval1","value":0},
+      {"name":"interval2","value":1},{"name":"color1","value":[0,0,0,1]},
+      {"name":"color2","value":[1,0.5,0,1]},{"name":"interpolation","value":1},
+      {"name":"prev_color","value":[0,0,1,1]},{"name":"interval_num","value":1},
+      {"name":"num_intervals","value":2}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string rampError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&rampMat, &rampError) ||
+      rampMat.materialXGraph.nodes.size() != 29 ||
+      rampMat.materialXGraph.nodes[21].op != tusdview::MaterialXGraphOpCPU::Ramp ||
+      rampMat.materialXGraph.nodes[28].op != tusdview::MaterialXGraphOpCPU::RampGradient ||
+      !Near(rampMat.materialXGraph.nodes[21].auxValue[0], 1.0f) ||
+      !Near(rampMat.materialXGraph.nodes[28].auxValue[0], 22.0f)) {
+    std::fprintf(stderr, "MaterialX ramp lowering failed: %s (nodes=%zu)\n",
+                 rampError.c_str(), rampMat.materialXGraph.nodes.size());
+    return 1;
+  }
+  tusdview::DrawMaterialCPU blurMat;
+  blurMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"source","category":"constant","type":"color3","inputs":[{"name":"value","value":[0.2,0.4,0.8]}]},
+    {"name":"blurred","category":"blur","type":"color3","inputs":[{"name":"in","nodename":"source"},{"name":"size","value":0.5},{"name":"filtertype","value":"gaussian"}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string blurError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&blurMat, &blurError) ||
+      blurMat.materialXGraph.nodes.size() != 2 ||
+      blurMat.materialXGraph.nodes[1].op != tusdview::MaterialXGraphOpCPU::Convert ||
+      blurMat.materialXGraph.nodes[1].input[0] != 0) {
+    std::fprintf(stderr, "MaterialX blur lowering failed: %s\n", blurError.c_str());
+    return 1;
+  }
   tusdview::DrawMaterialCPU aliasesMat;
   aliasesMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"plus","category":"plus","inputs":[{"value":1},{"value":2}]},

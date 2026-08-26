@@ -512,6 +512,9 @@ enum class MaterialXGraphOpCPU : uint32_t {
   TiledCircles,
   TiledCloverleafs,
   TiledHexagons,
+  RampCoordinate,
+  Ramp,
+  RampGradient,
   Unknown,
 };
 

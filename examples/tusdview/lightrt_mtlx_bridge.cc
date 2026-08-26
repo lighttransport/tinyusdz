@@ -1340,6 +1340,33 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       emitCore(regular,false);emitCore(staggered,true);
       runtimeNodes.push_back({{"name",name},{"category","ifequal"},{"type","color3"},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,"staggered",{{"value",false}}),"value1"),nlohmann::json{{"name","value2"},{"value",true}},nlohmann::json{{"name","in1"},{"nodename",staggered}},nlohmann::json{{"name","in2"},{"nodename",regular}}})}});continue;
     }
+    if (cat=="ramp"&&!name.empty()){
+      const std::string st=name+"__st",coord=name+"__coord";
+      nlohmann::json tc=inputNamed(node,"texcoord",{{"name","texcoord"},{"nodename",st}});
+      if(JsonString(tc,"nodename")==st)runtimeNodes.push_back({{"name",st},{"category","texcoord"},{"type","vector2"},{"inputs",nlohmann::json::array()}});
+      runtimeNodes.push_back({{"name",coord},{"category","rampcoord"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(tc,"texcoord"),renamedInput(inputNamed(node,"type",{{"value",0}}),"type")})}});
+      for(int stop=1;stop<=10;stop++){
+        const std::string suffix=std::to_string(stop),interval=name+"__interval"+suffix,color=name+"__color"+suffix;
+        runtimeNodes.push_back({{"name",interval},{"category","convert"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,("interval"+suffix).c_str(),{{"value",stop==1?0:1}}),"in")})}});
+        runtimeNodes.push_back({{"name",color},{"category","convert"},{"type","color4"},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,("color"+suffix).c_str(),{{"value",stop==1?nlohmann::json::array({0,0,0,1}):nlohmann::json::array({1,1,1,1})}}),"in")})}});
+      }
+      runtimeNodes.push_back({{"name",name},{"category","rampcore"},{"type","color4"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","x"},{"nodename",coord}},renamedInput(inputNamed(node,"interpolation",{{"value",1}}),"interpolation"),renamedInput(inputNamed(node,"num_intervals",{{"value",2}}),"num_intervals")})}});continue;
+    }
+    if((cat=="rampgradient"||cat=="ramp_gradient")&&!name.empty()){
+      const char* fields[6]={"interval1","interval2","color1","color2","prev_color","interval_num"};
+      const char* types[6]={"float","float","color4","color4","color4","float"};
+      const nlohmann::json defaults[6]={0,1,nlohmann::json::array({0,0,0,1}),nlohmann::json::array({1,1,1,1}),nlohmann::json::array({0,0,0,1}),1};
+      for(int i=0;i<6;i++){const std::string data=name+"__"+fields[i];runtimeNodes.push_back({{"name",data},{"category","convert"},{"type",types[i]},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,fields[i],{{"value",defaults[i]}}),"in")})}});}
+      runtimeNodes.push_back({{"name",name},{"category","rampgradientcore"},{"type","color4"},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,"x",{{"value",0}}),"x"),renamedInput(inputNamed(node,"interpolation",{{"value",1}}),"interpolation"),renamedInput(inputNamed(node,"num_intervals",{{"value",2}}),"num_intervals")})}});continue;
+    }
+    // MaterialX 1.39's stdlib implementation of blur is intentionally a
+    // pass-through. Preserve its live input connection with a bounded op.
+    if(cat=="blur"&&!name.empty()){
+      runtimeNodes.push_back({{"name",name},{"category","convert"},{"type",type},
+          {"inputs",nlohmann::json::array({renamedInput(
+              inputNamed(node,"in",{{"value",0}}),"in")})}});
+      continue;
+    }
     if (cat == "randomfloat" && !name.empty()) {
       const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
       emitRandomFloat(name, input, inputNamed(node,"seed",{{"value",0}}),
@@ -1558,6 +1585,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat=="tiledcirclescore"||cat=="tiledcirclesstaggeredcore") out.op=MaterialXGraphOpCPU::TiledCircles;
     else if (cat=="tiledcloverleafscore"||cat=="tiledcloverleafsstaggeredcore") out.op=MaterialXGraphOpCPU::TiledCloverleafs;
     else if (cat=="tiledhexagonscore"||cat=="tiledhexagonsstaggeredcore") out.op=MaterialXGraphOpCPU::TiledHexagons;
+    else if(cat=="rampcoord")out.op=MaterialXGraphOpCPU::RampCoordinate;
+    else if(cat=="rampcore")out.op=MaterialXGraphOpCPU::Ramp;
+    else if(cat=="rampgradientcore")out.op=MaterialXGraphOpCPU::RampGradient;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1737,6 +1767,11 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         else if (cat.find("core")!=std::string::npos && inputName=="texcoord") inputSlot=0;
         else if (cat.find("core")!=std::string::npos && inputName=="uvtiling") inputSlot=1;
         else if (cat.find("core")!=std::string::npos && inputName=="uvoffset") inputSlot=2;
+        else if(cat=="rampcoord"&&inputName=="texcoord")inputSlot=0;
+        else if(cat=="rampcoord"&&inputName=="type")inputSlot=1;
+        else if((cat=="rampcore"||cat=="rampgradientcore")&&inputName=="x")inputSlot=0;
+        else if((cat=="rampcore"||cat=="rampgradientcore")&&inputName=="interpolation")inputSlot=1;
+        else if((cat=="rampcore"||cat=="rampgradientcore")&&inputName=="num_intervals")inputSlot=2;
         else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
                  (inputName == "texcoord" || inputName == "position")) inputSlot = 0;
         else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
@@ -1855,6 +1890,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     if(cat=="gridstaggeredcore"||cat=="crosshatchstaggeredcore"||
        cat=="tiledcirclesstaggeredcore"||cat=="tiledcloverleafsstaggeredcore"||
        cat=="tiledhexagonsstaggeredcore")out.auxValue[1]=1.0f;
+    if(cat=="rampcore"||cat=="rampgradientcore"){
+      const auto first=nodeIds.find(name+(cat=="rampcore"?"__interval1":"__interval1"));
+      if(first!=nodeIds.end())out.auxValue[0]=static_cast<float>(first->second);
+    }
     if (uvInput >= 0) out.value[2][3] = static_cast<float>(uvInput);
     graph.nodes.push_back(std::move(out));
   }
@@ -2600,7 +2639,9 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
                               node.op == MaterialXGraphOpCPU::TiledCircles ||
                               node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
                               node.op == MaterialXGraphOpCPU::TiledHexagons;
-    int textureId = usesAuxInput ? node.auxInput : node.textureId;
+    const bool usesRampTable=node.op==MaterialXGraphOpCPU::Ramp||
+                             node.op==MaterialXGraphOpCPU::RampGradient;
+    int textureId = (usesAuxInput||usesRampTable) ? node.auxInput : node.textureId;
     if (!usesAuxInput && sourceToTable && textureId >= 0 &&
         static_cast<size_t>(textureId) < sourceToTable->size()) {
       textureId = (*sourceToTable)[static_cast<size_t>(textureId)];
@@ -2613,7 +2654,7 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
         node.op == MaterialXGraphOpCPU::Fractal3D ||
         node.op == MaterialXGraphOpCPU::Grid || node.op == MaterialXGraphOpCPU::Crosshatch ||
         node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
-        node.op == MaterialXGraphOpCPU::TiledHexagons) {
+        node.op == MaterialXGraphOpCPU::TiledHexagons || usesRampTable) {
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 17 + lane] = node.auxValue[lane];
       continue;
@@ -2674,7 +2715,8 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
         node.op == MaterialXGraphOpCPU::Fractal3D ||
         node.op == MaterialXGraphOpCPU::Grid || node.op == MaterialXGraphOpCPU::Crosshatch ||
         node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
-        node.op == MaterialXGraphOpCPU::TiledHexagons) {
+        node.op == MaterialXGraphOpCPU::TiledHexagons ||
+        node.op == MaterialXGraphOpCPU::Ramp || node.op == MaterialXGraphOpCPU::RampGradient) {
       dst[base + 16] = static_cast<float>(node.auxInput);
       if (node.op == MaterialXGraphOpCPU::IfGreater ||
           node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
@@ -2683,7 +2725,8 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
           node.op == MaterialXGraphOpCPU::Fractal3D ||
           node.op == MaterialXGraphOpCPU::Grid || node.op == MaterialXGraphOpCPU::Crosshatch ||
           node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
-          node.op == MaterialXGraphOpCPU::TiledHexagons)
+          node.op == MaterialXGraphOpCPU::TiledHexagons ||
+          node.op == MaterialXGraphOpCPU::Ramp || node.op == MaterialXGraphOpCPU::RampGradient)
         for (int lane = 0; lane < 4; ++lane)
           dst[base + 17 + lane] = node.auxValue[lane];
       continue;
