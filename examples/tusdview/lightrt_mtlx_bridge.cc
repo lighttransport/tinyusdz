@@ -3252,6 +3252,26 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
   if (!deps.parsed || !deps.hasTextureNodes) return;
 
   const auto& outputs = mat->materialXGraph.output;
+  std::function<bool(int, std::set<int>*)> dependsOnImage =
+      [&](int index, std::set<int>* visiting) {
+        if (index < 0 || static_cast<size_t>(index) >=
+                              mat->materialXGraph.nodes.size()) {
+          return false;
+        }
+        const MaterialXGraphNodeCPU& node =
+            mat->materialXGraph.nodes[static_cast<size_t>(index)];
+        if (node.op == MaterialXGraphOpCPU::Image ||
+            node.op == MaterialXGraphOpCPU::TiledImage ||
+            node.textureId >= 0 || !node.imagePath.empty()) {
+          return true;
+        }
+        if (!visiting->insert(index).second) return false;
+        for (int input : node.input) {
+          if (dependsOnImage(input, visiting)) return true;
+        }
+        visiting->erase(index);
+        return false;
+      };
   std::string xml;
   std::string error;
   if (!BuildMaterialXXmlFromJsonGraph(*mat, &xml, &error)) return;
@@ -3285,7 +3305,11 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
                   {"geometry_normal", &mat->normalTex}};
   for (int laneIndex = 0; laneIndex < 6; ++laneIndex) {
     const Lane& lane = lanes[laneIndex];
-    if (outputs[laneIndex] < 0 || *lane.slot >= 0) continue;
+    std::set<int> visiting;
+    if (outputs[laneIndex] < 0 || *lane.slot >= 0 ||
+        !dependsOnImage(outputs[laneIndex], &visiting)) {
+      continue;
+    }
     DrawTextureCPU tex;
     tex.image.width = kSize;
     tex.image.height = kSize;
@@ -3584,6 +3608,7 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
     DrawLightRtOpenPBRCPU graphParams;
     std::string graphErr;
     if (EvaluateMaterialXJsonGraphForMaterial(*mat, &graphParams, &graphErr)) {
+      const DrawLightRtOpenPBRCPU directParams = p;
       graphParams.hasTextureInputs = p.hasTextureInputs;
       graphParams.hasNormalInput = p.hasNormalInput ||
           TextureDepsIncludeNormal(textureDeps) ||
@@ -3591,6 +3616,42 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
            std::fabs(graphParams.normal[1]) > 0.0f ||
            std::fabs(graphParams.normal[2] - 1.0f) > 1.0e-6f);
       MergeGraphParamsPreservingTextureDeps(graphParams, textureDeps, &p);
+      // A mixed typed/graph material may contain an image on one surface
+      // input (for example displacement) while its other inputs remain
+      // authored directly on the surface shader. The graph evaluator starts
+      // every lane from its own defaults; do not let that unrelated default
+      // replace a correctly extracted typed value. Texture-driven lanes are
+      // preserved by MergeGraphParamsPreservingTextureDeps above, and the
+      // corresponding non-textured typed lanes are restored here.
+      auto graphDrives = [&](const char* name) {
+        return graphDeps.textureInputs.find(name) !=
+               graphDeps.textureInputs.end();
+      };
+      if (mat->baseColorTex < 0 && !graphDrives("base_color")) {
+        std::copy(std::begin(directParams.baseColor),
+                  std::end(directParams.baseColor), std::begin(p.baseColor));
+      }
+      if (mat->metallicTex < 0 && !graphDrives("base_metalness"))
+        p.metalness = directParams.metalness;
+      if (mat->roughnessTex < 0 &&
+          !graphDrives("base_diffuse_roughness") &&
+          !graphDrives("specular_roughness")) {
+        p.diffuseRoughness = directParams.diffuseRoughness;
+        p.specularRoughness = directParams.specularRoughness;
+      }
+      if (mat->opacityTex < 0 && !graphDrives("geometry_opacity"))
+        p.opacity = directParams.opacity;
+      if (mat->emissiveTex < 0 && !graphDrives("emission_color")) {
+        std::copy(std::begin(directParams.emissionColor),
+                  std::end(directParams.emissionColor),
+                  std::begin(p.emissionColor));
+        if (!graphDrives("emission_luminance"))
+          p.emission = directParams.emission;
+      }
+      if (mat->normalTex < 0 && !graphDrives("geometry_normal")) {
+        std::copy(std::begin(directParams.normal), std::end(directParams.normal),
+                  std::begin(p.normal));
+      }
       // A graph evaluator starts from OpenPBR defaults (500 nm film), while a
       // converted Standard Surface with no authored film is explicitly 0 nm.
       // Do not let evaluation of an unrelated graph-connected lane (such as a

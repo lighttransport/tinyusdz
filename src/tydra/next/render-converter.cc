@@ -9082,7 +9082,17 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
   if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
 
   // Base layer
-  ExtractShaderParam(stage, shader_prim, "base", &out->base_weight, scene);
+  // AttributeEval can return a successful zero-valued result for an
+  // unauthored MaterialX input.  That is not the Standard Surface default:
+  // `base` defaults to 1. Preserve the initialized schema default unless the
+  // input is explicitly authored or connected.
+  const bool base_authored =
+      GetAttribute(shader_prim, "inputs:base") != nullptr ||
+      ::tinyusdz::next::AttributeEval(&stage).HasConnection(
+          shader_prim, "inputs:base");
+  if (base_authored) {
+    ExtractShaderParam(stage, shader_prim, "base", &out->base_weight, scene);
+  }
   ExtractShaderParam(stage, shader_prim, "base_color", &out->base_color, scene);
   ExtractShaderParam(stage, shader_prim, "diffuse_roughness",
                      &out->base_roughness, scene);
