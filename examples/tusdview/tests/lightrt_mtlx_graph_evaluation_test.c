@@ -144,6 +144,9 @@ int main(void) {
       " <transformpoint name=\"object_point\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformpoint>"
       " <transformvector name=\"object_vector\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformvector>"
       " <transformnormal name=\"object_normal\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,1,1\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformnormal>"
+      " <transformpoint name=\"view_point\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"fromspace\" type=\"string\" value=\"view\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformpoint>"
+      " <transformvector name=\"view_vector\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"fromspace\" type=\"string\" value=\"view\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformvector>"
+      " <transformnormal name=\"view_normal\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"0,0,1\"/><input name=\"fromspace\" type=\"string\" value=\"view\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformnormal>"
       " <geompropvalue name=\"temperature\" type=\"float\"><input name=\"geomprop\" type=\"string\" value=\"temperature\"/><input name=\"default\" type=\"float\" value=\"2700\"/></geompropvalue>"
       " <geompropvalue name=\"missing_prop\" type=\"float\"><input name=\"geomprop\" type=\"string\" value=\"missing\"/><input name=\"default\" type=\"float\" value=\"12\"/></geompropvalue>"
       " <blackbody name=\"blackbody_warm\" type=\"color3\"><input name=\"temperature\" type=\"float\" value=\"800\"/></blackbody>"
@@ -172,6 +175,10 @@ int main(void) {
                          0,0,.25f,0, -2.5f,-2,-1.75f,1};
     memcpy(ctx.object_to_world,o2w,sizeof(o2w));
     memcpy(ctx.world_to_object,w2o,sizeof(w2o));
+    const float w2v[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 10,20,30,1};
+    const float v2w[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, -10,-20,-30,1};
+    memcpy(ctx.world_to_view,w2v,sizeof(w2v));
+    memcpy(ctx.view_to_world,v2w,sizeof(v2w));
     ctx.has_space_transforms=1;
   }
   ctx.geomprop=lookup_geomprop;
@@ -254,6 +261,9 @@ int main(void) {
        check3("transform-vector",eval_named(&ctx,"object_vector"),2,6,12) &&
        check3("transform-normal",eval_named(&ctx,"object_normal"),
               0.7682213f,0.5121475f,0.3841106f) &&
+       check3("view-point",eval_named(&ctx,"view_point"),-9,-18,-27) &&
+       check3("view-vector",eval_named(&ctx,"view_vector"),1,2,3) &&
+       check3("view-normal",eval_named(&ctx,"view_normal"),0,0,1) &&
        check1("geomprop-callback",eval_named(&ctx,"temperature"),6500.0f) &&
        check1("geomprop-default",eval_named(&ctx,"missing_prop"),12.0f) &&
        check3("roughness-anisotropy",eval_named(&ctx,"rough_aniso"),.5f,.125f,0) &&
