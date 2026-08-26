@@ -323,6 +323,8 @@ Passed:
 - Standalone EDF evaluation now handles the MaterialX `light` wrapper,
   applying its color intensity and EV exposure to the nested EDF; a focused
   wrapper regression passes and matches the bridge lowering.
+- Transform evaluation now has non-identity view→world point, vector, and
+  normal coverage in addition to the existing non-uniform object→world case.
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
@@ -378,8 +380,8 @@ but texture-driven and schema-specific volume validation remains. Separate
 displacement terminals now resolve authored scalar `displacement`, `height`,
 `dispScalar`, or `value` inputs into the next loader's geometry lane.
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
-   matrix-valued transport is implemented across the RT graph paths, while
-   object/world/view transform and Vulkan instance-transform fidelity remain.
+   matrix-valued transport and object/world/view evaluator transforms are
+   covered, while Vulkan instance-transform fidelity remains.
 5. Close texture/projection gaps: camera-aware latlong defaults, derivatives,
    and any true measured-EDF
    profile backend beyond the documented color fallback. Nearest filtering is
