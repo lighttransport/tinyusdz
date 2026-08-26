@@ -38,6 +38,7 @@ not hand-edit generated headers.
 - `f6d9a7af0` Support integer geomprops in next viewer
 - `da8b1ac62` Honor MaterialX texture address modes
 - `43c1cb068` Fix CUDA HIP geomprop path plumbing
+- `e882ce7c1` Preserve lanes in generalized EDF bridge
 
 ## Completed coverage
 
@@ -174,6 +175,9 @@ Passed:
   conversion passed. The aggregate `test_tydra_next` executable still crashes
   in an earlier unrelated `TestChunkedArrayShareCowBudgetFailure` test.
 - `tusdview_lightrt_bridge_test` after latlong default-view fix: passed
+- Generalized-Schlick EDF bridge lowering now preserves inherited closure
+  lanes and applies the runtime angle-dependent emission tint; bridge,
+  evaluator, and CPU graph focused tests pass 3/3.
 - Stable `next` regression after wrapper changes: 40/40 passed
 - Viewer rebuild plus focused geomprop/bridge/ABI/nonmesh/safety checks: 6/6
   passed after generic geomprop stream preservation (`3228d85cd`)
@@ -191,9 +195,9 @@ capability-skipped in this environment.
 
 ## Remaining work, in priority order
 
-1. Finish and validate bridge closure lowering: diffuse, translucent,
-   dielectric, conductor, generalized-Schlick, subsurface, sheen, Chiang hair,
-   EDF, VDF, and add/mix/multiply/layer.
+1. Finish and validate remaining bridge closure fidelity, especially measured
+   EDF behavior and any schema-specific closure parameter mappings; the
+   generalized-Schlick EDF bridge is now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation
    permits it; add vector2 roughness extraction and exact scatter-mode handling.
 3. Complete shader constructors/wrappers: `surface`, `surfacematerial`,
