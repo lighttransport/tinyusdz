@@ -226,6 +226,9 @@ Passed:
   flake/projection/OpenPBR parity, opacity texture alpha, NVIDIA GL warmup,
   next nonmesh extraction, displacement UDIM, texture pipeline, bridge,
   evaluator, graph connection/evaluation, and `unit-test-next`.
+- Final current-HEAD optimized native/viewer/tusdrender regression: 298/298
+  passed in 1109.38 seconds. The 24 unavailable asset/capability profiles
+  remained documented skips; no test failed.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
