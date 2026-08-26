@@ -65,9 +65,24 @@ static unsigned char *load_searchpath(const char *base_dir, const char *rel,
     return NULL;
 }
 
+static int texcache_add(TextureCache *tc, const char *rel_path, int srgb,
+                        unsigned char *px, int w, int h, int comp) {
+    if (tc->ntex >= tc->cap) {
+        tc->cap = tc->cap ? tc->cap * 2 : 16;
+        tc->tex = (Texture *)realloc(tc->tex, sizeof(Texture) * tc->cap);
+    }
+    Texture *t = &tc->tex[tc->ntex];
+    char key[1100];
+    snprintf(key, sizeof(key), "%s|%d", rel_path, srgb ? 1 : 0);
+    t->key = strdup(key);
+    t->pixels = px;
+    t->w = w; t->h = h; t->comp = comp; t->srgb = srgb;
+    return tc->ntex++;
+}
+
 int texcache_get(TextureCache *tc, const char *rel_path, int srgb) {
     if (!rel_path || !rel_path[0]) return -1;
-    char key[1024];
+    char key[1100];
     snprintf(key, sizeof(key), "%s|%d", rel_path, srgb ? 1 : 0);
     for (int i = 0; i < tc->ntex; i++)
         if (strcmp(tc->tex[i].key, key) == 0) return i;
@@ -78,15 +93,7 @@ int texcache_get(TextureCache *tc, const char *rel_path, int srgb) {
     unsigned char *px = load_searchpath(tc->base_dir, rel_path, &w, &h, &comp);
     if (!px) { fprintf(stderr, "texture: failed to load '%s' (searched from '%s')\n", rel_path, tc->base_dir); return -1; }
 
-    if (tc->ntex >= tc->cap) {
-        tc->cap = tc->cap ? tc->cap * 2 : 16;
-        tc->tex = (Texture *)realloc(tc->tex, sizeof(Texture) * tc->cap);
-    }
-    Texture *t = &tc->tex[tc->ntex];
-    t->key = strdup(key);
-    t->pixels = px;
-    t->w = w; t->h = h; t->comp = comp; t->srgb = srgb;
-    return tc->ntex++;
+    return texcache_add(tc, rel_path, srgb, px, w, h, comp);
 }
 
 static int udim_path(const char *pattern, float u, float v, char *path,
@@ -128,8 +135,29 @@ void texcache_preload(TextureCache *tc, const MtlxDoc *doc) {
             strcmp(c, "normalmap") && strcmp(c, "gltf_normalmap")) continue;
         for (int j = 0; j < n->ninput; j++) {
             const MtlxInput *in = &n->inputs[j];
-            if (strcmp(in->name, "file") == 0 && in->value.s)
+            if (strcmp(in->name, "file") != 0 || !in->value.s) continue;
+            const char *token = strstr(in->value.s, "<UDIM>");
+            if (!token) {
                 texcache_get(tc, in->value.s, in->colorspace_srgb);
+                continue;
+            }
+            /* Preload the first ten UDIM rows. This covers the normal 1001
+             * through 1100 layout while keeping startup bounded; absent tiles
+             * are probed silently and become the node's default value. */
+            for (int tile = 1001; tile <= 1100; ++tile) {
+                char path[1024];
+                size_t prefix = (size_t)(token - in->value.s);
+                size_t suffix = strlen(token + 6);
+                if (prefix + 4 + suffix + 1 > sizeof(path)) break;
+                memcpy(path, in->value.s, prefix);
+                snprintf(path + prefix, sizeof(path) - prefix, "%d%s", tile,
+                         token + 6);
+                int w, h, comp;
+                unsigned char *px = load_searchpath(tc->base_dir, path, &w, &h,
+                                                    &comp);
+                if (px) texcache_add(tc, path, in->colorspace_srgb, px, w, h,
+                                     comp);
+            }
         }
     }
     tc->frozen = 1;

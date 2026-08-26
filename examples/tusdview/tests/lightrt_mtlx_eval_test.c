@@ -93,6 +93,15 @@ int main(void) {
   fputc(0, udim_file); fputc(0, udim_file); fputc(255, udim_file);
   fclose(udim_file);
   TextureCache *udim_cache = texcache_create(".");
+  MtlxDoc *udim_doc = mtlx_load_string(
+      "<materialx><image name=\"udim\" type=\"color3\"><input "
+      "name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
+      "</image></materialx>");
+  if (!udim_doc) {
+    texcache_free(udim_cache); remove(udim_1001); remove(udim_1002); return 1;
+  }
+  texcache_preload(udim_cache, udim_doc);
+  mtlx_free(udim_doc);
   float udim_sample[4];
   const int udim_first = texcache_sample_file(
       udim_cache, "lightrt_udim_regression.<UDIM>.ppm", 0, 0.25f, 0.5f,
