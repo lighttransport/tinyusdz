@@ -317,6 +317,11 @@ Passed:
   mode-sweep and per-case paths, preventing llvmpipe RT runs from entering the
   full expensive matrix. A direct Vulkan-RT albedo profile completes; the
   cold coat-normal variant remains hardware-dependent.
+- Fresh full CTest after the harness guard passed tests 1–132, including all
+  smoke, renderer, parity, deformation, MCP, and raster semantic groups. Test
+  133 (`tusdview-texture-semantic-aov-vk-rt`) then stalled in its RT/JIT sweep
+  without output for several minutes and the aggregate run was terminated;
+  therefore no clean 298-test result is claimed for this HEAD.
 - A fresh full configured regression at this HEAD is not clean: the aggregate
   GL/Vulkan parity test reports the unsupported-real-time-lobes comparison
   failing (19.6% of pixels), while its standalone test passes; the subsequent
