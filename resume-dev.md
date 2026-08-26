@@ -119,7 +119,8 @@ and instance-transform fidelity still require separate validation.
 The next converter now retains a separate volume-terminal graph. The tusdview
 bridge converts its density/albedo outputs to absorption/scattering VDF inputs
 and its emission output to EDF, preserving composed MaterialX volume networks
-without conflating them with the surface graph.
+without conflating them with the surface graph; authored emission scale is
+applied in the EDF bridge as well.
 Standalone EDF evaluation now recursively handles add/layer, mix, and
 scalar-or-EDF multiply composition, so composed emission survives into both
 surface and volume evaluation.
