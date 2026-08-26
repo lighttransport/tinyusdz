@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `81f90a574` (`Preserve conical EDF authored direction`)
+- HEAD: `b8dd11c88` (`Match conical EDF angle semantics`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -268,6 +268,12 @@ Passed:
   the complete final regression both passed.
 - Final current-HEAD optimized native/viewer/tusdrender regression after the
   conical-direction fix: 298/298 passed in 1107.55 seconds; the same
+  documented unavailable profiles were skipped.
+- Conical EDF lowering now follows the full-angle cosine-boundary and
+  hard-cutoff/smoothstep semantics, with authored direction preserved
+  (`b8dd11c88`). Numeric evaluator and runtime-graph regressions pass.
+- Final current-HEAD optimized native/viewer/tusdrender regression after the
+  conical angle-semantics fix: 298/298 passed in 1105.89 seconds; the same
   documented unavailable profiles were skipped.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
