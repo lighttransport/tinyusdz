@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `d1f825121` (`Record headless parity completion`)
+- HEAD: `8840d598f` (`Preserve typed lanes in mixed MaterialX graphs`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -425,6 +425,16 @@ Passed:
   NVIDIA-selector rerun cannot reproduce here because only llvmpipe is
   visible, so hardware Vulkan validation remains pending after fixing the
   standard-surface loader mismatch.
+- The mixed-graph lane fix (`8840d598f`) now requires an image dependency on
+  the individual graph output before compatibility baking can neutralize a
+  typed lane. The affected bridge object and viewer relink compile cleanly,
+  and the next loader reports one texture for the standard displacement
+  fixture; software-Vulkan screenshot completion remains unreliable in this
+  environment, so the displacement MAD has not yet been re-certified.
+- The focused LightRT bridge regression executable exits successfully after
+  the mixed-graph fix. The source object and viewer relink both compile; the
+  full displacement-UDIM image comparison still needs a capable, stable
+  Vulkan runtime to certify the pixel MAD and packaged/legacy parity.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
