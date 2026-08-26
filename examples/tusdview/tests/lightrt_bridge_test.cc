@@ -2105,7 +2105,7 @@ int main() {
     "nodegraph":{"nodes":[
       {"name":"measured","category":"measured_edf","type":"EDF","inputs":[
         {"name":"color","value":[0.15,0.35,0.65]},
-        {"name":"measurement","value":"profile.mxd"}]}
+        {"name":"file","type":"filename","value":"profile.ies"}]}
     ],"outputs":[{"name":"shader","type":"EDF","nodename":"measured"}]},
     "connections":[{"input":"edf","output":"shader"}]})json",
       "measured EDF color fallback", {4, 44}) ||
