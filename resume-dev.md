@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `8e9741e02` (`Implement Chiang hair roughness conversion`)
+- HEAD: `af8e14748` (`Test Chiang hair lobe scale outputs`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -391,6 +391,9 @@ Passed:
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
   stalled and produced no completed CTest result. The bounded explicit-device
   preflight remains in place; a clean hardware run is still required.
+- The focused CUDA and HIP semantic-AOV checks both pass on the current build;
+  the CUDA run completed in 26.75 seconds and the HIP run in 14.70 seconds,
+  including texture-backed OpenPBR AOVs and USDZ parity.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -431,12 +434,13 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    nesting, multi-output selectors, missing inputs, type conversion,
    direct Shader-to-Shader graphs, and the 64-node limit.
 7. Run focused CUDA/NVIDIA, HIP, and hardware Vulkan RT checks on capable
-   machines; this environment exposes llvmpipe only, so the RT semantic sweep
-   remains capability-limited and AMD hardware remains unavailable.
+   machines; CUDA and HIP semantic-AOV checks now pass here, while the
+   registered hardware Vulkan RT semantic sweep still requires a clean cold
+   NVIDIA validation run and AMD hardware remains unavailable.
 8. Complete a clean full native/viewer/tusdrender regression after the RT
    semantic harness can finish on a hardware Vulkan environment; the latest
-   non-RT focused matrix is green, while the historical 298/298 result remains
-   useful baseline evidence only.
+   non-RT focused matrix and CUDA/HIP semantic checks are green, while the
+   historical 298/298 result remains useful baseline evidence only.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
