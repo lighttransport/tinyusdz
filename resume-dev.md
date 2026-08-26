@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `f15197683` (`Preserve subsurface BSDF anisotropy`)
+- HEAD: `768131bcd` (`Refresh subsurface resume evidence`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -403,6 +403,10 @@ Passed:
 - Standard `subsurface_bsdf` now preserves authored anisotropy in standalone
   evaluation and copies it into the LightRT OpenPBR block; the focused
   evaluator and bridge checks pass after a clean rebuild.
+- A clean full native rebuild completed after the subsurface transport changes;
+  the five core MaterialX/bridge tests pass 5/5. The non-RT aggregate again
+  reaches `tool-tusdrender-materialx-openpbr-parity` and stalls before CTest
+  reports the child timeout, so no new aggregate pass is claimed.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
