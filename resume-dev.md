@@ -138,6 +138,9 @@ verifies the angular nodes are retained.
 The standalone evaluator and bridge now also preserve standard
 `subsurface_vdf` scattering and anisotropy inputs in the shared volume
 representation, with focused evaluator and direct-VDF bridge coverage.
+MaterialX `light` wrappers in the bridge now forward their EDF closure and
+apply color intensity plus exposure gain to surface and volume emission lanes;
+direct wrapper graph coverage is included.
 Measured EDFs now have explicit regression coverage in the standalone and
 LightRT bridge paths: authored color is preserved as the renderer-neutral
 fallback while unsupported profile filenames remain non-fatal.
