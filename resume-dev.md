@@ -1,106 +1,115 @@
-# Resume: full MaterialX/OpenPBR renderer parity
+# Resume: complete MaterialX/OpenPBR support
 
-Work in this repository and follow `AGENTS.md`. Do not rewrite published
-history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
+Follow `AGENTS.md`. Continue the active objective: finish MaterialX/OpenPBR
+support across tusdview CPU RT, Vulkan RT, CUDA RT, HIP RT, and headless
+tusdrender, including all supported MaterialX node operations and a testable
+CLI/headless path.
 
-## Repository state
+Do not touch the unrelated untracked `run.sh` or `usd-assets`. Do not rewrite
+published history. Regenerate embedded SPIR-V headers from source shaders; do
+not hand-edit generated headers.
+
+## Current repository state
 
 - Branch: `dev`
-- Local HEAD: `8d21ba688` (`Add MaterialX glossiness anisotropy evaluation`)
-- Recorded remote tip: `origin/dev` at `d8068d7fc`
-- The local branch contains the continuing MaterialX renderer work and has not
-  been pushed in this session.
-- Worktree is clean except for this resume update and the unrelated untracked
-  `run.sh` and `usd-assets`.
+- HEAD: `a3e390249` (`Guard Vulkan MaterialX opcode parity`)
+- Upstream: `origin/dev`
+- Worktree: one in-progress tracked change in
+  `examples/tusdview/lightrt_mtlx_bridge.cc`, plus the two unrelated untracked
+  paths above.
+- Recent completed commits:
+  - `4c7e80c07` Complete MaterialX Vulkan RT graph evaluation
+  - `63c5b9a29` Transport MaterialX time context to GPU RT
+  - `60d4b638c` Preserve direct MaterialX GPU graph context
+  - `9643985f8` Add MaterialX surface and volume closures
+  - `4c5b073b0` Add MaterialX hair helper evaluation
 
-## Current renderer coverage
+## Completed coverage
 
-- The bounded 64-node MaterialX graph ABI is shared by tusdview CPU RT,
-  CUDA/HIP RT, Vulkan RT, and headless tusdrender.
-- Arithmetic, conditionals, compositing, channel operations, matrices,
-  procedural noise/patterns, ramps, flake multi-outputs, image/tiled-image,
-  latlong and triplanar projection, normal maps, and spatial bump derivatives
-  are executable rather than topology-only fallbacks.
-- `heighttonormal(image)` uses centered texel differences on CPU, CUDA/HIP,
-  and Vulkan. The standalone evaluator also differentiates connected
-  procedural graphs by reevaluating at neighboring UVs.
-- Runtime shading-context nodes now include position, normal, view direction,
-  time, and frame opcodes. CPU and Vulkan receive real view direction in their
-  primary paths. CUDA/HIP and time/frame still need complete call/API plumbing.
-- The standalone evaluator has object/world/view transform matrices and exact
-  point/vector/inverse-transpose-normal transformations.
-- `geompropvalue` supports arbitrary named lookup through a standalone
-  renderer callback. GPU graph lowering supports standard bounded primvars:
-  st/UV, display color, position, normal, tangent, and bitangent; arbitrary GPU
-  primvar storage is still pending.
-- Upstream-exact physical helpers now include blackbody,
-  roughness_anisotropy, roughness_dual, glossiness_anisotropy, and the two
-  artistic_ior outputs.
-- Standalone `surface_unlit` parameter evaluation exists, but the USD/Tydra
-  legacy and next converters do not yet recognize the unlit shader schema.
-- OpenPBR graph routes already include spatial volume density, albedo, and
-  emission lanes, but closure-based VDF/EDF/volume/volumematerial composition
-  is not implemented.
+- Shared bounded graph ABI: 64 nodes, 48 OpenPBR output lanes, used by CPU,
+  CUDA/HIP, Vulkan RT, and headless LightRT/tusdrender paths.
+- Interactive Vulkan RT implements the current graph opcode set through op 121,
+  including arithmetic, conditionals, compositing, channel operations,
+  procedural noise/Worley/patterns, ramps, flake, textures, normal maps,
+  matrices, blackbody, roughness helpers, artistic IOR, and shading context.
+- Interactive Vulkan RT transports real hit normal, world position, view
+  direction, MaterialX time, and MaterialX frame through the frame packet and
+  push constants.
+- CUDA/HIP graph routes transport normal, position, view direction, time, and
+  frame through their camera ABI; headless Vulkan transports time/frame too.
+- Standalone MaterialX evaluation supports surface, surface_unlit, volume,
+  volumematerial, BSDF/VDF/EDF evaluation, physical helpers, transforms,
+  procedural derivatives, and named geomprop callbacks.
+- Texture paths cover image/tiled-image, UDIM, Ptex, latlong/triplanar,
+  normal maps, mip selection, colorspace handling, and centered height
+  derivatives; edge cases remain incomplete.
 
-## Latest commits
+## Uncommitted work in progress
 
-- `85c2ce717` Add MaterialX spatial bump evaluation
-- `044c6905c` Add MaterialX shading context evaluation
-- `d36bb43d9` Add MaterialX geometry property evaluation
-- `18034da33` Add MaterialX physical helper nodes
-- `4e235e944` Add MaterialX artistic IOR evaluation
-- `8d21ba688` Add MaterialX glossiness anisotropy evaluation
+`examples/tusdview/lightrt_mtlx_bridge.cc` contains a recursive closure-lowering
+pass. It discovers direct `bsdf`/`edf`/`vdf` terminal connections and lowers
+closure leaves plus typed closure composition into ordinary bounded graph nodes
+and OpenPBR lanes. It still needs compile/test validation and fidelity review,
+especially weighted lobe blending and vector roughness extraction.
 
-## Verification in the current session
+Do not commit this change until bridge tests cover direct closure graphs and the
+generated graph is confirmed on CPU, CUDA/HIP, Vulkan RT, and tusdrender.
 
-- Rebuilt tusdview, tusdrender, the bridge test, standalone evaluator test, and
-  standalone graph-evaluation test after the ABI/operator changes.
-- Focused bridge, evaluator, graph-evaluation, and GPU-material-ABI CTests pass.
-- The real Vulkan rendered bump delta passed when NVIDIA Vulkan was visible.
-- llvmpipe produces a flat path-traced image for that hardware semantic case;
-  the fixture now capability-skips it while hermetic derivative tests remain
-  active.
-- The current boot no longer exposes a usable NVIDIA driver or `/dev/kfd`, so
-  strict CUDA/HIP and NVIDIA/AMD hardware reruns remain pending.
-- Generated `trace_materialx_path.spv.h` was rebuilt from
-  `trace_materialx_path.comp`; never edit it by hand.
+## Verified tests after HEAD
 
-## Authoritative upstream inventory
+Passed:
 
-The MaterialX 1.39 `stdlib_defs.mtlx` and `pbrlib_defs.mtlx` currently expose
-175 distinct node categories. The remaining material gaps are concentrated in
-these groups:
+- `tusdview-gpu-material-abi`
+- `tusdview-vk-render` on NVIDIA GeForce RTX 5060 Ti with Vulkan RT
+- `tusdview-texture-semantic-rt-loader-parity-vk-rt` on NVIDIA Vulkan RT
+- both interactive Vulkan shader variants compile via
+  `examples/tusdview/vk/shaders/build-shaders.sh`
+- `tusdview` rebuild after Vulkan shader/context changes
 
-1. Complete GPU context transport for view direction on every CUDA/HIP route,
-   scene time/frame, and named object/world/view transformations. The Vulkan
-   headless path currently flattens geometry and does not preserve object-space
-   transforms, so this needs explicit instance transform data rather than an
-   identity placeholder.
-2. Arbitrary typed/interpolated GPU `geompropvalue` primvars beyond the standard
-   built-ins, including uniform primvars.
-3. Hair helpers: `deon_hair_absorption_from_melanin`,
-   `chiang_hair_absorption_from_color`, and multi-output
-   `chiang_hair_roughness`. Upstream's current OSL roughness implementation is
-   itself a TODO returning zero, which must be handled and documented.
-4. Closure nodes: diffuse/translucent/dielectric/conductor/generalized-Schlick,
-   subsurface, sheen, and Chiang hair BSDFs; uniform/conical/measured EDFs;
-   absorption/anisotropic VDFs; typed closure add/mix/multiply/layer.
-5. Shader constructors and wrappers: `surface`, renderer-wide `surface_unlit`,
-   `surfacematerial`, `volume`, `volumematerial`, `light`, and displacement
-   constructors.
-6. Closure-based spatial volume evaluation and mapping into the renderer's
-   density/albedo/emission representation.
-7. Exact camera-aware latlong default view direction, filtering/derivative,
-   colorspace/alpha, and UDIM-projection edge cases.
-8. Expanded connection/evaluation/render suites for all remaining nodes,
-   multi-output selectors, wrapper nesting, cycles, missing inputs, types, and
-   the 64-node bound.
-9. Strict hardware matrix: Vulkan RT on NVIDIA and AMD, CUDA RT on NVIDIA, HIP
-   RT on AMD, followed by focused and full native regression within the
-   established approximately 20-minute whole-suite budget.
-10. Re-run an exact-range pre-push audit and request fresh authorization before
-    any push.
+The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
+about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
+timeout is 180 seconds so a healthy cold device is not incorrectly skipped.
 
-The active objective remains full MaterialX/OpenPBR support across Vulkan RT,
-CUDA RT, HIP RT, and headless tusdrender. Do not mark it complete from focused
-tests alone.
+The full native regression, CUDA/NVRTC hardware run, HIP/AMD run, and complete
+NVIDIA+AMD Vulkan matrix have not yet been rerun after the latest changes.
+
+## Remaining work, in priority order
+
+1. Finish and validate bridge closure lowering: diffuse, translucent,
+   dielectric, conductor, generalized-Schlick, subsurface, sheen, Chiang hair,
+   EDF, VDF, and add/mix/multiply/layer.
+2. Preserve weighted colors/roughness where the OpenPBR lane representation
+   permits it; add vector2 roughness extraction and exact scatter-mode handling.
+3. Complete shader constructors/wrappers: `surface`, `surfacematerial`,
+   `volume`, `volumematerial`, `light`, displacement, and unlit behavior in
+   legacy and next converters.
+4. Complete arbitrary typed/interpolated/uniform GPU geomprop transport and
+   object/world/view transform matrices, including Vulkan instance transforms.
+5. Close texture/projection gaps: camera-aware latlong defaults, filtering and
+   derivatives, colorspace/alpha, UDIM missing-tile behavior, and measured EDF
+   profile handling.
+6. Add graph connection/evaluation/render tests for closure composition, wrapper
+   nesting, multi-output selectors, cycles, missing inputs, type conversion,
+   direct Shader-to-Shader graphs, and the 64-node limit.
+7. Run focused CUDA/NVIDIA and HIP/AMD tests, then Vulkan RT on NVIDIA and AMD;
+   capability-skip only when documented hardware is genuinely unavailable.
+8. Run optimized full native/viewer/tusdrender regression and keep the suite
+   near the established 20-minute budget.
+9. Update this file with the new HEAD and evidence after each coherent slice.
+10. Before pushing, audit the exact outgoing range for credentials, personal
+    paths, build artifacts, large binaries/assets, and stale generated output;
+    request fresh authorization immediately before `git push`.
+
+## Resuming prompt
+
+Resume the active MaterialX/OpenPBR implementation in this worktree. Read
+`AGENTS.md` and this file first. Inspect the uncommitted
+`lightrt_mtlx_bridge.cc` closure-lowering change, compile it, and add focused
+bridge tests for direct Shader-to-Shader `bsdf`, `edf`, and `vdf` graphs.
+Verify graph output indices and values on the shared CPU/GPU packing path. Run
+focused bridge/evaluator/ABI tests and a cached NVIDIA Vulkan RT semantic test.
+Continue with closure fidelity, wrappers, geomprops/transforms, texture edge
+cases, and the hardware/regression matrix in the numbered order above. Preserve
+the two unrelated untracked paths, do not push without the exact-range
+pre-push audit and fresh authorization, and do not claim completion from
+focused tests alone.
