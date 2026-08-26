@@ -157,8 +157,9 @@ int main(void) {
       " <multiply name=\"artistic_extinction\" type=\"color3\"><input name=\"in1\" type=\"color3\" nodename=\"artistic\" output=\"extinction\"/><input name=\"in2\" type=\"float\" value=\"1\"/></multiply>"
       " <deon_hair_absorption_from_melanin name=\"deon_hair\" type=\"vector3\"><input name=\"melanin_concentration\" type=\"float\" value=\"1\"/><input name=\"melanin_redness\" type=\"float\" value=\"0\"/><input name=\"eumelanin_color\" type=\"color3\" value=\"0.367879441,0.367879441,0.367879441\"/></deon_hair_absorption_from_melanin>"
       " <chiang_hair_absorption_from_color name=\"chiang_absorption\" type=\"vector3\"><input name=\"color\" type=\"color3\" value=\"0.5,0.5,0.5\"/><input name=\"azimuthal_roughness\" type=\"float\" value=\"0.2\"/></chiang_hair_absorption_from_color>"
-      " <chiang_hair_roughness name=\"chiang_roughness\" type=\"multioutput\"><input name=\"longitudinal\" type=\"float\" value=\"0.1\"/><input name=\"azimuthal\" type=\"float\" value=\"0.2\"/></chiang_hair_roughness>"
+      " <chiang_hair_roughness name=\"chiang_roughness\" type=\"multioutput\"><input name=\"longitudinal\" type=\"float\" value=\"0.1\"/><input name=\"azimuthal\" type=\"float\" value=\"0.2\"/><input name=\"scale_TT\" type=\"float\" value=\"0.5\"/><input name=\"scale_TRT\" type=\"float\" value=\"2\"/></chiang_hair_roughness>"
       " <multiply name=\"chiang_tt\" type=\"vector2\"><input name=\"in1\" type=\"vector2\" nodename=\"chiang_roughness\" output=\"roughness_TT\"/><input name=\"in2\" value=\"1\"/></multiply>"
+      " <multiply name=\"chiang_trt\" type=\"vector2\"><input name=\"in1\" type=\"vector2\" nodename=\"chiang_roughness\" output=\"roughness_TRT\"/><input name=\"in2\" value=\"1\"/></multiply>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -277,6 +278,8 @@ int main(void) {
        nearf_eps(eval_named(&ctx,"chiang_roughness").v[1],0.1007600f) &&
        nearf_eps(eval_named(&ctx,"chiang_tt").v[0],0.0016289296f) &&
        nearf_eps(eval_named(&ctx,"chiang_tt").v[1],0.1007600f) && ok;
+  if (!nearf_eps(eval_named(&ctx,"chiang_trt").v[0],0.0260628736f) ||
+      !nearf_eps(eval_named(&ctx,"chiang_trt").v[1],0.1007600f)) ok = 0;
   if (!nearf_eps(eval_named(&ctx,"chiang_roughness").v[0],0.0065157184f) ||
       !nearf_eps(eval_named(&ctx,"chiang_roughness").v[1],0.1007600f) ||
       !nearf_eps(eval_named(&ctx,"chiang_tt").v[0],0.0016289296f) ||
