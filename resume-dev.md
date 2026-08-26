@@ -313,6 +313,9 @@ Passed:
   transmission, subsurface, and sheen compositions; emission remains additive,
   and scalar closure multiplication leaves these colors unchanged. The
   rebuilt focused nine-test matrix remains green.
+- Projection image nodes now honor `filtertype="nearest"` for both
+  `latlongimage` and `triplanarprojection`, with a two-texel evaluator fixture
+  covering both paths.
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
@@ -368,9 +371,10 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
    matrix-valued transport is implemented across the RT graph paths, while
    object/world/view transform and Vulkan instance-transform fidelity remain.
-5. Close texture/projection gaps: camera-aware latlong defaults, filtering and
-   derivatives, colorspace/alpha, UDIM missing-tile behavior, and any true
-   measured-EDF profile backend beyond the documented color fallback.
+5. Close texture/projection gaps: camera-aware latlong defaults, derivatives,
+   colorspace/alpha, UDIM missing-tile behavior, and any true measured-EDF
+   profile backend beyond the documented color fallback. Nearest filtering is
+   now covered for regular, latlong, triplanar, and UDIM-capable image paths.
 6. Add graph connection/evaluation/render tests for closure composition, wrapper
    nesting, multi-output selectors, cycles, missing inputs, type conversion,
    direct Shader-to-Shader graphs, and the 64-node limit.
