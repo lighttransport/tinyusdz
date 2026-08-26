@@ -397,6 +397,9 @@ Passed:
 - Standard `subsurface_bsdf` lowering now preserves its authored `scale` input
   in both standalone evaluation and the bounded closure graph; direct bridge
   and evaluator regressions pass 2/2.
+- Next volume graph conversion now preserves VDF anisotropy as
+  `volume_anisotropy` and reconnects it to the generated anisotropic VDF;
+  the next-volume bridge regression passes with a nonzero authored value.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test

@@ -903,6 +903,9 @@ bool BuildMaterialXXmlFromJsonGraph(const DrawMaterialCPU& mat,
     } else if (density != connections.end()) {
       emit_graph_input("absorption", "color3", density->second);
     }
+    const auto anisotropy = connections.find("volume_anisotropy");
+    if (anisotropy != connections.end())
+      emit_graph_input("anisotropy", "float", anisotropy->second);
     ss << "  </anisotropic_vdf>\n";
     const auto emission = connections.find("volume_emission_color");
     const auto emission_scale = connections.find("volume_emission_scale");

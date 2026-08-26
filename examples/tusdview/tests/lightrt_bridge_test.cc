@@ -2414,20 +2414,25 @@ int main() {
       {"name":"emissionNode","category":"constant","type":"color3",
        "inputs":[{"name":"value","value":[0.2,0.3,0.4]}]},
       {"name":"scaleNode","category":"constant","type":"float",
-       "inputs":[{"name":"value","value":2.0}]}
+       "inputs":[{"name":"value","value":2.0}]},
+      {"name":"anisotropyNode","category":"constant","type":"float",
+       "inputs":[{"name":"value","value":0.25}]}
     ],"outputs":[
       {"name":"volume_density","type":"float","nodename":"densityNode","output":"out"},
       {"name":"volume_emission_color","type":"color3","nodename":"emissionNode","output":"out"},
-      {"name":"volume_emission_scale","type":"float","nodename":"scaleNode","output":"out"}]},
+      {"name":"volume_emission_scale","type":"float","nodename":"scaleNode","output":"out"},
+      {"name":"volume_anisotropy","type":"float","nodename":"anisotropyNode","output":"out"}]},
     "connections":[{"input":"volume_density","output":"volume_density"},
       {"input":"volume_emission_color","output":"volume_emission_color"},
-      {"input":"volume_emission_scale","output":"volume_emission_scale"}]})json";
+      {"input":"volume_emission_scale","output":"volume_emission_scale"},
+      {"input":"volume_anisotropy","output":"volume_anisotropy"}]})json";
   nextVolumeGraph.hasVolumeOutput = true;
   tusdview::BakeRealtimePbrMaterial(&nextVolumeGraph);
   if (!nextVolumeGraph.hasVolumeOutput ||
       !Near(nextVolumeGraph.volumeDensity, 0.75f) ||
       !Near(nextVolumeGraph.volumeEmission[0], 0.4f) ||
-      !Near(nextVolumeGraph.volumeEmission[2], 0.8f)) {
+      !Near(nextVolumeGraph.volumeEmission[2], 0.8f) ||
+      !Near(nextVolumeGraph.volumeAnisotropy, 0.25f)) {
     std::fprintf(stderr, "next MaterialX volume graph evaluation failed (density=%g)\n",
                  nextVolumeGraph.volumeDensity);
     return 1;
