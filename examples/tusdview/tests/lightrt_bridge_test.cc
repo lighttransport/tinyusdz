@@ -2016,6 +2016,17 @@ int main() {
       "direct conductor", {0, 1, 2, 20})) {
     return 1;
   }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"schlick","category":"generalized_schlick_bsdf","type":"BSDF","inputs":[
+        {"name":"weight","value":0.5},{"name":"color0","value":[0.2,0.3,0.4]},
+        {"name":"color90","value":[0.8,0.7,0.6]},
+        {"name":"roughness","value":0.2},{"name":"scatter_mode","value":"RT"}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"schlick"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "generalized Schlick RT", {9, 10, 11, 12, 2})) {
+    return 1;
+  }
 
   const char* volumeXml =
       "<materialx version=\"1.39\">"
