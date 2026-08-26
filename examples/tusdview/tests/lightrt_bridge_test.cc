@@ -2119,6 +2119,16 @@ int main() {
   }
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
+      {"name":"subsurface","category":"subsurface_vdf","type":"VDF","inputs":[
+        {"name":"scattering","value":[0.3,0.5,0.7]},
+        {"name":"anisotropy","value":0.2}]}
+    ],"outputs":[{"name":"shader","type":"VDF","nodename":"subsurface"}]},
+    "connections":[{"input":"vdf","output":"shader"}]})json",
+      "direct subsurface VDF", {40, 41})) {
+    return 1;
+  }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
       {"name":"d","category":"oren_nayar_diffuse_bsdf","type":"BSDF","inputs":[{"name":"weight","value":0.8},{"name":"color","value":[0.8,0.2,0.1]}]},
       {"name":"g","category":"dielectric_bsdf","type":"BSDF","inputs":[{"name":"weight","value":0.6},{"name":"tint","value":[0.1,0.2,0.9]},{"name":"ior","value":1.45}]},
       {"name":"blend","category":"mix","type":"BSDF","inputs":[{"name":"bg","nodename":"d"},{"name":"fg","nodename":"g"},{"name":"mix","value":0.25}]}

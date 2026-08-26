@@ -135,6 +135,9 @@ non-fatal.
 Conical EDF bridge lowering preserves normal/view angular falloff through acos,
 degree conversion, and clamped runtime graph arithmetic; bridge coverage
 verifies the angular nodes are retained.
+The standalone evaluator and bridge now also preserve standard
+`subsurface_vdf` scattering and anisotropy inputs in the shared volume
+representation, with focused evaluator and direct-VDF bridge coverage.
 Measured EDFs now have explicit regression coverage in the standalone and
 LightRT bridge paths: authored color is preserved as the renderer-neutral
 fallback while unsupported profile filenames remain non-fatal.

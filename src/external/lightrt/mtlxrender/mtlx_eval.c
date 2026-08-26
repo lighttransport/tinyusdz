@@ -1125,10 +1125,11 @@ static void eval_vdf(ShadeContext *ctx, const MtlxNode *n, float scale,
         eval_vdf(ctx, a ? a : b, scale * f, out, depth + 1);
         return;
     }
-    if (!strcmp(cat, "absorption_vdf") || !strcmp(cat, "anisotropic_vdf")) {
+    if (!strcmp(cat, "absorption_vdf") || !strcmp(cat, "anisotropic_vdf") ||
+        !strcmp(cat, "subsurface_vdf")) {
         out->absorption = v3_add(out->absorption,
             v3_scale(in_color(ctx, n, "absorption", v3_splat(0.0f)), scale));
-        if (!strcmp(cat, "anisotropic_vdf")) {
+        if (!strcmp(cat, "anisotropic_vdf") || !strcmp(cat, "subsurface_vdf")) {
             out->scattering = v3_add(out->scattering,
                 v3_scale(in_color(ctx, n, "scattering", v3_splat(0.0f)), scale));
             out->anisotropy = in_float(ctx, n, "anisotropy", out->anisotropy);
