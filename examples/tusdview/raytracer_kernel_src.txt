@@ -255,6 +255,14 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
       else if (op==81||op==82) { float q=op==81?b.x:1.f-b.x;values[i]=mk4(a.x*q,a.y*q,a.z*q,a.w*q);}
       else if (op==83) values[i]=mk4(1,1,1,1);
       else if (op==84) values[i]=mk4(0,1,0,1);
+      else if (op==85) values[i]=mk4(b.x+c.x*(fabsf(a.x-b.x)-b.x),b.y+c.y*(fabsf(a.y-b.y)-b.y),b.z+c.z*(fabsf(a.z-b.z)-b.z),b.w+c.w*(fabsf(a.w-b.w)-b.w));
+      else if (op>=86 && op<=91) { F4 q;
+        if(op==86) q=mk4(a.x*b.w,a.y*b.w,a.z*b.w,a.w*b.w);
+        else if(op==87) q=mk4(b.x*a.w,b.y*a.w,b.z*a.w,b.w*a.w);
+        else if(op==89) q=mk4(a.x*(1.f-b.w),a.y*(1.f-b.w),a.z*(1.f-b.w),a.w*(1.f-b.w));
+        else if(op==91) { float s=a.w+b.w; if(s<=1.f) q=mk4(a.x+b.x,a.y+b.y,a.z+b.z,fminf(s,1.f)); else if(fabsf(b.w)<1e-6f) q=mk4(0,0,0,fminf(s,1.f)); else { float x=(1.f-a.w)/b.w;q=mk4(a.x+b.x*x,a.y+b.y*x,a.z+b.z*x,fminf(s,1.f)); } }
+        else { float x=1.f-a.w;q=mk4((op==88?a.x*a.w:a.x)+b.x*x,(op==88?a.y*a.w:a.y)+b.y*x,(op==88?a.z*a.w:a.z)+b.z*x,a.w+b.w*x); }
+        values[i]=mk4(b.x+c.x*(q.x-b.x),b.y+c.y*(q.y-b.y),b.z+c.z*(q.z-b.z),b.w+c.w*(q.w-b.w)); }
       else values[i]=fallback;
   }
   (void)face;

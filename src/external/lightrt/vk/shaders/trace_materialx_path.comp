@@ -162,6 +162,14 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position, out vec4 rout
     else if(op==81||op==82)value[i]=a*(op==81?b.x:1.0-b.x);
     else if(op==83)value[i]=vec4(1);
     else if(op==84)value[i]=vec4(normalize(cross(normal,abs(normal.z)<0.9?vec3(0,0,1):vec3(0,1,0))),1);
+    else if(op==85)value[i]=mix(b,abs(a-b),c);
+    else if(op>=86&&op<=91){vec4 q;
+      if(op==86)q=a*b.w;
+      else if(op==87)q=b*a.w;
+      else if(op==89)q=a*(1.0-b.w);
+      else if(op==91){float s=a.w+b.w;if(s<=1.0)q=vec4(a.rgb+b.rgb,min(s,1.0));else if(abs(b.w)<1e-6)q=vec4(0,0,0,min(s,1.0));else q=vec4(a.rgb+b.rgb*((1.0-a.w)/b.w),min(s,1.0));}
+      else q=vec4((op==88?a.rgb*a.w:a.rgb)+b.rgb*(1.0-a.w),a.w+b.w*(1.0-a.w));
+      value[i]=mix(b,q,c);}
     else value[i]=a;
   }
   for(uint r=0u;r<GRAPH_OUTPUTS;++r){int wanted=int(round(graphs[gb+1u+r]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}

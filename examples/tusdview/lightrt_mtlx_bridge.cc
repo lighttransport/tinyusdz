@@ -1130,6 +1130,102 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       }
       continue;
     }
+    if (cat == "trianglewave" && !name.empty()) {
+      const nlohmann::json input = inputNamed(node, "in", {{"value", 0.0}});
+      const std::string abs1 = name + "__abs1";
+      const std::string mod = name + "__mod";
+      const std::string sub = name + "__sub";
+      const std::string abs2 = name + "__abs2";
+      runtimeNodes.push_back({{"name", abs1}, {"category", "absval"}, {"type", "float"},
+          {"inputs", nlohmann::json::array({renamedInput(input, "in")})}});
+      runtimeNodes.push_back({{"name", mod}, {"category", "modulo"}, {"type", "float"},
+          {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"nodename", abs1}},
+              nlohmann::json{{"name", "in2"}, {"value", 1.0}}})}});
+      runtimeNodes.push_back({{"name", sub}, {"category", "subtract"}, {"type", "float"},
+          {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"nodename", mod}},
+              nlohmann::json{{"name", "in2"}, {"value", 0.5}}})}});
+      runtimeNodes.push_back({{"name", abs2}, {"category", "absval"}, {"type", "float"},
+          {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in"}, {"nodename", sub}}})}});
+      runtimeNodes.push_back({{"name", name}, {"category", "subtract"}, {"type", "float"},
+          {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"value", 0.5}},
+              nlohmann::json{{"name", "in2"}, {"nodename", abs2}}})}});
+      continue;
+    }
+    if (cat == "checkerboard" && !name.empty()) {
+      const std::string st=name+"__st",mul=name+"__mul",add=name+"__add";
+      const std::string flr=name+"__floor",ux=name+"__x",vy=name+"__y";
+      const std::string sum=name+"__sum",parity=name+"__parity";
+      nlohmann::json tc=inputNamed(node,"texcoord",{{"name","texcoord"},{"nodename",st}});
+      if (JsonString(tc,"nodename")==st)
+        runtimeNodes.push_back({{"name",st},{"category","texcoord"},{"type","vector2"},{"inputs",nlohmann::json::array()}});
+      runtimeNodes.push_back({{"name",mul},{"category","multiply"},{"type","vector2"},{"inputs",nlohmann::json::array({renamedInput(tc,"in1"),renamedInput(inputNamed(node,"uvtiling",{{"value",nlohmann::json::array({8,8})}}),"in2")})}});
+      runtimeNodes.push_back({{"name",add},{"category","add"},{"type","vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",mul}},renamedInput(inputNamed(node,"uvoffset",{{"value",nlohmann::json::array({0,0})}}),"in2")})}});
+      runtimeNodes.push_back({{"name",flr},{"category","floor"},{"type","vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",add}}})}});
+      for (const auto& lane : {std::pair<std::string,int>{ux,0},{vy,1}})
+        runtimeNodes.push_back({{"name",lane.first},{"category","extract"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",flr}},nlohmann::json{{"name","index"},{"value",lane.second}}})}});
+      runtimeNodes.push_back({{"name",sum},{"category","add"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",ux}},nlohmann::json{{"name","in2"},{"nodename",vy}}})}});
+      runtimeNodes.push_back({{"name",parity},{"category","modulo"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",sum}},nlohmann::json{{"name","in2"},{"value",2}}})}});
+      runtimeNodes.push_back({{"name",name},{"category","select"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",parity}},renamedInput(inputNamed(node,"color2",{{"value",nlohmann::json::array({0,0,0})}}),"in1"),renamedInput(inputNamed(node,"color1",{{"value",nlohmann::json::array({1,1,1})}}),"in2")})}});
+      continue;
+    }
+    if (cat == "circle" && !name.empty()) {
+      const std::string st = name + "__st";
+      const std::string delta = name + "__delta";
+      const std::string distance2 = name + "__distance2";
+      const std::string radius2 = name + "__radius2";
+      nlohmann::json tc = inputNamed(
+          node, "texcoord", {{"name", "texcoord"}, {"nodename", st}});
+      if (JsonString(tc, "nodename") == st)
+        runtimeNodes.push_back({{"name", st}, {"category", "texcoord"},
+            {"type", "vector2"}, {"inputs", nlohmann::json::array()}});
+      runtimeNodes.push_back({{"name", delta}, {"category", "subtract"},
+          {"type", "vector2"}, {"inputs", nlohmann::json::array({
+              renamedInput(tc, "in1"),
+              renamedInput(inputNamed(node, "center",
+                  {{"value", nlohmann::json::array({0.0, 0.0})}}), "in2")})}});
+      runtimeNodes.push_back({{"name", distance2}, {"category", "dotproduct"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"nodename", delta}},
+              nlohmann::json{{"name", "in2"}, {"nodename", delta}}})}});
+      const nlohmann::json radius = inputNamed(node, "radius", {{"value", 0.5}});
+      runtimeNodes.push_back({{"name", radius2}, {"category", "multiply"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              renamedInput(radius, "in1"), renamedInput(radius, "in2")})}});
+      runtimeNodes.push_back({{"name", name}, {"category", "ifgreater"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "value1"}, {"nodename", distance2}},
+              nlohmann::json{{"name", "value2"}, {"nodename", radius2}},
+              nlohmann::json{{"name", "in1"}, {"value", 0.0}},
+              nlohmann::json{{"name", "in2"}, {"value", 1.0}}})}});
+      continue;
+    }
+    if (cat == "line" && !name.empty()) {
+      const std::string st=name+"__st",delta=name+"__delta",pa=name+"__pa";
+      const std::string ba=name+"__ba",dotpa=name+"__dotpa",dotba=name+"__dotba";
+      const std::string ratio=name+"__ratio",bounded=name+"__bounded";
+      const std::string nearest=name+"__nearest",distance=name+"__distance";
+      nlohmann::json tc=inputNamed(node,"texcoord",{{"name","texcoord"},{"nodename",st}});
+      if(JsonString(tc,"nodename")==st)
+        runtimeNodes.push_back({{"name",st},{"category","texcoord"},{"type","vector2"},{"inputs",nlohmann::json::array()}});
+      const nlohmann::json center=inputNamed(node,"center",{{"value",nlohmann::json::array({0,0})}});
+      const nlohmann::json p1=inputNamed(node,"point1",{{"value",nlohmann::json::array({0.25,0.25})}});
+      const nlohmann::json p2=inputNamed(node,"point2",{{"value",nlohmann::json::array({0.75,0.75})}});
+      runtimeNodes.push_back({{"name",delta},{"category","subtract"},{"type","vector2"},{"inputs",nlohmann::json::array({renamedInput(tc,"in1"),renamedInput(center,"in2")})}});
+      runtimeNodes.push_back({{"name",pa},{"category","subtract"},{"type","vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",delta}},renamedInput(p1,"in2")})}});
+      runtimeNodes.push_back({{"name",ba},{"category","subtract"},{"type","vector2"},{"inputs",nlohmann::json::array({renamedInput(p2,"in1"),renamedInput(p1,"in2")})}});
+      runtimeNodes.push_back({{"name",dotpa},{"category","dotproduct"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",pa}},nlohmann::json{{"name","in2"},{"nodename",ba}}})}});
+      runtimeNodes.push_back({{"name",dotba},{"category","dotproduct"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",ba}},nlohmann::json{{"name","in2"},{"nodename",ba}}})}});
+      runtimeNodes.push_back({{"name",ratio},{"category","divide"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",dotpa}},nlohmann::json{{"name","in2"},{"nodename",dotba}}})}});
+      runtimeNodes.push_back({{"name",bounded},{"category","clamp"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",ratio}}})}});
+      runtimeNodes.push_back({{"name",nearest},{"category","multiply"},{"type","vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",ba}},nlohmann::json{{"name","in2"},{"nodename",bounded}}})}});
+      runtimeNodes.push_back({{"name",distance},{"category","distance"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",pa}},nlohmann::json{{"name","in2"},{"nodename",nearest}}})}});
+      runtimeNodes.push_back({{"name",name},{"category","ifgreater"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","value1"},{"nodename",distance}},renamedInput(inputNamed(node,"radius",{{"value",0.1}}),"value2"),nlohmann::json{{"name","in1"},{"value",0}},nlohmann::json{{"name","in2"},{"value",1}}})}});
+      continue;
+    }
     runtimeNodes.push_back(node);
   }
   std::map<std::string, int> nodeIds;
@@ -1254,6 +1350,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.op = MaterialXGraphOpCPU::GeomColor;
     }
     else if (cat == "bitangent") out.op = MaterialXGraphOpCPU::Bitangent;
+    else if (cat == "difference" || cat == "in" || cat == "mask" ||
+             cat == "matte" || cat == "out" || cat == "over" ||
+             cat == "disjointover") {
+      out.op = cat == "difference" ? MaterialXGraphOpCPU::Difference :
+               cat == "in" ? MaterialXGraphOpCPU::In :
+               cat == "mask" ? MaterialXGraphOpCPU::Mask :
+               cat == "matte" ? MaterialXGraphOpCPU::Matte :
+               cat == "out" ? MaterialXGraphOpCPU::Out :
+               cat == "over" ? MaterialXGraphOpCPU::Over :
+               MaterialXGraphOpCPU::DisjointOver;
+      out.value[2][0] = out.value[2][1] =
+          out.value[2][2] = out.value[2][3] = 1.0f;
+    }
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1411,14 +1520,24 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         else if (conditional && inputName == "value1") inputSlot = 0;
         else if (conditional && inputName == "value2") inputSlot = 1;
         else if (conditional && inputName == "in1") inputSlot = 2;
+        else if (cat == "select" && (inputName == "in" || inputName == "which"))
+          inputSlot = 0;
+        else if (cat == "select" && inputName == "in1") inputSlot = 1;
+        else if (cat == "select" && inputName == "in2") inputSlot = 2;
         else if ((cat == "screen" || cat == "overlay" || cat == "burn" ||
-                  cat == "dodge") && inputName == "fg")
+                  cat == "dodge" || cat == "difference" || cat == "in" ||
+                  cat == "mask" || cat == "matte" || cat == "out" ||
+                  cat == "over" || cat == "disjointover") && inputName == "fg")
           inputSlot = 0;
         else if ((cat == "screen" || cat == "overlay" || cat == "burn" ||
-                  cat == "dodge") && inputName == "bg")
+                  cat == "dodge" || cat == "difference" || cat == "in" ||
+                  cat == "mask" || cat == "matte" || cat == "out" ||
+                  cat == "over" || cat == "disjointover") && inputName == "bg")
           inputSlot = 1;
         else if ((cat == "screen" || cat == "overlay" || cat == "burn" ||
-                  cat == "dodge") && inputName == "mix")
+                  cat == "dodge" || cat == "difference" || cat == "in" ||
+                  cat == "mask" || cat == "matte" || cat == "out" ||
+                  cat == "over" || cat == "disjointover") && inputName == "mix")
           inputSlot = 2;
         else if (cat == "ramplr" && inputName == "valuel")
           inputSlot = 0;

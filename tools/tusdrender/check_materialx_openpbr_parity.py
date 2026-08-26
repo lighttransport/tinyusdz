@@ -495,6 +495,69 @@ def Xform "World" {
 ''', encoding="utf-8")
 
 
+def write_pattern_fixture(path: pathlib.Path) -> None:
+    """Exercise lowered checkerboard and triangle-wave nodes at hit UVs."""
+    path.write_text('''#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def Mesh "Card" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    texCoord2f[] primvars:st = [(0,0), (1,0), (1,1), (0,1)] (interpolation = "vertex")
+    rel material:binding = </World/M>
+  }
+  def Material "M" (prepend apiSchemas = ["MaterialXConfigAPI"]) {
+    token outputs:surface.connect = </World/M/P.outputs:surface>
+    token outputs:mtlx:surface.connect = </World/M/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      float inputs:base_weight.connect = </World/M/NG.outputs:weight>
+      color3f inputs:base_color.connect = </World/M/NG.outputs:base>
+      float inputs:specular_weight = 0
+      token outputs:surface
+    }
+    def NodeGraph "NG" {
+      color3f outputs:base.connect = </World/M/NG/Checker.outputs:out>
+      float outputs:weight.connect = </World/M/NG/Wave.outputs:out>
+      def Shader "ST" {
+        uniform token info:id = "ND_texcoord_vector2"
+        float2 outputs:out
+      }
+      def Shader "X" {
+        uniform token info:id = "ND_extract_vector2"
+        float2 inputs:in.connect = </World/M/NG/ST.outputs:out>
+        int inputs:index = 0
+        float outputs:out
+      }
+      def Shader "ScaledX" {
+        uniform token info:id = "ND_multiply_float"
+        float inputs:in1.connect = </World/M/NG/X.outputs:out>
+        float inputs:in2 = 2
+        float outputs:out
+      }
+      def Shader "Wave" {
+        uniform token info:id = "ND_trianglewave_float"
+        float inputs:in.connect = </World/M/NG/ScaledX.outputs:out>
+        float outputs:out
+      }
+      def Shader "Checker" {
+        uniform token info:id = "ND_checkerboard_color3"
+        color3f inputs:color1 = (0.9,0.02,0.02)
+        color3f inputs:color2 = (0.02,0.02,0.9)
+        float2 inputs:uvtiling = (2,2)
+        float2 inputs:uvoffset = (0,0)
+        float2 inputs:texcoord.connect = </World/M/NG/ST.outputs:out>
+        color3f outputs:out
+      }
+    }
+  }
+  def DistantLight "Key" { float inputs:intensity = 0.5 }
+}
+''', encoding="utf-8")
+
+
 def main() -> int:
     if len(sys.argv) not in (2, 3):
         print(f"usage: {sys.argv[0]} TUSDRENDER [REPO_ROOT]", file=sys.stderr)
@@ -537,11 +600,13 @@ def main() -> int:
         extended_ops = out_dir / "extended-operators.usda"
         ramps = out_dir / "ramps.usda"
         splits = out_dir / "splits.usda"
+        patterns = out_dir / "patterns.usda"
         write_displacement_fixture(displacement)
         write_swizzle_fixture(swizzle)
         write_extended_operator_fixture(extended_ops)
         write_ramp_fixture(ramps)
         write_split_fixture(splits)
+        write_pattern_fixture(patterns)
         available = set()
         grid_images = {}
         grid_means = {}
@@ -689,6 +754,23 @@ def main() -> int:
             if dominant != {0, 1, 2}:
                 fail(f"{backend} did not preserve LR/TB split regions: {means}", log)
             print(f"  {backend}: LR/TB split quadrants=" + " ".join(
+                "%.1f,%.1f,%.1f" % value for value in means))
+
+        print("=== tusdrender lowered MaterialX patterns ===")
+        for backend in sorted(available):
+            output = out_dir / f"patterns-{backend}.png"
+            log, ok = render(binary, patterns, backend, output)
+            if not ok:
+                fail(f"{backend} disappeared during pattern validation")
+            require_topology(log, backend)
+            means = quadrant_means(output, read_image)
+            dominant = [max(range(3), key=lambda channel: value[channel])
+                        for value in means]
+            if dominant[0] != dominant[3] or dominant[1] != dominant[2] or \
+                    dominant[0] == dominant[1] or set(dominant) != {0, 2}:
+                fail(f"{backend} did not execute checkerboard lowering: {means}", log)
+            check_nonblank(output, read_image)
+            print(f"  {backend}: checkerboard/trianglewave quadrants=" + " ".join(
                 "%.1f,%.1f,%.1f" % value for value in means))
 
         print("=== tusdrender OpenPBR lobe golden images ===")

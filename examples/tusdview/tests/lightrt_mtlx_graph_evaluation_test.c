@@ -18,6 +18,11 @@ static int check3(const char *name, MtlxValue value, float x, float y, float z) 
   return 1;
 }
 
+static int check4(const char *name, MtlxValue value, float x, float y, float z,
+                  float w) {
+  return check3(name, value, x, y, z) && nearf_eps(value.v[3], w);
+}
+
 static MtlxValue eval_named(ShadeContext *ctx, const char *name) {
   int id = mtlx_find_node(ctx->doc, -1, name);
   for (int graph = 0; id < 0 && graph < ctx->doc->ngraph; ++graph)
@@ -58,6 +63,14 @@ int main(void) {
       " <mincomponent name=\"mincomp\" type=\"float\"><input name=\"in\" type=\"color3\" value=\"0.8,0.2,0.5\"/></mincomponent>"
       " <xor name=\"xor\" type=\"boolean\"><input name=\"in1\" type=\"boolean\" value=\"true\"/><input name=\"in2\" type=\"boolean\" value=\"false\"/></xor>"
       " <inside name=\"inside\" type=\"color3\"><input name=\"in\" type=\"color3\" value=\"0.2,0.4,0.8\"/><input name=\"mask\" type=\"float\" value=\"0.25\"/></inside>"
+      " <trianglewave name=\"tri_wave\" type=\"float\"><input name=\"in\" type=\"float\" value=\"1.25\"/></trianglewave>"
+      " <checkerboard name=\"checker\" type=\"color3\"><input name=\"color1\" type=\"color3\" value=\"1,0,0\"/><input name=\"color2\" type=\"color3\" value=\"0,0,1\"/><input name=\"uvtiling\" type=\"vector2\" value=\"2,2\"/><input name=\"texcoord\" type=\"vector2\" value=\"0.6,0.1\"/></checkerboard>"
+      " <circle name=\"circle\" type=\"float\"><input name=\"center\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"radius\" type=\"float\" value=\"0.25\"/><input name=\"texcoord\" type=\"vector2\" value=\"0.6,0.6\"/></circle>"
+      " <line name=\"line\" type=\"float\"><input name=\"point1\" type=\"vector2\" value=\"0.25,0.25\"/><input name=\"point2\" type=\"vector2\" value=\"0.75,0.75\"/><input name=\"radius\" type=\"float\" value=\"0.1\"/><input name=\"texcoord\" type=\"vector2\" value=\"0.55,0.5\"/></line>"
+      " <difference name=\"difference\" type=\"color3\"><input name=\"fg\" type=\"color3\" value=\"0.8,0.1,0.4\"/><input name=\"bg\" type=\"color3\" value=\"0.2,0.5,0.1\"/><input name=\"mix\" type=\"float\" value=\"0.5\"/></difference>"
+      " <over name=\"over\" type=\"color4\"><input name=\"fg\" type=\"color4\" value=\"0.4,0.1,0.2,0.5\"/><input name=\"bg\" type=\"color4\" value=\"0.2,0.4,0.6,0.25\"/></over>"
+      " <matte name=\"matte\" type=\"color4\"><input name=\"fg\" type=\"color4\" value=\"0.4,0.1,0.2,0.5\"/><input name=\"bg\" type=\"color4\" value=\"0.2,0.4,0.6,0.25\"/></matte>"
+      " <disjointover name=\"disjoint\" type=\"color4\"><input name=\"fg\" type=\"color4\" value=\"0.4,0.1,0.2,0.8\"/><input name=\"bg\" type=\"color4\" value=\"0.2,0.4,0.6,0.6\"/></disjointover>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -107,6 +120,18 @@ int main(void) {
        nearf_eps(eval_named(&ctx, "mincomp").v[0], 0.2f) &&
        nearf_eps(eval_named(&ctx, "xor").v[0], 1.0f) &&
        check3("inside", eval_named(&ctx, "inside"), 0.05f, 0.1f, 0.2f) && ok;
+  ok = nearf_eps(eval_named(&ctx, "tri_wave").v[0], 0.25f) && ok;
+  ok = check3("checkerboard", eval_named(&ctx, "checker"), 0.0f, 0.0f, 1.0f) && ok;
+  ok = nearf_eps(eval_named(&ctx, "circle").v[0], 1.0f) && ok;
+  ok = nearf_eps(eval_named(&ctx, "line").v[0], 1.0f) && ok;
+  ok = check3("difference", eval_named(&ctx, "difference"), 0.4f, 0.45f,
+              0.2f) && ok;
+  ok = check4("over", eval_named(&ctx, "over"), 0.5f, 0.3f, 0.5f,
+              0.625f) && ok;
+  ok = check4("matte", eval_named(&ctx, "matte"), 0.3f, 0.25f, 0.4f,
+              0.625f) && ok;
+  ok = check4("disjointover", eval_named(&ctx, "disjoint"),
+              0.46666667f, 0.23333333f, 0.4f, 1.0f) && ok;
   /* mtlx_eval_node_test must clear memoization between shade points. */
   ctx.uv[0] = 0.8f;
   ctx.uv[1] = 0.9f;

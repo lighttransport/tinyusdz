@@ -491,6 +491,13 @@ enum class MaterialXGraphOpCPU : uint32_t {
   Outside,
   GeomColor,
   Bitangent,
+  Difference,
+  In,
+  Mask,
+  Matte,
+  Out,
+  Over,
+  DisjointOver,
   Unknown,
 };
 
