@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `6a7677286` (`Preserve OpenPBR subsurface radius vector`)
+- HEAD: `32cd575e7` (`Keep OpenPBR thin film thickness in nanometers`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -382,6 +382,10 @@ Passed:
 - OpenPBR thin-film thickness now stays in the documented nanometer unit in
   standalone evaluation, matching the bridge; the evaluator regression uses
   a 450 nm film.
+- `chiang_hair_roughness` now implements the MaterialX empirical conversion
+  for longitudinal variance and azimuthal logistic scale, including squared
+  TT/TRT lobe scales in multi-output connections. Standalone graph and bridge
+  regressions pass.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
@@ -400,7 +404,7 @@ capability-skipped in this environment.
 ## Remaining work, in priority order
 
 1. Finish and validate remaining bridge closure fidelity, especially any
-   schema-specific closure parameter mappings; standard diffuse,
+   schema-specific closure parameter mappings; standard diffuse, Chiang,
    generalized-Schlick and
    measured-EDF fallback behavior are now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation

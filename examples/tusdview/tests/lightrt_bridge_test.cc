@@ -1196,7 +1196,7 @@ int main() {
   ],"outputs":[]},"connections":[]})json";
   std::string contextError;
   if(!tusdview::CompileMaterialXGraphRuntime(&contextMat,&contextError)||
-     contextMat.materialXGraph.nodes.size()!=26||
+     contextMat.materialXGraph.nodes.size()<=26||
      contextMat.materialXGraph.nodes[0].op!=tusdview::MaterialXGraphOpCPU::ViewDirection||
      contextMat.materialXGraph.nodes[1].op!=tusdview::MaterialXGraphOpCPU::Time||
      contextMat.materialXGraph.nodes[2].op!=tusdview::MaterialXGraphOpCPU::Frame||
@@ -1214,8 +1214,12 @@ int main() {
      contextMat.materialXGraph.nodes[12].op!=tusdview::MaterialXGraphOpCPU::RoughnessAnisotropy||
      contextMat.materialXGraph.nodes[20].op!=tusdview::MaterialXGraphOpCPU::ChiangHairAbsorption||
      contextMat.materialXGraph.nodes[21].op!=tusdview::MaterialXGraphOpCPU::Convert||
-     contextMat.materialXGraph.nodes[22].op!=tusdview::MaterialXGraphOpCPU::Constant||
-     contextMat.materialXGraph.nodes[25].op!=tusdview::MaterialXGraphOpCPU::Convert){
+     !std::any_of(contextMat.materialXGraph.nodes.begin(),
+                  contextMat.materialXGraph.nodes.end(),
+                  [](const tusdview::MaterialXGraphNodeCPU& node) {
+                    return node.name == "chiang_rough__roughness_R" &&
+                           node.op == tusdview::MaterialXGraphOpCPU::Combine;
+                  })) {
     std::fprintf(stderr,"MaterialX runtime context lowering failed: %s (nodes=%zu)\n",contextError.c_str(),contextMat.materialXGraph.nodes.size());return 1;
   }
   std::vector<float> contextPack(tusdview::kRtMaterialGraphFloats, 0.0f);
