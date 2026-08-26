@@ -1611,6 +1611,18 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         continue;
       }
     }
+    if(cat=="artistic_ior"&&!name.empty()){
+      for(int output=0;output<2;++output)
+        runtimeNodes.push_back({{"name",name+(output==0?"__ior":"__extinction")},
+            {"category","artisticiorcore"},{"type","color3"},
+            {"inputs",nlohmann::json::array({
+                inputNamed(node,"reflectivity",{{"value",nlohmann::json::array({.944,.776,.373})}}),
+                inputNamed(node,"edge_color",{{"value",nlohmann::json::array({1,1,1})}})})},
+            {"artistic_output",output}});
+      runtimeNodes.push_back({{"name",name},{"category","convert"},{"type","color3"},
+          {"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",name+"__ior"}}})}});
+      continue;
+    }
     if (cat == "randomcolor" && !name.empty()) {
       const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
       const nlohmann::json seed=inputNamed(node,"seed",{{"value",0}});
@@ -1789,6 +1801,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.op = MaterialXGraphOpCPU::RoughnessAnisotropy;
     else if (cat == "roughness_dual")
       out.op = MaterialXGraphOpCPU::RoughnessDual;
+    else if (cat == "artisticiorcore")
+      out.op = MaterialXGraphOpCPU::ArtisticIor;
     else if (cat == "hsvadjust") {
       out.op = MaterialXGraphOpCPU::HsvAdjust;
       out.value[1][1] = out.value[1][2] = 1.0f;
@@ -2165,6 +2179,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.auxValue[1]=node.value("flake_output",0);
       out.auxValue[2]=node.value("flake_3d",false)?1.0f:0.0f;
     }
+    if(cat=="artisticiorcore")out.auxValue[0]=node.value("artistic_output",0);
     if(cat=="matrixtransformcore"||cat=="matrixtransposecore"||
        cat=="matrixinversecore"||cat=="matrixdeterminantcore"){
       const auto source=nodeIds.find(node.value("matrix_source",std::string()));
@@ -2929,7 +2944,8 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
                              node.op==MaterialXGraphOpCPU::MatrixTransform||
                              node.op==MaterialXGraphOpCPU::MatrixTranspose||
                              node.op==MaterialXGraphOpCPU::MatrixInverse||
-                             node.op==MaterialXGraphOpCPU::MatrixDeterminant;
+                             node.op==MaterialXGraphOpCPU::MatrixDeterminant||
+                             node.op==MaterialXGraphOpCPU::ArtisticIor;
     int textureId = (usesAuxInput||usesRampTable) ? node.auxInput : node.textureId;
     if (!usesAuxInput && sourceToTable && textureId >= 0 &&
         static_cast<size_t>(textureId) < sourceToTable->size()) {

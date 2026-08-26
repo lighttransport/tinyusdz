@@ -526,6 +526,7 @@ enum class MaterialXGraphOpCPU : uint32_t {
   Blackbody,
   RoughnessAnisotropy,
   RoughnessDual,
+  ArtisticIor,
   Unknown,
 };
 
