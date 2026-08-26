@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `32cd575e7` (`Keep OpenPBR thin film thickness in nanometers`)
+- HEAD: `8e9741e02` (`Implement Chiang hair roughness conversion`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
