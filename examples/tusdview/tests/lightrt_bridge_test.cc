@@ -1974,7 +1974,8 @@ int main() {
       {"name":"c","category":"constant","type":"color3","inputs":[{"name":"value","value":[0.2,0.4,0.6]}]},
       {"name":"rough","category":"constant","type":"float","inputs":[{"name":"value","value":0.25}]},
       {"name":"diff","category":"oren_nayar_diffuse_bsdf","type":"BSDF","inputs":[
-        {"name":"weight","nodename":"w"},{"name":"color","nodename":"c"},{"name":"roughness","nodename":"rough"}]}
+        {"name":"weight","nodename":"w"},{"name":"color","nodename":"c"},
+        {"name":"roughness","type":"vector2","value":[0.25,0.75]}]}
     ],"outputs":[{"name":"shader","type":"BSDF","nodename":"diff"}]},
     "connections":[{"input":"bsdf","output":"shader"}]})json",
       "direct BSDF", {20, 0, 21}) ||
