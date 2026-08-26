@@ -77,6 +77,13 @@ require(kernel, r"floorf\(graph\[p\+1\]\+0\.5f\)",
         "CUDA/HIP graph input sentinel decode")
 require(kernel, r"floorf\(graph\[p\+16\]\+0\.5f\)",
         "CUDA/HIP graph texture sentinel decode")
+require(kernel, r"float context\[4\]", "CUDA/HIP MaterialX context ABI")
+require(kernel, r"graphSceneTime,graphSceneFrame",
+        "CUDA/HIP production MaterialX time/frame transport")
+require(shader, r"vec4 context;\s*// MaterialX time, frame",
+        "Vulkan MaterialX context ABI")
+require(shader, r"pc\.context\.x,pc\.context\.y,gr",
+        "Vulkan MaterialX time/frame transport")
 for offset, label in (("p \\+ 1", "input"), ("p \\+ 16", "texture")):
     require(cpu, rf"floor\(\s*scene\.matGraph\[{offset}\] \+ 0\.5f\)",
             f"CPU graph {label} sentinel decode")

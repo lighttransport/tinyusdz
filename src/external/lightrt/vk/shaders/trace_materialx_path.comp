@@ -21,6 +21,7 @@ layout(push_constant, scalar) uniform Push {
   mat4 invViewProj;
   vec4 camera;       // xyz origin
   vec4 clearColor;   // rgb miss, w exposure
+  vec4 context;      // MaterialX time, frame, reserved, reserved
   uvec4 frame;       // width,height,samples,maxDepth
   uvec4 path;        // rrDepth,seed,materialCount,lightCount
 } pc;
@@ -348,7 +349,7 @@ void main(){
       uint gb=h.mat*GRAPH_STRIDE;
       if(graphs[gb]>0.0){
         vec4 gr[48];evalGraphAll(h.mat,h.uv,h.n,h.p,
-            normalize(pc.camera.xyz-h.p),0.0,0.0,gr);
+            normalize(pc.camera.xyz-h.p),pc.context.x,pc.context.y,gr);
         if(graphs[gb+1u]>=0.0)base=max(gr[0].rgb,vec3(0));
         if(graphs[gb+2u]>=0.0)metal=clamp(gr[1].x,0.0,1.0);
         if(graphs[gb+3u]>=0.0)rough=clamp(gr[2].x,0.02,1.0);

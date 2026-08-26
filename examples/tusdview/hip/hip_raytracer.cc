@@ -35,6 +35,7 @@ struct Cam {
   float vp[16];        // world->clip (wireframe edge projection)
   float lens[4];       // focus distance, aperture radius, enabled, reserved
   float pathLimits[4]; // SSS events, volume events, motion segments, variance
+  float context[4];    // MaterialX time, frame, reserved, reserved
 };
 
 // Trace kernel source, shared with the CUDA backend (compiled at runtime by
@@ -516,9 +517,10 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           const float sceneExtent[3], int w, int h,
                           std::vector<uint8_t>* rgba, std::string* err, int spp,
                           const RtCameraLens* lens,
-                          const PathTraceSettings* pathTrace,
-                          std::vector<float>* linearRgba,
-                          uint32_t* renderedSamples) {
+                         const PathTraceSettings* pathTrace,
+                         std::vector<float>* linearRgba,
+                         uint32_t* renderedSamples,
+                         float sceneTime, float sceneFrame) {
   if (!ready_ || !dTris_) { if (err) *err = "HIP scene not built"; return false; }
   CU_OK(hipSetDevice(device_), "hipSetDevice");
   const size_t bytes = size_t(w) * h * 4;
@@ -548,6 +550,8 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     cam.clear[i] = clearColor[i];
   }
   cam.clear[3] = static_cast<float>(renderMode);
+  cam.context[0] = sceneTime;
+  cam.context[1] = sceneFrame;
   cam.camPos[3] = exposure;
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }

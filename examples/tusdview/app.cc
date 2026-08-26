@@ -5098,7 +5098,9 @@ bool App::renderHipViewport() {
   if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                        sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
                        &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
-                       pathTrace_.enabled ? &linear : nullptr)) {
+                       pathTrace_.enabled ? &linear : nullptr, nullptr,
+                       static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
+                       static_cast<float>(animTime_))) {
     if (pathTrace_.enabled)
       rgba = ToneMapPathDisplay(
           PreparePathDisplay(linear, w, h, pathTrace_, 1u), w, h,
@@ -5217,7 +5219,9 @@ bool App::renderCudaViewport() {
   if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                         sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
                         &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
-                        pathTrace_.enabled ? &linear : nullptr)) {
+                        pathTrace_.enabled ? &linear : nullptr, nullptr,
+                        static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
+                        static_cast<float>(animTime_))) {
     if (pathTrace_.enabled)
       rgba = ToneMapPathDisplay(
           PreparePathDisplay(linear, w, h, pathTrace_, 1u), w, h,
@@ -6962,7 +6966,9 @@ int App::run(const std::string& initialFile, int maxFrames,
                             sceneExtent, w, h, &rgba, &cerr, rtSamples_,
                             &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
                             pathTrace_.enabled ? &linear : nullptr,
-                            pathTrace_.enabled ? &pathTraceRenderedSamples_ : nullptr)) {
+                            pathTrace_.enabled ? &pathTraceRenderedSamples_ : nullptr,
+                            static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
+                            static_cast<float>(animTime_))) {
         reportCaptureWidth_ = w;
         reportCaptureHeight_ = h;
         std::string werr;
@@ -7051,7 +7057,9 @@ int App::run(const std::string& initialFile, int maxFrames,
                            sceneExtent, w, h, &rgba, &cerr, rtSamples_,
                            &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
                            pathTrace_.enabled ? &linear : nullptr,
-                           pathTrace_.enabled ? &pathTraceRenderedSamples_ : nullptr)) {
+                           pathTrace_.enabled ? &pathTraceRenderedSamples_ : nullptr,
+                           static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
+                           static_cast<float>(animTime_))) {
         reportCaptureWidth_ = w;
         reportCaptureHeight_ = h;
         std::string werr;
