@@ -419,6 +419,24 @@ if(TINYUSDZ_BUILD_TESTS)
     target_link_libraries(tusdview_lightrt_mtlx_eval_test PRIVATE m)
   endif()
 
+  foreach(mtlx_suite graph_connection graph_evaluation)
+    add_executable(tusdview_lightrt_mtlx_${mtlx_suite}_test
+        tests/lightrt_mtlx_${mtlx_suite}_test.c
+        ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+        ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+        ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+        ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+        ${TUSDVIEW_LIGHTRT_MTLX_DIR}/texture.c
+        ${TUSDVIEW_LIGHTRT_MTLX_DIR}/third_party_impl.c)
+    target_compile_features(tusdview_lightrt_mtlx_${mtlx_suite}_test PRIVATE c_std_11)
+    target_include_directories(tusdview_lightrt_mtlx_${mtlx_suite}_test PRIVATE
+        ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+        ${PROJECT_SOURCE_DIR}/src/external)
+    if(UNIX AND NOT APPLE)
+      target_link_libraries(tusdview_lightrt_mtlx_${mtlx_suite}_test PRIVATE m)
+    endif()
+  endforeach()
+
   add_executable(tusdview_camera_nav_test
       tests/camera_nav_test.cc
       camera_nav.cc
@@ -491,6 +509,8 @@ if(TINYUSDZ_BUILD_TESTS)
       tusdview_geometry_primvar_test
       tusdview_texture_pipeline_test
       tusdview_lightrt_mtlx_eval_test
+      tusdview_lightrt_mtlx_graph_connection_test
+      tusdview_lightrt_mtlx_graph_evaluation_test
       tusdview_camera_nav_test
       tusdview_preview_cache_test
       tusdview_texture_residency_policy_test

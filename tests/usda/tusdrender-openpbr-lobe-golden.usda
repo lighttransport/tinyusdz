@@ -1,0 +1,131 @@
+#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+
+def Xform "World" {
+  def Mesh "PanelBase" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-6,-1,0), (-4.2,-1,0), (-4.2,1,0), (-6,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/MatBase>
+  }
+  def Material "MatBase" {
+    token outputs:surface.connect = </World/MatBase/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      float inputs:base_weight = 1
+      float inputs:specular_roughness = 0.3
+      color3f inputs:base_color = (0.8,0.12,0.04)
+      token outputs:surface
+    }
+  }
+
+  def Mesh "PanelCoat" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-4,-1,0), (-2.2,-1,0), (-2.2,1,0), (-4,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/MatCoat>
+  }
+  def Material "MatCoat" {
+    token outputs:surface.connect = </World/MatCoat/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      float inputs:base_weight = 1
+      float inputs:specular_roughness = 0.3
+      color3f inputs:base_color = (0.08,0.45,0.12)
+      float inputs:coat_weight = 1
+      color3f inputs:coat_color = (0.2,1,0.3)
+      float inputs:coat_roughness = 0.08
+      token outputs:surface
+    }
+  }
+
+  def Mesh "PanelTransmission" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-2,-1,0), (-0.2,-1,0), (-0.2,1,0), (-2,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/MatTransmission>
+  }
+  def Material "MatTransmission" {
+    token outputs:surface.connect = </World/MatTransmission/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      float inputs:base_weight = 1
+      float inputs:specular_roughness = 0.3
+      color3f inputs:base_color = (0.05,0.12,0.8)
+      float inputs:transmission_weight = 0.75
+      color3f inputs:transmission_color = (0.1,0.3,1)
+      float inputs:geometry_thin_walled = 1
+      token outputs:surface
+    }
+  }
+
+  def Mesh "PanelSubsurface" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(0,-1,0), (1.8,-1,0), (1.8,1,0), (0,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/MatSubsurface>
+  }
+  def Material "MatSubsurface" {
+    token outputs:surface.connect = </World/MatSubsurface/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      float inputs:base_weight = 1
+      float inputs:specular_roughness = 0.3
+      color3f inputs:base_color = (0.8,0.35,0.04)
+      float inputs:subsurface_weight = 0.8
+      color3f inputs:subsurface_color = (1,0.15,0.04)
+      float inputs:subsurface_radius = 0.2
+      color3f inputs:subsurface_radius_scale = (1,0.2,0.1)
+      token outputs:surface
+    }
+  }
+
+  def Mesh "PanelEmission" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(2,-1,0), (3.8,-1,0), (3.8,1,0), (2,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/MatEmission>
+  }
+  def Material "MatEmission" {
+    token outputs:surface.connect = </World/MatEmission/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      float inputs:base_weight = 1
+      float inputs:specular_roughness = 0.3
+      color3f inputs:base_color = (0.05,0.02,0.05)
+      color3f inputs:emission_color = (1,0.05,0.8)
+      float inputs:emission_luminance = 3
+      token outputs:surface
+    }
+  }
+
+  def Mesh "PanelOpacity" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(4,-1,0), (5.8,-1,0), (5.8,1,0), (4,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/MatOpacity>
+  }
+  def Material "MatOpacity" {
+    token outputs:surface.connect = </World/MatOpacity/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      float inputs:base_weight = 1
+      float inputs:specular_roughness = 0.3
+      color3f inputs:base_color = (0.05,0.7,0.7)
+      float inputs:geometry_opacity = 0.35
+      token outputs:surface
+    }
+  }
+
+  def DistantLight "Key" {
+    float inputs:intensity = 5
+    float3 xformOp:rotateXYZ = (0,25,0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+  }
+}

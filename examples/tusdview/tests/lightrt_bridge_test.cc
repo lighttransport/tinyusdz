@@ -928,16 +928,17 @@ int main() {
       {"name":"atan", "category":"atan2", "inputs":[{"value":1.0},{"value":2.0}]},
       {"name":"sgn", "category":"sign", "inputs":[{"value":-2.0}]},
       {"name":"rnd", "category":"round", "inputs":[{"value":1.6}]},
-      {"name":"sat", "category":"saturate", "inputs":[{"value":-0.5}]},
+      {"name":"sat", "category":"clamp", "inputs":[{"name":"in","value":-0.5},{"name":"low","value":0.0},{"name":"high","value":1.0}]},
       {"name":"asin", "category":"arcsin", "inputs":[{"value":0.5}]},
       {"name":"acos", "category":"arccos", "inputs":[{"value":0.5}]},
       {"name":"contrast", "category":"contrast", "inputs":[{"value":0.25},{"value":2.0},{"value":0.5}]},
+      {"name":"saturate", "category":"saturate", "type":"color3", "inputs":[{"name":"in","value":[0.2,0.4,0.8]},{"name":"amount","value":0.0}]},
       {"name":"swizzle", "category":"ND_swizzle_color4_color3", "type":"color3", "inputs":[{"name":"in","value":[0.1,0.2,0.3,0.4]},{"name":"channels","value":"bgr1"}]}
     ], "outputs": []}, "connections": []
   })json";
   std::string scalarError;
   if (!tusdview::CompileMaterialXGraphRuntime(&scalarGraphMat, &scalarError) ||
-      scalarGraphMat.materialXGraph.nodes.size() != 8 ||
+      scalarGraphMat.materialXGraph.nodes.size() != 9 ||
       scalarGraphMat.materialXGraph.nodes[0].op !=
           tusdview::MaterialXGraphOpCPU::Atan2 ||
       scalarGraphMat.materialXGraph.nodes[1].op !=
@@ -953,9 +954,12 @@ int main() {
       scalarGraphMat.materialXGraph.nodes[6].op !=
           tusdview::MaterialXGraphOpCPU::Contrast ||
       scalarGraphMat.materialXGraph.nodes[7].op !=
+          tusdview::MaterialXGraphOpCPU::Saturate ||
+      scalarGraphMat.materialXGraph.nodes[8].op !=
           tusdview::MaterialXGraphOpCPU::Swizzle ||
-      !Near(scalarGraphMat.materialXGraph.nodes[7].value[1][0], 2.0f) ||
-      !Near(scalarGraphMat.materialXGraph.nodes[7].value[1][3], 5.0f) ||
+      !Near(scalarGraphMat.materialXGraph.nodes[7].value[1][0], 0.0f) ||
+      !Near(scalarGraphMat.materialXGraph.nodes[8].value[1][0], 2.0f) ||
+      !Near(scalarGraphMat.materialXGraph.nodes[8].value[1][3], 5.0f) ||
       !Near(scalarGraphMat.materialXGraph.nodes[3].value[2][0], 1.0f)) {
     std::fprintf(stderr, "MaterialX scalar procedural operators failed: %s\n",
                  scalarError.c_str());

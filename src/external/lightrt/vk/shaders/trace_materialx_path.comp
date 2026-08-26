@@ -111,7 +111,11 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position, out vec4 rout
     else if(op==13) value[i]=min(a,b); else if(op==14) value[i]=max(a,b); else if(op==15) value[i]=abs(a);
     else if(op==16) value[i]=sqrt(max(a,vec4(0.0))); else if(op==17) value[i]=sin(a); else if(op==18) value[i]=cos(a);
     else if(op==19) value[i]=vec4(dot(a.rgb,vec3(0.2126,0.7152,0.0722)));
-    else if(op==20) value[i]=a.x<0.5?b:c; else if(op==21) value[i]=vec4(tuv,0,1);
+    else if(op==20) value[i]=a.x<0.5?b:c;
+    // Texcoord is a geometry source, not an image node. Using `tuv` here
+    // accidentally applied the generic image-input routing sentinel and could
+    // collapse explicitly connected texcoord graphs to (0,0).
+    else if(op==21) value[i]=vec4(uv,0,1);
     else if(op==22) value[i]=floor(a); else if(op==23) value[i]=ceil(a); else if(op==24) value[i]=fract(a);
     else if(op==25) value[i]=step(b,a); else if(op==26) value[i]=smoothstep(b,c,a);
     else if(op==27) value[i]=vec4(cross(a.xyz,b.xyz),1); else if(op==28) value[i]=vec4(length(a.xyz));
@@ -135,6 +139,14 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position, out vec4 rout
     else if(op==51) value[i]=acos(clamp(a,vec4(-1),vec4(1)));
     else if(op==52) value[i]=(a-c)*b+c;
     else if(op==53){vec4 q;for(int lane=0;lane<4;++lane){int s=clamp(int(round(b[lane])),0,5);q[lane]=s<4?a[s]:(s==5?1.0:0.0);}value[i]=q;}
+    else if(op==54) value[i]=atan(a);
+    else if(op==55){vec4 q=vec4(1)-((vec4(1)-a)*(vec4(1)-b));value[i]=mix(b,q,c);}
+    else if(op==56){vec4 q=mix(2.0*a*b,vec4(1)-2.0*(vec4(1)-a)*(vec4(1)-b),step(vec4(0.5),b));value[i]=mix(b,q,c);}
+    else if(op==57){vec4 q=c*(vec4(1)-(vec4(1)-b)/a)+(vec4(1)-c)*b;value[i]=mix(q,vec4(0),lessThan(abs(a),vec4(1e-6)));}
+    else if(op==58){vec4 q=c*b/(vec4(1)-a)+(vec4(1)-c)*b;value[i]=mix(q,vec4(0),lessThan(abs(vec4(1)-a),vec4(1e-6)));}
+    else if(op==59||op==60){float t=clamp(ci>=0?(op==59?c.x:c.y):(op==59?uv.x:uv.y),0.0,1.0);value[i]=mix(a,b,t);}
+    else if(op==61||op==62){int xi=int(floor(graphs[p+16u]+0.5));vec4 q=xi>=0&&xi<count?value[xi]:vec4(uv,0,1);value[i]=((op==61?q.x:q.y)>=c.x)?b:a;}
+    else if(op==63){float l=dot(a.rgb,vec3(0.2126,0.7152,0.0722));value[i]=vec4(vec3(l)+b.rgb*(a.rgb-vec3(l)),a.w);}
     else value[i]=a;
   }
   for(uint r=0u;r<GRAPH_OUTPUTS;++r){int wanted=int(round(graphs[gb+1u+r]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}

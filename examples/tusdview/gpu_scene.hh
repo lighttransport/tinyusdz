@@ -460,6 +460,16 @@ enum class MaterialXGraphOpCPU : uint32_t {
   Arccosine,
   Contrast,
   Swizzle,
+  Arctangent,
+  Screen,
+  Overlay,
+  Burn,
+  Dodge,
+  RampLR,
+  RampTB,
+  SplitLR,
+  SplitTB,
+  Saturate,
   Unknown,
 };
 
@@ -477,6 +487,9 @@ struct MaterialXGraphNodeCPU {
                     {0.0f, 0.0f, 0.0f, 1.0f},
                     {0.0f, 0.0f, 0.0f, 1.0f}};
   int textureId{-1};  // resolved DrawScene texture slot, when resident
+  // Fourth graph dependency for operators such as splitlr/splittb. Packed in
+  // the texture-id lane, which those non-image operators otherwise never use.
+  int auxInput{-1};
   bool isUdim{false}; // textureId names a UDIM atlas, not a plain 2D image
   float uvScale[2]{1.0f, 1.0f};
   float uvOffset[2]{0.0f, 0.0f};

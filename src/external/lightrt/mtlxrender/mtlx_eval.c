@@ -169,10 +169,12 @@ typedef enum {
     OP_SIN, OP_COS, OP_TAN, OP_ASIN, OP_ACOS, OP_ATAN, OP_SQRT, OP_LN, OP_EXP,
     OP_ABS, OP_FLOOR, OP_CEIL, OP_ROUND, OP_SIGN, OP_INVERT, OP_NORMALIZE,
     OP_MAGNITUDE, OP_DOTPRODUCT, OP_CROSSPRODUCT,
-    OP_MIX, OP_CLAMP, OP_SMOOTHSTEP, OP_REMAP, OP_LUMINANCE, OP_RGBTOHSV,
+    OP_MIX, OP_SCREEN, OP_OVERLAY, OP_BURN, OP_DODGE,
+    OP_CLAMP, OP_SMOOTHSTEP, OP_REMAP, OP_LUMINANCE, OP_RGBTOHSV,
     OP_HSVTORGB, OP_SATURATE, OP_CONTRAST, OP_RANGE,
     OP_SEPARATE, OP_COMBINE2, OP_COMBINE3, OP_COMBINE4, OP_EXTRACT, OP_CONVERT,
-    OP_SWIZZLE, OP_NOISE3D, OP_FRACTAL3D, OP_CELLNOISE3D, OP_RAMPLR, OP_SPLITLR,
+    OP_SWIZZLE, OP_NOISE3D, OP_FRACTAL3D, OP_CELLNOISE3D,
+    OP_RAMPLR, OP_RAMPTB, OP_SPLITLR, OP_SPLITTB,
     OP_IFGREATER, OP_IFGREATEREQ, OP_IFEQUAL, OP_SWITCH, OP_DOT, OP_RAMP4,
     OP_ROTATE2D, OP_ONEMINUS
 } NodeOp;
@@ -224,6 +226,10 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "crossproduct")) return OP_CROSSPRODUCT;
     /* compositing / adjust */
     if (!strcmp(c, "mix")) return OP_MIX;
+    if (!strcmp(c, "screen")) return OP_SCREEN;
+    if (!strcmp(c, "overlay")) return OP_OVERLAY;
+    if (!strcmp(c, "burn")) return OP_BURN;
+    if (!strcmp(c, "dodge")) return OP_DODGE;
     if (!strcmp(c, "clamp")) return OP_CLAMP;
     if (!strcmp(c, "smoothstep")) return OP_SMOOTHSTEP;
     if (!strcmp(c, "remap")) return OP_REMAP;
@@ -246,7 +252,9 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "fractal3d")) return OP_FRACTAL3D;
     if (!strcmp(c, "cellnoise3d")) return OP_CELLNOISE3D;
     if (!strcmp(c, "ramplr")) return OP_RAMPLR;
+    if (!strcmp(c, "ramptb")) return OP_RAMPTB;
     if (!strcmp(c, "splitlr")) return OP_SPLITLR;
+    if (!strcmp(c, "splittb")) return OP_SPLITTB;
     if (!strcmp(c, "ramp4")) return OP_RAMP4;
     /* conditional / utility */
     if (!strcmp(c, "ifgreater")) return OP_IFGREATER;
@@ -534,6 +542,10 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_DOTPRODUCT: a = in_or(ctx,n,"in1",mv_zero(MV_VEC3)); b = in_or(ctx,n,"in2",mv_zero(MV_VEC3)); r = mv_float(v3_dot(mv_as_v3(&a), mv_as_v3(&b))); break;
         case OP_CROSSPRODUCT: a = in_or(ctx,n,"in1",mv_zero(MV_VEC3)); b = in_or(ctx,n,"in2",mv_zero(MV_VEC3)); r = mv_vec3(v3_cross(mv_as_v3(&a), mv_as_v3(&b))); break;
         case OP_MIX: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(n->type)), bg=in_or(ctx,n,"bg",mv_zero(n->type)), m=in_or(ctx,n,"mix",mv_float(0)); int nc=ncomp_of(&fg); r=fg; for(int i=0;i<nc;i++){ float t=(ncomp_of(&m)==1)?m.v[0]:m.v[i]; r.v[i]=bg.v[i]*(1-t)+fg.v[i]*t; } break; }
+        case OP_SCREEN: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(n->type)),bg=in_or(ctx,n,"bg",mv_zero(n->type)),m=in_or(ctx,n,"mix",mv_float(1)); int nc=ncomp_of(&fg); r=bg; for(int i=0;i<nc;i++){ float t=ncomp_of(&m)==1?m.v[0]:m.v[i],v=1-(1-fg.v[i])*(1-bg.v[i]); r.v[i]=bg.v[i]+t*(v-bg.v[i]); } break; }
+        case OP_OVERLAY: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(n->type)),bg=in_or(ctx,n,"bg",mv_zero(n->type)),m=in_or(ctx,n,"mix",mv_float(1)); int nc=ncomp_of(&fg); r=bg; for(int i=0;i<nc;i++){ float t=ncomp_of(&m)==1?m.v[0]:m.v[i],v=bg.v[i]>=0.5f?1-2*(1-fg.v[i])*(1-bg.v[i]):2*fg.v[i]*bg.v[i]; r.v[i]=bg.v[i]+t*(v-bg.v[i]); } break; }
+        case OP_BURN: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(n->type)),bg=in_or(ctx,n,"bg",mv_zero(n->type)),m=in_or(ctx,n,"mix",mv_float(1)); int nc=ncomp_of(&fg); r=bg; for(int i=0;i<nc;i++){ float t=ncomp_of(&m)==1?m.v[0]:m.v[i]; r.v[i]=fabsf(fg.v[i])<1e-6f?0:t*(1-(1-bg.v[i])/fg.v[i])+(1-t)*bg.v[i]; } break; }
+        case OP_DODGE: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(n->type)),bg=in_or(ctx,n,"bg",mv_zero(n->type)),m=in_or(ctx,n,"mix",mv_float(1)); int nc=ncomp_of(&fg); r=bg; for(int i=0;i<nc;i++){ float t=ncomp_of(&m)==1?m.v[0]:m.v[i]; r.v[i]=fabsf(1-fg.v[i])<1e-6f?0:t*(bg.v[i]/(1-fg.v[i]))+(1-t)*bg.v[i]; } break; }
         case OP_CLAMP: { a=in_or(ctx,n,"in",mv_float(0)); MtlxValue lo=in_or(ctx,n,"low",mv_float(0)), hi=in_or(ctx,n,"high",mv_float(1)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){ float l=(ncomp_of(&lo)==1)?lo.v[0]:lo.v[i], h=(ncomp_of(&hi)==1)?hi.v[0]:hi.v[i]; r.v[i]=clampf(a.v[i],l,h);} break; }
         case OP_SMOOTHSTEP: { a=in_or(ctx,n,"in",mv_float(0)); MtlxValue lo=in_or(ctx,n,"low",mv_float(0)), hi=in_or(ctx,n,"high",mv_float(1)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){ float l=(ncomp_of(&lo)==1)?lo.v[0]:lo.v[i], h=(ncomp_of(&hi)==1)?hi.v[0]:hi.v[i]; float t=clampf((a.v[i]-l)/(h-l!=0?h-l:1),0,1); r.v[i]=t*t*(3-2*t);} break; }
         case OP_REMAP: { a=in_or(ctx,n,"in",mv_float(0)); MtlxValue il=in_or(ctx,n,"inlow",mv_float(0)),ih=in_or(ctx,n,"inhigh",mv_float(1)),ol=in_or(ctx,n,"outlow",mv_float(0)),oh=in_or(ctx,n,"outhigh",mv_float(1)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){ float t=(a.v[i]-il.v[0])/((ih.v[0]-il.v[0])!=0?ih.v[0]-il.v[0]:1); r.v[i]=ol.v[0]+t*(oh.v[0]-ol.v[0]);} break; }
@@ -554,7 +566,9 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_FRACTAL3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)); MtlxValue amp=in_or(ctx,n,"amplitude",mv_float(1)),oc=in_or(ctx,n,"octaves",mv_float(3)),lac=in_or(ctx,n,"lacunarity",mv_float(2)),dim=in_or(ctx,n,"diminish",mv_float(0.5f)); float f=fractal(mv_as_v3(&pos),(int)oc.v[0],lac.v[0],dim.v[0])*amp.v[0]; r=(n->type==MV_FLOAT)?mv_float(f):mv_color3(v3_splat(f)); break; }
         case OP_CELLNOISE3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)); float c=cellnoise(mv_as_v3(&pos)); r=(n->type==MV_FLOAT)?mv_float(c):mv_color3(v3_splat(c)); break; }
         case OP_RAMPLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float t=clampf(tc.v[0],0,1); int nc=ncomp_of(&l); r=l; for(int i=0;i<nc;i++) r.v[i]=l.v[i]*(1-t)+rr.v[i]*t; break; }
+        case OP_RAMPTB: { MtlxValue tval=in_or(ctx,n,"valuet",mv_zero(n->type)),bval=in_or(ctx,n,"valueb",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float t=clampf(tc.v[1],0,1); int nc=ncomp_of(&tval); r=tval; for(int i=0;i<nc;i++) r.v[i]=tval.v[i]*(1-t)+bval.v[i]*t; break; }
         case OP_SPLITLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),ct=in_or(ctx,n,"center",mv_float(0.5f)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); r=(tc.v[0]<ct.v[0])?l:rr; break; }
+        case OP_SPLITTB: { MtlxValue tval=in_or(ctx,n,"valuet",mv_zero(n->type)),bval=in_or(ctx,n,"valueb",mv_zero(n->type)),ct=in_or(ctx,n,"center",mv_float(0.5f)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); r=(tc.v[1]<ct.v[0])?tval:bval; break; }
         case OP_RAMP4: { MtlxValue tl=in_or(ctx,n,"valuetl",mv_zero(n->type)),tr=in_or(ctx,n,"valuetr",mv_zero(n->type)),bl=in_or(ctx,n,"valuebl",mv_zero(n->type)),br=in_or(ctx,n,"valuebr",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float u=clampf(tc.v[0],0,1),vv=clampf(tc.v[1],0,1); int nc=ncomp_of(&tl); r=tl; for(int i=0;i<nc;i++){ float top=tl.v[i]*(1-u)+tr.v[i]*u, bot=bl.v[i]*(1-u)+br.v[i]*u; r.v[i]=top*(1-vv)+bot*vv; } break; }
         case OP_IFGREATER: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
         case OP_IFGREATEREQ: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>=mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
