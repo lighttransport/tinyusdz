@@ -235,8 +235,10 @@ capability-skipped in this environment.
    permits it; add vector2 roughness extraction and exact scatter-mode handling.
 3. Complete remaining shader constructors/wrappers: `surface`,
    `surfacematerial`, `light`, displacement, and unlit behavior in legacy and
-   next converters; volume/volumematerial graph transport is now implemented,
-   but texture-driven and schema-specific volume validation remains.
+next converters; volume/volumematerial graph transport is now implemented,
+but texture-driven and schema-specific volume validation remains. Separate
+displacement terminals now resolve authored scalar `displacement`, `height`,
+`dispScalar`, or `value` inputs into the next loader's geometry lane.
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
    matrix-valued transport is implemented across the RT graph paths, while
    object/world/view transform and Vulkan instance-transform fidelity remain.
