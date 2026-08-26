@@ -269,9 +269,17 @@ int main(void) {
       " <uniform_edf name=\"Glow\" type=\"EDF\">"
       "  <input name=\"color\" type=\"color3\" value=\"2,1,0.5\"/>"
       " </uniform_edf>"
+      " <uniform_edf name=\"Fill\" type=\"EDF\">"
+      "  <input name=\"color\" type=\"color3\" value=\"0.25,0.5,0.75\"/>"
+      " </uniform_edf>"
+      " <mix name=\"MixedGlow\" type=\"EDF\">"
+      "  <input name=\"bg\" type=\"EDF\" nodename=\"Glow\"/>"
+      "  <input name=\"fg\" type=\"EDF\" nodename=\"Fill\"/>"
+      "  <input name=\"mix\" type=\"float\" value=\"0.25\"/>"
+      " </mix>"
       " <volume name=\"Volume\" type=\"volumeshader\">"
       "  <input name=\"vdf\" type=\"VDF\" nodename=\"Fog\"/>"
-      "  <input name=\"edf\" type=\"EDF\" nodename=\"Glow\"/>"
+      "  <input name=\"edf\" type=\"EDF\" nodename=\"MixedGlow\"/>"
       " </volume>"
       " <volumematerial name=\"VolumeMat\" type=\"material\">"
       "  <input name=\"volumeshader\" type=\"volumeshader\" nodename=\"Volume\"/>"
@@ -286,9 +294,9 @@ int main(void) {
        nearf(volume.scattering.y, 0.5f) &&
        nearf(volume.scattering.z, 0.6f) &&
        nearf(volume.anisotropy, 0.35f) &&
-       nearf(volume.emission.x, 2.0f) &&
-       nearf(volume.emission.y, 1.0f) &&
-       nearf(volume.emission.z, 0.5f);
+       nearf(volume.emission.x, 1.5625f) &&
+       nearf(volume.emission.y, 0.875f) &&
+       nearf(volume.emission.z, 0.5625f);
   if (!ok) {
     fprintf(stderr, "MaterialX volume/VDF/EDF graph was not evaluated\n");
     return 1;
