@@ -116,6 +116,10 @@ Matrix33/Matrix44 geomprops are now retained by the next render converter,
 expanded as column views in the bounded graph IR, and interpolated through the
 CPU, Vulkan, CUDA, and HIP RT paths (`0d29de89e`). Object/world/view transform
 and instance-transform fidelity still require separate validation.
+The next converter now retains a separate volume-terminal graph. The tusdview
+bridge converts its density/albedo outputs to absorption/scattering VDF inputs
+and its emission output to EDF, preserving composed MaterialX volume networks
+without conflating them with the surface graph.
 Standalone EDF evaluation now recursively handles add/layer, mix, and
 scalar-or-EDF multiply composition, so composed emission survives into both
 surface and volume evaluation.
@@ -223,9 +227,10 @@ capability-skipped in this environment.
    generalized-Schlick EDF bridge is now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation
    permits it; add vector2 roughness extraction and exact scatter-mode handling.
-3. Complete shader constructors/wrappers: `surface`, `surfacematerial`,
-   `volume`, `volumematerial`, `light`, displacement, and unlit behavior in
-   legacy and next converters.
+3. Complete remaining shader constructors/wrappers: `surface`,
+   `surfacematerial`, `light`, displacement, and unlit behavior in legacy and
+   next converters; volume/volumematerial graph transport is now implemented,
+   but texture-driven and schema-specific volume validation remains.
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
    matrix-valued transport is implemented across the RT graph paths, while
    object/world/view transform and Vulkan instance-transform fidelity remain.

@@ -610,6 +610,8 @@ struct DrawMaterialCPU {
   float volumeEmission[3]{0.0f, 0.0f, 0.0f};
   float volumeEmissionScale{0.0f};
   std::string materialXNodeGraphJson;
+  std::string volumeMaterialXNodeGraphJson;
+  bool materialXVolumeGraph{false};
   MaterialXGraphRuntimeCPU materialXGraph;
   std::vector<DrawMaterialParamCPU> params;
   bool hasLightRtOpenPBR{false};
