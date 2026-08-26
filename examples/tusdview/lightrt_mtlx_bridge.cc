@@ -1343,6 +1343,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         if (lane == "sheen_roughness") return "sheen_weight";
         return nullptr;
       };
+      auto colorWeightLane = [](const std::string& lane) -> const char* {
+        if (lane == "base_color") return "base_weight";
+        if (lane == "specular_color") return "specular_weight";
+        if (lane == "transmission_color") return "transmission_weight";
+        if (lane == "subsurface_color") return "subsurface_weight";
+        if (lane == "sheen_color") return "sheen_weight";
+        return nullptr;
+      };
       for (const std::string& lane : keys) {
         const auto ai = a.find(lane), bi = b.find(lane);
         const std::string output = name + "__closure_" + lane;
@@ -1353,15 +1361,16 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         nlohmann::json inputs = nlohmann::json::array();
         if (cat == "multiply") {
           const std::string& source = ai != a.end() ? ai->second : bi->second;
-          if (roughnessWeightLane(lane)) {
+          if (roughnessWeightLane(lane) || colorWeightLane(lane)) {
             lanes[lane] = source;
             continue;
           }
           inputs.push_back({{"name", "in1"}, {"nodename", source}});
           inputs.push_back(renamedInput(factor, "in2"));
-        } else if (roughnessWeightLane(lane) && ai != a.end() &&
-                   bi != b.end()) {
+        } else if ((roughnessWeightLane(lane) || colorWeightLane(lane)) &&
+                   ai != a.end() && bi != b.end()) {
           const char* weightLane = roughnessWeightLane(lane);
+          if (!weightLane) weightLane = colorWeightLane(lane);
           const auto aw = a.find(weightLane), bw = b.find(weightLane);
           if (aw != a.end() && bw != b.end()) {
             const std::string weightedA = output + "__weighted_a";
@@ -1370,17 +1379,17 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
             const std::string denominator = output + "__weight_sum";
             runtimeNodes.push_back({
                 {"name", weightedA}, {"category", "multiply"},
-                {"type", "float"}, {"inputs", nlohmann::json::array({
+                {"type", laneType}, {"inputs", nlohmann::json::array({
                     nlohmann::json{{"name", "in1"}, {"nodename", ai->second}},
                     nlohmann::json{{"name", "in2"}, {"nodename", aw->second}}})}});
             runtimeNodes.push_back({
                 {"name", weightedB}, {"category", "multiply"},
-                {"type", "float"}, {"inputs", nlohmann::json::array({
+                {"type", laneType}, {"inputs", nlohmann::json::array({
                     nlohmann::json{{"name", "in1"}, {"nodename", bi->second}},
                     nlohmann::json{{"name", "in2"}, {"nodename", bw->second}}})}});
             runtimeNodes.push_back({
                 {"name", numerator}, {"category", "add"},
-                {"type", "float"}, {"inputs", nlohmann::json::array({
+                {"type", laneType}, {"inputs", nlohmann::json::array({
                     nlohmann::json{{"name", "in1"}, {"nodename", weightedA}},
                     nlohmann::json{{"name", "in2"}, {"nodename", weightedB}}})}});
             runtimeNodes.push_back({
@@ -1390,7 +1399,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                     nlohmann::json{{"name", "in2"}, {"nodename", bw->second}}})}});
             runtimeNodes.push_back({
                 {"name", output}, {"category", "divide"},
-                {"type", "float"}, {"inputs", nlohmann::json::array({
+                {"type", laneType}, {"inputs", nlohmann::json::array({
                     nlohmann::json{{"name", "in1"}, {"nodename", numerator}},
                     nlohmann::json{{"name", "in2"}, {"nodename", denominator}}})}});
             lanes[lane] = output;
