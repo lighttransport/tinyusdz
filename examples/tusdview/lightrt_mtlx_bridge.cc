@@ -1520,9 +1520,23 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       const std::string falloff = name + "__conical_falloff";
       const std::string color = name + "__conical_color";
       const std::string result = name + "__conical_result";
-      runtimeNodes.push_back({{"name", normal}, {"category", "normal"},
-                              {"type", "vector3"},
-                              {"inputs", nlohmann::json::array()}});
+      const auto authoredNormal = nodeInput(node, "normal", nlohmann::json::object());
+      const bool hasAuthoredNormal =
+          authoredNormal.is_object() &&
+          (authoredNormal.find("value") != authoredNormal.end() ||
+           authoredNormal.find("nodename") != authoredNormal.end() ||
+           authoredNormal.find("nodegraph") != authoredNormal.end());
+      if (hasAuthoredNormal) {
+        runtimeNodes.push_back({
+            {"name", normal}, {"category", "convert"}, {"type", "vector3"},
+            {"inputs", nlohmann::json::array({
+                renamedInput(authoredNormal, "in")})}});
+      } else {
+        // MaterialX defaults the conical direction to the world-space normal.
+        runtimeNodes.push_back({{"name", normal}, {"category", "normal"},
+                                {"type", "vector3"},
+                                {"inputs", nlohmann::json::array()}});
+      }
       runtimeNodes.push_back({{"name", view}, {"category", "viewdirection"},
                               {"type", "vector3"},
                               {"inputs", nlohmann::json::array()}});
