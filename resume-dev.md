@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `94b22e060` (`Preserve zero-valued displacement terminals`)
+- HEAD: `81f90a574` (`Preserve conical EDF authored direction`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -263,6 +263,12 @@ Passed:
   zero-valued displacement fix: 298/298 passed in 1107.08 seconds; only the
   documented unavailable external-asset, real-texture/validation, corpus, and
   OpenChess profiles were skipped.
+- Conical EDF authored normal inputs now reach the runtime graph instead of
+  always using the geometric normal (`81f90a574`); the focused bridge test and
+  the complete final regression both passed.
+- Final current-HEAD optimized native/viewer/tusdrender regression after the
+  conical-direction fix: 298/298 passed in 1107.55 seconds; the same
+  documented unavailable profiles were skipped.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
