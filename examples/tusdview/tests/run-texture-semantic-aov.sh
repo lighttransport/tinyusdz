@@ -776,6 +776,13 @@ sweep_prerender() {
   else
     run "$@" --config "$OUT/config.json" --mode-sweep "$modes" --frames 4 --view-dir 0,0,-1 --screenshot "$OUT/$tag-$prefix-{mode}.ppm" "$source" >"$log" 2>&1
   fi
+  if [[ "$tag" = vk-rt* ]] &&
+     grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer' "$log"; then
+    backend_unavailable[$backend_key]=1
+    degraded=1
+    echo "SKIP: Vulkan RT on software Vulkan"
+    return
+  fi
   # Only claim the images the sweep actually produced; anything missing falls
   # back to its own render in case_run, so a sweep failure degrades rather than
   # silently dropping coverage.
@@ -809,6 +816,17 @@ case_run() {
   else
     run "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
     run_rc=$?
+  fi
+  # Hardware ray-query semantic coverage is not meaningful on llvmpipe. The
+  # raster path records this capability after its first render, but vk-rt can
+  # otherwise enter the expensive RT matrix before that flag is set. Classify
+  # the device from the first RT log and skip the remaining cases promptly.
+  if [[ "$tag" = vk-rt* ]] &&
+     grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer' "$log"; then
+    backend_unavailable[$backend_key]=1
+    degraded=1
+    echo "SKIP: Vulkan RT on software Vulkan"
+    return
   fi
   if grep -q '\[tusdview\]\[error\] load failed:' "$log"; then
     echo "FAIL: $tag $case_id asset load"; fail=1; return
