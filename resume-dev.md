@@ -129,6 +129,9 @@ preload behavior for the first ten UDIM rows.
 Standalone EDF evaluation now recursively handles add/layer, mix, and
 scalar-or-EDF multiply composition, so composed emission survives into both
 surface and volume evaluation.
+Measured EDFs now have explicit regression coverage in the standalone and
+LightRT bridge paths: authored color is preserved as the renderer-neutral
+fallback while unsupported profile filenames remain non-fatal.
 Standalone VDF evaluation now recursively handles add/layer, mix, and scalar
 multiply composition, preserving composed absorption, scattering, and
 anisotropy for volume evaluation.
@@ -228,9 +231,9 @@ capability-skipped in this environment.
 
 ## Remaining work, in priority order
 
-1. Finish and validate remaining bridge closure fidelity, especially measured
-   EDF behavior and any schema-specific closure parameter mappings; the
-   generalized-Schlick EDF bridge is now covered.
+1. Finish and validate remaining bridge closure fidelity, especially any
+   schema-specific closure parameter mappings; generalized-Schlick and
+   measured-EDF fallback behavior are now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation
    permits it; add vector2 roughness extraction and exact scatter-mode handling.
 3. Complete remaining shader constructors/wrappers: `surface`,
@@ -243,8 +246,8 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    matrix-valued transport is implemented across the RT graph paths, while
    object/world/view transform and Vulkan instance-transform fidelity remain.
 5. Close texture/projection gaps: camera-aware latlong defaults, filtering and
-   derivatives, colorspace/alpha, UDIM missing-tile behavior, and measured EDF
-   profile handling.
+   derivatives, colorspace/alpha, UDIM missing-tile behavior, and any true
+   measured-EDF profile backend beyond the documented color fallback.
 6. Add graph connection/evaluation/render tests for closure composition, wrapper
    nesting, multi-output selectors, cycles, missing inputs, type conversion,
    direct Shader-to-Shader graphs, and the 64-node limit.
