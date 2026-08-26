@@ -1507,8 +1507,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       const std::string u = name + "__u";
       const std::string latitude = name + "__latitude";
       const std::string uv = name + "__uv";
-      const nlohmann::json view = inputNamed(
-          node, "viewdir", {{"value", nlohmann::json::array({0.0, 0.0, 1.0})}});
+      nlohmann::json view = inputNamed(node, "viewdir", nlohmann::json::object());
+      if (view.empty() || (JsonString(view, "nodename").empty() &&
+                           view.find("value") == view.end())) {
+        const std::string viewNode = name + "__viewdirection";
+        runtimeNodes.push_back({{"name", viewNode}, {"category", "viewdirection"},
+            {"type", "vector3"}, {"inputs", nlohmann::json::array()}});
+        view = nlohmann::json{{"nodename", viewNode}};
+      }
       auto extract = [&](const std::string& dst, int lane) {
         runtimeNodes.push_back({{"name", dst}, {"category", "extract"},
             {"type", "float"}, {"inputs", nlohmann::json::array({

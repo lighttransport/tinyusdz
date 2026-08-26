@@ -1173,6 +1173,21 @@ int main() {
      latlongMat.materialXGraph.nodes.back().imagePath!="environment.png"){
     std::fprintf(stderr,"MaterialX latlongimage lowering failed: %s (nodes=%zu)\n",latlongError.c_str(),latlongMat.materialXGraph.nodes.size());return 1;
   }
+  tusdview::DrawMaterialCPU latlongDefaultMat;
+  latlongDefaultMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
+    {"name":"environment","category":"latlongimage","type":"color3","inputs":[{"name":"file","type":"filename","value":"environment.png"}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string latlongDefaultError;
+  if(!tusdview::CompileMaterialXGraphRuntime(&latlongDefaultMat,&latlongDefaultError)){
+    std::fprintf(stderr,"MaterialX latlong default lowering failed: %s\n",latlongDefaultError.c_str());return 1;
+  }
+  bool hasViewDirection=false;
+  for(const auto& graphNode:latlongDefaultMat.materialXGraph.nodes)
+    hasViewDirection = hasViewDirection ||
+        graphNode.op==tusdview::MaterialXGraphOpCPU::ViewDirection;
+  if(!hasViewDirection){
+    std::fprintf(stderr,"MaterialX latlong default did not use runtime view direction\n");return 1;
+  }
   tusdview::DrawMaterialCPU triplanarMat;
   triplanarMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
     {"name":"projection","category":"triplanarprojection","type":"color3","inputs":[{"name":"filex","type":"filename","value":"x.png"},{"name":"filey","type":"filename","value":"y.png"},{"name":"filez","type":"filename","value":"z.png"},{"name":"default","value":[0.1,0.2,0.3]},{"name":"position","value":[1,2,3]},{"name":"normal","value":[1,1,1]},{"name":"upaxis","value":2},{"name":"blend","value":0.5}]}
