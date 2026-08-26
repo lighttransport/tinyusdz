@@ -394,6 +394,9 @@ Passed:
 - The focused CUDA and HIP semantic-AOV checks both pass on the current build;
   the CUDA run completed in 26.75 seconds and the HIP run in 14.70 seconds,
   including texture-backed OpenPBR AOVs and USDZ parity.
+- Standard `subsurface_bsdf` lowering now preserves its authored `scale` input
+  in both standalone evaluation and the bounded closure graph; direct bridge
+  and evaluator regressions pass 2/2.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
