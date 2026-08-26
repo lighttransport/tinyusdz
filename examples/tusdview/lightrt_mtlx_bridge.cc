@@ -1346,6 +1346,48 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       emitLeaf("transmission_color", "tint_TT", nlohmann::json::array({1,1,1}), "color3");
       emitLeaf("specular_ior", "ior", 1.55, "float");
       emitLeaf("sheen_roughness", "roughness_R", 0.1, "float");
+    } else if (cat == "generalized_schlick_edf") {
+      const std::string baseName = connectedClosure("base");
+      const ClosureLaneMap& base = lowerClosure(baseName);
+      for (const auto& lane : base) {
+        if (lane.first != "emission_color") lanes[lane.first] = lane.second;
+      }
+      const auto baseColor = base.find("emission_color");
+      if (baseColor != base.end()) {
+        const std::string normal = name + "__edf_normal";
+        const std::string view = name + "__edf_view";
+        const std::string cosine = name + "__edf_cosine";
+        const std::string oneMinus = name + "__edf_one_minus";
+        const std::string factor = name + "__edf_factor";
+        const std::string tint = name + "__edf_tint";
+        const std::string result = name + "__edf_result";
+        runtimeNodes.push_back({{"name", normal}, {"category", "normal"},
+                                {"type", "vector3"}, {"inputs", nlohmann::json::array()}});
+        runtimeNodes.push_back({{"name", view}, {"category", "viewdirection"},
+                                {"type", "vector3"}, {"inputs", nlohmann::json::array()}});
+        runtimeNodes.push_back({{"name", cosine}, {"category", "dotproduct"},
+                                {"type", "float"}, {"inputs", nlohmann::json::array({
+                                    nlohmann::json{{"name", "in1"}, {"nodename", normal}},
+                                    nlohmann::json{{"name", "in2"}, {"nodename", view}}})}});
+        runtimeNodes.push_back({{"name", oneMinus}, {"category", "subtract"},
+                                {"type", "float"}, {"inputs", nlohmann::json::array({
+                                    nlohmann::json{{"name", "in1"}, {"value", 1.0}},
+                                    nlohmann::json{{"name", "in2"}, {"nodename", cosine}}})}});
+        runtimeNodes.push_back({{"name", factor}, {"category", "power"},
+                                {"type", "float"}, {"inputs", nlohmann::json::array({
+                                    nlohmann::json{{"name", "in1"}, {"nodename", oneMinus}},
+                                    renamedInput(nodeInput(node, "exponent", 5.0), "in2")})}});
+        runtimeNodes.push_back({{"name", tint}, {"category", "mix"},
+                                {"type", "color3"}, {"inputs", nlohmann::json::array({
+                                    renamedInput(nodeInput(node, "color0", nlohmann::json::array({1,1,1})), "in1"),
+                                    renamedInput(nodeInput(node, "color90", nlohmann::json::array({1,1,1})), "in2"),
+                                    nlohmann::json{{"name", "mix"}, {"nodename", factor}}})}});
+        runtimeNodes.push_back({{"name", result}, {"category", "multiply"},
+                                {"type", "color3"}, {"inputs", nlohmann::json::array({
+                                    nlohmann::json{{"name", "in1"}, {"nodename", baseColor->second}},
+                                    nlohmann::json{{"name", "in2"}, {"nodename", tint}}})}});
+        emitClosureLane(name, "emission_color", nlohmann::json{{"nodename", result}}, "color3");
+      }
     } else if (cat == "uniform_edf" || cat == "conical_edf" || cat == "measured_edf") {
       emitLeaf("emission_color", "color", nlohmann::json::array({1,1,1}), "color3");
       emitClosureLane(name, "emission_luminance", nlohmann::json{{"value",1.0}}, "float");
