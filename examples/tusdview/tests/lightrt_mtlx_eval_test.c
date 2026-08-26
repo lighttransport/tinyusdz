@@ -53,6 +53,28 @@ static int eval_xml(const char *xml, OpenPBRParams *p) {
   return ok;
 }
 
+static int eval_volume_xml(const char *xml, MtlxVolumeParams *p) {
+  MtlxDoc *doc = mtlx_load_string(xml);
+  if (!doc || doc->nmat != 1 || doc->mats[0].volume_node < 0) {
+    fprintf(stderr, "volume material did not resolve\n");
+    mtlx_free(doc);
+    return 0;
+  }
+  ShadeContext ctx;
+  memset(&ctx, 0, sizeof(ctx));
+  ctx.doc = doc;
+  ctx.Ns = v3_make(0.0f, 0.0f, 1.0f);
+  ctx.V = v3_make(0.0f, 0.0f, 1.0f);
+  ctx.memo = (MtlxValue *)calloc((size_t)doc->nnode, sizeof(MtlxValue));
+  ctx.memo_done = (char *)calloc((size_t)doc->nnode, 1);
+  const int ok = ctx.memo && ctx.memo_done &&
+      mtlx_eval_volume(&ctx, doc->mats[0].volume_node, p) == 0;
+  free(ctx.memo);
+  free(ctx.memo_done);
+  mtlx_free(doc);
+  return ok;
+}
+
 int main(void) {
   const char *xml =
       "<materialx version=\"1.38\">"
@@ -188,6 +210,87 @@ int main(void) {
        nearf(p.opacity, 0.45f);
   if (!ok) {
     fprintf(stderr, "surface_unlit parameters were not evaluated\n");
+    return 1;
+  }
+
+  const char *closure_xml =
+      "<materialx version=\"1.39\">"
+      " <oren_nayar_diffuse_bsdf name=\"Diffuse\" type=\"BSDF\">"
+      "  <input name=\"weight\" type=\"float\" value=\"0.4\"/>"
+      "  <input name=\"color\" type=\"color3\" value=\"0.2,0.3,0.4\"/>"
+      "  <input name=\"roughness\" type=\"float\" value=\"0.25\"/>"
+      " </oren_nayar_diffuse_bsdf>"
+      " <dielectric_bsdf name=\"Glass\" type=\"BSDF\">"
+      "  <input name=\"weight\" type=\"float\" value=\"0.6\"/>"
+      "  <input name=\"tint\" type=\"color3\" value=\"0.8,0.9,1\"/>"
+      "  <input name=\"ior\" type=\"float\" value=\"1.45\"/>"
+      "  <input name=\"roughness\" type=\"vector2\" value=\"0.12,0.2\"/>"
+      "  <input name=\"scatter_mode\" type=\"string\" value=\"RT\"/>"
+      " </dielectric_bsdf>"
+      " <add name=\"Combined\" type=\"BSDF\">"
+      "  <input name=\"in1\" type=\"BSDF\" nodename=\"Diffuse\"/>"
+      "  <input name=\"in2\" type=\"BSDF\" nodename=\"Glass\"/>"
+      " </add>"
+      " <uniform_edf name=\"Emit\" type=\"EDF\">"
+      "  <input name=\"color\" type=\"color3\" value=\"0.1,0.2,0.3\"/>"
+      " </uniform_edf>"
+      " <surface name=\"Surface\" type=\"surfaceshader\">"
+      "  <input name=\"bsdf\" type=\"BSDF\" nodename=\"Combined\"/>"
+      "  <input name=\"edf\" type=\"EDF\" nodename=\"Emit\"/>"
+      "  <input name=\"opacity\" type=\"float\" value=\"0.75\"/>"
+      " </surface>"
+      " <surfacematerial name=\"ClosureMat\" type=\"material\">"
+      "  <input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"Surface\"/>"
+      " </surfacematerial>"
+      "</materialx>";
+  if (!eval_xml(closure_xml, &p)) return 1;
+  ok = nearf(p.base_weight, 0.4f) && nearf(p.base_color.x, 0.2f) &&
+       nearf(p.diffuse_roughness, 0.25f) &&
+       nearf(p.specular_weight, 0.6f) && nearf(p.specular_ior, 1.45f) &&
+       nearf(p.specular_roughness, 0.12f) && nearf(p.transmission, 0.6f) &&
+       nearf(p.emission_color.z, 0.3f) && nearf(p.opacity, 0.75f);
+  if (!ok) {
+    fprintf(stderr, "MaterialX surface closure graph was not evaluated: "
+            "base=%g color=%g rough=%g spec=%g ior=%g srough=%g trans=%g "
+            "emit=%g opacity=%g\n", p.base_weight, p.base_color.x,
+            p.diffuse_roughness, p.specular_weight, p.specular_ior,
+            p.specular_roughness, p.transmission, p.emission_color.z,
+            p.opacity);
+    return 1;
+  }
+
+  const char *volume_xml =
+      "<materialx version=\"1.39\">"
+      " <anisotropic_vdf name=\"Fog\" type=\"VDF\">"
+      "  <input name=\"absorption\" type=\"vector3\" value=\"0.1,0.2,0.3\"/>"
+      "  <input name=\"scattering\" type=\"vector3\" value=\"0.4,0.5,0.6\"/>"
+      "  <input name=\"anisotropy\" type=\"float\" value=\"0.35\"/>"
+      " </anisotropic_vdf>"
+      " <uniform_edf name=\"Glow\" type=\"EDF\">"
+      "  <input name=\"color\" type=\"color3\" value=\"2,1,0.5\"/>"
+      " </uniform_edf>"
+      " <volume name=\"Volume\" type=\"volumeshader\">"
+      "  <input name=\"vdf\" type=\"VDF\" nodename=\"Fog\"/>"
+      "  <input name=\"edf\" type=\"EDF\" nodename=\"Glow\"/>"
+      " </volume>"
+      " <volumematerial name=\"VolumeMat\" type=\"material\">"
+      "  <input name=\"volumeshader\" type=\"volumeshader\" nodename=\"Volume\"/>"
+      " </volumematerial>"
+      "</materialx>";
+  MtlxVolumeParams volume;
+  if (!eval_volume_xml(volume_xml, &volume)) return 1;
+  ok = nearf(volume.absorption.x, 0.1f) &&
+       nearf(volume.absorption.y, 0.2f) &&
+       nearf(volume.absorption.z, 0.3f) &&
+       nearf(volume.scattering.x, 0.4f) &&
+       nearf(volume.scattering.y, 0.5f) &&
+       nearf(volume.scattering.z, 0.6f) &&
+       nearf(volume.anisotropy, 0.35f) &&
+       nearf(volume.emission.x, 2.0f) &&
+       nearf(volume.emission.y, 1.0f) &&
+       nearf(volume.emission.z, 0.5f);
+  if (!ok) {
+    fprintf(stderr, "MaterialX volume/VDF/EDF graph was not evaluated\n");
     return 1;
   }
 

@@ -70,8 +70,9 @@ typedef struct {
     /* pending output records: graph_id, output-name -> nodename (+sub) */
     struct { int graph_id; char *name; char *nodename; char *sub; } *outs;
     int nout;
-    /* pending material surfaceshader nodenames (top-level scope) */
+    /* pending material shader nodenames (top-level scope) */
     char **mat_shadernames;
+    char **mat_volumenames;
 } Builder;
 
 static int add_graph(Builder *b, const char *name) {
@@ -229,20 +230,28 @@ static MtlxDoc *mtlx_build(XmlNode *root) {
             for (int k = 0; k < el->nchild; k++)
                 if (!strcmp(el->children[k].tag, "input"))
                     node_add_input(&b.d.nodes[nid], &el->children[k], root_pre);
-        } else if (!strcmp(tag, "surfacematerial")) {
+        } else if (!strcmp(tag, "surfacematerial") ||
+                   !strcmp(tag, "volumematerial")) {
             b.d.mats = realloc(b.d.mats, sizeof(MtlxMaterial) * (b.d.nmat + 1));
             b.mat_shadernames = realloc(b.mat_shadernames, sizeof(char *) * (b.d.nmat + 1));
+            b.mat_volumenames = realloc(b.mat_volumenames, sizeof(char *) * (b.d.nmat + 1));
             MtlxMaterial *m = &b.d.mats[b.d.nmat];
             m->name = strdup(xml_attr(el, "name") ? xml_attr(el, "name") : "");
             m->surface_node = -1;
-            const char *shadername = NULL;
+            m->volume_node = -1;
+            const char *surface_name = NULL;
+            const char *volume_name = NULL;
             for (int k = 0; k < el->nchild; k++) {
                 const XmlNode *in = &el->children[k];
                 if (!strcmp(in->tag, "input") && xml_attr(in, "name") &&
                     !strcmp(xml_attr(in, "name"), "surfaceshader"))
-                    shadername = xml_attr(in, "nodename");
+                    surface_name = xml_attr(in, "nodename");
+                if (!strcmp(in->tag, "input") && xml_attr(in, "name") &&
+                    !strcmp(xml_attr(in, "name"), "volumeshader"))
+                    volume_name = xml_attr(in, "nodename");
             }
-            b.mat_shadernames[b.d.nmat] = strdup(shadername ? shadername : "");
+            b.mat_shadernames[b.d.nmat] = strdup(surface_name ? surface_name : "");
+            b.mat_volumenames[b.d.nmat] = strdup(volume_name ? volume_name : "");
             b.d.nmat++;
         } else if (!strcmp(tag, "look")) {
             for (int k = 0; k < el->nchild; k++) {
@@ -304,9 +313,12 @@ static MtlxDoc *mtlx_build(XmlNode *root) {
     /* ---- resolve material surface nodes (top-level scope) ---- */
     for (int i = 0; i < b.d.nmat; i++) {
         b.d.mats[i].surface_node = mtlx_find_node(&b.d, -1, b.mat_shadernames[i]);
+        b.d.mats[i].volume_node = mtlx_find_node(&b.d, -1, b.mat_volumenames[i]);
         free(b.mat_shadernames[i]);
+        free(b.mat_volumenames[i]);
     }
     free(b.mat_shadernames);
+    free(b.mat_volumenames);
 
     /* free pending output records */
     for (int i = 0; i < b.nout; i++) { free(b.outs[i].name); free(b.outs[i].nodename); free(b.outs[i].sub); }

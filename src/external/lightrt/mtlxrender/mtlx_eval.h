@@ -56,6 +56,13 @@ typedef struct {
 } OpenPBRParams;
 
 typedef struct {
+    v3 absorption;
+    v3 scattering;
+    float anisotropy;
+    v3 emission;
+} MtlxVolumeParams;
+
+typedef struct {
     const MtlxDoc *doc;
     TextureCache  *tex;
     /* shade point */
@@ -85,6 +92,10 @@ void openpbr_defaults(OpenPBRParams *p);
 
 /* Evaluate a surface shader node into params. Returns 0 on success. */
 int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out);
+
+/* Evaluate a MaterialX volume constructor and its connected VDF/EDF graph. */
+int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
+                     MtlxVolumeParams *out);
 
 /* Evaluate any node by id (resets the per-shade memo first). For tests. */
 MtlxValue mtlx_eval_node_test(ShadeContext *ctx, int node_id);

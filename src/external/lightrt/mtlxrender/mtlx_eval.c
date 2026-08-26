@@ -995,6 +995,199 @@ static v3 in_color(ShadeContext *ctx, const MtlxNode *n, const char *name, v3 fb
     return mv_as_v3(&v);
 }
 
+static const MtlxNode *input_node(ShadeContext *ctx, const MtlxNode *n,
+                                  const char *name) {
+    const MtlxInput *in = find_input(n, name);
+    if (!in || in->src_node < 0 || in->src_node >= ctx->doc->nnode) return NULL;
+    return &ctx->doc->nodes[in->src_node];
+}
+
+static v3 eval_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
+    if (!n || depth > 32) return v3_splat(0.0f);
+    const char *cat = n->category;
+    if (!strcmp(cat, "uniform_edf") || !strcmp(cat, "measured_edf"))
+        return in_color(ctx, n, "color", v3_splat(1.0f));
+    if (!strcmp(cat, "conical_edf")) {
+        const v3 color = in_color(ctx, n, "color", v3_splat(1.0f));
+        v3 normal = in_color(ctx, n, "normal", ctx->Ns);
+        normal = v3_normalize(normal);
+        const float inner = in_float(ctx, n, "inner_angle", 60.0f);
+        const float outer = in_float(ctx, n, "outer_angle", 0.0f);
+        const float angle = acosf(fmaxf(-1.0f, fminf(1.0f,
+                                                   v3_dot(normal, ctx->V)))) *
+                            (180.0f / 3.14159265358979323846f);
+        const float lo = fminf(inner, outer), hi = fmaxf(inner, outer);
+        const float falloff = angle <= lo ? 1.0f :
+                              angle >= hi ? 0.0f :
+                              (hi - angle) / fmaxf(hi - lo, 1.0e-6f);
+        return v3_scale(color, falloff);
+    }
+    if (!strcmp(cat, "generalized_schlick_edf")) {
+        const v3 base = eval_edf(ctx, input_node(ctx, n, "base"), depth + 1);
+        const v3 c0 = in_color(ctx, n, "color0", v3_splat(1.0f));
+        const v3 c90 = in_color(ctx, n, "color90", v3_splat(1.0f));
+        const float exponent = in_float(ctx, n, "exponent", 5.0f);
+        const float cos_theta = fmaxf(0.0f, fminf(1.0f,
+            v3_dot(v3_normalize(ctx->Ns), v3_normalize(ctx->V))));
+        const float f = powf(1.0f - cos_theta, exponent);
+        return v3_mul(base, v3_lerp(c0, c90, f));
+    }
+    return v3_splat(0.0f);
+}
+
+static const char *in_string(const MtlxNode *n, const char *name,
+                             const char *fb) {
+    const MtlxInput *in = find_input(n, name);
+    return (in && in->has_value && in->value.s) ? in->value.s : fb;
+}
+
+static float in_component0(ShadeContext *ctx, const MtlxNode *n,
+                           const char *name, float fb) {
+    const MtlxInput *in = find_input(n, name);
+    if (!in) return fb;
+    const MtlxValue value = eval_input(ctx, in);
+    return value.v[0];
+}
+
+static void apply_normal_input(ShadeContext *ctx, const MtlxNode *n,
+                               const char *name, OpenPBRParams *out);
+
+static void blend_lobe(float *total, v3 *dst, v3 color, float weight) {
+    if (weight <= 0.0f) return;
+    const float old = *total;
+    const float sum = old + weight;
+    *dst = sum > 0.0f ? v3_scale(v3_add(v3_scale(*dst, old),
+                                       v3_scale(color, weight)), 1.0f / sum)
+                      : color;
+    *total = sum;
+}
+
+static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
+                       OpenPBRParams *out, int depth) {
+    if (!n || depth > 32 || scale <= 0.0f) return;
+    const char *cat = n->category;
+    if (!strcmp(cat, "add")) {
+        apply_bsdf(ctx, input_node(ctx, n, "in1"), scale, out, depth + 1);
+        apply_bsdf(ctx, input_node(ctx, n, "in2"), scale, out, depth + 1);
+        return;
+    }
+    if (!strcmp(cat, "mix")) {
+        const float mix = fmaxf(0.0f, fminf(1.0f,
+            in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.5f))));
+        apply_bsdf(ctx, input_node(ctx, n, "bg"), scale * (1.0f - mix),
+                   out, depth + 1);
+        apply_bsdf(ctx, input_node(ctx, n, "fg"), scale * mix,
+                   out, depth + 1);
+        return;
+    }
+    if (!strcmp(cat, "multiply")) {
+        const MtlxNode *a = input_node(ctx, n, "in1");
+        const MtlxNode *b = input_node(ctx, n, "in2");
+        const MtlxInput *scalar = find_input(n, a ? "in2" : "in1");
+        MtlxValue scalar_value;
+        memset(&scalar_value, 0, sizeof(scalar_value));
+        if (scalar) scalar_value = eval_input(ctx, scalar);
+        float factor = scalar ? mv_as_float(&scalar_value) : 1.0f;
+        apply_bsdf(ctx, a ? a : b, scale * fmaxf(0.0f, factor), out,
+                   depth + 1);
+        return;
+    }
+    if (!strcmp(cat, "layer")) {
+        apply_bsdf(ctx, input_node(ctx, n, "base"), scale, out, depth + 1);
+        apply_bsdf(ctx, input_node(ctx, n, "top"), scale, out, depth + 1);
+        return;
+    }
+
+    const float weight = scale * fmaxf(0.0f, in_float(ctx, n, "weight", 1.0f));
+    if (!strcmp(cat, "oren_nayar_diffuse_bsdf") ||
+        !strcmp(cat, "burley_diffuse_bsdf")) {
+        const float old = out->base_weight;
+        blend_lobe(&out->base_weight, &out->base_color,
+                   in_color(ctx, n, "color", v3_splat(0.18f)), weight);
+        out->diffuse_roughness = (out->diffuse_roughness * old +
+            in_float(ctx, n, "roughness", 0.0f) * weight) /
+            fmaxf(out->base_weight, 1.0e-6f);
+    } else if (!strcmp(cat, "translucent_bsdf")) {
+        blend_lobe(&out->transmission, &out->transmission_color,
+                   in_color(ctx, n, "color", v3_splat(1.0f)), weight);
+    } else if (!strcmp(cat, "dielectric_bsdf")) {
+        const char *mode = in_string(n, "scatter_mode", "R");
+        if (strchr(mode, 'R')) {
+            blend_lobe(&out->specular_weight, &out->specular_color,
+                       in_color(ctx, n, "tint", v3_splat(1.0f)), weight);
+        }
+        if (strchr(mode, 'T')) {
+            blend_lobe(&out->transmission, &out->transmission_color,
+                       in_color(ctx, n, "tint", v3_splat(1.0f)), weight);
+        }
+        out->specular_ior = in_float(ctx, n, "ior", 1.5f);
+        out->specular_roughness = in_component0(ctx, n, "roughness", 0.05f);
+        out->thin_film_thickness = in_float(ctx, n, "thinfilm_thickness", 0.0f);
+        out->thin_film_ior = in_float(ctx, n, "thinfilm_ior", 1.5f);
+        out->thin_film_weight = out->thin_film_thickness > 0.0f ? weight : 0.0f;
+    } else if (!strcmp(cat, "conductor_bsdf")) {
+        const v3 eta = in_color(ctx, n, "ior", v3_make(0.183f, 0.421f, 1.373f));
+        const v3 k = in_color(ctx, n, "extinction", v3_make(3.424f, 2.346f, 1.770f));
+        const v3 one = v3_splat(1.0f);
+        const v3 em = v3_sub(eta, one), ep = v3_add(eta, one);
+        const v3 k2 = v3_mul(k, k);
+        const v3 num = v3_add(v3_mul(em, em), k2);
+        const v3 den = v3_add(v3_mul(ep, ep), k2);
+        const v3 f0 = v3_make(num.x / fmaxf(den.x, 1.0e-6f),
+                              num.y / fmaxf(den.y, 1.0e-6f),
+                              num.z / fmaxf(den.z, 1.0e-6f));
+        blend_lobe(&out->base_weight, &out->base_color, f0, weight);
+        out->metalness = 1.0f;
+        out->specular_roughness = in_component0(ctx, n, "roughness", 0.05f);
+    } else if (!strcmp(cat, "generalized_schlick_bsdf")) {
+        const char *mode = in_string(n, "scatter_mode", "R");
+        const v3 c0 = in_color(ctx, n, "color0", v3_splat(1.0f));
+        if (strchr(mode, 'R'))
+            blend_lobe(&out->specular_weight, &out->specular_color, c0, weight);
+        if (strchr(mode, 'T'))
+            blend_lobe(&out->transmission, &out->transmission_color,
+                       in_color(ctx, n, "color90", v3_splat(1.0f)), weight);
+        out->specular_roughness = in_component0(ctx, n, "roughness", 0.05f);
+    } else if (!strcmp(cat, "subsurface_bsdf")) {
+        blend_lobe(&out->subsurface, &out->subsurface_color,
+                   in_color(ctx, n, "color", v3_splat(0.18f)), weight);
+        out->subsurface_radius = in_color(ctx, n, "radius", v3_splat(1.0f));
+    } else if (!strcmp(cat, "sheen_bsdf")) {
+        blend_lobe(&out->sheen_weight, &out->sheen_color,
+                   in_color(ctx, n, "color", v3_splat(1.0f)), weight);
+        out->sheen_roughness = in_float(ctx, n, "roughness", 0.3f);
+    } else if (!strcmp(cat, "chiang_hair_bsdf")) {
+        const v3 r = in_color(ctx, n, "tint_R", v3_splat(1.0f));
+        const v3 tt = in_color(ctx, n, "tint_TT", v3_splat(1.0f));
+        blend_lobe(&out->sheen_weight, &out->sheen_color, r, 0.5f * weight);
+        blend_lobe(&out->transmission, &out->transmission_color, tt,
+                   0.5f * weight);
+        out->specular_ior = in_float(ctx, n, "ior", 1.55f);
+        out->sheen_roughness = in_component0(ctx, n, "roughness_R", 0.1f);
+    }
+    apply_normal_input(ctx, n, "normal", out);
+}
+
+int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
+                     MtlxVolumeParams *out) {
+    if (!ctx || !ctx->doc || !out || volume_node < 0 ||
+        volume_node >= ctx->doc->nnode) return 1;
+    memset(out, 0, sizeof(*out));
+    memset(ctx->memo_done, 0, (size_t)ctx->doc->nnode);
+    const MtlxNode *volume = &ctx->doc->nodes[volume_node];
+    if (strcmp(volume->category, "volume")) return 1;
+    const MtlxNode *vdf = input_node(ctx, volume, "vdf");
+    if (vdf && !strcmp(vdf->category, "absorption_vdf")) {
+        out->absorption = in_color(ctx, vdf, "absorption", v3_splat(0.0f));
+    } else if (vdf && !strcmp(vdf->category, "anisotropic_vdf")) {
+        out->absorption = in_color(ctx, vdf, "absorption", v3_splat(0.0f));
+        out->scattering = in_color(ctx, vdf, "scattering", v3_splat(0.0f));
+        out->anisotropy = in_float(ctx, vdf, "anisotropy", 0.0f);
+    }
+    out->emission = eval_edf(ctx, input_node(ctx, volume, "edf"), 0);
+    return 0;
+}
+
 static void apply_normal_input(ShadeContext *ctx, const MtlxNode *n, const char *name, OpenPBRParams *out) {
     const MtlxInput *nin = find_input(n, name);
     if (nin && nin->src_node >= 0) {
@@ -1013,7 +1206,17 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
     const MtlxNode *n = &ctx->doc->nodes[surface_node];
     const char *cat = n->category;
 
-    if (!strcmp(cat, "surface_unlit")) {
+    if (!strcmp(cat, "surface")) {
+        out->base_weight = 0.0f;
+        out->specular_weight = 0.0f;
+        out->transmission = 0.0f;
+        out->subsurface = 0.0f;
+        out->sheen_weight = 0.0f;
+        apply_bsdf(ctx, input_node(ctx, n, "bsdf"), 1.0f, out, 0);
+        out->emission_color = eval_edf(ctx, input_node(ctx, n, "edf"), 0);
+        out->emission = v3_maxc(out->emission_color) > 0.0f ? 1.0f : 0.0f;
+        out->opacity = in_float(ctx, n, "opacity", 1.0f);
+    } else if (!strcmp(cat, "surface_unlit")) {
         out->base_weight = 0.0f;
         out->specular_weight = 0.0f;
         out->emission = in_float(ctx, n, "emission", 1.0f);

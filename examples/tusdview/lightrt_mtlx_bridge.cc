@@ -929,6 +929,7 @@ int FindSurfaceNode(const MtlxDoc* doc, const char* materialName,
     if (!c) continue;
     if (std::strcmp(c, "open_pbr_surface") == 0 ||
         std::strcmp(c, "standard_surface") == 0 ||
+        std::strcmp(c, "surface_unlit") == 0 ||
         std::strcmp(c, "UsdPreviewSurface") == 0 ||
         std::strcmp(c, "gltf_pbr") == 0 ||
         std::strcmp(c, "disney_principled") == 0) {
@@ -1029,6 +1030,65 @@ bool EvaluateMaterialXStringToLightRtOpenPBR(const char* xml,
                                              std::string* err) {
   return EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
       xml, materialName, nullptr, out, err);
+}
+
+bool EvaluateMaterialXStringToLightRtVolume(const char* xml,
+                                            const char* materialName,
+                                            DrawMaterialCPU* out,
+                                            std::string* err) {
+  if (err) err->clear();
+  if (!xml || !xml[0] || !out) {
+    if (err) *err = !out ? "Output pointer is null" :
+                           "MaterialX XML string is empty";
+    return false;
+  }
+  MtlxDoc* doc = mtlx_load_string(xml);
+  if (!doc) {
+    if (err) *err = "mtlx_load_string failed";
+    return false;
+  }
+  int material = materialName && materialName[0]
+      ? mtlx_find_material(doc, materialName) : (doc->nmat == 1 ? 0 : -1);
+  if (material < 0 || doc->mats[material].volume_node < 0) {
+    if (err) *err = "MaterialX volume material or shader not found";
+    mtlx_free(doc);
+    return false;
+  }
+  ShadeContext ctx{};
+  ctx.doc = doc;
+  ctx.Ns = v3_make(0.0f, 0.0f, 1.0f);
+  ctx.Ng = ctx.Ns;
+  ctx.V = ctx.Ns;
+  std::vector<MtlxValue> memo(static_cast<size_t>(doc->nnode));
+  std::vector<char> done(static_cast<size_t>(doc->nnode), 0);
+  ctx.memo = memo.data();
+  ctx.memo_done = done.data();
+  MtlxVolumeParams volume{};
+  const bool ok = mtlx_eval_volume(
+      &ctx, doc->mats[material].volume_node, &volume) == 0;
+  mtlx_free(doc);
+  if (!ok) {
+    if (err) *err = "mtlx_eval_volume failed";
+    return false;
+  }
+  const float extinction[3] = {
+      volume.absorption.x + volume.scattering.x,
+      volume.absorption.y + volume.scattering.y,
+      volume.absorption.z + volume.scattering.z};
+  out->volumeDensity = std::max(extinction[0],
+      std::max(extinction[1], extinction[2]));
+  const float scattering[3] = {volume.scattering.x, volume.scattering.y,
+                               volume.scattering.z};
+  for (int i = 0; i < 3; ++i) {
+    out->volumeAlbedo[i] = extinction[i] > 1.0e-8f
+        ? scattering[i] / extinction[i] : 0.0f;
+  }
+  out->volumeEmission[0] = volume.emission.x;
+  out->volumeEmission[1] = volume.emission.y;
+  out->volumeEmission[2] = volume.emission.z;
+  out->volumeEmissionScale = v3_maxc(volume.emission) > 0.0f ? 1.0f : 0.0f;
+  out->hasVolumeOutput = true;
+  return true;
 }
 
 bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
