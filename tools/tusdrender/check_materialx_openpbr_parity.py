@@ -562,7 +562,7 @@ def Xform "World" {
     }
     def NodeGraph "NG" {
       color3f outputs:base.connect = </World/M/NG/Checker.outputs:out>
-      float outputs:weight.connect = </World/M/NG/Wave.outputs:out>
+      float outputs:weight.connect = </World/M/NG/Modulated.outputs:out>
       def Shader "ST" {
         uniform token info:id = "ND_texcoord_vector2"
         float2 outputs:out
@@ -582,6 +582,35 @@ def Xform "World" {
       def Shader "Wave" {
         uniform token info:id = "ND_trianglewave_float"
         float inputs:in.connect = </World/M/NG/ScaledX.outputs:out>
+        float outputs:out
+      }
+      def Shader "CellST" {
+        uniform token info:id = "ND_multiply_vector2"
+        float2 inputs:in1.connect = </World/M/NG/ST.outputs:out>
+        float inputs:in2 = 4
+        float2 outputs:out
+      }
+      def Shader "Cell" {
+        uniform token info:id = "ND_cellnoise2d_float"
+        float2 inputs:texcoord.connect = </World/M/NG/CellST.outputs:out>
+        float outputs:out
+      }
+      def Shader "CellHalf" {
+        uniform token info:id = "ND_multiply_float"
+        float inputs:in1.connect = </World/M/NG/Cell.outputs:out>
+        float inputs:in2 = 0.5
+        float outputs:out
+      }
+      def Shader "CellBias" {
+        uniform token info:id = "ND_add_float"
+        float inputs:in1.connect = </World/M/NG/CellHalf.outputs:out>
+        float inputs:in2 = 0.5
+        float outputs:out
+      }
+      def Shader "Modulated" {
+        uniform token info:id = "ND_multiply_float"
+        float inputs:in1.connect = </World/M/NG/Wave.outputs:out>
+        float inputs:in2.connect = </World/M/NG/CellBias.outputs:out>
         float outputs:out
       }
       def Shader "Checker" {

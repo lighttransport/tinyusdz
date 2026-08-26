@@ -1071,6 +1071,23 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     input["name"] = name;
     return input;
   };
+  auto emitRandomFloat = [&](const std::string& base, nlohmann::json input,
+                             nlohmann::json seed, nlohmann::json minimum,
+                             nlohmann::json maximum, bool scaleInput) {
+    const std::string scaled=base+"__scaled_input",pair=base+"__pair";
+    const std::string cell=base+"__cell",span=base+"__span";
+    const std::string ranged=base+"__ranged";
+    nlohmann::json randomInput = input;
+    if (scaleInput) {
+      runtimeNodes.push_back({{"name",scaled},{"category","multiply"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(input,"in1"),nlohmann::json{{"name","in2"},{"value",4096}}})}});
+      randomInput={{"nodename",scaled}};
+    }
+    runtimeNodes.push_back({{"name",pair},{"category","combine2"},{"type","vector2"},{"inputs",nlohmann::json::array({renamedInput(randomInput,"in1"),renamedInput(seed,"in2")})}});
+    runtimeNodes.push_back({{"name",cell},{"category","cellnoise2d"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","texcoord"},{"nodename",pair}}})}});
+    runtimeNodes.push_back({{"name",span},{"category","subtract"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(maximum,"in1"),renamedInput(minimum,"in2")})}});
+    runtimeNodes.push_back({{"name",ranged},{"category","multiply"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",cell}},nlohmann::json{{"name","in2"},{"nodename",span}}})}});
+    runtimeNodes.push_back({{"name",base},{"category","add"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",ranged}},renamedInput(minimum,"in2")})}});
+  };
   for (const nlohmann::json& node : *nodesIt) {
     const std::string name = JsonString(node, "name");
     const std::string type = JsonString(node, "type");
@@ -1258,6 +1275,47 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       if(preserveAlpha){const std::string alpha=name+"__alpha";runtimeNodes.push_back({{"name",alpha},{"category","extract"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(source,"in"),nlohmann::json{{"name","index"},{"value",3}}})}});runtimeNodes.push_back({{"name",name},{"category","setalpha"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",corrected}},nlohmann::json{{"name","alpha"},{"nodename",alpha}}})}});}
       continue;
     }
+    if ((cat == "cellnoise2d" || cat == "cellnoise3d") && !name.empty()) {
+      const bool is3d = cat == "cellnoise3d";
+      const char* inputName = is3d ? "position" : "texcoord";
+      const std::string sourceName = name + (is3d ? "__position" : "__st");
+      nlohmann::json source = inputNamed(
+          node, inputName, {{"name", inputName}, {"nodename", sourceName}});
+      if (JsonString(source, "nodename") == sourceName) {
+        runtimeNodes.push_back({{"name", sourceName},
+            {"category", is3d ? "position" : "texcoord"},
+            {"type", is3d ? "vector3" : "vector2"},
+            {"inputs", nlohmann::json::array()}});
+      }
+      nlohmann::json lowered = node;
+      lowered["inputs"] = nlohmann::json::array({renamedInput(source, inputName)});
+      runtimeNodes.push_back(std::move(lowered));
+      continue;
+    }
+    if (cat == "randomfloat" && !name.empty()) {
+      const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
+      emitRandomFloat(name, input, inputNamed(node,"seed",{{"value",0}}),
+                      inputNamed(node,"min",{{"value",0}}),
+                      inputNamed(node,"max",{{"value",1}}),
+                      JsonString(input,"type") != "integer");
+      continue;
+    }
+    if (cat == "randomcolor" && !name.empty()) {
+      const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
+      const nlohmann::json seed=inputNamed(node,"seed",{{"value",0}});
+      const char* labels[3]={"hue","saturation","brightness"};
+      const double offsets[3]={413.3,1522.4,1813.8};
+      const char* lows[3]={"huelow","saturationlow","brightnesslow"};
+      const char* highs[3]={"huehigh","saturationhigh","brightnesshigh"};
+      const double lowDefaults[3]={0.0,0.825,1.0};
+      const double highDefaults[3]={1.0,1.0,1.0};
+      std::string randomNames[3];
+      for(int channel=0;channel<3;++channel){const std::string offset=name+"__seed_"+labels[channel]+"_offset";const std::string rounded=name+"__seed_"+labels[channel];randomNames[channel]=name+"__random_"+labels[channel];runtimeNodes.push_back({{"name",offset},{"category","add"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(seed,"in1"),nlohmann::json{{"name","in2"},{"value",offsets[channel]}}})}});runtimeNodes.push_back({{"name",rounded},{"category","ceil"},{"type","integer"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",offset}}})}});emitRandomFloat(randomNames[channel],input,nlohmann::json{{"nodename",rounded}},inputNamed(node,lows[channel],{{"value",lowDefaults[channel]}}),inputNamed(node,highs[channel],{{"value",highDefaults[channel]}}),true);}
+      const std::string hsv=name+"__hsv";
+      runtimeNodes.push_back({{"name",hsv},{"category","combine3"},{"type","color3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",randomNames[0]}},nlohmann::json{{"name","in2"},{"nodename",randomNames[1]}},nlohmann::json{{"name","in3"},{"nodename",randomNames[2]}}})}});
+      runtimeNodes.push_back({{"name",name},{"category","hsvtorgb"},{"type","color3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",hsv}}})}});
+      continue;
+    }
     runtimeNodes.push_back(node);
   }
   std::map<std::string, int> nodeIds;
@@ -1396,6 +1454,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           out.value[2][2] = out.value[2][3] = 1.0f;
     }
     else if (cat == "setalpha") out.op = MaterialXGraphOpCPU::SetAlpha;
+    else if (cat == "cellnoise2d") out.op = MaterialXGraphOpCPU::CellNoise2D;
+    else if (cat == "cellnoise3d") out.op = MaterialXGraphOpCPU::CellNoise3D;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")

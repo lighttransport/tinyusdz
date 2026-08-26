@@ -353,6 +353,23 @@ inline float SampleTextureBilinearChannel(
   return top * (1.0f - ty) + bot * ty;
 }
 
+uint32_t MtlxRotl32(uint32_t x, int k) {
+  return (x << k) | (x >> (32 - k));
+}
+uint32_t MtlxBjFinal(uint32_t a, uint32_t b, uint32_t c) {
+  c ^= b; c -= MtlxRotl32(b,14); a ^= c; a -= MtlxRotl32(c,11);
+  b ^= a; b -= MtlxRotl32(a,25); c ^= b; c -= MtlxRotl32(b,16);
+  a ^= c; a -= MtlxRotl32(c,4); b ^= a; b -= MtlxRotl32(a,14);
+  c ^= b; c -= MtlxRotl32(b,24); return c;
+}
+float MtlxCellNoise(int x, int y, int z, bool is3d) {
+  const uint32_t seed = 0xdeadbeefu + ((is3d ? 3u : 2u) << 2u) + 13u;
+  const uint32_t hash = MtlxBjFinal(seed + static_cast<uint32_t>(x),
+      seed + static_cast<uint32_t>(y),
+      seed + (is3d ? static_cast<uint32_t>(z) : 0u));
+  return static_cast<float>(hash) / static_cast<float>(0xffffffffu);
+}
+
 std::array<float, 4> EvalCpuMaterialXGraph(
     const HostScene& scene, int materialId, int route, float u, float v,
     float u1, float v1) {
@@ -707,6 +724,13 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst={0,1,0,1};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::SetAlpha)) {
         dst = {a[0], a[1], a[2], b[0]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::CellNoise2D) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::CellNoise3D)) {
+        const bool is3d = op == static_cast<int>(MaterialXGraphOpCPU::CellNoise3D);
+        const float q = MtlxCellNoise(static_cast<int>(std::floor(a[0])),
+            static_cast<int>(std::floor(a[1])),
+            static_cast<int>(std::floor(a[2])), is3d);
+        dst = {q, q, q, q};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);

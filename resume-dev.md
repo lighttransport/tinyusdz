@@ -7,11 +7,12 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
 
 - Branch: `dev`
 - Public remote: `https://github.com/lighttransport/tinyusdz.git`
-- Local `HEAD`: `e963234b3` (`Expand MaterialX procedural and compositing nodes`)
+- Local `HEAD`: `f1406bb22` (`Add full MaterialX color correction`)
 - `origin/dev`: `d8068d7fc` (`Expand headless MaterialX GPU parity`)
 - Local `dev` is two commits ahead. The triangle-wave/checkerboard,
   compositing, circle, and line enhancements described in items 27-29 are
-  committed locally. The color-correction work in item 30 is uncommitted.
+  and color-correction enhancements through item 30 are committed locally.
+  The cell-noise/random work in item 31 is uncommitted.
 
 ## Implemented in the worktree
 
@@ -142,6 +143,12 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
     Fixed scalar-to-vector promotion in runtime graph packing and replaced the
     CUDA/HIP `hsvadjust` pass-through with live evaluation. A dedicated
     headless fixture checks hue rotation rather than topology alone.
+31. Added upstream-exact Jenkins integer hashing for `cellnoise2d` and
+    `cellnoise3d` across CPU, CUDA/HIP, Vulkan, and the standalone evaluator.
+    Added bounded stdlib lowerings for `randomfloat` and `randomcolor`, including
+    float-input scaling, seeded channel offsets, authored ranges, and HSV output.
+    Numerical tests lock same-cell stability and boundary changes, while the
+    rendered pattern fixture executes connected cell noise at hit UVs.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.

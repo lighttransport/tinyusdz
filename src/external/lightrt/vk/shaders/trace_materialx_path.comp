@@ -36,6 +36,9 @@ const uint TEX_DESC_STRIDE = 8u; // offset,w,h,wrapS,wrapT,srgb,reserved,reserve
 const uint LIGHT_STRIDE = 16u; // position/type, direction/radius, radiance/shape, aux
 
 uint hashU(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
+uint mtlxRotl32(uint x,int k){return (x<<k)|(x>>(32-k));}
+uint mtlxBjFinal(uint a,uint b,uint c){c^=b;c-=mtlxRotl32(b,14);a^=c;a-=mtlxRotl32(c,11);b^=a;b-=mtlxRotl32(a,25);c^=b;c-=mtlxRotl32(b,16);a^=c;a-=mtlxRotl32(c,4);b^=a;b-=mtlxRotl32(a,14);c^=b;c-=mtlxRotl32(b,24);return c;}
+float mtlxCellNoise(ivec3 p,bool is3d){uint s=0xdeadbeefu+((is3d?3u:2u)<<2u)+13u;uint h=mtlxBjFinal(s+uint(p.x),s+uint(p.y),s+(is3d?uint(p.z):0u));return float(h)/float(0xffffffffu);}
 float rnd(inout uint s) { s = s * 747796405u + 2891336453u; uint r=((s>>((s>>28)+4u))^s)*277803737u; return float((r>>22)^r)/4294967296.0; }
 float graphNoise(vec3 p) { return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453); }
 vec3 srgbToLinear(vec3 c) { return mix(c/12.92, pow((c+0.055)/1.055,vec3(2.4)), greaterThan(c,vec3(0.04045))); }
@@ -171,6 +174,7 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position, out vec4 rout
       else q=vec4((op==88?a.rgb*a.w:a.rgb)+b.rgb*(1.0-a.w),a.w+b.w*(1.0-a.w));
       value[i]=mix(b,q,c);}
     else if(op==92)value[i]=vec4(a.rgb,b.x);
+    else if(op==93||op==94)value[i]=vec4(mtlxCellNoise(ivec3(floor(a.xyz)),op==94));
     else value[i]=a;
   }
   for(uint r=0u;r<GRAPH_OUTPUTS;++r){int wanted=int(round(graphs[gb+1u+r]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}

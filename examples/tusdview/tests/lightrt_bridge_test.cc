@@ -1039,13 +1039,35 @@ int main() {
     {"name":"wave","category":"trianglewave","inputs":[{"name":"in","value":1.25}]},
     {"name":"checker","category":"checkerboard","type":"color3","inputs":[{"name":"color1","value":[1,0,0]},{"name":"color2","value":[0,0,1]},{"name":"uvtiling","value":[2,2]},{"name":"texcoord","value":[0.6,0.1]}]},
     {"name":"circle","category":"circle","type":"float","inputs":[{"name":"center","value":[0.5,0.5]},{"name":"radius","value":0.4},{"name":"texcoord","value":[0.5,0.5]}]},
-    {"name":"line","category":"line","type":"float","inputs":[{"name":"point1","value":[0.25,0.25]},{"name":"point2","value":[0.75,0.75]},{"name":"radius","value":0.1},{"name":"texcoord","value":[0.5,0.5]}]}
+    {"name":"line","category":"line","type":"float","inputs":[{"name":"point1","value":[0.25,0.25]},{"name":"point2","value":[0.75,0.75]},{"name":"radius","value":0.1},{"name":"texcoord","value":[0.5,0.5]}]},
+    {"name":"cell2","category":"cellnoise2d","type":"float","inputs":[{"name":"texcoord","value":[1.2,2.8]}]},
+    {"name":"cell3","category":"cellnoise3d","type":"float","inputs":[{"name":"position","value":[1.2,2.8,3.4]}]},
+    {"name":"random","category":"randomfloat","type":"float","inputs":[{"name":"in","type":"float","value":0.25},{"name":"min","value":2},{"name":"max","value":4},{"name":"seed","value":7}]}
   ],"outputs":[]},"connections":[]})json";
   std::string aliasesError;
   if (!tusdview::CompileMaterialXGraphRuntime(&aliasesMat, &aliasesError) ||
-      aliasesMat.materialXGraph.nodes.size() != 36) {
+      aliasesMat.materialXGraph.nodes.size() != 44) {
     std::fprintf(stderr, "MaterialX standard aliases failed: %s\n",
                  aliasesError.c_str());
+    return 1;
+  }
+  tusdview::DrawMaterialCPU randomColorMat;
+  randomColorMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"randomColor","category":"randomcolor","type":"color3","inputs":[
+      {"name":"in","type":"float","value":0.25},{"name":"seed","value":7},
+      {"name":"huelow","value":0.1},{"name":"huehigh","value":0.2},
+      {"name":"saturationlow","value":0.5},{"name":"saturationhigh","value":0.6},
+      {"name":"brightnesslow","value":0.7},{"name":"brightnesshigh","value":0.8}
+    ]}],"outputs":[{"name":"base","nodename":"randomColor"}]},
+    "connections":[{"input":"base_color","output":"base"}]})json";
+  std::string randomColorError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&randomColorMat,
+                                               &randomColorError) ||
+      randomColorMat.materialXGraph.nodes.size() != 26 ||
+      randomColorMat.materialXGraph.nodes.back().op !=
+          tusdview::MaterialXGraphOpCPU::HsvToRgb) {
+    std::fprintf(stderr, "MaterialX randomcolor lowering failed: %s\n",
+                 randomColorError.c_str());
     return 1;
   }
   tusdview::DrawMaterialCPU compositeMat;

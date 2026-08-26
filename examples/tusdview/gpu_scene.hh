@@ -499,6 +499,8 @@ enum class MaterialXGraphOpCPU : uint32_t {
   Over,
   DisjointOver,
   SetAlpha,
+  CellNoise2D,
+  CellNoise3D,
   Unknown,
 };
 
