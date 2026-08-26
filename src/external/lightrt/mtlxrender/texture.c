@@ -153,10 +153,11 @@ void texcache_preload(TextureCache *tc, const MtlxDoc *doc) {
                 texcache_get(tc, in->value.s, in->colorspace_srgb);
                 continue;
             }
-            /* Preload the first ten UDIM rows. This covers the normal 1001
-             * through 1100 layout while keeping startup bounded; absent tiles
-             * are probed silently and become the node's default value. */
-            for (int tile = 1001; tile <= 1100; ++tile) {
+            /* MaterialX UDIM addressing permits tiles 1001 through 1999.
+             * Probe the complete bounded range before freezing so a valid
+             * higher-row tile cannot become a render-time cache miss; absent
+             * tiles are still probed silently and use the node default. */
+            for (int tile = 1001; tile <= 1999; ++tile) {
                 char path[1024];
                 size_t prefix = (size_t)(token - in->value.s);
                 size_t suffix = strlen(token + 6);
