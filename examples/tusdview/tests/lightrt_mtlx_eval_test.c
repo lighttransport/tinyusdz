@@ -266,6 +266,14 @@ int main(void) {
       "  <input name=\"scattering\" type=\"vector3\" value=\"0.4,0.5,0.6\"/>"
       "  <input name=\"anisotropy\" type=\"float\" value=\"0.35\"/>"
       " </anisotropic_vdf>"
+      " <absorption_vdf name=\"FogFill\" type=\"VDF\">"
+      "  <input name=\"absorption\" type=\"vector3\" value=\"0.2,0.1,0.0\"/>"
+      " </absorption_vdf>"
+      " <mix name=\"MixedFog\" type=\"VDF\">"
+      "  <input name=\"bg\" type=\"VDF\" nodename=\"Fog\"/>"
+      "  <input name=\"fg\" type=\"VDF\" nodename=\"FogFill\"/>"
+      "  <input name=\"mix\" type=\"float\" value=\"0.25\"/>"
+      " </mix>"
       " <uniform_edf name=\"Glow\" type=\"EDF\">"
       "  <input name=\"color\" type=\"color3\" value=\"2,1,0.5\"/>"
       " </uniform_edf>"
@@ -278,7 +286,7 @@ int main(void) {
       "  <input name=\"mix\" type=\"float\" value=\"0.25\"/>"
       " </mix>"
       " <volume name=\"Volume\" type=\"volumeshader\">"
-      "  <input name=\"vdf\" type=\"VDF\" nodename=\"Fog\"/>"
+      "  <input name=\"vdf\" type=\"VDF\" nodename=\"MixedFog\"/>"
       "  <input name=\"edf\" type=\"EDF\" nodename=\"MixedGlow\"/>"
       " </volume>"
       " <volumematerial name=\"VolumeMat\" type=\"material\">"
@@ -287,12 +295,12 @@ int main(void) {
       "</materialx>";
   MtlxVolumeParams volume;
   if (!eval_volume_xml(volume_xml, &volume)) return 1;
-  ok = nearf(volume.absorption.x, 0.1f) &&
-       nearf(volume.absorption.y, 0.2f) &&
-       nearf(volume.absorption.z, 0.3f) &&
-       nearf(volume.scattering.x, 0.4f) &&
-       nearf(volume.scattering.y, 0.5f) &&
-       nearf(volume.scattering.z, 0.6f) &&
+  ok = nearf(volume.absorption.x, 0.125f) &&
+       nearf(volume.absorption.y, 0.175f) &&
+       nearf(volume.absorption.z, 0.225f) &&
+       nearf(volume.scattering.x, 0.3f) &&
+       nearf(volume.scattering.y, 0.375f) &&
+       nearf(volume.scattering.z, 0.45f) &&
        nearf(volume.anisotropy, 0.35f) &&
        nearf(volume.emission.x, 1.5625f) &&
        nearf(volume.emission.y, 0.875f) &&

@@ -1088,6 +1088,47 @@ static float in_component0(ShadeContext *ctx, const MtlxNode *n,
 static void apply_normal_input(ShadeContext *ctx, const MtlxNode *n,
                                const char *name, OpenPBRParams *out);
 
+static void eval_vdf(ShadeContext *ctx, const MtlxNode *n, float scale,
+                     MtlxVolumeParams *out, int depth) {
+    if (!n || depth > 32 || scale <= 0.0f) return;
+    const char *cat = n->category;
+    if (!strcmp(cat, "add") || !strcmp(cat, "layer")) {
+        const char *a_name = !strcmp(cat, "layer") ? "base" : "in1";
+        const char *b_name = !strcmp(cat, "layer") ? "top" : "in2";
+        eval_vdf(ctx, input_node(ctx, n, a_name), scale, out, depth + 1);
+        eval_vdf(ctx, input_node(ctx, n, b_name), scale, out, depth + 1);
+        return;
+    }
+    if (!strcmp(cat, "mix")) {
+        const float amount = fmaxf(0.0f, fminf(1.0f,
+            in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.5f))));
+        eval_vdf(ctx, input_node(ctx, n, "bg"), scale * (1.0f - amount),
+                 out, depth + 1);
+        eval_vdf(ctx, input_node(ctx, n, "fg"), scale * amount, out,
+                 depth + 1);
+        return;
+    }
+    if (!strcmp(cat, "multiply")) {
+        const MtlxNode *a = input_node(ctx, n, "in1");
+        const MtlxNode *b = input_node(ctx, n, "in2");
+        const MtlxInput *factor = find_input(n, a ? "in2" : "in1");
+        MtlxValue factor_value;
+        const float f = factor ? (factor_value = eval_input(ctx, factor),
+                                  fmaxf(0.0f, mv_as_float(&factor_value))) : 1.0f;
+        eval_vdf(ctx, a ? a : b, scale * f, out, depth + 1);
+        return;
+    }
+    if (!strcmp(cat, "absorption_vdf") || !strcmp(cat, "anisotropic_vdf")) {
+        out->absorption = v3_add(out->absorption,
+            v3_scale(in_color(ctx, n, "absorption", v3_splat(0.0f)), scale));
+        if (!strcmp(cat, "anisotropic_vdf")) {
+            out->scattering = v3_add(out->scattering,
+                v3_scale(in_color(ctx, n, "scattering", v3_splat(0.0f)), scale));
+            out->anisotropy = in_float(ctx, n, "anisotropy", out->anisotropy);
+        }
+    }
+}
+
 static void blend_lobe(float *total, v3 *dst, v3 color, float weight) {
     if (weight <= 0.0f) return;
     const float old = *total;
@@ -1213,13 +1254,7 @@ int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
     const MtlxNode *volume = &ctx->doc->nodes[volume_node];
     if (strcmp(volume->category, "volume")) return 1;
     const MtlxNode *vdf = input_node(ctx, volume, "vdf");
-    if (vdf && !strcmp(vdf->category, "absorption_vdf")) {
-        out->absorption = in_color(ctx, vdf, "absorption", v3_splat(0.0f));
-    } else if (vdf && !strcmp(vdf->category, "anisotropic_vdf")) {
-        out->absorption = in_color(ctx, vdf, "absorption", v3_splat(0.0f));
-        out->scattering = in_color(ctx, vdf, "scattering", v3_splat(0.0f));
-        out->anisotropy = in_float(ctx, vdf, "anisotropy", 0.0f);
-    }
+    eval_vdf(ctx, vdf, 1.0f, out, 0);
     out->emission = eval_edf(ctx, input_node(ctx, volume, "edf"), 0);
     return 0;
 }
