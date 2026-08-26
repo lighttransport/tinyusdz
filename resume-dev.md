@@ -155,6 +155,12 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
     channel count through the packed ABI. Scalar and color numerical tests
     cover the exact Perlin/hash octave result, and the rendered pattern fixture
     now executes the fractal at interpolated hit UVs.
+33. Added upstream-exact `worleynoise2d` and `worleynoise3d` evaluation across
+    CPU, CUDA/HIP, Vulkan, and the standalone evaluator. Distance and solid
+    styles preserve MaterialX's nearest-feature search, scalar/vector channel
+    behavior, and Jenkins-derived feature positions. Numerical tests cover 2D
+    F1/F2/F3, solid cell color, and 3D F1/F2; the rendered spatial fixture now
+    includes live Worley modulation.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.

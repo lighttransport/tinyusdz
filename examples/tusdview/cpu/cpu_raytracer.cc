@@ -369,6 +369,49 @@ float MtlxCellNoise(int x, int y, int z, bool is3d) {
       seed + (is3d ? static_cast<uint32_t>(z) : 0u));
   return static_cast<float>(hash) / static_cast<float>(0xffffffffu);
 }
+float MtlxCellNoiseChannel(int x, int y, int z, bool is3d, int channel) {
+  const uint32_t seed = 0xdeadbeefu + ((is3d ? 3u : 2u) << 2u) + 13u;
+  uint32_t hash = MtlxBjFinal(seed + static_cast<uint32_t>(x),
+      seed + static_cast<uint32_t>(y),
+      seed + (is3d ? static_cast<uint32_t>(z) : 0u));
+  if (channel >= 0) hash = (hash >> (channel * 8)) & 0xffu;
+  return static_cast<float>(hash) /
+      static_cast<float>(channel >= 0 ? 0xffu : 0xffffffffu);
+}
+std::array<float,4> MtlxWorley(const std::array<float,4>& p, bool is3d,
+                               float jitter, int style, int channels) {
+  const int ix=static_cast<int>(std::floor(p[0]));
+  const int iy=static_cast<int>(std::floor(p[1]));
+  const int iz=is3d?static_cast<int>(std::floor(p[2])):0;
+  const float local[3]={p[0]-ix,p[1]-iy,is3d?p[2]-iz:0.0f};
+  float best[3]={1.0e6f,1.0e6f,1.0e6f};
+  float feature[3]={0,0,0};
+  for(int x=-1;x<=1;++x)for(int y=-1;y<=1;++y)
+    for(int z=is3d?-1:0;z<=(is3d?1:0);++z){
+      const int hx=ix+x,hy=iy+y,hz=iz+z;
+      float candidate[3]{0,0,0};
+      for(int lane=0;lane<(is3d?3:2);++lane){
+        const float rnd=MtlxCellNoiseChannel(hx,hy,hz,is3d,lane);
+        candidate[lane]=(lane==0?x:(lane==1?y:z))+(rnd-0.5f)*jitter+0.5f;
+      }
+      const float dx=candidate[0]-local[0],dy=candidate[1]-local[1];
+      const float dz=is3d?candidate[2]-local[2]:0.0f;
+      const float d=dx*dx+dy*dy+dz*dz;
+      if(d<best[0]){best[2]=best[1];best[1]=best[0];best[0]=d;
+        feature[0]=candidate[0];feature[1]=candidate[1];feature[2]=candidate[2];}
+      else if(d<best[1]){best[2]=best[1];best[1]=d;}
+      else if(d<best[2])best[2]=d;
+    }
+  std::array<float,4> out{0,0,0,0};
+  if(style==1){
+    const int fx=static_cast<int>(std::floor(feature[0]-local[0]+p[0]));
+    const int fy=static_cast<int>(std::floor(feature[1]-local[1]+p[1]));
+    const int fz=is3d?static_cast<int>(std::floor(feature[2]-local[2]+p[2])):0;
+    for(int lane=0;lane<channels;++lane)
+      out[lane]=MtlxCellNoiseChannel(fx,fy,fz,is3d,channels==1?-1:lane);
+  }else for(int lane=0;lane<channels;++lane)out[lane]=std::sqrt(best[lane]);
+  return out;
+}
 float MtlxGradient2(uint32_t hash, float x, float y) {
   const uint32_t h = hash & 7u;
   const float u = h < 4u ? x : y;
@@ -770,6 +813,11 @@ std::array<float, 4> EvalCpuMaterialXGraph(
           else {for(int lane=0;lane<3;++lane)dst[lane]+=weight*MtlxPerlin2(px,py,lane);if(channels==4)dst[3]+=weight*MtlxPerlin2(px+19,py+193,-1);}
           px*=c[0];py*=c[0];weight*=diminishValue;
         }
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::WorleyNoise2D) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::WorleyNoise3D)) {
+        const int channels=std::clamp(static_cast<int>(std::floor(c[1]+0.5f)),1,3);
+        dst=MtlxWorley(a,op==static_cast<int>(MaterialXGraphOpCPU::WorleyNoise3D),
+                       b[0],static_cast<int>(std::floor(c[0]+0.5f)),channels);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);

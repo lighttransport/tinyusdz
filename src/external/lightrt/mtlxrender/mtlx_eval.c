@@ -175,6 +175,28 @@ static float cellnoise(v3 p) {
     uint32_t h = mx_hash_int3((int)floorf(p.x), (int)floorf(p.y), (int)floorf(p.z));
     return (float)h / (float)0xffffffffu;
 }
+static float worley_cell_channel(int x,int y,int z,int d3,int channel){
+    uint32_t h=d3?mx_hash_int3(x,y,z):mx_hash_int2(x,y);
+    if(channel>=0)h=(h>>(channel*8))&255u;
+    return (float)h/(channel>=0?255.0f:(float)0xffffffffu);
+}
+static MtlxValue worley_value(v3 p,int d3,float jitter,int style,MtlxType type){
+    int ix=(int)floorf(p.x),iy=(int)floorf(p.y),iz=d3?(int)floorf(p.z):0;
+    float local[3]={p.x-ix,p.y-iy,d3?p.z-iz:0},best[3]={1e6f,1e6f,1e6f};
+    float feature[3]={0,0,0};
+    for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++)for(int z=d3?-1:0;z<=(d3?1:0);z++){
+        float q[3]={x+(worley_cell_channel(ix+x,iy+y,iz+z,d3,0)-.5f)*jitter+.5f,
+                    y+(worley_cell_channel(ix+x,iy+y,iz+z,d3,1)-.5f)*jitter+.5f,
+                    d3?z+(worley_cell_channel(ix+x,iy+y,iz+z,d3,2)-.5f)*jitter+.5f:0};
+        float dx=q[0]-local[0],dy=q[1]-local[1],dz=d3?q[2]-local[2]:0,dist=dx*dx+dy*dy+dz*dz;
+        if(dist<best[0]){best[2]=best[1];best[1]=best[0];best[0]=dist;memcpy(feature,q,sizeof(q));}
+        else if(dist<best[1]){best[2]=best[1];best[1]=dist;}else if(dist<best[2])best[2]=dist;
+    }
+    MtlxValue r=mv_zero(type);int nc=ncomp_of(&r);if(nc<1)nc=1;if(nc>3)nc=3;
+    if(style==1){int hx=(int)floorf(feature[0]-local[0]+p.x),hy=(int)floorf(feature[1]-local[1]+p.y),hz=d3?(int)floorf(feature[2]-local[2]+p.z):0;for(int i=0;i<nc;i++)r.v[i]=worley_cell_channel(hx,hy,hz,d3,nc==1?-1:i);}
+    else for(int i=0;i<nc;i++)r.v[i]=sqrtf(best[i]);
+    return r;
+}
 static float randomfloat_value(float input, int seed, float lo, float hi) {
     uint32_t h = mx_hash_int2((int)floorf(input * 4096.0f), seed);
     float q = (float)h / (float)0xffffffffu;
@@ -197,6 +219,7 @@ typedef enum {
     OP_HSVTORGB, OP_HSVADJUST, OP_SATURATE, OP_CONTRAST, OP_RANGE,
     OP_SEPARATE, OP_COMBINE2, OP_COMBINE3, OP_COMBINE4, OP_EXTRACT, OP_CONVERT,
     OP_SWIZZLE, OP_NOISE3D, OP_FRACTAL2D, OP_FRACTAL3D, OP_CELLNOISE2D, OP_CELLNOISE3D,
+    OP_WORLEYNOISE2D, OP_WORLEYNOISE3D,
     OP_RAMPLR, OP_RAMPTB, OP_SPLITLR, OP_SPLITTB,
     OP_IFGREATER, OP_IFGREATEREQ, OP_IFEQUAL, OP_SWITCH, OP_DOT, OP_RAMP4,
     OP_ROTATE2D, OP_ONEMINUS, OP_DISTANCE, OP_REFLECT, OP_REFRACT,
@@ -293,6 +316,8 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "fractal3d")) return OP_FRACTAL3D;
     if (!strcmp(c, "cellnoise2d")) return OP_CELLNOISE2D;
     if (!strcmp(c, "cellnoise3d")) return OP_CELLNOISE3D;
+    if (!strcmp(c, "worleynoise2d")) return OP_WORLEYNOISE2D;
+    if (!strcmp(c, "worleynoise3d")) return OP_WORLEYNOISE3D;
     if (!strcmp(c, "ramplr")) return OP_RAMPLR;
     if (!strcmp(c, "ramptb")) return OP_RAMPTB;
     if (!strcmp(c, "splitlr")) return OP_SPLITLR;
@@ -634,6 +659,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_FRACTAL2D: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),amp=in_or(ctx,n,"amplitude",mv_float(1)),oc=in_or(ctx,n,"octaves",mv_float(3)),lac=in_or(ctx,n,"lacunarity",mv_float(2)),dim=in_or(ctx,n,"diminish",mv_float(0.5f));r=mv_zero(n->type);int nc=ncomp_of(&r);if(nc<1)nc=1;float px=tc.v[0],py=tc.v[1],w=1;for(int o=0;o<(int)oc.v[0]&&o<16;o++){if(nc==1)r.v[0]+=w*vnoise2(px,py,-1);else if(nc==2){r.v[0]+=w*vnoise2(px,py,-1);r.v[1]+=w*vnoise2(px+19,py+193,-1);}else{for(int i=0;i<3;i++)r.v[i]+=w*vnoise2(px,py,i);if(nc==4)r.v[3]+=w*vnoise2(px+19,py+193,-1);}px*=lac.v[0];py*=lac.v[0];w*=dim.v[0];}for(int i=0;i<nc;i++)r.v[i]*=ncomp_of(&amp)==1?amp.v[0]:amp.v[i];break; }
         case OP_CELLNOISE2D: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1]));uint32_t h=mx_hash_int2((int)floorf(tc.v[0]),(int)floorf(tc.v[1]));r=mv_float((float)h/(float)0xffffffffu);break; }
         case OP_CELLNOISE3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)); float c=cellnoise(mv_as_v3(&pos)); r=(n->type==MV_FLOAT)?mv_float(c):mv_color3(v3_splat(c)); break; }
+        case OP_WORLEYNOISE2D: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),j=in_or(ctx,n,"jitter",mv_float(1)),s=in_or(ctx,n,"style",mv_float(0));r=worley_value(v3_make(tc.v[0],tc.v[1],0),0,j.v[0],(int)s.v[0],n->type);break; }
+        case OP_WORLEYNOISE3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)),j=in_or(ctx,n,"jitter",mv_float(1)),s=in_or(ctx,n,"style",mv_float(0));r=worley_value(mv_as_v3(&pos),1,j.v[0],(int)s.v[0],n->type);break; }
         case OP_RAMPLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float t=clampf(tc.v[0],0,1); int nc=ncomp_of(&l); r=l; for(int i=0;i<nc;i++) r.v[i]=l.v[i]*(1-t)+rr.v[i]*t; break; }
         case OP_RAMPTB: { MtlxValue tval=in_or(ctx,n,"valuet",mv_zero(n->type)),bval=in_or(ctx,n,"valueb",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float t=clampf(tc.v[1],0,1); int nc=ncomp_of(&tval); r=tval; for(int i=0;i<nc;i++) r.v[i]=tval.v[i]*(1-t)+bval.v[i]*t; break; }
         case OP_SPLITLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),ct=in_or(ctx,n,"center",mv_float(0.5f)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); r=(tc.v[0]<ct.v[0])?l:rr; break; }

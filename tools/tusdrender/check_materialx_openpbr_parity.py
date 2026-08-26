@@ -639,10 +639,35 @@ def Xform "World" {
         float inputs:in2.connect = </World/M/NG/FractalBias.outputs:out>
         float outputs:out
       }
+      def Shader "Worley" {
+        uniform token info:id = "ND_worleynoise2d_float"
+        float2 inputs:texcoord.connect = </World/M/NG/CellST.outputs:out>
+        float inputs:jitter = 1
+        int inputs:style = 0
+        float outputs:out
+      }
+      def Shader "WorleyQuarter" {
+        uniform token info:id = "ND_multiply_float"
+        float inputs:in1.connect = </World/M/NG/Worley.outputs:out>
+        float inputs:in2 = 0.25
+        float outputs:out
+      }
+      def Shader "WorleyBias" {
+        uniform token info:id = "ND_add_float"
+        float inputs:in1.connect = </World/M/NG/WorleyQuarter.outputs:out>
+        float inputs:in2 = 0.75
+        float outputs:out
+      }
+      def Shader "AllNoise" {
+        uniform token info:id = "ND_multiply_float"
+        float inputs:in1.connect = </World/M/NG/NoiseModulation.outputs:out>
+        float inputs:in2.connect = </World/M/NG/WorleyBias.outputs:out>
+        float outputs:out
+      }
       def Shader "Modulated" {
         uniform token info:id = "ND_multiply_float"
         float inputs:in1.connect = </World/M/NG/Wave.outputs:out>
-        float inputs:in2.connect = </World/M/NG/NoiseModulation.outputs:out>
+        float inputs:in2.connect = </World/M/NG/AllNoise.outputs:out>
         float outputs:out
       }
       def Shader "Checker" {
