@@ -113,6 +113,9 @@ outside samples); the legacy periodic entry point remains unchanged.
 Standalone EDF evaluation now recursively handles add/layer, mix, and
 scalar-or-EDF multiply composition, so composed emission survives into both
 surface and volume evaluation.
+Standalone VDF evaluation now recursively handles add/layer, mix, and scalar
+ multiply composition, preserving composed absorption, scattering, and
+ anisotropy for volume evaluation.
 CUDA/HIP path-tracing live reload now forwards the geomprop descriptor/value
 buffers through `productionPath`; this keeps the shared kernel source's new
 geomprop call signature valid under NVRTC and hipRTC.
@@ -127,6 +130,8 @@ Passed:
 - Stable `build-next` rebuild and regression: 40/40 passed
 - Standalone EDF composition and headless MaterialX CPU graph tests after
   recursive EDF evaluation: 2/2 passed
+- Standalone VDF composition and headless MaterialX CPU graph tests after
+  recursive VDF evaluation: 2/2 passed
 - Exact outgoing-range audit over `origin/dev..HEAD`: heuristic credential,
   personal-path, artifact, and flagged-asset scans clean; gitleaks clean;
   trufflehog 3.97.1 clean with auto-update disabled
