@@ -1340,6 +1340,7 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
                    in_color(ctx, n, "color", v3_splat(0.18f)), weight);
         out->subsurface_radius = in_color(ctx, n, "radius", v3_splat(1.0f));
         out->subsurface_scale = in_float(ctx, n, "scale", 1.0f);
+        out->subsurface_anisotropy = in_float(ctx, n, "anisotropy", 0.0f);
     } else if (!strcmp(cat, "sheen_bsdf")) {
         const float old_weight = out->sheen_weight;
         blend_lobe(&out->sheen_weight, &out->sheen_color,

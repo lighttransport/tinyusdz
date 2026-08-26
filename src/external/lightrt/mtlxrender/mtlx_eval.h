@@ -34,6 +34,7 @@ typedef struct {
     v3    subsurface_color;
     v3    subsurface_radius;
     float subsurface_scale;
+    float subsurface_anisotropy;
     /* coat */
     float coat_weight;
     v3    coat_color;

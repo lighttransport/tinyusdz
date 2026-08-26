@@ -806,6 +806,7 @@ int main(void) {
       "  <input name=\"color\" type=\"color3\" value=\"0.2,0.4,0.6\"/>"
       "  <input name=\"radius\" type=\"color3\" value=\"0.3,0.5,0.7\"/>"
       "  <input name=\"scale\" type=\"float\" value=\"2.5\"/>"
+      "  <input name=\"anisotropy\" type=\"float\" value=\"0.2\"/>"
       " </subsurface_bsdf>"
       " <surface name=\"SubsurfaceSurface\" type=\"surfaceshader\">"
       "  <input name=\"bsdf\" type=\"BSDF\" nodename=\"SubsurfaceBsdf\"/>"
@@ -819,7 +820,8 @@ int main(void) {
       !nearf(subsurface.subsurface_radius.x, 0.3f) ||
       !nearf(subsurface.subsurface_radius.y, 0.5f) ||
       !nearf(subsurface.subsurface_radius.z, 0.7f) ||
-      !nearf(subsurface.subsurface_scale, 2.5f)) {
+      !nearf(subsurface.subsurface_scale, 2.5f) ||
+      !nearf(subsurface.subsurface_anisotropy, 0.2f)) {
     fprintf(stderr, "MaterialX subsurface BSDF scale was not evaluated\n");
     return 1;
   }

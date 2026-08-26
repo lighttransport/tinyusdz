@@ -352,6 +352,7 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   CopyV3(src.subsurface_color, dst->subsurfaceColor);
   CopyV3(src.subsurface_radius, dst->subsurfaceRadius);
   dst->subsurfaceScale = src.subsurface_scale;
+  dst->subsurfaceAnisotropy = src.subsurface_anisotropy;
   dst->coatWeight = src.coat_weight;
   CopyV3(src.coat_color, dst->coatColor);
   dst->coatRoughness = src.coat_roughness;
