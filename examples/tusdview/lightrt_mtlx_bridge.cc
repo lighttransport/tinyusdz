@@ -1177,7 +1177,23 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     };
     auto emitLeaf = [&](const char* lane, const char* inputName,
                         const nlohmann::json& fallback, const char* laneType) {
-      emitClosureLane(name, lane, nodeInput(node, inputName, fallback), laneType);
+      nlohmann::json input = nodeInput(node, inputName, fallback);
+      const auto valueIt = input.find("value");
+      const std::string inputType = NormalizeMtlxType(JsonString(input, "type"));
+      const bool vector2Scalar = std::strcmp(laneType, "float") == 0 &&
+          (inputType == "vector2" ||
+           (valueIt != input.end() && valueIt->is_array() &&
+            valueIt->size() == 2));
+      if (vector2Scalar) {
+        const std::string extracted = name + "__closure_" + inputName + "_x";
+        runtimeNodes.push_back({
+            {"name", extracted}, {"category", "extract"}, {"type", "float"},
+            {"inputs", nlohmann::json::array({
+                renamedInput(input, "in"),
+                nlohmann::json{{"name", "index"}, {"value", 0}}})}});
+        input = nlohmann::json{{"name", inputName}, {"nodename", extracted}};
+      }
+      emitClosureLane(name, lane, std::move(input), laneType);
     };
     const bool closureTyped = isClosureType(type) || isClosureType(rawType) ||
         rawType.find("_bsdf") != std::string::npos ||
