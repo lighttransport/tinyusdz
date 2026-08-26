@@ -2080,7 +2080,13 @@ int main() {
         [](const tusdview::MaterialXGraphNodeCPU& node) {
           return node.op == tusdview::MaterialXGraphOpCPU::Clamp;
         });
-    if (!hasAcos || !hasClamp) {
+    const bool hasAuthoredNormal = std::any_of(
+        material.materialXGraph.nodes.begin(), material.materialXGraph.nodes.end(),
+        [](const tusdview::MaterialXGraphNodeCPU& node) {
+          return node.name == "cone__conical_normal" &&
+                 node.op == tusdview::MaterialXGraphOpCPU::Convert;
+        });
+    if (!hasAcos || !hasClamp || !hasAuthoredNormal) {
       std::fprintf(stderr, "conical EDF angular falloff was flattened\n");
       return false;
     }
