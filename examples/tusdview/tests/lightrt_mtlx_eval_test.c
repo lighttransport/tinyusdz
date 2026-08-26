@@ -357,5 +357,28 @@ int main(void) {
     return 1;
   }
 
+  /* Measured profiles require a renderer-specific spectral/table backend.
+   * The standalone evaluator's documented fallback preserves an authored
+   * color while ignoring the unavailable profile filename. */
+  const char *measured_volume_xml =
+      "<materialx version=\"1.39\">"
+      " <measured_edf name=\"MeasuredGlow\" type=\"EDF\">"
+      "  <input name=\"color\" type=\"color3\" value=\"0.15,0.35,0.65\"/>"
+      "  <input name=\"measurement\" type=\"filename\" value=\"profile.mxd\"/>"
+      " </measured_edf>"
+      " <volume name=\"MeasuredVolume\" type=\"volumeshader\">"
+      "  <input name=\"edf\" type=\"EDF\" nodename=\"MeasuredGlow\"/>"
+      " </volume>"
+      " <volumematerial name=\"MeasuredMat\" type=\"material\">"
+      "  <input name=\"volumeshader\" type=\"volumeshader\" nodename=\"MeasuredVolume\"/>"
+      " </volumematerial></materialx>";
+  if (!eval_volume_xml(measured_volume_xml, &volume) ||
+      !nearf(volume.emission.x, 0.15f) ||
+      !nearf(volume.emission.y, 0.35f) ||
+      !nearf(volume.emission.z, 0.65f)) {
+    fprintf(stderr, "MaterialX measured EDF color fallback was not evaluated\n");
+    return 1;
+  }
+
   return 0;
 }
