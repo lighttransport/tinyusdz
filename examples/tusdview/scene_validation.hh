@@ -82,6 +82,22 @@ inline bool ValidateDrawMesh(const DrawMeshCPU& mesh, size_t materialCount,
       !parallel(mesh.morphOffsetCount.size(), 2, "morphOffsetCount")) {
     return false;
   }
+  for (size_t i = 0; i < mesh.geomProps.size(); ++i) {
+    const DrawGeomPropCPU& prop = mesh.geomProps[i];
+    if (prop.name.empty() || prop.components == 0 || prop.components > 4) {
+      return fail("geomProps[" + std::to_string(i) + "] has invalid metadata");
+    }
+    size_t expected = 0;
+    if (!CheckedMulSize(nv, prop.components, &expected) ||
+        prop.values.size() != expected) {
+      return fail("geomProps[" + std::to_string(i) + "] is not parallel to vertices");
+    }
+    for (float value : prop.values) {
+      if (!std::isfinite(value)) {
+        return fail("geomProps[" + std::to_string(i) + "] contains a non-finite value");
+      }
+    }
+  }
   if (!mesh.sourceFaceId.empty() &&
       mesh.sourceFaceId.size() != mesh.indices.size() / 3) {
     return fail("sourceFaceId is not parallel to triangles");

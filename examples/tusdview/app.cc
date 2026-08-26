@@ -1758,6 +1758,8 @@ static void FreeMeshSurfaceCPU(DrawMeshCPU& m) {
   std::vector<float>().swap(m.vertexAlpha);
   std::vector<float>().swap(m.tangents);
   std::vector<float>().swap(m.binormals);
+  for (DrawGeomPropCPU& prop : m.geomProps) std::vector<float>().swap(prop.values);
+  std::vector<DrawGeomPropCPU>().swap(m.geomProps);
   std::vector<float>().swap(m.uv1);
   std::vector<float>().swap(m.morphInfluence);
   std::vector<DrawVertex>().swap(m.rtDisplacedVertices);

@@ -48,6 +48,15 @@ struct DrawVertex {
   float u, v;
 };
 
+// Generic MaterialX geomprop stream. Values are expanded to DrawVertex order
+// by the scene loader, so interpolation and authored index indirection are
+// resolved once on the host before a backend consumes the mesh.
+struct DrawGeomPropCPU {
+  std::string name;
+  uint32_t components{0};
+  std::vector<float> values;  // components floats per DrawVertex
+};
+
 // One draw call: a contiguous run of indices sharing a single material.
 struct DrawSubmesh {
   uint32_t indexOffset{0};  // offset into DrawMeshCPU::indices (in indices)
@@ -113,6 +122,9 @@ struct DrawMeshCPU {
   // renderers ignore these until full normal-map/anisotropy evaluation lands.
   std::vector<float> tangents;
   std::vector<float> binormals;
+  // Float/vector primvars retained from the next loader for MaterialX
+  // geompropvalue nodes. Empty until a generic primvar is authored.
+  std::vector<DrawGeomPropCPU> geomProps;
   // True when the mesh has no authored normals: the shader shades it with the
   // geometric (screen-derivative) normal instead of the per-vertex normal, so
   // hard-surface geometry isn't smeared by averaged smooth normals.

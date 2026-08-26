@@ -25,6 +25,8 @@ std::size_t MeshVramBytes(const DrawMeshCPU& m) {
     b += m.instanceOpacities.size() * sizeof(float);
   }
   b += m.vertexColors.size() * sizeof(float);
+  for (const DrawGeomPropCPU& prop : m.geomProps)
+    b += prop.values.size() * sizeof(float) + prop.name.capacity();
   return b;
 }
 

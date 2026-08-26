@@ -72,6 +72,20 @@ int main() {
   Check(!tusdview::ValidateDrawMesh(badParallel, 1, &err),
         "malformed parallel attribute was accepted");
 
+  tusdview::DrawMeshCPU geomPropMesh = Triangle(0);
+  tusdview::DrawGeomPropCPU temperature;
+  temperature.name = "temperature";
+  temperature.components = 1;
+  temperature.values = {10.0f, 20.0f, 30.0f};
+  geomPropMesh.geomProps.push_back(temperature);
+  Check(tusdview::ValidateDrawMesh(geomPropMesh, 1, &err),
+        "valid generic geomprop stream was rejected");
+
+  tusdview::DrawMeshCPU badGeomProp = geomPropMesh;
+  badGeomProp.geomProps[0].values.pop_back();
+  Check(!tusdview::ValidateDrawMesh(badGeomProp, 1, &err),
+        "malformed generic geomprop stream was accepted");
+
   tusdview::DrawMeshCPU badMorph = Triangle(0);
   badMorph.morphOffsetCount = {0, 2, 0, 0, 0, 0};
   badMorph.morphDeltaHalf = {0, 0, 0, 0};
