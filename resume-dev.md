@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `9a31c83d9` (`Record stable next regression`)
+- HEAD: current checkout (see `git log`; latest commit records this evidence)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -122,6 +122,9 @@ Passed:
   plumbing: 298/298 passed in 1112.57 seconds (24 documented
   capability/asset skips)
 - Stable `build-next` rebuild and regression: 40/40 passed
+- Exact outgoing-range audit over `origin/dev..HEAD`: heuristic credential,
+  personal-path, artifact, and flagged-asset scans clean; gitleaks clean;
+  trufflehog 3.97.1 clean with auto-update disabled
 - `tusdview_lightrt_bridge_test`, OpenPBR, evaluator, and graph tests after
   vector2 roughness extraction
 - `tusdview-vk-render`, CUDA/HIP semantic RT parity, and headless
