@@ -257,7 +257,8 @@ typedef enum {
     OP_DISJOINTOVER, OP_CIRCLE, OP_LINE, OP_CLOVERLEAF, OP_HEXAGON,
     OP_GRID, OP_CROSSHATCH, OP_TILEDCIRCLES, OP_TILEDCLOVERLEAFS, OP_TILEDHEXAGONS,
     OP_COLORCORRECT, OP_BLUR, OP_FLAKE2D, OP_FLAKE3D, OP_RANDOMFLOAT,
-    OP_RANDOMCOLOR, OP_LATLONGIMAGE, OP_TRIPLANARPROJECTION
+    OP_RANDOMCOLOR, OP_LATLONGIMAGE, OP_TRIPLANARPROJECTION,
+    OP_HEIGHTTONORMAL, OP_BUMP
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -403,6 +404,8 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "randomcolor")) return OP_RANDOMCOLOR;
     if (!strcmp(c, "latlongimage")) return OP_LATLONGIMAGE;
     if (!strcmp(c, "triplanarprojection")) return OP_TRIPLANARPROJECTION;
+    if (!strcmp(c, "heighttonormal")) return OP_HEIGHTTONORMAL;
+    if (!strcmp(c, "bump")) return OP_BUMP;
     return OP_UNKNOWN;
 }
 
@@ -687,6 +690,17 @@ static MtlxValue eval_normalmap(ShadeContext *ctx, const MtlxNode *n) {
     return mv_vec3(v3_is_finite(w) ? w : N);
 }
 
+static MtlxValue eval_height_normal(ShadeContext *ctx,const MtlxNode *n,
+                                    const char *height_name,float scale){
+    const MtlxInput *height=find_input(n,height_name);
+    if(!height||height->src_node<0)return mv_vec3(v3_make(.5f,.5f,1));
+    float old_u=ctx->uv[0],old_v=ctx->uv[1],eps=1.0f/1024.0f,h[4];
+    const float du[4]={-eps,eps,0,0},dv[4]={0,0,-eps,eps};
+    for(int i=0;i<4;i++){MtlxValue sample;ctx->uv[0]=old_u+du[i];ctx->uv[1]=old_v+dv[i];memset(ctx->memo_done,0,(size_t)ctx->doc->nnode);sample=eval_input(ctx,height);h[i]=mv_as_float(&sample);}
+    ctx->uv[0]=old_u;ctx->uv[1]=old_v;memset(ctx->memo_done,0,(size_t)ctx->doc->nnode);
+    float dx=(h[1]-h[0])*.5f*scale/16.0f,dy=(h[3]-h[2])*.5f*scale/16.0f;v3 q=v3_normalize(v3_make(-dx,-dy,1));return mv_vec3(v3_scale(v3_add(q,v3_make(1,1,1)),.5f));
+}
+
 static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
     if (node_id < 0 || node_id >= ctx->doc->nnode) return mv_zero(MV_NONE);
     if (ctx->memo_done[node_id]) return ctx->memo[node_id];
@@ -706,6 +720,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_IMAGE: r = eval_image(ctx, n); break;
         case OP_LATLONGIMAGE: r = eval_latlongimage(ctx, n); break;
         case OP_TRIPLANARPROJECTION: r=eval_triplanarprojection(ctx,n); break;
+        case OP_HEIGHTTONORMAL: {MtlxValue s=in_or(ctx,n,"scale",mv_float(1));r=eval_height_normal(ctx,n,"in",s.v[0]);break;}
+        case OP_BUMP: {MtlxValue s=in_or(ctx,n,"scale",mv_float(1)),enc=eval_height_normal(ctx,n,"height",1),nval=in_or(ctx,n,"normal",mv_vec3(ctx->Ns)),tval=in_or(ctx,n,"tangent",mv_vec3(v3_normalize(ctx->dpdu))),bval=in_or(ctx,n,"bitangent",mv_vec3(v3_normalize(ctx->dpdv)));v3 ts=v3_make(enc.v[0]*2-1,enc.v[1]*2-1,enc.v[2]*2-1),nn=mv_as_v3(&nval),tt=mv_as_v3(&tval),bb=mv_as_v3(&bval);ts.x*=s.v[0];ts.y*=s.v[0];r=mv_vec3(v3_normalize(v3_add(v3_add(v3_scale(tt,ts.x),v3_scale(bb,ts.y)),v3_scale(nn,ts.z))));break;}
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
         case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;
@@ -892,7 +908,15 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
     const MtlxNode *n = &ctx->doc->nodes[surface_node];
     const char *cat = n->category;
 
-    if (!strcmp(cat, "open_pbr_surface")) {
+    if (!strcmp(cat, "surface_unlit")) {
+        out->base_weight = 0.0f;
+        out->specular_weight = 0.0f;
+        out->emission = in_float(ctx, n, "emission", 1.0f);
+        out->emission_color = in_color(ctx, n, "emission_color", v3_splat(1.0f));
+        out->transmission = in_float(ctx, n, "transmission", 0.0f);
+        out->transmission_color = in_color(ctx, n, "transmission_color", v3_splat(1.0f));
+        out->opacity = in_float(ctx, n, "opacity", 1.0f);
+    } else if (!strcmp(cat, "open_pbr_surface")) {
         out->base_weight = in_float(ctx, n, "base_weight", 1.0f);
         out->base_color = in_color(ctx, n, "base_color", out->base_color);
         out->diffuse_roughness = in_float(ctx, n, "base_diffuse_roughness", 0.0f);

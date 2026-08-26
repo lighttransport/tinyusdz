@@ -149,7 +149,7 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position, out vec4 rout
     else if(op==46) value[i]=a;
     else if(op==47) value[i]=vec4(position,1);
     else if(op==48){vec3 hsv=rgbToHsv(a.rgb);hsv.x=fract(hsv.x+b.x);hsv.y=clamp(hsv.y*b.y,0.0,1.0);hsv.z=max(hsv.z*b.z,0.0);value[i]=vec4(hsvToRgb(hsv),a.w);}
-    else if(op==49){float eps=0.01,scale=max(abs(b.x),1e-4),h0=graphNoise(position),hx=graphNoise(position+vec3(eps,0,0)),hy=graphNoise(position+vec3(0,eps,0));vec3 hn=normalize(vec3(-(hx-h0)*scale/eps,-(hy-h0)*scale/eps,1));value[i]=vec4(hn*0.5+0.5,1);}
+    else if(op==49){value[i]=vec4(.5,.5,1,1);int src=ai;for(int hop=0;hop<4&&src>=0&&src<count;hop++){uint qp=gb+GRAPH_HEADER+uint(src)*GRAPH_NODE;int qop=int(round(graphs[qp]));if(qop==45||qop==46)src=int(floor(graphs[qp+1u]+.5));else break;}if(src>=0&&src<count){uint sp=gb+GRAPH_HEADER+uint(src)*GRAPH_NODE;int sop=int(round(graphs[sp])),stid=int(floor(graphs[sp+16u]+.5));uint td=uint(max(stid,0))*TEX_DESC_STRIDE;if((sop==1||sop==2)&&stid>=0&&td+2u<textureDescs.length()){vec2 q=ci>=0?c.xy:uv;q=q*vec2(graphs[sp+17u],graphs[sp+18u])+vec2(graphs[sp+19u],graphs[sp+20u]);vec2 e=1.0/vec2(max(textureDescs[td+1u],1),max(textureDescs[td+2u],1));float dx=(sampleTexture(stid,q+vec2(e.x,0)).x-sampleTexture(stid,q-vec2(e.x,0)).x)*.5*b.x/16.0,dy=(sampleTexture(stid,q+vec2(0,e.y)).x-sampleTexture(stid,q-vec2(0,e.y)).x)*.5*b.x/16.0;vec3 hn=normalize(vec3(-dx,-dy,1));value[i]=vec4(hn*.5+.5,1);}}}
     else if(op==50) value[i]=asin(clamp(a,vec4(-1),vec4(1)));
     else if(op==51) value[i]=acos(clamp(a,vec4(-1),vec4(1)));
     else if(op==52) value[i]=(a-c)*b+c;

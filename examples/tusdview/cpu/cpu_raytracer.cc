@@ -732,7 +732,41 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst = {rgb[sector][0] + m, rgb[sector][1] + m,
                rgb[sector][2] + m, a[3]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::HeightToNormal)) {
+        // Ray tracing has no fragment derivatives.  For the common
+        // heighttonormal(image) form, evaluate centered texel differences in
+        // the source image; procedural inputs retain the defined flat fallback.
         dst = {0.5f, 0.5f, 1.0f, 1.0f};
+        int heightSource=ia;
+        for(int hop=0;hop<4&&heightSource>=0&&heightSource<count;++hop){
+          const size_t q=base+kRtMaterialGraphHeaderFloats+static_cast<size_t>(heightSource)*kRtMaterialGraphNodeFloats;
+          const int qop=static_cast<int>(scene.matGraph[q]+0.5f);
+          if(qop==static_cast<int>(MaterialXGraphOpCPU::Extract)||qop==static_cast<int>(MaterialXGraphOpCPU::Convert))heightSource=static_cast<int>(std::floor(scene.matGraph[q+1]+0.5f));else break;
+        }
+        if (heightSource >= 0 && heightSource < count) {
+          const size_t source = base + kRtMaterialGraphHeaderFloats +
+              static_cast<size_t>(heightSource) * kRtMaterialGraphNodeFloats;
+          const int sourceOp=static_cast<int>(scene.matGraph[source]+0.5f);
+          const int sourceTex=static_cast<int>(std::floor(scene.matGraph[source+16]+0.5f));
+          if ((sourceOp==static_cast<int>(MaterialXGraphOpCPU::Image)||
+               sourceOp==static_cast<int>(MaterialXGraphOpCPU::TiledImage))&&
+              sourceTex>=0&&static_cast<size_t>(sourceTex)<scene.textures.size()) {
+            float gu=ic>=0?c[0]:u,gv=ic>=0?c[1]:v;
+            gu=gu*scene.matGraph[source+17]+scene.matGraph[source+19];
+            gv=gv*scene.matGraph[source+18]+scene.matGraph[source+20];
+            const auto& td=scene.textures[static_cast<size_t>(sourceTex)];
+            const float du=1.0f/std::max(td.width,1),dv=1.0f/std::max(td.height,1);
+            float xm[3],xp[3],ym[3],yp[3];
+            SampleTextureBilinear(scene.textures,scene.texels,sourceTex,gu-du,gv,xm);
+            SampleTextureBilinear(scene.textures,scene.texels,sourceTex,gu+du,gv,xp);
+            SampleTextureBilinear(scene.textures,scene.texels,sourceTex,gu,gv-dv,ym);
+            SampleTextureBilinear(scene.textures,scene.texels,sourceTex,gu,gv+dv,yp);
+            const float scale=b[0]*(1.0f/16.0f),dx=(xp[0]-xm[0])*0.5f*scale,
+                        dy=(yp[0]-ym[0])*0.5f*scale;
+            const float len=std::sqrt(dx*dx+dy*dy+1.0f);
+            dst={-dx/len*0.5f+0.5f,-dy/len*0.5f+0.5f,
+                 1.0f/len*0.5f+0.5f,1.0f};
+          }
+        }
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Arcsine)) {
         for (int cidx = 0; cidx < 4; ++cidx)
           dst[cidx] = std::asin(std::clamp(a[cidx], -1.0f, 1.0f));
