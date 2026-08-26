@@ -63,6 +63,8 @@ require(openpbr, r"kLightRtOpenPBRVec4s\s*=\s*20", "Tydra OpenPBR vec4 count")
 require(bridge, r"kLightRtOpenPBRFloats\s*==\s*TUSD_GPU_OPENPBR_FLOATS", "bridge OpenPBR guard")
 require(kernel, r"base\s*\+\s*TUSD_GPU_GRAPH_HEADER_FLOATS\s*\+\s*i\s*\*\s*TUSD_GPU_GRAPH_NODE_FLOATS", "CUDA/HIP graph record offset")
 require(shader, r"r\s*<\s*GRAPH_OUTPUTS", "Vulkan graph output routing")
+require(shader, r"op\s*==\s*21\)\s*value\[i\]\s*=\s*vec4\(uv,\s*0,\s*1\)",
+        "Vulkan texcoord uses hit UV")
 if re.search(r"base\s*\+\s*46\s*\+\s*i\s*\*\s*21", kernel):
     raise SystemExit("GPU material ABI mismatch: stale CUDA/HIP graph header")
 if ("(int)(graph[base + 1 + route] + 0.5f)" in kernel or
@@ -78,7 +80,9 @@ require(kernel, r"floorf\(graph\[p\+16\]\+0\.5f\)",
 for offset, label in (("p \\+ 1", "input"), ("p \\+ 16", "texture")):
     require(cpu, rf"floor\(\s*scene\.matGraph\[{offset}\] \+ 0\.5f\)",
             f"CPU graph {label} sentinel decode")
-for operation in ("Arcsine", "Arccosine", "Contrast", "Swizzle"):
+for operation in ("Arcsine", "Arccosine", "Arctangent", "Contrast", "Screen",
+                  "Overlay", "Burn", "Dodge", "RampLR", "RampTB", "SplitLR",
+                  "SplitTB", "Saturate", "Swizzle"):
     require(cpu, rf"MaterialXGraphOpCPU::{operation}\b",
             f"CPU graph {operation} parity")
 if "r<44" in shader:

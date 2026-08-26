@@ -51,14 +51,29 @@ ctest --test-dir build_ninja \
 
 It checks PreviewSurface/OpenPBR/standard_surface color semantics, executable
 MaterialX graph retention, a typed `color4` to `color3` swizzle result, tight
-CUDA/HIP image parity, and exposure-independent Vulkan/shared-backend
-chromaticity parity. To turn missing hardware into a failure for a GPU
-validation host, set
-`TUSDR_PARITY_REQUIRE_BACKENDS=vkr,cuda,hip`. Set
+CUDA/HIP image parity, `atan` plus spec-matched `screen`, `overlay`, `burn`, and
+`dodge` blend execution, and
+exposure-independent Vulkan/shared-backend chromaticity parity. A committed
+six-panel OpenPBR visual reference separately locks base, coat, transmission,
+subsurface, emission, and opacity output for the Vulkan and shared CUDA/HIP
+integrators. To turn missing hardware into a failure for a GPU validation host,
+set `TUSDR_PARITY_REQUIRE_BACKENDS=vkr,cuda,hip`. Set
 `TUSDR_PARITY_REQUIRE_HARDWARE=1` to require NVIDIA identity on CUDA and AMD
 identity on HIP. Multi-GPU Vulkan validation accepts an explicit index/vendor
 matrix such as `TUSDR_PARITY_VULKAN_DEVICES=0:NVIDIA,1:AMD`; every listed
 device must expose hardware ray query and pass the semantic grid.
+
+Spatial graph coverage includes standard `ramplr`, `ramptb`, `splitlr`, and
+`splittb` nodes. The ramp fixture checks red-to-blue horizontal variation and an
+independent green vertical gradient, including implicit hit UV when no texcoord
+input is connected. The split fixture drives both axes through a connected
+MaterialX texcoord node and verifies the resulting image quadrants.
+
+Color-adjust coverage follows MaterialX semantics for `saturate`: `amount`
+mixes the input away from or toward its luminance, rather than acting as a
+shader-language shorthand for clamping values to `[0, 1]`. The headless
+blend-chain fixture executes this operation after screen, overlay, burn, and
+dodge on every requested backend.
 
 CUDA cache transitions can be made part of the same headless gate. Point
 `XDG_CACHE_HOME` at an empty temporary directory and set

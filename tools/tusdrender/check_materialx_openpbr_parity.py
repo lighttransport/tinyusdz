@@ -136,6 +136,20 @@ def center_mean(image, read_image):
                  for channel in range(3))
 
 
+def quadrant_means(image, read_image):
+    width, height, px = pixels(image, read_image)
+    means = []
+    for cy in (3, 5):
+        for cx in (3, 5):
+            x0, x1 = width * cx // 8, width * (cx + 1) // 8
+            y0, y1 = height * cy // 8, height * (cy + 1) // 8
+            sample = [px[y * width + x] for y in range(y0, y1)
+                      for x in range(x0, x1)]
+            means.append(tuple(sum(value[channel] for value in sample) /
+                               len(sample) for channel in range(3)))
+    return means
+
+
 def chroma(rgb):
     total = sum(rgb)
     if total < 1.0:
@@ -201,59 +215,6 @@ def generate_texture_fixtures(repo: pathlib.Path, output: pathlib.Path) -> None:
         text=True, timeout=30, check=False)
     if run.returncode != 0:
         fail("failed to generate shared semantic texture fixtures", run.stdout)
-
-
-def write_lobe_grid(path: pathlib.Path) -> None:
-    lobes = [
-        ("Base", "color3f inputs:base_color = (0.8,0.12,0.04)"),
-        ("Coat", "color3f inputs:base_color = (0.08,0.45,0.12)\n"
-                 "      float inputs:coat_weight = 1\n"
-                 "      color3f inputs:coat_color = (0.2,1,0.3)\n"
-                 "      float inputs:coat_roughness = 0.08"),
-        ("Transmission", "color3f inputs:base_color = (0.05,0.12,0.8)\n"
-                         "      float inputs:transmission_weight = 0.75\n"
-                         "      color3f inputs:transmission_color = (0.1,0.3,1)\n"
-                         "      float inputs:geometry_thin_walled = 1"),
-        ("Subsurface", "color3f inputs:base_color = (0.8,0.35,0.04)\n"
-                       "      float inputs:subsurface_weight = 0.8\n"
-                       "      color3f inputs:subsurface_color = (1,0.15,0.04)\n"
-                       "      float inputs:subsurface_radius = 0.2\n"
-                       "      color3f inputs:subsurface_radius_scale = (1,0.2,0.1)"),
-        ("Emission", "color3f inputs:base_color = (0.05,0.02,0.05)\n"
-                     "      color3f inputs:emission_color = (1,0.05,0.8)\n"
-                     "      float inputs:emission_luminance = 3"),
-        ("Opacity", "color3f inputs:base_color = (0.05,0.7,0.7)\n"
-                    "      float inputs:geometry_opacity = 0.35"),
-    ]
-    parts = ['#usda 1.0', '(defaultPrim = "World" upAxis = "Y")',
-             'def Xform "World" {']
-    for index, (name, inputs) in enumerate(lobes):
-        x0 = -6 + index * 2
-        x1 = x0 + 1.8
-        parts.append(f'''  def Mesh "Panel{name}" {{
-    uniform bool doubleSided = 1
-    point3f[] points = [({x0},-1,0), ({x1},-1,0), ({x1},1,0), ({x0},1,0)]
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0,1,2,3]
-    rel material:binding = </World/Mat{name}>
-  }}
-  def Material "Mat{name}" {{
-    token outputs:surface.connect = </World/Mat{name}/P.outputs:surface>
-    def Shader "P" {{
-      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
-      float inputs:base_weight = 1
-      float inputs:specular_roughness = 0.3
-      {inputs}
-      token outputs:surface
-    }}
-  }}''')
-    parts.append('''  def DistantLight "Key" {
-    float inputs:intensity = 5
-    float3 xformOp:rotateXYZ = (0,25,0)
-    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
-  }
-}''')
-    path.write_text("\n".join(parts) + "\n", encoding="utf-8")
 
 
 def write_displacement_fixture(path: pathlib.Path) -> None:
@@ -344,6 +305,164 @@ def Xform "World" {
 ''', encoding="utf-8")
 
 
+def write_extended_operator_fixture(path: pathlib.Path) -> None:
+    """Author a graph whose expected channel ordering exercises three ops."""
+    path.write_text('''#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def Mesh "Card" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/M>
+  }
+  def Material "M" (prepend apiSchemas = ["MaterialXConfigAPI"]) {
+    token outputs:surface.connect = </World/M/P.outputs:surface>
+    token outputs:mtlx:surface.connect = </World/M/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      float inputs:base_weight = 1
+      color3f inputs:base_color.connect = </World/M/NG.outputs:base>
+      float inputs:specular_roughness = 0.55
+      token outputs:surface
+    }
+    def NodeGraph "NG" {
+      color3f outputs:base.connect = </World/M/NG/Saturate.outputs:out>
+      def Shader "Screen" {
+        uniform token info:id = "ND_screen_color3"
+        color3f inputs:fg = (0.2,0.4,0.8)
+        color3f inputs:bg = (0.5,0.25,0.5)
+        color3f outputs:out
+      }
+      def Shader "Overlay" {
+        uniform token info:id = "ND_overlay_color3"
+        color3f inputs:fg.connect = </World/M/NG/Screen.outputs:out>
+        color3f inputs:bg = (0.25,0.75,0.25)
+        color3f outputs:out
+      }
+      def Shader "Atan" {
+        uniform token info:id = "ND_atan_color3"
+        color3f inputs:in.connect = </World/M/NG/Overlay.outputs:out>
+        color3f outputs:out
+      }
+      def Shader "Burn" {
+        uniform token info:id = "ND_burn_color3"
+        color3f inputs:fg.connect = </World/M/NG/Atan.outputs:out>
+        color3f inputs:bg = (0.4,0.6,0.8)
+        color3f outputs:out
+      }
+      def Shader "Dodge" {
+        uniform token info:id = "ND_dodge_color3"
+        color3f inputs:fg.connect = </World/M/NG/Burn.outputs:out>
+        color3f inputs:bg = (0.2,0.4,0.6)
+        color3f outputs:out
+      }
+      def Shader "Saturate" {
+        uniform token info:id = "ND_saturate_color3"
+        color3f inputs:in.connect = </World/M/NG/Dodge.outputs:out>
+        float inputs:amount = 0.35
+        color3f outputs:out
+      }
+    }
+  }
+  def DistantLight "Key" { float inputs:intensity = 0.5 }
+}
+''', encoding="utf-8")
+
+
+def write_ramp_fixture(path: pathlib.Path) -> None:
+    path.write_text('''#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def Mesh "Card" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    texCoord2f[] primvars:st = [(0,0), (1,0), (1,1), (0,1)] (interpolation = "vertex")
+    rel material:binding = </World/M>
+  }
+  def Material "M" (prepend apiSchemas = ["MaterialXConfigAPI"]) {
+    token outputs:surface.connect = </World/M/P.outputs:surface>
+    token outputs:mtlx:surface.connect = </World/M/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      color3f inputs:base_color.connect = </World/M/NG.outputs:base>
+      float inputs:specular_roughness = 0.65
+      token outputs:surface
+    }
+    def NodeGraph "NG" {
+      color3f outputs:base.connect = </World/M/NG/TB.outputs:out>
+      def Shader "LR" {
+        uniform token info:id = "ND_ramplr_color3"
+        color3f inputs:valuel = (0.9,0.02,0.02)
+        color3f inputs:valuer = (0.02,0.02,0.9)
+        color3f outputs:out
+      }
+      def Shader "TB" {
+        uniform token info:id = "ND_ramptb_color3"
+        color3f inputs:valuet.connect = </World/M/NG/LR.outputs:out>
+        color3f inputs:valueb = (0.02,0.9,0.02)
+        color3f outputs:out
+      }
+    }
+  }
+  def DistantLight "Key" { float inputs:intensity = 0.5 }
+}
+''', encoding="utf-8")
+
+
+def write_split_fixture(path: pathlib.Path) -> None:
+    path.write_text('''#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def Mesh "Card" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    texCoord2f[] primvars:st = [(0,0), (1,0), (1,1), (0,1)] (interpolation = "vertex")
+    rel material:binding = </World/M>
+  }
+  def Material "M" (prepend apiSchemas = ["MaterialXConfigAPI"]) {
+    token outputs:surface.connect = </World/M/P.outputs:surface>
+    token outputs:mtlx:surface.connect = </World/M/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      color3f inputs:base_color.connect = </World/M/NG.outputs:base>
+      float inputs:specular_roughness = 0.65
+      token outputs:surface
+    }
+    def NodeGraph "NG" {
+      color3f outputs:base.connect = </World/M/NG/TB.outputs:out>
+      def Shader "ST" {
+        uniform token info:id = "ND_texcoord_vector2"
+        float2 outputs:out
+      }
+      def Shader "LR" {
+        uniform token info:id = "ND_splitlr_color3"
+        color3f inputs:valuel = (0.9,0.02,0.02)
+        color3f inputs:valuer = (0.02,0.02,0.9)
+        float inputs:center = 0.5
+        float2 inputs:texcoord.connect = </World/M/NG/ST.outputs:out>
+        color3f outputs:out
+      }
+      def Shader "TB" {
+        uniform token info:id = "ND_splittb_color3"
+        color3f inputs:valuet.connect = </World/M/NG/LR.outputs:out>
+        color3f inputs:valueb = (0.02,0.9,0.02)
+        float inputs:center = 0.5
+        float2 inputs:texcoord.connect = </World/M/NG/ST.outputs:out>
+        color3f outputs:out
+      }
+    }
+  }
+  def DistantLight "Key" { float inputs:intensity = 0.5 }
+}
+''', encoding="utf-8")
+
+
 def main() -> int:
     if len(sys.argv) not in (2, 3):
         print(f"usage: {sys.argv[0]} TUSDRENDER [REPO_ROOT]", file=sys.stderr)
@@ -379,12 +498,18 @@ def main() -> int:
         fixture_dir = out_dir / "semantic-fixtures"
         fixture_dir.mkdir()
         generate_texture_fixtures(repo, fixture_dir)
-        lobe_grid = out_dir / "openpbr-lobes.usda"
+        lobe_grid = repo / "tests" / "usda" / \
+            "tusdrender-openpbr-lobe-golden.usda"
         displacement = out_dir / "displacement.usda"
         swizzle = out_dir / "swizzle.usda"
-        write_lobe_grid(lobe_grid)
+        extended_ops = out_dir / "extended-operators.usda"
+        ramps = out_dir / "ramps.usda"
+        splits = out_dir / "splits.usda"
         write_displacement_fixture(displacement)
         write_swizzle_fixture(swizzle)
+        write_extended_operator_fixture(extended_ops)
+        write_ramp_fixture(ramps)
+        write_split_fixture(splits)
         available = set()
         grid_images = {}
         grid_means = {}
@@ -483,9 +608,78 @@ def main() -> int:
             print(f"  {backend}: bgr swizzle mean=" +
                   "%.1f,%.1f,%.1f" % mean)
 
+        print("=== tusdrender extended MaterialX operators ===")
+        for backend in sorted(available):
+            output = out_dir / f"extended-operators-{backend}.png"
+            log, ok = render(binary, extended_ops, backend, output)
+            if not ok:
+                fail(f"{backend} disappeared during extended-operator validation")
+            require_topology(log, backend)
+            mean = center_mean(output, read_image)
+            if not (mean[2] > mean[1] > mean[0] and mean[2] - mean[0] > 8.0):
+                fail(f"{backend} did not execute blend/atan/saturate chain: mean={mean}",
+                     log)
+            print(f"  {backend}: screen/overlay/atan/burn/dodge/saturate mean=" +
+                  "%.1f,%.1f,%.1f" % mean)
+
+        print("=== tusdrender spatial MaterialX ramps ===")
+        for backend in sorted(available):
+            output = out_dir / f"ramps-{backend}.png"
+            log, ok = render(binary, ramps, backend, output)
+            if not ok:
+                fail(f"{backend} disappeared during ramp validation")
+            require_topology(log, backend)
+            means = quadrant_means(output, read_image)
+            # Rows are (left,right). LR must trade red for blue in each row;
+            # TB must change the green contribution between the two rows.
+            horizontal = all(
+                means[row * 2][0] - means[row * 2 + 1][0] > 3.0 and
+                means[row * 2 + 1][2] - means[row * 2][2] > 3.0
+                for row in range(2))
+            top_green = (means[0][1] + means[1][1]) * 0.5
+            bottom_green = (means[2][1] + means[3][1]) * 0.5
+            if not horizontal or abs(top_green - bottom_green) < 5.0:
+                fail(f"{backend} did not preserve LR/TB ramp regions: {means}", log)
+            print(f"  {backend}: LR/TB ramp quadrants=" + " ".join(
+                "%.1f,%.1f,%.1f" % value for value in means))
+
+        print("=== tusdrender connected-texcoord MaterialX splits ===")
+        for backend in sorted(available):
+            output = out_dir / f"splits-{backend}.png"
+            log, ok = render(binary, splits, backend, output)
+            if not ok:
+                fail(f"{backend} disappeared during split validation")
+            require_topology(log, backend)
+            means = quadrant_means(output, read_image)
+            dominant = {max(range(3), key=lambda channel: value[channel])
+                        for value in means
+                        if max(value) - min(value) > 5.0}
+            if dominant != {0, 1, 2}:
+                fail(f"{backend} did not preserve LR/TB split regions: {means}", log)
+            print(f"  {backend}: LR/TB split quadrants=" + " ".join(
+                "%.1f,%.1f,%.1f" % value for value in means))
+
+        print("=== tusdrender OpenPBR lobe golden images ===")
+        golden_dir = repo / "tests" / "golden"
+        for backend in sorted(available):
+            output = out_dir / f"openpbr-lobes-golden-{backend}.png"
+            log, ok = render(binary, lobe_grid, backend, output,
+                             ("--pt-samples", "16"))
+            if not ok:
+                fail(f"{backend} disappeared during OpenPBR golden validation")
+            golden_name = ("tusdrender-openpbr-lobes-vkr.png" if backend == "vkr"
+                           else "tusdrender-openpbr-lobes-shared-gpu.png")
+            golden = golden_dir / golden_name
+            if not golden.is_file():
+                fail(f"missing OpenPBR golden image: {golden}")
+            error = normalized_rmse(golden, output, read_image)
+            if error > 0.01:
+                fail(f"{backend} OpenPBR lobe golden diverged (RMSE={error:.6f})",
+                     log)
+            print(f"  {backend}: six-lobe golden RMSE={error:.6f}")
+
         print("=== tusdrender extended OpenPBR and texture semantics ===")
         semantic_cases = [
-            ("lobes", lobe_grid, False),
             ("core-textures", fixture_dir / "core-openpbr.usda", True),
             ("core-udim", fixture_dir / "core-openpbr-udim.usda", True),
             ("coat", fixture_dir / "coat.usda", True),

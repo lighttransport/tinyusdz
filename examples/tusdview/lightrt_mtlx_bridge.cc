@@ -1086,12 +1086,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "mix") out.op = MaterialXGraphOpCPU::Mix;
     else if (cat == "clamp") out.op = MaterialXGraphOpCPU::Clamp;
     else if (cat == "saturate") {
-      out.op = MaterialXGraphOpCPU::Clamp;
-      // MaterialX saturate is a unary clamp with implicit [0, 1] bounds.
-      out.value[1][0] = out.value[1][1] = out.value[1][2] = 0.0f;
-      out.value[1][3] = 0.0f;
-      out.value[2][0] = out.value[2][1] = out.value[2][2] = 1.0f;
-      out.value[2][3] = 1.0f;
+      out.op = MaterialXGraphOpCPU::Saturate;
+      out.value[1][0] = out.value[1][1] =
+          out.value[1][2] = out.value[1][3] = 1.0f;
     }
     else if (cat == "dot" || cat == "dotproduct") out.op = MaterialXGraphOpCPU::Dot;
     else if (cat == "normalize") out.op = MaterialXGraphOpCPU::Normalized;
@@ -1160,8 +1157,38 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.op = MaterialXGraphOpCPU::Arcsine;
     else if (cat == "acos" || cat == "arccos")
       out.op = MaterialXGraphOpCPU::Arccosine;
+    else if (cat == "atan" || cat == "arctan")
+      out.op = MaterialXGraphOpCPU::Arctangent;
     else if (cat == "contrast")
       out.op = MaterialXGraphOpCPU::Contrast;
+    else if (cat == "screen") {
+      out.op = MaterialXGraphOpCPU::Screen;
+      out.value[2][0] = out.value[2][1] =
+          out.value[2][2] = out.value[2][3] = 1.0f;
+    }
+    else if (cat == "overlay") {
+      out.op = MaterialXGraphOpCPU::Overlay;
+      out.value[2][0] = out.value[2][1] =
+          out.value[2][2] = out.value[2][3] = 1.0f;
+    }
+    else if (cat == "burn") {
+      out.op = MaterialXGraphOpCPU::Burn;
+      out.value[2][0] = out.value[2][1] =
+          out.value[2][2] = out.value[2][3] = 1.0f;
+    }
+    else if (cat == "dodge") {
+      out.op = MaterialXGraphOpCPU::Dodge;
+      out.value[2][0] = out.value[2][1] =
+          out.value[2][2] = out.value[2][3] = 1.0f;
+    }
+    else if (cat == "ramplr")
+      out.op = MaterialXGraphOpCPU::RampLR;
+    else if (cat == "ramptb")
+      out.op = MaterialXGraphOpCPU::RampTB;
+    else if (cat == "splitlr")
+      out.op = MaterialXGraphOpCPU::SplitLR;
+    else if (cat == "splittb")
+      out.op = MaterialXGraphOpCPU::SplitTB;
     else if (cat == "swizzle" || cat.rfind("swizzle_", 0) == 0) {
       out.op = MaterialXGraphOpCPU::Swizzle;
       out.value[1][0] = 0.0f;
@@ -1187,6 +1214,13 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         const std::string inputName = JsonString(input, "name");
         const auto valueIt = input.find("value");
         const std::string inputType = NormalizeMtlxType(JsonString(input, "type"));
+        if ((cat == "splitlr" || cat == "splittb") &&
+            inputName == "texcoord") {
+          const std::string source = JsonString(input, "nodename");
+          const auto found = nodeIds.find(source);
+          if (found != nodeIds.end()) out.auxInput = found->second;
+          continue;
+        }
         if ((cat == "swizzle" || cat.rfind("swizzle_", 0) == 0) &&
             inputName == "channels" &&
             valueIt != input.end() && valueIt->is_string()) {
@@ -1251,6 +1285,41 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         else if (cat == "mix" && (inputName == "fg" || inputName == "in2"))
           inputSlot = 1;
         else if (cat == "mix" && (inputName == "mix" || inputName == "amount"))
+          inputSlot = 2;
+        else if (cat == "saturate" && inputName == "in")
+          inputSlot = 0;
+        else if (cat == "saturate" && inputName == "amount")
+          inputSlot = 1;
+        else if ((cat == "screen" || cat == "overlay" || cat == "burn" ||
+                  cat == "dodge") && inputName == "fg")
+          inputSlot = 0;
+        else if ((cat == "screen" || cat == "overlay" || cat == "burn" ||
+                  cat == "dodge") && inputName == "bg")
+          inputSlot = 1;
+        else if ((cat == "screen" || cat == "overlay" || cat == "burn" ||
+                  cat == "dodge") && inputName == "mix")
+          inputSlot = 2;
+        else if (cat == "ramplr" && inputName == "valuel")
+          inputSlot = 0;
+        else if (cat == "ramplr" && inputName == "valuer")
+          inputSlot = 1;
+        else if (cat == "ramptb" && inputName == "valuet")
+          inputSlot = 0;
+        else if (cat == "ramptb" && inputName == "valueb")
+          inputSlot = 1;
+        else if ((cat == "ramplr" || cat == "ramptb") &&
+                 inputName == "texcoord")
+          inputSlot = 2;
+        else if (cat == "splitlr" && inputName == "valuel")
+          inputSlot = 0;
+        else if (cat == "splitlr" && inputName == "valuer")
+          inputSlot = 1;
+        else if (cat == "splittb" && inputName == "valuet")
+          inputSlot = 0;
+        else if (cat == "splittb" && inputName == "valueb")
+          inputSlot = 1;
+        else if ((cat == "splitlr" || cat == "splittb") &&
+                 inputName == "center")
           inputSlot = 2;
         else if (inputName == "in" || inputName == "in1" ||
             inputName == "value" || inputName == "color" ||
@@ -1398,6 +1467,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     state = 1;
     for (int input : graph.nodes[static_cast<size_t>(index)].input)
       if (!emitDependencyFirst(input)) return false;
+    if (!emitDependencyFirst(graph.nodes[static_cast<size_t>(index)].auxInput))
+      return false;
     state = 2;
     order.push_back(index);
     return true;
@@ -1418,6 +1489,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
   for (MaterialXGraphNodeCPU& node : sorted) {
     for (int& input : node.input)
       if (input >= 0) input = oldToNew[static_cast<size_t>(input)];
+    if (node.auxInput >= 0)
+      node.auxInput = oldToNew[static_cast<size_t>(node.auxInput)];
   }
   for (int& output : graph.output)
     if (output >= 0) output = oldToNew[static_cast<size_t>(output)];
@@ -2019,8 +2092,10 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
     for (int input = 0; input < 3; ++input)
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 4 + input * 4 + lane] = node.value[input][lane];
-    int textureId = node.textureId;
-    if (sourceToTable && textureId >= 0 &&
+    const bool usesAuxInput = node.op == MaterialXGraphOpCPU::SplitLR ||
+                              node.op == MaterialXGraphOpCPU::SplitTB;
+    int textureId = usesAuxInput ? node.auxInput : node.textureId;
+    if (!usesAuxInput && sourceToTable && textureId >= 0 &&
         static_cast<size_t>(textureId) < sourceToTable->size()) {
       textureId = (*sourceToTable)[static_cast<size_t>(textureId)];
     }
@@ -2072,6 +2147,11 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
     for (int input = 0; input < 3; ++input)
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 4 + input * 4 + lane] = node.value[input][lane];
+    if (node.op == MaterialXGraphOpCPU::SplitLR ||
+        node.op == MaterialXGraphOpCPU::SplitTB) {
+      dst[base + 16] = static_cast<float>(node.auxInput);
+      continue;
+    }
     if (node.textureId < 0) {
       dst[base + 16] = -1.0f;
       continue;

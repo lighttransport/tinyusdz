@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "mtlx_doc.h"
+#include "mtlx_eval.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static int nearf_eps(float a, float b) { return fabsf(a - b) <= 1.0e-5f; }
+
+static int check3(const char *name, MtlxValue value, float x, float y, float z) {
+  if (!nearf_eps(value.v[0], x) || !nearf_eps(value.v[1], y) ||
+      !nearf_eps(value.v[2], z)) {
+    fprintf(stderr, "%s: got %.6f %.6f %.6f, expected %.6f %.6f %.6f\n",
+            name, value.v[0], value.v[1], value.v[2], x, y, z);
+    return 0;
+  }
+  return 1;
+}
+
+static MtlxValue eval_named(ShadeContext *ctx, const char *name) {
+  int id = mtlx_find_node(ctx->doc, -1, name);
+  for (int graph = 0; id < 0 && graph < ctx->doc->ngraph; ++graph)
+    id = mtlx_find_node(ctx->doc, graph, name);
+  return mtlx_eval_node_test(ctx, id);
+}
+
+int main(void) {
+  const char *xml =
+      "<materialx version=\"1.39\"><nodegraph name=\"NG\">"
+      " <constant name=\"src\" type=\"color3\"><input name=\"value\" type=\"color3\" value=\"0.2,0.4,0.8\"/></constant>"
+      " <add name=\"add\" type=\"color3\"><input name=\"in1\" type=\"color3\" nodename=\"src\"/><input name=\"in2\" type=\"color3\" value=\"0.1,0.2,0.3\"/></add>"
+      " <multiply name=\"mul\" type=\"color3\"><input name=\"in1\" type=\"color3\" nodename=\"add\"/><input name=\"in2\" type=\"float\" value=\"2\"/></multiply>"
+      " <clamp name=\"clamped\" type=\"color3\"><input name=\"in\" nodename=\"mul\"/><input name=\"low\" value=\"0.0\"/><input name=\"high\" value=\"1.0\"/></clamp>"
+      " <texcoord name=\"st\" type=\"vector2\"/>"
+      " <ramplr name=\"ramp\" type=\"color3\"><input name=\"valuel\" type=\"color3\" value=\"1,0,0\"/><input name=\"valuer\" type=\"color3\" value=\"0,0,1\"/><input name=\"texcoord\" type=\"vector2\" nodename=\"st\"/></ramplr>"
+      " <splitlr name=\"split\" type=\"color3\"><input name=\"valuel\" type=\"color3\" value=\"0,1,0\"/><input name=\"valuer\" type=\"color3\" value=\"1,0,1\"/><input name=\"center\" type=\"float\" value=\"0.6\"/><input name=\"texcoord\" type=\"vector2\" nodename=\"st\"/></splitlr>"
+      " <ramptb name=\"ramp_tb\" type=\"color3\"><input name=\"valuet\" type=\"color3\" value=\"1,1,0\"/><input name=\"valueb\" type=\"color3\" value=\"0,1,1\"/><input name=\"texcoord\" type=\"vector2\" nodename=\"st\"/></ramptb>"
+      " <splittb name=\"split_tb\" type=\"color3\"><input name=\"valuet\" type=\"color3\" value=\"1,0,0\"/><input name=\"valueb\" type=\"color3\" value=\"0,0,1\"/><input name=\"center\" type=\"float\" value=\"0.8\"/><input name=\"texcoord\" type=\"vector2\" nodename=\"st\"/></splittb>"
+      " <screen name=\"screen\" type=\"color3\"><input name=\"fg\" type=\"color3\" value=\"0.2,0.5,0.8\"/><input name=\"bg\" type=\"color3\" value=\"0.1,0.4,0.7\"/><input name=\"mix\" type=\"float\" value=\"0.5\"/></screen>"
+      " <overlay name=\"overlay\" type=\"color3\"><input name=\"fg\" type=\"color3\" value=\"0.2,0.5,0.8\"/><input name=\"bg\" type=\"color3\" value=\"0.1,0.4,0.7\"/><input name=\"mix\" type=\"float\" value=\"0.5\"/></overlay>"
+      " <burn name=\"burn\" type=\"float\"><input name=\"fg\" type=\"float\" value=\"0.5\"/><input name=\"bg\" type=\"float\" value=\"0.25\"/><input name=\"mix\" type=\"float\" value=\"0.5\"/></burn>"
+      " <dodge name=\"dodge\" type=\"float\"><input name=\"fg\" type=\"float\" value=\"0.5\"/><input name=\"bg\" type=\"float\" value=\"0.25\"/><input name=\"mix\" type=\"float\" value=\"0.5\"/></dodge>"
+      " <saturate name=\"desaturate\" type=\"color3\"><input name=\"in\" type=\"color3\" value=\"0.2,0.4,0.8\"/><input name=\"amount\" type=\"float\" value=\"0\"/></saturate>"
+      " <dotproduct name=\"dot\" type=\"float\"><input name=\"in1\" type=\"vector3\" value=\"1,2,3\"/><input name=\"in2\" type=\"vector3\" value=\"4,5,6\"/></dotproduct>"
+      " <normalize name=\"norm\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"0,3,4\"/></normalize>"
+      " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
+      "</nodegraph></materialx>";
+  MtlxDoc *doc = mtlx_load_string(xml);
+  if (!doc) return 1;
+  ShadeContext ctx = {0};
+  ctx.doc = doc;
+  ctx.uv[0] = 0.25f; ctx.uv[1] = 0.75f;
+  ctx.Ns = ctx.Ng = v3_make(0, 0, 1);
+  ctx.dpdu = v3_make(1, 0, 0); ctx.dpdv = v3_make(0, 1, 0);
+  ctx.memo = (MtlxValue *)calloc((size_t)doc->nnode, sizeof(MtlxValue));
+  ctx.memo_done = (char *)calloc((size_t)doc->nnode, 1);
+  if (!ctx.memo || !ctx.memo_done) {
+    free(ctx.memo); free(ctx.memo_done); mtlx_free(doc); return 1;
+  }
+  int ok = check3("chain", eval_named(&ctx, "clamped"), 0.6f, 1.0f, 1.0f) &&
+           check3("ramp-left", eval_named(&ctx, "ramp"), 0.75f, 0.0f, 0.25f) &&
+           check3("split-left", eval_named(&ctx, "split"), 0.0f, 1.0f, 0.0f) &&
+           check3("ramp-tb", eval_named(&ctx, "ramp_tb"), 0.25f, 1.0f, 0.75f) &&
+           check3("split-tb-top", eval_named(&ctx, "split_tb"), 1.0f, 0.0f, 0.0f) &&
+           check3("screen", eval_named(&ctx, "screen"), 0.19f, 0.55f, 0.82f) &&
+           check3("overlay", eval_named(&ctx, "overlay"), 0.07f, 0.4f, 0.79f) &&
+           nearf_eps(eval_named(&ctx, "burn").v[0], -0.125f) &&
+           nearf_eps(eval_named(&ctx, "dodge").v[0], 0.375f) &&
+           check3("saturate", eval_named(&ctx, "desaturate"), 0.38636f,
+                  0.38636f, 0.38636f) &&
+           check3("conditional", eval_named(&ctx, "choose"), 0.75f, 0.0f, 0.25f) &&
+           nearf_eps(eval_named(&ctx, "dot").v[0], 32.0f) &&
+           check3("normalize", eval_named(&ctx, "norm"), 0.0f, 0.6f, 0.8f);
+  /* mtlx_eval_node_test must clear memoization between shade points. */
+  ctx.uv[0] = 0.8f;
+  ctx.uv[1] = 0.9f;
+  ok = check3("ramp-right", eval_named(&ctx, "ramp"), 0.2f, 0.0f, 0.8f) &&
+       check3("split-right", eval_named(&ctx, "split"), 1.0f, 0.0f, 1.0f) && ok;
+  ok = check3("split-tb-bottom", eval_named(&ctx, "split_tb"), 0.0f, 0.0f,
+              1.0f) && ok;
+  free(ctx.memo); free(ctx.memo_done); mtlx_free(doc);
+  if (!ok) fprintf(stderr, "MaterialX graph evaluation suite failed\n");
+  return ok ? 0 : 1;
+}

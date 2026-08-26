@@ -208,6 +208,13 @@ shader-cache warmup and PRIME environment. They use Vulkan only as a windowless
 presentation shell and must remain runnable on the automatically selected
 device if an Xvfb display or NVIDIA driver disappears after configuration.
 
+The `tool-tusdrender-materialx-openpbr-parity` test also compares a fixed
+six-panel OpenPBR lobe scene against committed 192x140, 16-sample PNG references.
+Vulkan has its own reference and CUDA/HIP share one because their common kernel
+is byte-identical for this deterministic scene. The 1% normalized-RMSE allowance
+covers minor driver/compiler variation without accepting a flattened or missing
+lobe.
+
 The three GLVND variables route OpenGL only. `TUSDVIEW_VK_DEVICE=nvidia` is a
 test-harness variable that forwards `--vk-device nvidia`; direct viewer runs
 should use the command-line option. True headless Vulkan/CUDA/HIP tests do not
@@ -294,6 +301,8 @@ The tusdview viewer example registers GPU-dependent tests under the `tusdview` c
 | `tusdview_openpbr_material_test` | OpenPBR material extraction | None (compiled unit) |
 | `tusdview_texture_pipeline_test` | Image decode/mip/descriptor pipeline | None (compiled unit) |
 | `tusdview_lightrt_mtlx_eval_test` | MaterialX ND_image evaluation | None (compiled unit) |
+| `tusdview_lightrt_mtlx_graph_connection_test` | MaterialX graph edge resolution, forward references, graph outputs, selectors, and surface binding | None (compiled unit) |
+| `tusdview_lightrt_mtlx_graph_evaluation_test` | Numerical evaluation of connected arithmetic, vector, conditional, blend, and UV-spatial MaterialX nodes | None (compiled unit) |
 | `tusdview_geometry_primvar_test` | Geometry primvar reconstruction | None (compiled unit) |
 | `tusdview_camera_nav_test` | Camera navigation | None (compiled unit) |
 | `tusdview-next-nonmesh-extraction` | Default-loader Points/Curves records | Vulkan backend |

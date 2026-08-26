@@ -7,8 +7,10 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
 
 - Branch: `dev`
 - Public remote: `https://github.com/lighttransport/tinyusdz.git`
-- `HEAD` and `origin/dev`: `ac3cc417f` (`Update renderer development handoff`)
-- The renderer improvements below are uncommitted.
+- `HEAD` and `origin/dev`: `d8068d7fc` (`Expand headless MaterialX GPU parity`)
+- The renderer parity batch below is committed, audited, and pushed.
+- The `atan`/blend-node and OpenPBR golden enhancements described in items
+  15-16 are currently uncommitted.
 
 ## Implemented in the worktree
 
@@ -69,6 +71,44 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
     Xvfb or PRIME state cannot block their automatic Vulkan presentation shell.
     Updated the viewer/testing docs, which still incorrectly described CPU RT
     as flat-material-only and lacking headless screenshots.
+15. Added executable MaterialX `atan`, `screen`, and `overlay` operators to the
+    shared graph IR and CPU, CUDA/HIP, and Vulkan interpreters. The headless
+    parity fixture chains all three and asserts the resulting channel ordering
+    on every required backend.
+16. Added a committed six-panel OpenPBR lobe fixture and deterministic 192x140,
+    16-sample visual goldens. Vulkan RT is checked against its reference while
+    CUDA and HIP share their byte-identical kernel reference; a 1% normalized
+    RMSE gate allows small driver/compiler variation.
+17. Added MaterialX `burn` and `dodge` across CPU, CUDA/HIP, and Vulkan, using
+    the upstream standard-library edge cases and `fg`/`bg`/`mix` semantics.
+    Auditing those definitions also corrected `screen` and `overlay`: both now
+    honor the third `mix` input, and overlay selects multiply versus screen from
+    the background channel as specified. The executable parity graph chains all
+    five blend/atan operations.
+18. Added spec-matched `ramplr` and `ramptb` nodes across all four interpreters.
+    Connected texcoords use the third graph input; omitted texcoords correctly
+    fall back to the hit UV. The headless fixture checks independent horizontal
+    red/blue and vertical green gradients rather than relying on topology or a
+    single center pixel.
+19. Added `splitlr` and `splittb` across CPU, CUDA/HIP, and Vulkan. Their fourth
+    logical texcoord dependency is retained in the otherwise-unused image slot
+    of non-image graph records, preserving the fixed 21-float GPU ABI. A
+    connected-texcoord quadrant fixture exposed and fixed a Vulkan regression
+    where `ND_texcoord_vector2` incorrectly passed through image UV routing and
+    collapsed to `(0, 0)` instead of returning the hit UV.
+20. Added standalone, hermetic MaterialX graph-connection and graph-evaluation
+    CTest suites. They cover forward references, nodegraph-output indirection,
+    output selectors, surface binding, chained scalar/vector operations,
+    conditionals, spatial UV nodes, and evaluator memo reset between shade
+    points. Both suites run without a GPU or display.
+21. Closed standalone evaluator parity for `ramptb`, `splittb`, `screen`,
+    `overlay`, `burn`, and `dodge`. Their numerical tests share the same
+    `fg`/`bg`/`mix`, vertical-coordinate, and split-threshold expectations as
+    the CPU and GPU runtime graph interpreters.
+22. Corrected runtime `saturate` semantics across CPU, CUDA/HIP, and Vulkan.
+    It now interpolates each RGB channel from luminance using the authored
+    `amount`, matching MaterialX and the standalone evaluator, instead of being
+    miscompiled as a clamp. The hardware blend-chain fixture now executes it.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.
@@ -97,10 +137,20 @@ The Vulkan compute shader was recompiled into
   (`sha256 2e29c1249fcdb54d5ad3bc534f43f0e1a0df060f8ba74dc7a85ebff069c30139`).
 - `git diff --check`, Python compilation, shell syntax, generated ABI validation,
   and personal-path scan: pass.
+- Expanded strict hardware parity (Vulkan RT on NVIDIA/AMD, CUDA, and HIP),
+  including the new operators and both golden families: passed in 69.19 s.
+- Strict hardware parity after the spec-correct blend update passed in 158.35 s,
+  including the expected cold CUDA/HIP kernel recompilation.
+- Warm strict hardware parity with the spatial ramp fixture passed in 75.81 s.
+- Strict hardware parity with connected-texcoord split coverage passed in
+  80.39 s across Vulkan RT on NVIDIA and AMD, CUDA on NVIDIA, and HIP on AMD.
+- Strict hardware parity after the MaterialX saturation fix passed in 161.76 s
+  across the same four hardware paths; the shared CUDA/HIP kernel rebuilt cold.
 
 ## Remaining work
 
-1. Commit only after the user requests a commit. Keep `run.sh` and `usd-assets`
-   untracked.
-2. If a push is requested, run the mandatory exact-range pre-push audit and ask
-   for fresh push authorization after reporting its results.
+1. Continue incremental MaterialX coverage using the bounded graph ABI and the
+   non-image auxiliary-input convention where a standard node needs a fourth
+   dependency.
+2. Keep `run.sh` and `usd-assets` untracked. If a later push is requested, run
+   the mandatory exact-range pre-push audit and request fresh authorization.

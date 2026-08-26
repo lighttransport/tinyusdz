@@ -571,9 +571,61 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Arccosine)) {
         for (int cidx = 0; cidx < 4; ++cidx)
           dst[cidx] = std::acos(std::clamp(a[cidx], -1.0f, 1.0f));
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Arctangent)) {
+        for (int cidx = 0; cidx < 4; ++cidx)
+          dst[cidx] = std::atan(a[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Contrast)) {
         for (int cidx = 0; cidx < 4; ++cidx)
           dst[cidx] = (a[cidx] - c[cidx]) * b[cidx] + c[cidx];
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Screen)) {
+        for (int cidx = 0; cidx < 4; ++cidx) {
+          const float composite =
+              1.0f - (1.0f - a[cidx]) * (1.0f - b[cidx]);
+          dst[cidx] = b[cidx] + c[cidx] * (composite - b[cidx]);
+        }
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Overlay)) {
+        for (int cidx = 0; cidx < 4; ++cidx) {
+          const float composite = b[cidx] >= 0.5f
+              ? 1.0f - 2.0f * (1.0f - a[cidx]) * (1.0f - b[cidx])
+              : 2.0f * a[cidx] * b[cidx];
+          dst[cidx] = b[cidx] + c[cidx] * (composite - b[cidx]);
+        }
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Burn)) {
+        for (int cidx = 0; cidx < 4; ++cidx) {
+          dst[cidx] = std::fabs(a[cidx]) < 1.0e-6f
+                          ? 0.0f
+                          : c[cidx] * (1.0f - (1.0f - b[cidx]) / a[cidx]) +
+                                (1.0f - c[cidx]) * b[cidx];
+        }
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Dodge)) {
+        for (int cidx = 0; cidx < 4; ++cidx) {
+          dst[cidx] = std::fabs(1.0f - a[cidx]) < 1.0e-6f
+                          ? 0.0f
+                          : c[cidx] * (b[cidx] / (1.0f - a[cidx])) +
+                                (1.0f - c[cidx]) * b[cidx];
+        }
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::RampLR) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::RampTB)) {
+        const float coord = op == static_cast<int>(MaterialXGraphOpCPU::RampLR)
+                                ? (ic >= 0 ? c[0] : u)
+                                : (ic >= 0 ? c[1] : v);
+        const float t = std::clamp(coord, 0.0f, 1.0f);
+        for (int cidx = 0; cidx < 4; ++cidx)
+          dst[cidx] = a[cidx] + t * (b[cidx] - a[cidx]);
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::SplitLR) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::SplitTB)) {
+        const auto coordValue = textureId >= 0 && textureId < count
+                                    ? values[textureId]
+                                    : std::array<float, 4>{u, v, 0.0f, 1.0f};
+        const float coord = op == static_cast<int>(MaterialXGraphOpCPU::SplitLR)
+                                ? coordValue[0] : coordValue[1];
+        dst = coord >= c[0] ? b : a;
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Saturate)) {
+        const float luminance =
+            0.2126f * a[0] + 0.7152f * a[1] + 0.0722f * a[2];
+        for (int cidx = 0; cidx < 3; ++cidx)
+          dst[cidx] = luminance + b[cidx] * (a[cidx] - luminance);
+        dst[3] = a[3];
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Swizzle)) {
         for (int cidx = 0; cidx < 4; ++cidx) {
           const int selector = std::clamp(

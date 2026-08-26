@@ -232,6 +232,14 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
       else if (op==51) values[i]=mk4(acosf(fminf(fmaxf(a.x,-1.f),1.f)),acosf(fminf(fmaxf(a.y,-1.f),1.f)),acosf(fminf(fmaxf(a.z,-1.f),1.f)),acosf(fminf(fmaxf(a.w,-1.f),1.f)));
       else if (op==52) values[i]=mk4((a.x-c.x)*b.x+c.x,(a.y-c.y)*b.y+c.y,(a.z-c.z)*b.z+c.z,(a.w-c.w)*b.w+c.w);
       else if (op==53) { const float q[6]={a.x,a.y,a.z,a.w,0.f,1.f}; int sx=(int)(b.x+.5f),sy=(int)(b.y+.5f),sz=(int)(b.z+.5f),sw=(int)(b.w+.5f); sx=sx<0?0:(sx>5?5:sx);sy=sy<0?0:(sy>5?5:sy);sz=sz<0?0:(sz>5?5:sz);sw=sw<0?0:(sw>5?5:sw);values[i]=mk4(q[sx],q[sy],q[sz],q[sw]); }
+      else if (op==54) values[i]=mk4(atanf(a.x),atanf(a.y),atanf(a.z),atanf(a.w));
+      else if (op==55) { F4 q=mk4(1.f-(1.f-a.x)*(1.f-b.x),1.f-(1.f-a.y)*(1.f-b.y),1.f-(1.f-a.z)*(1.f-b.z),1.f-(1.f-a.w)*(1.f-b.w)); values[i]=mk4(b.x+c.x*(q.x-b.x),b.y+c.y*(q.y-b.y),b.z+c.z*(q.z-b.z),b.w+c.w*(q.w-b.w)); }
+      else if (op==56) { F4 q=mk4(b.x>=.5f?1.f-2.f*(1.f-a.x)*(1.f-b.x):2.f*a.x*b.x,b.y>=.5f?1.f-2.f*(1.f-a.y)*(1.f-b.y):2.f*a.y*b.y,b.z>=.5f?1.f-2.f*(1.f-a.z)*(1.f-b.z):2.f*a.z*b.z,b.w>=.5f?1.f-2.f*(1.f-a.w)*(1.f-b.w):2.f*a.w*b.w); values[i]=mk4(b.x+c.x*(q.x-b.x),b.y+c.y*(q.y-b.y),b.z+c.z*(q.z-b.z),b.w+c.w*(q.w-b.w)); }
+      else if (op==57) values[i]=mk4(fabsf(a.x)<1e-6f?0.f:c.x*(1.f-(1.f-b.x)/a.x)+(1.f-c.x)*b.x,fabsf(a.y)<1e-6f?0.f:c.y*(1.f-(1.f-b.y)/a.y)+(1.f-c.y)*b.y,fabsf(a.z)<1e-6f?0.f:c.z*(1.f-(1.f-b.z)/a.z)+(1.f-c.z)*b.z,fabsf(a.w)<1e-6f?0.f:c.w*(1.f-(1.f-b.w)/a.w)+(1.f-c.w)*b.w);
+      else if (op==58) values[i]=mk4(fabsf(1.f-a.x)<1e-6f?0.f:c.x*b.x/(1.f-a.x)+(1.f-c.x)*b.x,fabsf(1.f-a.y)<1e-6f?0.f:c.y*b.y/(1.f-a.y)+(1.f-c.y)*b.y,fabsf(1.f-a.z)<1e-6f?0.f:c.z*b.z/(1.f-a.z)+(1.f-c.z)*b.z,fabsf(1.f-a.w)<1e-6f?0.f:c.w*b.w/(1.f-a.w)+(1.f-c.w)*b.w);
+      else if (op==59 || op==60) { float t=fminf(fmaxf(ic>=0?(op==59?c.x:c.y):(op==59?u:v),0.f),1.f); values[i]=mk4(a.x+t*(b.x-a.x),a.y+t*(b.y-a.y),a.z+t*(b.z-a.z),a.w+t*(b.w-a.w)); }
+      else if (op==61 || op==62) { F4 q=(tex>=0&&tex<count)?values[tex]:mk4(u,v,0.f,1.f); values[i]=(op==61?q.x:q.y)>=c.x?b:a; }
+      else if (op==63) { float l=a.x*.2126f+a.y*.7152f+a.z*.0722f; values[i]=mk4(l+b.x*(a.x-l),l+b.y*(a.y-l),l+b.z*(a.z-l),a.w); }
       else values[i]=fallback;
   }
   (void)face;
