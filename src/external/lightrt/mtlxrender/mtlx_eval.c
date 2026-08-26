@@ -1070,6 +1070,12 @@ static v3 eval_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
         return v3_mul(eval_edf(ctx, a, depth + 1),
                       eval_edf(ctx, b, depth + 1));
     }
+    if (!strcmp(cat, "light")) {
+        const v3 edf = eval_edf(ctx, input_node(ctx, n, "edf"), depth + 1);
+        const v3 intensity = in_color(ctx, n, "intensity", v3_splat(1.0f));
+        const float exposure = in_float(ctx, n, "exposure", 0.0f);
+        return v3_mul(edf, v3_scale(intensity, powf(2.0f, exposure)));
+    }
     if (!strcmp(cat, "uniform_edf") || !strcmp(cat, "measured_edf"))
         return in_color(ctx, n, "color", v3_splat(1.0f));
     if (!strcmp(cat, "conical_edf")) {

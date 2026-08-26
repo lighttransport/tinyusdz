@@ -556,6 +556,30 @@ int main(void) {
     return 1;
   }
 
+  const char *light_wrapper_xml =
+      "<materialx version=\"1.39\">"
+      " <uniform_edf name=\"Source\" type=\"EDF\">"
+      "  <input name=\"color\" type=\"color3\" value=\"0.2,0.4,0.6\"/>"
+      " </uniform_edf>"
+      " <light name=\"Wrapped\" type=\"EDF\">"
+      "  <input name=\"edf\" type=\"EDF\" nodename=\"Source\"/>"
+      "  <input name=\"intensity\" type=\"color3\" value=\"2,1,0.5\"/>"
+      "  <input name=\"exposure\" type=\"float\" value=\"1\"/>"
+      " </light>"
+      " <surface name=\"Surface\" type=\"surfaceshader\">"
+      "  <input name=\"edf\" type=\"EDF\" nodename=\"Wrapped\"/>"
+      " </surface>"
+      " <surfacematerial name=\"Mat\"><input name=\"surfaceshader\""
+      " type=\"surfaceshader\" nodename=\"Surface\"/></surfacematerial>"
+      "</materialx>";
+  if (!eval_xml(light_wrapper_xml, &p) ||
+      !nearf(p.emission_color.x, 0.8f) ||
+      !nearf(p.emission_color.y, 0.8f) ||
+      !nearf(p.emission_color.z, 0.6f)) {
+    fprintf(stderr, "MaterialX light wrapper was not evaluated\n");
+    return 1;
+  }
+
   const char *scatter_mode_xml =
       "<materialx version=\"1.39\">"
       " <dielectric_bsdf name=\"Glass\" type=\"BSDF\">"
