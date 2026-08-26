@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `5ac5f3030` (`Transport anisotropy for direct VDF graphs`)
+- HEAD: `7b89dbdd8` (`Refresh VDF resume marker`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -410,6 +410,11 @@ Passed:
 - Direct absorption, anisotropic, and subsurface VDF closure lowering now
   emits anisotropy into the shared transmission-scatter medium lane; the
   direct VDF bridge regression passes after rebuilding the bridge target.
+- The rebuilt headless `tusdrender` MaterialX/OpenPBR parity checker completes
+  on Vulkan: semantic grid, executable graph, swizzle, extended operators,
+  color correction, ramps, splits, patterns, lobe golden (RMSE 0), texture/
+  UDIM cases, and displacement all pass. CUDA/HIP are unavailable for this
+  `tusdrender` binary and are skipped by the checker.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
