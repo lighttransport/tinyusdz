@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `15f62e98e` (`Document Schlick mode validation`)
+- HEAD: `f74f31384` (`Fix scalar multiplication of closure graphs`)
 - Upstream: `origin/dev`
 - Worktree: clean tracked state, plus the two unrelated untracked paths above.
 - Recent completed commits:
@@ -26,6 +26,7 @@ not hand-edit generated headers.
   - `c518d8fc3` Test nested MaterialX closure composition
   - `97d1cd317` Preserve conductor F0 in MaterialX closure lowering
   - `1ffade301` Honor generalized Schlick transmission mode
+  - `f74f31384` Fix scalar multiplication of closure graphs
 
 ## Completed coverage
 
@@ -58,6 +59,8 @@ vector extraction change is committed in `bab865016`, with the nested test in
 F0 arithmetic used by the standalone evaluator (`97d1cd317`).
 Generalized-Schlick R/T scatter mode now emits matching specular/transmission
 lanes (`1ffade301`).
+Typed closure `multiply` now distinguishes a closure operand from its scalar
+factor instead of lowering the factor as a second closure (`f74f31384`).
 
 ## Current implementation status
 
@@ -86,6 +89,8 @@ Passed:
 - `tusdview` rebuild after Vulkan shader/context changes
 - Full configured native CTest rerun after conductor and generalized-Schlick
   lowering changes: 298/298 passed, with 24 documented skips
+- Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
+  scalar-multiply fix: 12/12 passed
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -125,13 +130,10 @@ capability-skipped in this environment.
 ## Resuming prompt
 
 Resume the active MaterialX/OpenPBR implementation in this worktree. Read
-`AGENTS.md` and this file first. Inspect the uncommitted
-`lightrt_mtlx_bridge.cc` closure-lowering change, compile it, and add focused
-bridge tests for direct Shader-to-Shader `bsdf`, `edf`, and `vdf` graphs.
-Verify graph output indices and values on the shared CPU/GPU packing path. Run
-focused bridge/evaluator/ABI tests and a cached NVIDIA Vulkan RT semantic test.
-Continue with closure fidelity, wrappers, geomprops/transforms, texture edge
-cases, and the hardware/regression matrix in the numbered order above. Preserve
-the two unrelated untracked paths, do not push without the exact-range
+`AGENTS.md` and this file first. The direct closure bridge slice and scalar
+closure multiplication fix are committed and tested. Continue with closure
+fidelity, wrappers, geomprops/transforms, texture edge cases, and the
+hardware/regression matrix in the numbered order above. Preserve the two
+unrelated untracked paths, do not push without the exact-range
 pre-push audit and fresh authorization, and do not claim completion from
 focused tests alone.
