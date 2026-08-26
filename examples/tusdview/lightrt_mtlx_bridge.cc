@@ -1304,8 +1304,18 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       emitClosureLane(name, "base_metalness", nlohmann::json{{"value",1.0}}, "float");
       emitLeaf("specular_roughness", "roughness", 0.05, "float");
     } else if (cat == "generalized_schlick_bsdf") {
-      emitLeaf("specular_weight", "weight", 1.0, "float");
-      emitLeaf("specular_color", "color0", nlohmann::json::array({1,1,1}), "color3");
+      const std::string mode = JsonString(
+          nodeInput(node, "scatter_mode", "R"), "value", "R");
+      if (mode.find('R') != std::string::npos) {
+        emitLeaf("specular_weight", "weight", 1.0, "float");
+        emitLeaf("specular_color", "color0",
+                 nlohmann::json::array({1,1,1}), "color3");
+      }
+      if (mode.find('T') != std::string::npos) {
+        emitLeaf("transmission_weight", "weight", 1.0, "float");
+        emitLeaf("transmission_color", "color90",
+                 nlohmann::json::array({1,1,1}), "color3");
+      }
       emitLeaf("specular_roughness", "roughness", 0.05, "float");
     } else if (cat == "subsurface_bsdf") {
       emitLeaf("subsurface_weight", "weight", 1.0, "float");
