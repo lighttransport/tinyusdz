@@ -80,6 +80,8 @@ int main(void) {
       " <creatematrix name=\"matrix4\" type=\"matrix44\"><input name=\"in1\" type=\"vector3\" value=\"1,0,0\"/><input name=\"in2\" type=\"vector3\" value=\"0,1,0\"/><input name=\"in3\" type=\"vector3\" value=\"0,0,1\"/><input name=\"in4\" type=\"vector3\" value=\"5,6,7\"/></creatematrix>"
       " <transformmatrix name=\"matrix4_transform\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"mat\" type=\"matrix44\" nodename=\"matrix4\"/></transformmatrix>"
       " <determinant name=\"matrix4_det\" type=\"float\"><input name=\"in\" type=\"matrix44\" nodename=\"matrix4\"/></determinant>"
+      " <latlongimage name=\"latlong_missing\" type=\"color3\"><input name=\"file\" type=\"filename\" value=\"\"/><input name=\"default\" type=\"color3\" value=\"0.125,0.25,0.5\"/><input name=\"viewdir\" type=\"vector3\" value=\"1,0,0\"/><input name=\"rotation\" type=\"float\" value=\"90\"/></latlongimage>"
+      " <triplanarprojection name=\"triplanar_missing\" type=\"color3\"><input name=\"default\" type=\"color3\" value=\"0.2,0.4,0.8\"/><input name=\"position\" type=\"vector3\" value=\"1,2,3\"/><input name=\"normal\" type=\"vector3\" value=\"1,2,3\"/><input name=\"upaxis\" type=\"integer\" value=\"2\"/><input name=\"blend\" type=\"float\" value=\"0.25\"/></triplanarprojection>"
       " <switch name=\"pick\" type=\"color3\"><input name=\"which\" type=\"integer\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" nodename=\"quad\"/><input name=\"in3\" type=\"color3\" value=\"0,0,1\"/></switch>"
       " <distance name=\"distance\" type=\"float\"><input name=\"in1\" type=\"vector3\" value=\"1,2,3\"/><input name=\"in2\" type=\"vector3\" value=\"1,5,7\"/></distance>"
       " <reflect name=\"reflect\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,-1,0\"/><input name=\"normal\" type=\"vector3\" value=\"0,1,0\"/></reflect>"
@@ -187,7 +189,11 @@ int main(void) {
        check3("matrix-inverse-roundtrip",eval_named(&ctx,"matrix_roundtrip"),1,2,3) &&
        check1("matrix-transpose-determinant",eval_named(&ctx,"transpose_det"),24.0f) &&
        check3("matrix44-transform",eval_named(&ctx,"matrix4_transform"),6,8,10) &&
-       check1("matrix44-determinant",eval_named(&ctx,"matrix4_det"),1.0f) && ok;
+       check1("matrix44-determinant",eval_named(&ctx,"matrix4_det"),1.0f) &&
+       check3("latlong-missing-default",eval_named(&ctx,"latlong_missing"),
+              0.125f,0.25f,0.5f) &&
+       check3("triplanar-missing-default",eval_named(&ctx,"triplanar_missing"),
+              0.2f,0.4f,0.8f) && ok;
   ok = nearf_eps(eval_named(&ctx, "distance").v[0], 5.0f) &&
        check3("reflect", eval_named(&ctx, "reflect"), 1.0f, 1.0f, 0.0f) &&
        check3("unpremult", eval_named(&ctx, "unpremult"), 0.8f, 0.4f, 0.2f) &&

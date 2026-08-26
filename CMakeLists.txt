@@ -2345,6 +2345,15 @@ if(TINYUSDZ_BUILD_TESTS)
                          TIMEOUT 100 SKIP_RETURN_CODE 77
                          LABELS "tusdrender;gpu;materialx;graph;parity")
 
+    add_test(
+      NAME tool-tusdrender-materialx-projection-parity
+      COMMAND ${TUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_materialx_projection_parity.py
+              "$<TARGET_FILE:tusdrender>")
+    set_tests_properties(tool-tusdrender-materialx-projection-parity PROPERTIES
+                         TIMEOUT 100 SKIP_RETURN_CODE 77
+                         LABELS "tusdrender;gpu;materialx;graph;parity")
+
     # The legacy (eager tydra) path handles every .usda/.usdz; it used to drop
     # every UsdUVTexture and render a flat constant base color.
     add_test(

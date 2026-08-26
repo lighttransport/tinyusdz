@@ -23,6 +23,11 @@ run_gate() {
     ctest --test-dir "${build_dir}" \
       -R '^tool-tusdrender-materialx-flake-parity$' \
       --output-on-failure
+  TINYUSDZ_MTLX_PROJECTION_CUDA=1 \
+  TINYUSDZ_MTLX_PROJECTION_HIP=1 \
+    ctest --test-dir "${build_dir}" \
+      -R '^tool-tusdrender-materialx-projection-parity$' \
+      --output-on-failure
 }
 
 if [ "${TUSDR_CI_CUDA_CACHE_CYCLE:-0}" = 1 ]; then

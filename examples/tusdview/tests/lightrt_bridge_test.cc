@@ -1120,6 +1120,33 @@ int main() {
      !Near(matrix4Mat.materialXGraph.nodes[9].auxValue[0],5)){
     std::fprintf(stderr,"MaterialX matrix44 lowering failed: %s (nodes=%zu)\n",matrix4Error.c_str(),matrix4Mat.materialXGraph.nodes.size());return 1;
   }
+  tusdview::DrawMaterialCPU latlongMat;
+  latlongMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
+    {"name":"direction","category":"constant","type":"vector3","inputs":[{"name":"value","value":[1,0,0]}]},
+    {"name":"environment","category":"latlongimage","type":"color3","inputs":[{"name":"file","type":"filename","value":"environment.png"},{"name":"default","value":[0.1,0.2,0.3]},{"name":"viewdir","nodename":"direction"},{"name":"rotation","value":90}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string latlongError;
+  if(!tusdview::CompileMaterialXGraphRuntime(&latlongMat,&latlongError)||
+     latlongMat.materialXGraph.nodes.size()!=14||
+     latlongMat.materialXGraph.nodes.back().op!=tusdview::MaterialXGraphOpCPU::Image||
+     latlongMat.materialXGraph.nodes.back().input[0]!=12||
+     latlongMat.materialXGraph.nodes.back().imagePath!="environment.png"){
+    std::fprintf(stderr,"MaterialX latlongimage lowering failed: %s (nodes=%zu)\n",latlongError.c_str(),latlongMat.materialXGraph.nodes.size());return 1;
+  }
+  tusdview::DrawMaterialCPU triplanarMat;
+  triplanarMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
+    {"name":"projection","category":"triplanarprojection","type":"color3","inputs":[{"name":"filex","type":"filename","value":"x.png"},{"name":"filey","type":"filename","value":"y.png"},{"name":"filez","type":"filename","value":"z.png"},{"name":"default","value":[0.1,0.2,0.3]},{"name":"position","value":[1,2,3]},{"name":"normal","value":[1,1,1]},{"name":"upaxis","value":2},{"name":"blend","value":0.5}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string triplanarError;int triplanarImages=0;
+  if(!tusdview::CompileMaterialXGraphRuntime(&triplanarMat,&triplanarError)){
+    std::fprintf(stderr,"MaterialX triplanar lowering failed: %s\n",triplanarError.c_str());return 1;
+  }
+  for(const auto& graphNode:triplanarMat.materialXGraph.nodes)
+    if(graphNode.op==tusdview::MaterialXGraphOpCPU::Image)triplanarImages++;
+  if(triplanarImages!=3||triplanarMat.materialXGraph.nodes.empty()||
+     triplanarMat.materialXGraph.nodes.back().op!=tusdview::MaterialXGraphOpCPU::Add){
+    std::fprintf(stderr,"MaterialX triplanar topology invalid (nodes=%zu images=%d)\n",triplanarMat.materialXGraph.nodes.size(),triplanarImages);return 1;
+  }
   tusdview::DrawMaterialCPU aliasesMat;
   aliasesMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"plus","category":"plus","inputs":[{"value":1},{"value":2}]},
