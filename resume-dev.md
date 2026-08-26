@@ -75,7 +75,9 @@ omitted instead of baking a +Z direction (`eaeafba1c`).
 The next scene loader now preserves authored float/vector geomprops through
 interpolation/index expansion, corner welding, Ptex expansion, and material
 batching; validation and CPU resource accounting cover the new streams
-(`3228d85cd`). Backend shader lookup and typed GPU ABI consumption remain open.
+(`3228d85cd`). Integer and unsigned scalar/vector primvars now use the same
+packed float ABI through conversion at evaluation time; matrix primvars remain
+intentionally excluded because they do not fit the four-component stream ABI.
 Arbitrary geomprop nodes now survive JSON normalization and carry a stable
 name hash through the fixed graph record; the CPU RT reference evaluates
 float/vector streams from triangle-corner data with authored defaults for
@@ -95,10 +97,10 @@ ordinary bounded graph nodes and OpenPBR lanes. The remaining closure work is
 fidelity review for weighted composition and wrapper nesting; the direct
 closure slice is committed and validated.
 The next MaterialX converter resolves both direct surface bindings and
-nodegraph-backed `surfacematerial` outputs. Host-side generic float/vector
-geomprops are retained by the next scene loader; CPU RT, Vulkan hardware
-ray-query, the shared CUDA/HIP kernel, and compute-BVH now evaluate the
-supported streams; arbitrary typed variants remain open.
+nodegraph-backed `surfacematerial` outputs. Host-side generic float/vector and
+integer/unsigned scalar/vector geomprops are retained by the next scene loader;
+CPU RT, Vulkan hardware ray-query, the shared CUDA/HIP kernel, and compute-BVH
+evaluate the supported streams. Matrix-valued transport remains open.
 
 ## Verified tests after HEAD
 
@@ -128,6 +130,9 @@ Passed:
   environment-skipped
 - SWBVH stacked-glass regression rerun after barycentric geomprop update and
   GPU material ABI check: 2/2 passed
+- `tusdview` rebuild plus focused GPU material ABI and SWBVH checks after
+  integer/unsigned scalar-vector geomprop ingestion: build passed, ABI passed,
+  SWBVH profile environment-skipped
 - Full configured native CTest rerun after conductor and generalized-Schlick
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
@@ -160,7 +165,7 @@ capability-skipped in this environment.
 3. Complete shader constructors/wrappers: `surface`, `surfacematerial`,
    `volume`, `volumematerial`, `light`, displacement, and unlit behavior in
    legacy and next converters.
-4. Complete arbitrary typed/interpolated/uniform GPU geomprop transport and
+4. Complete matrix-valued/interpolated/uniform GPU geomprop transport and
    object/world/view transform matrices, including Vulkan instance transforms.
 5. Close texture/projection gaps: camera-aware latlong defaults, filtering and
    derivatives, colorspace/alpha, UDIM missing-tile behavior, and measured EDF
