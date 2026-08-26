@@ -26,6 +26,7 @@ not hand-edit generated headers.
   - `cab4b6aec` Add direct MaterialX closure bridge tests
   - `bab865016` Extract vector roughness in MaterialX closures
   - `c518d8fc3` Test nested MaterialX closure composition
+  - `97d1cd317` Preserve conductor F0 in MaterialX closure lowering
 
 ## Completed coverage
 
@@ -54,7 +55,8 @@ OpenPBR lane receives a MaterialX vector2 input (notably vector roughness).
 Direct Shader-to-Shader BSDF, EDF, and VDF graphs assert route indices and
 packed graph-header parity; nested typed BSDF mixing is covered as well. The
 vector extraction change is committed in `bab865016`, with the nested test in
-`c518d8fc3`.
+`c518d8fc3`. Conductor closures now lower eta/extinction to the same bounded
+F0 arithmetic used by the standalone evaluator (`97d1cd317`).
 
 ## Uncommitted work in progress
 
