@@ -325,12 +325,12 @@ Passed:
   133 (`tusdview-texture-semantic-aov-vk-rt`) then stalled in its RT/JIT sweep
   without output for several minutes and the aggregate run was terminated;
   therefore no clean 298-test result is claimed for this HEAD.
-- A fresh full configured regression at this HEAD is not clean: the aggregate
-  GL/Vulkan parity test reports the unsupported-real-time-lobes comparison
-  failing (19.6% of pixels), while its standalone test passes; the subsequent
-  Vulkan RT texture-semantic-AOV test produced no output for roughly six
-  minutes and was terminated. The older 298/298 result below predates this
-  transform change and remains historical evidence only.
+- The rebuilt focused MaterialX/bridge matrix at this HEAD passes 9/9,
+  including GL/Vulkan parity and the unsupported-real-time-lobes standalone
+  coverage. The full configured run remains incomplete because the Vulkan RT
+  texture-semantic-AOV test stalls in software Vulkan initialization; the
+  older 298/298 result below predates the latest texture changes and remains
+  historical evidence only.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -347,7 +347,8 @@ capability-skipped in this environment.
    schema-specific closure parameter mappings; generalized-Schlick and
    measured-EDF fallback behavior are now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation
-   permits it; add vector2 roughness extraction and exact scatter-mode handling.
+   permits it; vector2 roughness extraction and exact scatter-mode handling are
+   now covered by focused tests.
 3. Complete remaining shader constructors/wrappers: `surface`,
    `surfacematerial`, `light`, displacement, and unlit behavior in legacy and
 next converters; volume/volumematerial graph transport is now implemented,
@@ -363,11 +364,13 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
 6. Add graph connection/evaluation/render tests for closure composition, wrapper
    nesting, multi-output selectors, cycles, missing inputs, type conversion,
    direct Shader-to-Shader graphs, and the 64-node limit.
-7. Completed for this environment: focused CUDA/NVIDIA, HIP, and Vulkan RT
-   checks pass; AMD hardware remains unavailable and is capability-skipped
-   with evidence.
-8. Completed for this slice: optimized full native/viewer/tusdrender regression
-   passed 298/298 in 1107.08 seconds.
+7. Run focused CUDA/NVIDIA, HIP, and hardware Vulkan RT checks on capable
+   machines; this environment exposes llvmpipe only, so the RT semantic sweep
+   remains capability-limited and AMD hardware remains unavailable.
+8. Complete a clean full native/viewer/tusdrender regression after the RT
+   semantic harness can finish on a hardware Vulkan environment; the latest
+   non-RT focused matrix is green, while the historical 298/298 result remains
+   useful baseline evidence only.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
