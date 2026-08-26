@@ -24,6 +24,8 @@ __device__ F4 mk4(float x, float y, float z, float w){ F4 r; r.x=x; r.y=y; r.z=z
 __device__ unsigned int mtlxRotl32(unsigned int x,int k){return (x<<k)|(x>>(32-k));}
 __device__ unsigned int mtlxBjFinal(unsigned int a,unsigned int b,unsigned int c){c^=b;c-=mtlxRotl32(b,14);a^=c;a-=mtlxRotl32(c,11);b^=a;b-=mtlxRotl32(a,25);c^=b;c-=mtlxRotl32(b,16);a^=c;a-=mtlxRotl32(c,4);b^=a;b-=mtlxRotl32(a,14);c^=b;c-=mtlxRotl32(b,24);return c;}
 __device__ float mtlxCellNoise(int x,int y,int z,int is3d){unsigned int s=0xdeadbeefu+((is3d?3u:2u)<<2u)+13u,h=mtlxBjFinal(s+(unsigned int)x,s+(unsigned int)y,s+(is3d?(unsigned int)z:0u));return (float)h/4294967295.f;}
+__device__ float mtlxGrad2(unsigned int hash,float x,float y){unsigned int h=hash&7u;float u=h<4u?x:y,v=2.f*(h<4u?y:x);return (h&1u?-u:u)+(h&2u?-v:v);}
+__device__ float mtlxPerlin2(float x,float y,int channel){int ix=(int)floorf(x),iy=(int)floorf(y);float fx=x-ix,fy=y-iy,u=fx*fx*fx*(fx*(fx*6.f-15.f)+10.f),v=fy*fy*fy*(fy*(fy*6.f-15.f)+10.f);unsigned int s=0xdeadbeefu+(2u<<2u)+13u,h00=mtlxBjFinal(s+(unsigned int)ix,s+(unsigned int)iy,s),h10=mtlxBjFinal(s+(unsigned int)(ix+1),s+(unsigned int)iy,s),h01=mtlxBjFinal(s+(unsigned int)ix,s+(unsigned int)(iy+1),s),h11=mtlxBjFinal(s+(unsigned int)(ix+1),s+(unsigned int)(iy+1),s);if(channel>=0){int sh=channel*8;h00=(h00>>sh)&255u;h10=(h10>>sh)&255u;h01=(h01>>sh)&255u;h11=(h11>>sh)&255u;}float a=mtlxGrad2(h00,fx,fy),bb=mtlxGrad2(h10,fx-1.f,fy),cc=mtlxGrad2(h01,fx,fy-1.f),d=mtlxGrad2(h11,fx-1.f,fy-1.f);return .6616f*((1.f-v)*(a+(bb-a)*u)+v*(cc+(d-cc)*u));}
 __device__ F3 sub(F3 a, F3 b){ return mk(a.x-b.x, a.y-b.y, a.z-b.z); }
 __device__ F3 add(F3 a, F3 b){ return mk(a.x+b.x, a.y+b.y, a.z+b.z); }
 __device__ F3 scale(F3 a, float s){ return mk(a.x*s, a.y*s, a.z*s); }
@@ -269,6 +271,7 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
         values[i]=mk4(b.x+c.x*(q.x-b.x),b.y+c.y*(q.y-b.y),b.z+c.z*(q.z-b.z),b.w+c.w*(q.w-b.w)); }
       else if (op==92) values[i]=mk4(a.x,a.y,a.z,b.x);
       else if (op==93 || op==94) { float q=mtlxCellNoise((int)floorf(a.x),(int)floorf(a.y),(int)floorf(a.z),op==94);values[i]=mk4(q,q,q,q); }
+      else if (op==95) { float dim=(tex>=0&&tex<count)?values[tex].x:graph[p+17],px=a.x,py=a.y,amp=1.f;int oct=(int)floorf(b.x+.5f);oct=oct<0?0:(oct>16?16:oct);int channels=(int)floorf(graph[p+20]+.5f);F4 q=mk4(0,0,0,0);for(int o=0;o<oct;o++){if(channels==1)q.x+=amp*mtlxPerlin2(px,py,-1);else if(channels==2){q.x+=amp*mtlxPerlin2(px,py,-1);q.y+=amp*mtlxPerlin2(px+19.f,py+193.f,-1);}else{q.x+=amp*mtlxPerlin2(px,py,0);q.y+=amp*mtlxPerlin2(px,py,1);q.z+=amp*mtlxPerlin2(px,py,2);if(channels==4)q.w+=amp*mtlxPerlin2(px+19.f,py+193.f,-1);}px*=c.x;py*=c.x;amp*=dim;}values[i]=q; }
       else values[i]=fallback;
   }
   (void)face;

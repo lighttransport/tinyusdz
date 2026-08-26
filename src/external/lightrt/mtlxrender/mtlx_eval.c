@@ -159,6 +159,17 @@ static float fractal(v3 p, int octaves, float lacunarity, float diminish) {
     for (int o = 0; o < octaves; o++) { sum += amp * vnoise(p); amp *= diminish; p = v3_scale(p, lacunarity); }
     return sum;
 }
+static float gradient2(uint32_t hash, float x, float y) {
+    uint32_t h=hash&7u;float u=h<4u?x:y,v=2.0f*(h<4u?y:x);
+    return (h&1u?-u:u)+(h&2u?-v:v);
+}
+static float vnoise2(float x,float y,int channel) {
+    int ix=(int)floorf(x),iy=(int)floorf(y);float fx=x-ix,fy=y-iy;
+    float u=mx_fade(fx),v=mx_fade(fy);uint32_t h[4]={mx_hash_int2(ix,iy),mx_hash_int2(ix+1,iy),mx_hash_int2(ix,iy+1),mx_hash_int2(ix+1,iy+1)};
+    if(channel>=0)for(int i=0;i<4;i++)h[i]=(h[i]>>(channel*8))&255u;
+    float a=gradient2(h[0],fx,fy),b=gradient2(h[1],fx-1,fy),c=gradient2(h[2],fx,fy-1),d=gradient2(h[3],fx-1,fy-1);
+    return 0.6616f*((1-v)*(a+(b-a)*u)+v*(c+(d-c)*u));
+}
 /* mx_cell_noise_float: hash of the integer lattice cell, mapped to [0,1] */
 static float cellnoise(v3 p) {
     uint32_t h = mx_hash_int3((int)floorf(p.x), (int)floorf(p.y), (int)floorf(p.z));
@@ -185,7 +196,7 @@ typedef enum {
     OP_CLAMP, OP_SMOOTHSTEP, OP_REMAP, OP_LUMINANCE, OP_RGBTOHSV,
     OP_HSVTORGB, OP_HSVADJUST, OP_SATURATE, OP_CONTRAST, OP_RANGE,
     OP_SEPARATE, OP_COMBINE2, OP_COMBINE3, OP_COMBINE4, OP_EXTRACT, OP_CONVERT,
-    OP_SWIZZLE, OP_NOISE3D, OP_FRACTAL3D, OP_CELLNOISE2D, OP_CELLNOISE3D,
+    OP_SWIZZLE, OP_NOISE3D, OP_FRACTAL2D, OP_FRACTAL3D, OP_CELLNOISE2D, OP_CELLNOISE3D,
     OP_RAMPLR, OP_RAMPTB, OP_SPLITLR, OP_SPLITTB,
     OP_IFGREATER, OP_IFGREATEREQ, OP_IFEQUAL, OP_SWITCH, OP_DOT, OP_RAMP4,
     OP_ROTATE2D, OP_ONEMINUS, OP_DISTANCE, OP_REFLECT, OP_REFRACT,
@@ -278,6 +289,7 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "swizzle")) return OP_SWIZZLE;
     /* procedural */
     if (!strcmp(c, "noise3d")) return OP_NOISE3D;
+    if (!strcmp(c, "fractal2d")) return OP_FRACTAL2D;
     if (!strcmp(c, "fractal3d")) return OP_FRACTAL3D;
     if (!strcmp(c, "cellnoise2d")) return OP_CELLNOISE2D;
     if (!strcmp(c, "cellnoise3d")) return OP_CELLNOISE3D;
@@ -619,6 +631,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_SWIZZLE: { const MtlxInput *ch=find_input(n,"channels"); const char *s=(ch && ch->has_value && ch->value.s)?ch->value.s:NULL; a=in_or(ctx,n,"in",mv_zero(n->type)); r=swizzle_channels(a,s,n->type); break; }
         case OP_NOISE3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)); MtlxValue amp=in_or(ctx,n,"amplitude",mv_float(1)),piv=in_or(ctx,n,"pivot",mv_float(0)); float val=piv.v[0]+vnoise(mv_as_v3(&pos))*amp.v[0]; r=(n->type==MV_FLOAT)?mv_float(val):mv_color3(v3_splat(val)); break; }
         case OP_FRACTAL3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)); MtlxValue amp=in_or(ctx,n,"amplitude",mv_float(1)),oc=in_or(ctx,n,"octaves",mv_float(3)),lac=in_or(ctx,n,"lacunarity",mv_float(2)),dim=in_or(ctx,n,"diminish",mv_float(0.5f)); float f=fractal(mv_as_v3(&pos),(int)oc.v[0],lac.v[0],dim.v[0])*amp.v[0]; r=(n->type==MV_FLOAT)?mv_float(f):mv_color3(v3_splat(f)); break; }
+        case OP_FRACTAL2D: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),amp=in_or(ctx,n,"amplitude",mv_float(1)),oc=in_or(ctx,n,"octaves",mv_float(3)),lac=in_or(ctx,n,"lacunarity",mv_float(2)),dim=in_or(ctx,n,"diminish",mv_float(0.5f));r=mv_zero(n->type);int nc=ncomp_of(&r);if(nc<1)nc=1;float px=tc.v[0],py=tc.v[1],w=1;for(int o=0;o<(int)oc.v[0]&&o<16;o++){if(nc==1)r.v[0]+=w*vnoise2(px,py,-1);else if(nc==2){r.v[0]+=w*vnoise2(px,py,-1);r.v[1]+=w*vnoise2(px+19,py+193,-1);}else{for(int i=0;i<3;i++)r.v[i]+=w*vnoise2(px,py,i);if(nc==4)r.v[3]+=w*vnoise2(px+19,py+193,-1);}px*=lac.v[0];py*=lac.v[0];w*=dim.v[0];}for(int i=0;i<nc;i++)r.v[i]*=ncomp_of(&amp)==1?amp.v[0]:amp.v[i];break; }
         case OP_CELLNOISE2D: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1]));uint32_t h=mx_hash_int2((int)floorf(tc.v[0]),(int)floorf(tc.v[1]));r=mv_float((float)h/(float)0xffffffffu);break; }
         case OP_CELLNOISE3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)); float c=cellnoise(mv_as_v3(&pos)); r=(n->type==MV_FLOAT)?mv_float(c):mv_color3(v3_splat(c)); break; }
         case OP_RAMPLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float t=clampf(tc.v[0],0,1); int nc=ncomp_of(&l); r=l; for(int i=0;i<nc;i++) r.v[i]=l.v[i]*(1-t)+rr.v[i]*t; break; }

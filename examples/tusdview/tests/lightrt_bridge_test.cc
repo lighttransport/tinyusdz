@@ -1070,6 +1070,31 @@ int main() {
                  randomColorError.c_str());
     return 1;
   }
+  tusdview::DrawMaterialCPU fractal2dMat;
+  fractal2dMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"scalar","category":"fractal2d","type":"float","inputs":[
+      {"name":"amplitude","value":1.5},{"name":"octaves","value":3},
+      {"name":"lacunarity","value":2},{"name":"diminish","value":0.5},
+      {"name":"texcoord","value":[0.2,0.4]}]},
+    {"name":"color","category":"fractal2d","type":"color3","inputs":[
+      {"name":"amplitude","value":[1,2,3]},{"name":"octaves","value":3},
+      {"name":"lacunarity","value":2},{"name":"diminish","value":0.5},
+      {"name":"texcoord","value":[0.2,0.4]}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string fractal2dError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&fractal2dMat,
+                                               &fractal2dError) ||
+      fractal2dMat.materialXGraph.nodes.size() != 4 ||
+      fractal2dMat.materialXGraph.nodes[0].op !=
+          tusdview::MaterialXGraphOpCPU::Fractal2D ||
+      fractal2dMat.materialXGraph.nodes[2].op !=
+          tusdview::MaterialXGraphOpCPU::Fractal2D ||
+      fractal2dMat.materialXGraph.nodes[0].auxValue[3] != 1.0f ||
+      fractal2dMat.materialXGraph.nodes[2].auxValue[3] != 3.0f) {
+    std::fprintf(stderr, "MaterialX fractal2d lowering failed: %s\n",
+                 fractal2dError.c_str());
+    return 1;
+  }
   tusdview::DrawMaterialCPU compositeMat;
   compositeMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"difference","category":"difference","type":"color3","inputs":[{"name":"fg","value":[0.8,0.1,0.4]},{"name":"bg","value":[0.2,0.5,0.1]}]},

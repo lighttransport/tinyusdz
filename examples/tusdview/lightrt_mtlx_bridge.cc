@@ -1316,6 +1316,15 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       runtimeNodes.push_back({{"name",name},{"category","hsvtorgb"},{"type","color3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",hsv}}})}});
       continue;
     }
+    if (cat == "fractal2d" && !name.empty()) {
+      const std::string st=name+"__st",core=name+"__core";
+      nlohmann::json tc=inputNamed(node,"texcoord",{{"name","texcoord"},{"nodename",st}});
+      if(JsonString(tc,"nodename")==st)
+        runtimeNodes.push_back({{"name",st},{"category","texcoord"},{"type","vector2"},{"inputs",nlohmann::json::array()}});
+      runtimeNodes.push_back({{"name",core},{"category","fractal2dcore"},{"type",type},{"inputs",nlohmann::json::array({renamedInput(tc,"texcoord"),renamedInput(inputNamed(node,"octaves",{{"value",3}}),"octaves"),renamedInput(inputNamed(node,"lacunarity",{{"value",2}}),"lacunarity"),renamedInput(inputNamed(node,"diminish",{{"value",0.5}}),"diminish")})}});
+      runtimeNodes.push_back({{"name",name},{"category","multiply"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",core}},renamedInput(inputNamed(node,"amplitude",{{"value",1}}),"in2")})}});
+      continue;
+    }
     runtimeNodes.push_back(node);
   }
   std::map<std::string, int> nodeIds;
@@ -1456,6 +1465,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "setalpha") out.op = MaterialXGraphOpCPU::SetAlpha;
     else if (cat == "cellnoise2d") out.op = MaterialXGraphOpCPU::CellNoise2D;
     else if (cat == "cellnoise3d") out.op = MaterialXGraphOpCPU::CellNoise3D;
+    else if (cat == "fractal2dcore") out.op = MaterialXGraphOpCPU::Fractal2D;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1523,7 +1533,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                                  cat == "ifgreaterequal" || cat == "ifequal";
         if (((cat == "splitlr" || cat == "splittb") &&
              inputName == "texcoord") ||
-            (conditional && inputName == "in2")) {
+            (conditional && inputName == "in2") ||
+            (cat == "fractal2dcore" && inputName == "diminish")) {
           const std::string source = JsonString(input, "nodename");
           const auto found = nodeIds.find(source);
           if (found != nodeIds.end()) out.auxInput = found->second;
@@ -1617,6 +1628,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         else if (cat == "contrast" && inputName == "pivot") inputSlot = 2;
         else if (cat == "setalpha" && inputName == "in") inputSlot = 0;
         else if (cat == "setalpha" && inputName == "alpha") inputSlot = 1;
+        else if (cat == "fractal2dcore" && inputName == "texcoord") inputSlot = 0;
+        else if (cat == "fractal2dcore" && inputName == "octaves") inputSlot = 1;
+        else if (cat == "fractal2dcore" && inputName == "lacunarity") inputSlot = 2;
         else if (conditional && inputName == "value1") inputSlot = 0;
         else if (conditional && inputName == "value2") inputSlot = 1;
         else if (conditional && inputName == "in1") inputSlot = 2;
@@ -1709,6 +1723,11 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           }
         }
       }
+    }
+    if (cat == "fractal2dcore") {
+      out.auxValue[3] = (type.find('4') != std::string::npos) ? 4.0f :
+                        (type.find('3') != std::string::npos) ? 3.0f :
+                        (type.find('2') != std::string::npos) ? 2.0f : 1.0f;
     }
     if (uvInput >= 0) out.value[2][3] = static_cast<float>(uvInput);
     graph.nodes.push_back(std::move(out));
@@ -2447,7 +2466,8 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
                               node.op == MaterialXGraphOpCPU::SplitTB ||
                               node.op == MaterialXGraphOpCPU::IfGreater ||
                               node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
-                              node.op == MaterialXGraphOpCPU::IfEqual;
+                              node.op == MaterialXGraphOpCPU::IfEqual ||
+                              node.op == MaterialXGraphOpCPU::Fractal2D;
     int textureId = usesAuxInput ? node.auxInput : node.textureId;
     if (!usesAuxInput && sourceToTable && textureId >= 0 &&
         static_cast<size_t>(textureId) < sourceToTable->size()) {
@@ -2456,7 +2476,8 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
     dst[base + 16] = static_cast<float>(textureId);
     if (node.op == MaterialXGraphOpCPU::IfGreater ||
         node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
-        node.op == MaterialXGraphOpCPU::IfEqual) {
+        node.op == MaterialXGraphOpCPU::IfEqual ||
+        node.op == MaterialXGraphOpCPU::Fractal2D) {
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 17 + lane] = node.auxValue[lane];
       continue;
@@ -2512,11 +2533,13 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
         node.op == MaterialXGraphOpCPU::SplitTB ||
         node.op == MaterialXGraphOpCPU::IfGreater ||
         node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
-        node.op == MaterialXGraphOpCPU::IfEqual) {
+        node.op == MaterialXGraphOpCPU::IfEqual ||
+        node.op == MaterialXGraphOpCPU::Fractal2D) {
       dst[base + 16] = static_cast<float>(node.auxInput);
       if (node.op == MaterialXGraphOpCPU::IfGreater ||
           node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
-          node.op == MaterialXGraphOpCPU::IfEqual)
+          node.op == MaterialXGraphOpCPU::IfEqual ||
+          node.op == MaterialXGraphOpCPU::Fractal2D)
         for (int lane = 0; lane < 4; ++lane)
           dst[base + 17 + lane] = node.auxValue[lane];
       continue;
