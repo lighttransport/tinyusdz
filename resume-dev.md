@@ -279,6 +279,10 @@ Passed:
   `T`, and `RT` values in both the standalone evaluator and runtime bridge;
   transmission-only, invalid-mode, and vector2-roughness extraction tests
   pass (`56a86af56`).
+- Generalized-Schlick transmission no longer misuses reflection `color90` as
+  a transmission tint; the standalone evaluator and bridge use neutral
+  transmission color while preserving `color0` for reflection. Focused
+  bridge/evaluator tests pass after this correction.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test

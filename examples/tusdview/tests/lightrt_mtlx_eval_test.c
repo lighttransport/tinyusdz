@@ -366,6 +366,29 @@ int main(void) {
     return 1;
   }
 
+  const char *schlick_transmission_xml =
+      "<materialx version=\"1.39\">"
+      " <generalized_schlick_bsdf name=\"Glass\" type=\"BSDF\">"
+      "  <input name=\"weight\" type=\"float\" value=\"0.6\"/>"
+      "  <input name=\"color0\" type=\"color3\" value=\"0.2,0.3,0.4\"/>"
+      "  <input name=\"color90\" type=\"color3\" value=\"0.4,0.5,0.6\"/>"
+      "  <input name=\"scatter_mode\" type=\"string\" value=\"T\"/>"
+      " </generalized_schlick_bsdf>"
+      " <surface name=\"Surface\" type=\"surfaceshader\">"
+      "  <input name=\"bsdf\" type=\"BSDF\" nodename=\"Glass\"/>"
+      " </surface>"
+      " <surfacematerial name=\"GlassMat\"><input name=\"surfaceshader\""
+      " type=\"surfaceshader\" nodename=\"Surface\"/></surfacematerial>"
+      "</materialx>";
+  if (!eval_xml(schlick_transmission_xml, &p) ||
+      !nearf(p.specular_weight, 0.0f) || !nearf(p.transmission, 0.6f) ||
+      !nearf(p.transmission_color.x, 1.0f) ||
+      !nearf(p.transmission_color.y, 1.0f) ||
+      !nearf(p.transmission_color.z, 1.0f)) {
+    fprintf(stderr, "generalized Schlick transmission tint was not neutral\n");
+    return 1;
+  }
+
   const char *volume_xml =
       "<materialx version=\"1.39\">"
       " <anisotropic_vdf name=\"Fog\" type=\"VDF\">"

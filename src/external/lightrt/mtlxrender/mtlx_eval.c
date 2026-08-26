@@ -1247,7 +1247,7 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
             blend_lobe(&out->specular_weight, &out->specular_color, c0, weight);
         if (scatter_mode_has(mode, 'T'))
             blend_lobe(&out->transmission, &out->transmission_color,
-                       in_color(ctx, n, "color90", v3_splat(1.0f)), weight);
+                       v3_splat(1.0f), weight);
         out->specular_roughness = in_component0(ctx, n, "roughness", 0.05f);
     } else if (!strcmp(cat, "subsurface_bsdf")) {
         blend_lobe(&out->subsurface, &out->subsurface_color,

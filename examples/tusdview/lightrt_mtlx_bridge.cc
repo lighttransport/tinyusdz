@@ -1449,8 +1449,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       }
       if (ScatterModeHas(mode, 'T')) {
         emitLeaf("transmission_weight", "weight", 1.0, "float");
-        emitLeaf("transmission_color", "color90",
-                 nlohmann::json::array({1,1,1}), "color3");
+        emitClosureLane(name, "transmission_color",
+                        nlohmann::json{{"value", nlohmann::json::array({1,1,1})}},
+                        "color3");
       }
       emitLeaf("specular_roughness", "roughness", 0.05, "float");
     } else if (cat == "subsurface_bsdf") {

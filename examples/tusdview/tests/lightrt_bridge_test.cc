@@ -2052,7 +2052,8 @@ int main() {
     }
     return true;
   };
-  auto CheckNoDirectClosureRoutes = [](const char* json, const char* label) {
+  auto CheckOnlyDirectClosureRoutes = [](const char* json, const char* label,
+                                         const std::vector<int>& allowed) {
     tusdview::DrawMaterialCPU material;
     material.materialXNodeGraphJson = json;
     std::string compileError;
@@ -2062,9 +2063,14 @@ int main() {
                    compileError.c_str());
       return false;
     }
-    for (int route : material.materialXGraph.output) {
-      if (route >= 0) {
-        std::fprintf(stderr, "%s emitted an unexpected closure route\n", label);
+    for (size_t routeIndex = 0;
+         routeIndex < material.materialXGraph.output.size(); ++routeIndex) {
+      const int route = material.materialXGraph.output[routeIndex];
+      if (route >= 0 &&
+          std::find(allowed.begin(), allowed.end(),
+                    static_cast<int>(routeIndex)) == allowed.end()) {
+        std::fprintf(stderr, "%s emitted unexpected output[%zu]=%d\n", label,
+                     routeIndex, route);
         return false;
       }
     }
@@ -2245,13 +2251,13 @@ int main() {
     ],"outputs":[{"name":"shader","type":"BSDF","nodename":"glass"}]},
     "connections":[{"input":"bsdf","output":"shader"}]})json",
       "dielectric transmission-only", {2, 11, 12}) ||
-      !CheckNoDirectClosureRoutes(R"json({
+      !CheckOnlyDirectClosureRoutes(R"json({
     "nodegraph":{"nodes":[
       {"name":"glass","category":"dielectric_bsdf","type":"BSDF","inputs":[
         {"name":"weight","value":0.6},{"name":"scatter_mode","value":"TR"}]}
     ],"outputs":[{"name":"shader","type":"BSDF","nodename":"glass"}]},
     "connections":[{"input":"bsdf","output":"shader"}]})json",
-      "invalid dielectric scatter mode")) {
+      "invalid dielectric scatter mode", {2, 19, 29, 30})) {
     return 1;
   }
 
