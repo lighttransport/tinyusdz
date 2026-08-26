@@ -295,6 +295,12 @@ Passed:
 - CPU/RT host-scene normal baking now applies the inverse-transpose for
   non-uniform object-to-world transforms, matching Vulkan; a scaled-triangle
   regression passes in the bridge test.
+- A fresh full configured regression at this HEAD is not clean: the aggregate
+  GL/Vulkan parity test reports the unsupported-real-time-lobes comparison
+  failing (19.6% of pixels), while its standalone test passes; the subsequent
+  Vulkan RT texture-semantic-AOV test produced no output for roughly six
+  minutes and was terminated. The older 298/298 result below predates this
+  transform change and remains historical evidence only.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
