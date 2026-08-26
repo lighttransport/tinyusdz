@@ -114,8 +114,8 @@ Standalone EDF evaluation now recursively handles add/layer, mix, and
 scalar-or-EDF multiply composition, so composed emission survives into both
 surface and volume evaluation.
 Standalone VDF evaluation now recursively handles add/layer, mix, and scalar
- multiply composition, preserving composed absorption, scattering, and
- anisotropy for volume evaluation.
+multiply composition, preserving composed absorption, scattering, and
+anisotropy for volume evaluation.
 CUDA/HIP path-tracing live reload now forwards the geomprop descriptor/value
 buffers through `productionPath`; this keeps the shared kernel source's new
 geomprop call signature valid under NVRTC and hipRTC.
@@ -127,6 +127,8 @@ Passed:
 - Complete configured native CTest suite after CUDA/HIP geomprop path
   plumbing: 298/298 passed in 1112.57 seconds (24 documented
   capability/asset skips)
+- Full configured native CTest after recursive EDF/VDF evaluation: 298/298
+  passed in 1106.94 seconds (24 documented capability/asset skips)
 - Stable `build-next` rebuild and regression: 40/40 passed
 - Standalone EDF composition and headless MaterialX CPU graph tests after
   recursive EDF evaluation: 2/2 passed
