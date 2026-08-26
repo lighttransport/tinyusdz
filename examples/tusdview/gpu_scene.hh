@@ -527,6 +527,7 @@ enum class MaterialXGraphOpCPU : uint32_t {
   RoughnessAnisotropy,
   RoughnessDual,
   ArtisticIor,
+  ChiangHairAbsorption,
   Unknown,
 };
 
