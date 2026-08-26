@@ -846,6 +846,20 @@ std::array<float, 4> EvalCpuMaterialXGraph(
           else{for(int lane=0;lane<3;lane++)dst[lane]+=weight*MtlxPerlin3(px,py,pz,lane);if(channels==4)dst[3]+=weight*MtlxPerlin3(px+19,py+193,pz+17,-1);}
           px*=c[0];py*=c[0];pz*=c[0];weight*=diminishValue;
         }
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Cloverleaf)) {
+        const float sx=2*a[0],sy=2*a[1],cx=2*b[0],cy=2*b[1],r=c[0],r2=r*r;
+        const float dx[4]={sx+r-cx,sx-r-cx,sx-cx,sx-cx};
+        const float dy[4]={sy-cy,sy-cy,sy-r-cy,sy+r-cy};
+        float inside=0;for(int k=0;k<4;k++)if(dx[k]*dx[k]+dy[k]*dy[k]<=r2)inside=1;
+        dst={inside,inside,inside,inside};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Hexagon)) {
+        float px=std::fabs(a[1]-b[1]),py=std::fabs(a[0]-b[0]);
+        const float kx=-.866025f,ky=.5f,kz=.57735f,r=c[0];
+        const float projection=std::min(kx*px+ky*py,0.0f);
+        px-=2*projection*kx;py-=2*projection*ky;
+        px-=std::clamp(px,-kz*r,kz*r);py-=r;
+        const float signedDistance=std::sqrt(px*px+py*py)*(py<0?-1.0f:1.0f);
+        const float inside=signedDistance<=0?1.0f:0.0f;dst={inside,inside,inside,inside};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);

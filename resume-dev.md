@@ -170,6 +170,10 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
     conditional clamping. Standalone numerical coverage locks every 2D noise
     selection and 3D fractal selection, while the rendered fixture executes a
     connected unified Worley graph.
+35. Added exact bounded `cloverleaf` and signed-distance `hexagon` shape
+    operators across CPU, CUDA/HIP, Vulkan, and the standalone evaluator.
+    Default hit-UV synthesis and connected center/radius inputs are preserved;
+    numerical inside/outside tests and bridge opcode tests cover both shapes.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.

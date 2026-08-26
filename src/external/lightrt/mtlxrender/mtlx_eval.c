@@ -229,7 +229,7 @@ typedef enum {
     OP_PREMULT, OP_UNPREMULT, OP_MINCOMPONENT, OP_MAXCOMPONENT,
     OP_AND, OP_OR, OP_XOR, OP_NOT, OP_INSIDE, OP_OUTSIDE, OP_TRIANGLEWAVE,
     OP_CHECKERBOARD, OP_DIFFERENCE, OP_IN, OP_MASK, OP_MATTE, OP_OUT, OP_OVER,
-    OP_DISJOINTOVER, OP_CIRCLE, OP_LINE, OP_COLORCORRECT, OP_RANDOMFLOAT,
+    OP_DISJOINTOVER, OP_CIRCLE, OP_LINE, OP_CLOVERLEAF, OP_HEXAGON, OP_COLORCORRECT, OP_RANDOMFLOAT,
     OP_RANDOMCOLOR
 } NodeOp;
 
@@ -354,6 +354,8 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "checkerboard")) return OP_CHECKERBOARD;
     if (!strcmp(c, "circle")) return OP_CIRCLE;
     if (!strcmp(c, "line")) return OP_LINE;
+    if (!strcmp(c, "cloverleaf")) return OP_CLOVERLEAF;
+    if (!strcmp(c, "hexagon")) return OP_HEXAGON;
     if (!strcmp(c, "colorcorrect")) return OP_COLORCORRECT;
     if (!strcmp(c, "randomfloat")) return OP_RANDOMFLOAT;
     if (!strcmp(c, "randomcolor")) return OP_RANDOMCOLOR;
@@ -677,6 +679,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_RAMP4: { MtlxValue tl=in_or(ctx,n,"valuetl",mv_zero(n->type)),tr=in_or(ctx,n,"valuetr",mv_zero(n->type)),bl=in_or(ctx,n,"valuebl",mv_zero(n->type)),br=in_or(ctx,n,"valuebr",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float u=clampf(tc.v[0],0,1),vv=clampf(tc.v[1],0,1); int nc=ncomp_of(&tl); r=tl; for(int i=0;i<nc;i++){ float top=tl.v[i]*(1-u)+tr.v[i]*u, bot=bl.v[i]*(1-u)+br.v[i]*u; r.v[i]=top*(1-vv)+bot*vv; } break; }
         case OP_CIRCLE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.5f));float x=tc.v[0]-center.v[0],y=tc.v[1]-center.v[1];r=mv_float(x*x+y*y>radius.v[0]*radius.v[0]?0.0f:1.0f);break; }
         case OP_LINE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.1f)),p1=in_or(ctx,n,"point1",mv_vec2(0.25f,0.25f)),p2=in_or(ctx,n,"point2",mv_vec2(0.75f,0.75f));float px=tc.v[0]-center.v[0]-p1.v[0],py=tc.v[1]-center.v[1]-p1.v[1],bx=p2.v[0]-p1.v[0],by=p2.v[1]-p1.v[1],bb=bx*bx+by*by,t=clampf(bb>1e-12f?(px*bx+py*by)/bb:0,0,1),dx=px-bx*t,dy=py-by*t;r=mv_float(sqrtf(dx*dx+dy*dy)>radius.v[0]?0.0f:1.0f);break; }
+        case OP_CLOVERLEAF: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(.5f,.5f)),radius=in_or(ctx,n,"radius",mv_float(.5f));float sx=2*tc.v[0],sy=2*tc.v[1],cx=2*center.v[0],cy=2*center.v[1],rr=radius.v[0],r2=rr*rr,dx[4]={sx+rr-cx,sx-rr-cx,sx-cx,sx-cx},dy[4]={sy-cy,sy-cy,sy-rr-cy,sy+rr-cy},inside=0;for(int i=0;i<4;i++)if(dx[i]*dx[i]+dy[i]*dy[i]<=r2)inside=1;r=mv_float(inside);break; }
+        case OP_HEXAGON: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(.5f,.5f)),radius=in_or(ctx,n,"radius",mv_float(.5f));float px=fabsf(tc.v[1]-center.v[1]),py=fabsf(tc.v[0]-center.v[0]),kx=-.866025f,ky=.5f,kz=.57735f,rr=radius.v[0],projection=fminf(kx*px+ky*py,0);px-=2*projection*kx;py-=2*projection*ky;px-=clampf(px,-kz*rr,kz*rr);py-=rr;float sd=sqrtf(px*px+py*py)*(py<0?-1:1);r=mv_float(sd<=0?1:0);break; }
         case OP_COLORCORRECT: { a=in_or(ctx,n,"in",mv_zero(n->type));MtlxValue hue=in_or(ctx,n,"hue",mv_float(0)),sat=in_or(ctx,n,"saturation",mv_float(1)),gamma=in_or(ctx,n,"gamma",mv_float(1)),lift=in_or(ctx,n,"lift",mv_float(0)),gain=in_or(ctx,n,"gain",mv_float(1)),contrast=in_or(ctx,n,"contrast",mv_float(1)),pivot=in_or(ctx,n,"contrastpivot",mv_float(0.5f)),exposure=in_or(ctx,n,"exposure",mv_float(0));v3 hsv=rgb_to_hsv(mv_as_v3(&a));hsv.x=hsv.x+hue.v[0]-floorf(hsv.x+hue.v[0]);v3 rgb=hsv_to_rgb(hsv);float lum=luminance(rgb),scale=powf(2.0f,exposure.v[0]),recip=fabsf(gamma.v[0])>1e-6f?1.0f/gamma.v[0]:0.0f;r=a;for(int i=0;i<3;i++){float x=lum+sat.v[0]*((i==0?rgb.x:(i==1?rgb.y:rgb.z))-lum);x=(x<0?-1.0f:1.0f)*powf(fabsf(x),recip);x=(x*(1-lift.v[0])+lift.v[0])*gain.v[0];r.v[i]=((x-pivot.v[0])*contrast.v[0]+pivot.v[0])*scale;}break; }
         case OP_RANDOMFLOAT: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),lo=in_or(ctx,n,"min",mv_float(0)),hi=in_or(ctx,n,"max",mv_float(1));int x=(int)floorf(a.v[0]*(a.type==MV_INT?1.0f:4096.0f)),y=(int)floorf(seed.v[0]);float q=(float)mx_hash_int2(x,y)/(float)0xffffffffu;r=mv_float(lo.v[0]+q*(hi.v[0]-lo.v[0]));break; }
         case OP_RANDOMCOLOR: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),hl=in_or(ctx,n,"huelow",mv_float(0)),hh=in_or(ctx,n,"huehigh",mv_float(1)),sl=in_or(ctx,n,"saturationlow",mv_float(0.825f)),sh=in_or(ctx,n,"saturationhigh",mv_float(1)),bl=in_or(ctx,n,"brightnesslow",mv_float(1)),bh=in_or(ctx,n,"brightnesshigh",mv_float(1));int s=(int)floorf(seed.v[0]);float h=randomfloat_value(a.v[0],(int)ceilf((float)s+413.3f),hl.v[0],hh.v[0]),ss=randomfloat_value(a.v[0],(int)ceilf((float)s+1522.4f),sl.v[0],sh.v[0]),v=randomfloat_value(a.v[0],(int)ceilf((float)s+1813.8f),bl.v[0],bh.v[0]);r=mv_color3(hsv_to_rgb(v3_make(h,ss,v)));break; }

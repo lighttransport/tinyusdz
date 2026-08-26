@@ -90,6 +90,7 @@ for operation in ("Arcsine", "Arccosine", "Arctangent", "Contrast", "Screen",
                   "Difference", "In", "Mask", "Matte", "Out", "Over",
                   "DisjointOver", "SetAlpha", "CellNoise2D", "CellNoise3D",
                   "Fractal2D", "WorleyNoise2D", "WorleyNoise3D", "Fractal3D",
+                  "Cloverleaf", "Hexagon",
                   "Swizzle"):
     require(cpu, rf"MaterialXGraphOpCPU::{operation}\b",
             f"CPU graph {operation} parity")
