@@ -246,3 +246,35 @@ void texcache_sample_address(TextureCache *tc, int id, float u, float v,
 void texcache_sample(TextureCache *tc, int id, float u, float v, float out[4]) {
     texcache_sample_address(tc, id, u, v, "periodic", "periodic", out);
 }
+
+void texcache_sample_nearest_address(TextureCache *tc, int id, float u, float v,
+                                     const char *wrap_s, const char *wrap_t,
+                                     float out[4]) {
+    if (id < 0 || id >= tc->ntex) {
+        out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f; return;
+    }
+    const Texture *t = &tc->tex[id];
+    /* Texture coordinates address texel centers: floor(u*w) selects the
+     * nearest texel for the half-open [0,1) interval. V is image-downward. */
+    int x = (int)floorf(u * t->w);
+    int y = (int)floorf((1.0f - v) * t->h);
+    int ox, oy;
+    x = address_index(x, t->w, wrap_s, &ox);
+    y = address_index(y, t->h, wrap_t, &oy);
+    if (ox || oy) {
+        out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f; return;
+    }
+    fetch_texel(t, x, y, out);
+}
+
+int texcache_sample_file_nearest(TextureCache *tc, const char *path, int srgb,
+                                 float u, float v, float out[4]) {
+    if (!tc || !path || !path[0] || !out) return 0;
+    char resolved[1024];
+    if (udim_path(path, u, v, resolved, sizeof(resolved)) < 0) return 0;
+    int id = texcache_get(tc, resolved, srgb);
+    if (id < 0) return 0;
+    texcache_sample_nearest_address(tc, id, u - floorf(u), v - floorf(v),
+                                    "periodic", "periodic", out);
+    return 1;
+}

@@ -35,9 +35,18 @@ void texcache_sample_address(TextureCache *tc, int id, float u, float v,
                              const char *wrap_s, const char *wrap_t,
                              float out[4]);
 
+/* Nearest-neighbor counterpart used by MaterialX image nodes that request
+ * filtertype="nearest". */
+void texcache_sample_nearest_address(TextureCache *tc, int id, float u, float v,
+                                    const char *wrap_s, const char *wrap_t,
+                                    float out[4]);
+
 /* Sample a regular or UDIM filename. A <UDIM> token selects the tile from
  * floor(u), floor(v); absent tiles return 0 and leave a neutral rgba value. */
 int texcache_sample_file(TextureCache *tc, const char *path, int srgb,
                          float u, float v, float out[4]);
+
+int texcache_sample_file_nearest(TextureCache *tc, const char *path, int srgb,
+                                 float u, float v, float out[4]);
 
 #endif /* MTLXRENDER_TEXTURE_H_ */

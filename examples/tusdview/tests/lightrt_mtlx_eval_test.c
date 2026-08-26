@@ -181,6 +181,51 @@ int main(void) {
     return 1;
   }
 
+  const char *nearest_file = "lightrt_nearest_regression.ppm";
+  FILE *nearest_stream = fopen(nearest_file, "wb");
+  if (!nearest_stream) return 1;
+  fputs("P6\n2 1\n255\n", nearest_stream);
+  fputc(255, nearest_stream); fputc(0, nearest_stream); fputc(0, nearest_stream);
+  fputc(0, nearest_stream); fputc(0, nearest_stream); fputc(255, nearest_stream);
+  fclose(nearest_stream);
+  MtlxDoc *nearest_doc = mtlx_load_string(
+      "<materialx><image name=\"nearest\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "</image></materialx>");
+  TextureCache *nearest_cache = texcache_create(".");
+  int nearest_ok = nearest_doc && nearest_cache;
+  MtlxValue nearest_value;
+  memset(&nearest_value, 0, sizeof(nearest_value));
+  if (nearest_ok) {
+    texcache_preload(nearest_cache, nearest_doc);
+    ShadeContext nearest_ctx;
+    memset(&nearest_ctx, 0, sizeof(nearest_ctx));
+    nearest_ctx.doc = nearest_doc;
+    nearest_ctx.tex = nearest_cache;
+    nearest_ctx.uv[0] = 0.5f;
+    nearest_ctx.uv[1] = 0.5f;
+    nearest_ctx.memo = (MtlxValue *)calloc((size_t)nearest_doc->nnode,
+                                            sizeof(MtlxValue));
+    nearest_ctx.memo_done = (char *)calloc((size_t)nearest_doc->nnode, 1);
+    int nearest_node = mtlx_find_node(nearest_doc, -1, "nearest");
+    if (!nearest_ctx.memo || !nearest_ctx.memo_done || nearest_node < 0) {
+      nearest_ok = 0;
+    } else {
+      nearest_value = mtlx_eval_node_test(&nearest_ctx, nearest_node);
+      nearest_ok = nearest_value.v[2] > 0.99f && nearest_value.v[0] < 0.01f;
+    }
+    free(nearest_ctx.memo);
+    free(nearest_ctx.memo_done);
+  }
+  texcache_free(nearest_cache);
+  mtlx_free(nearest_doc);
+  remove(nearest_file);
+  if (!nearest_ok) {
+    fprintf(stderr, "nearest image filtering failed\n");
+    return 1;
+  }
+
   const char *xml =
       "<materialx version=\"1.38\">"
       "  <open_pbr_surface name=\"Preview\" type=\"surfaceshader\">"
