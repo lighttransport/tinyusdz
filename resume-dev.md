@@ -358,6 +358,11 @@ Passed:
   texture-semantic-AOV test stalls in software Vulkan initialization; the
   older 298/298 result below predates the latest texture changes and remains
   historical evidence only.
+- The registered NVIDIA RT semantic test was rerun with the documented
+  offload environment. Device selection and hardware ray-query initialization
+  succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
+  stalled and produced no completed CTest result. The bounded explicit-device
+  preflight remains in place; a clean hardware run is still required.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -374,9 +379,9 @@ capability-skipped in this environment.
    schema-specific closure parameter mappings; generalized-Schlick and
    measured-EDF fallback behavior are now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation
-   permits it; vector2 roughness extraction, exact scatter-mode handling, and
-   composed roughness weighting are now covered by focused tests. Weighted
-   color lowering for all wrapper/layer combinations remains to be audited.
+   permits it; vector2 roughness extraction, exact scatter-mode handling,
+   composed roughness weighting, and weighted color lowering are covered by
+   focused tests. Wrapper/layer combinations remain to be audited.
 3. Complete remaining shader constructors/wrappers: `surface`,
    displacement, and unlit behavior in legacy and next converters; public
    `surfacematerial`/`surface_unlit` resolution is now covered,
