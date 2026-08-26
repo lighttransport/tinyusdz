@@ -89,6 +89,9 @@ int main(void) {
       " <randomcolor name=\"random_color\" type=\"color3\"><input name=\"in\" type=\"float\" value=\"0.25\"/><input name=\"seed\" type=\"integer\" value=\"7\"/><input name=\"huelow\" type=\"float\" value=\"0.1\"/><input name=\"huehigh\" type=\"float\" value=\"0.2\"/><input name=\"saturationlow\" type=\"float\" value=\"0.5\"/><input name=\"saturationhigh\" type=\"float\" value=\"0.6\"/><input name=\"brightnesslow\" type=\"float\" value=\"0.7\"/><input name=\"brightnesshigh\" type=\"float\" value=\"0.8\"/></randomcolor>"
       " <fractal2d name=\"fractal_scalar\" type=\"float\"><input name=\"amplitude\" type=\"float\" value=\"1.5\"/><input name=\"octaves\" type=\"integer\" value=\"3\"/><input name=\"lacunarity\" type=\"float\" value=\"2\"/><input name=\"diminish\" type=\"float\" value=\"0.5\"/><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/></fractal2d>"
       " <fractal2d name=\"fractal_color\" type=\"color3\"><input name=\"amplitude\" type=\"color3\" value=\"1,2,3\"/><input name=\"octaves\" type=\"integer\" value=\"3\"/><input name=\"lacunarity\" type=\"float\" value=\"2\"/><input name=\"diminish\" type=\"float\" value=\"0.5\"/><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/></fractal2d>"
+      " <worleynoise2d name=\"worley2_distance\" type=\"vector3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"jitter\" type=\"float\" value=\"1\"/><input name=\"style\" type=\"integer\" value=\"0\"/></worleynoise2d>"
+      " <worleynoise2d name=\"worley2_solid\" type=\"vector3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"jitter\" type=\"float\" value=\"1\"/><input name=\"style\" type=\"integer\" value=\"1\"/></worleynoise2d>"
+      " <worleynoise3d name=\"worley3_distance\" type=\"vector2\"><input name=\"position\" type=\"vector3\" value=\"0.2,0.4,0.7\"/><input name=\"jitter\" type=\"float\" value=\"0.75\"/><input name=\"style\" type=\"integer\" value=\"0\"/></worleynoise3d>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -165,6 +168,17 @@ int main(void) {
               0.27252933f) &&
        check3("fractal2d-color", eval_named(&ctx, "fractal_color"),
               0.18168622f, 1.98365822f, -0.40455556f) && ok;
+  ok = check3("worley2d-distance", eval_named(&ctx, "worley2_distance"),
+              0.604036f, 0.778409f, 0.907265f) && ok;
+  ok = check3("worley2d-solid", eval_named(&ctx, "worley2_solid"),
+              0.623529f, 0.580392f, 0.211765f) && ok;
+  { MtlxValue w = eval_named(&ctx, "worley3_distance");
+    ok = check1("worley3d-distance-f1", w, 0.724764287f) && ok;
+    if (!nearf_eps(w.v[1], 0.825379968f))
+      fprintf(stderr, "worley3d-distance-f2: got %.9f, expected %.9f\n",
+              w.v[1], 0.825379968f);
+    ok = nearf_eps(w.v[1], 0.825379968f) && ok;
+  }
   /* mtlx_eval_node_test must clear memoization between shade points. */
   ctx.uv[0] = 0.8f;
   ctx.uv[1] = 0.9f;

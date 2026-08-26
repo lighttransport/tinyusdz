@@ -1275,8 +1275,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       if(preserveAlpha){const std::string alpha=name+"__alpha";runtimeNodes.push_back({{"name",alpha},{"category","extract"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(source,"in"),nlohmann::json{{"name","index"},{"value",3}}})}});runtimeNodes.push_back({{"name",name},{"category","setalpha"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",corrected}},nlohmann::json{{"name","alpha"},{"nodename",alpha}}})}});}
       continue;
     }
-    if ((cat == "cellnoise2d" || cat == "cellnoise3d") && !name.empty()) {
-      const bool is3d = cat == "cellnoise3d";
+    if ((cat == "cellnoise2d" || cat == "cellnoise3d" ||
+         cat == "worleynoise2d" || cat == "worleynoise3d") && !name.empty()) {
+      const bool is3d = cat == "cellnoise3d" || cat == "worleynoise3d";
       const char* inputName = is3d ? "position" : "texcoord";
       const std::string sourceName = name + (is3d ? "__position" : "__st");
       nlohmann::json source = inputNamed(
@@ -1288,7 +1289,12 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
             {"inputs", nlohmann::json::array()}});
       }
       nlohmann::json lowered = node;
-      lowered["inputs"] = nlohmann::json::array({renamedInput(source, inputName)});
+      nlohmann::json inputs = nlohmann::json::array({renamedInput(source, inputName)});
+      if (cat == "worleynoise2d" || cat == "worleynoise3d") {
+        inputs.push_back(renamedInput(inputNamed(node,"jitter",{{"value",1}}),"jitter"));
+        inputs.push_back(renamedInput(inputNamed(node,"style",{{"value",0}}),"style"));
+      }
+      lowered["inputs"] = std::move(inputs);
       runtimeNodes.push_back(std::move(lowered));
       continue;
     }
@@ -1466,6 +1472,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "cellnoise2d") out.op = MaterialXGraphOpCPU::CellNoise2D;
     else if (cat == "cellnoise3d") out.op = MaterialXGraphOpCPU::CellNoise3D;
     else if (cat == "fractal2dcore") out.op = MaterialXGraphOpCPU::Fractal2D;
+    else if (cat == "worleynoise2d") out.op = MaterialXGraphOpCPU::WorleyNoise2D;
+    else if (cat == "worleynoise3d") out.op = MaterialXGraphOpCPU::WorleyNoise3D;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1631,6 +1639,12 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         else if (cat == "fractal2dcore" && inputName == "texcoord") inputSlot = 0;
         else if (cat == "fractal2dcore" && inputName == "octaves") inputSlot = 1;
         else if (cat == "fractal2dcore" && inputName == "lacunarity") inputSlot = 2;
+        else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
+                 (inputName == "texcoord" || inputName == "position")) inputSlot = 0;
+        else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
+                 inputName == "jitter") inputSlot = 1;
+        else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
+                 inputName == "style") inputSlot = 2;
         else if (conditional && inputName == "value1") inputSlot = 0;
         else if (conditional && inputName == "value2") inputSlot = 1;
         else if (conditional && inputName == "in1") inputSlot = 2;
@@ -1727,6 +1741,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     if (cat == "fractal2dcore") {
       out.auxValue[3] = (type.find('4') != std::string::npos) ? 4.0f :
                         (type.find('3') != std::string::npos) ? 3.0f :
+                        (type.find('2') != std::string::npos) ? 2.0f : 1.0f;
+    }
+    if (cat == "worleynoise2d" || cat == "worleynoise3d") {
+      out.value[2][1] = (type.find('3') != std::string::npos) ? 3.0f :
                         (type.find('2') != std::string::npos) ? 2.0f : 1.0f;
     }
     if (uvInput >= 0) out.value[2][3] = static_cast<float>(uvInput);
