@@ -1397,9 +1397,10 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
         out->transmission_scatter_anisotropy = in_float(ctx, n, "transmission_scatter_anisotropy", 0.0f);
         out->subsurface = in_float(ctx, n, "subsurface_weight", 0.0f);
         out->subsurface_color = in_color(ctx, n, "subsurface_color", out->subsurface_color);
-        out->subsurface_radius = in_color(ctx, n, "subsurface_radius",
-                                           out->subsurface_radius);
-        out->subsurface_scale = in_float(ctx, n, "subsurface_radius_scale", 1.0f);
+        out->subsurface_radius = v3_mul(
+            in_color(ctx, n, "subsurface_radius", out->subsurface_radius),
+            in_color(ctx, n, "subsurface_radius_scale", v3_splat(1.0f)));
+        out->subsurface_scale = in_float(ctx, n, "subsurface_scale", 1.0f);
         out->coat_weight = in_float(ctx, n, "coat_weight", 0.0f);
         out->coat_color = in_color(ctx, n, "coat_color", out->coat_color);
         out->coat_roughness = in_float(ctx, n, "coat_roughness", 0.0f);

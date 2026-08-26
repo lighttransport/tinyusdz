@@ -332,6 +332,8 @@ int main(void) {
       "    <input name=\"base_diffuse_roughness\" type=\"float\" value=\"0.12\"/>"
       "    <input name=\"base_metalness\" type=\"float\" value=\"0.5\"/>"
       "    <input name=\"subsurface_radius\" type=\"color3\" value=\"0.2,0.4,0.6\"/>"
+      "    <input name=\"subsurface_radius_scale\" type=\"color3\" value=\"2,3,4\"/>"
+      "    <input name=\"subsurface_scale\" type=\"float\" value=\"1.5\"/>"
       "    <input name=\"specular_weight\" type=\"float\" value=\"0.25\"/>"
       "    <input name=\"base_roughness\" type=\"float\" value=\"0.35\"/>"
       "    <input name=\"specular_ior\" type=\"float\" value=\"1.6\"/>"
@@ -355,9 +357,10 @@ int main(void) {
            nearf(p.base_color.y, 0.4f) && nearf(p.base_color.z, 0.6f) &&
            nearf(p.diffuse_roughness, 0.12f) &&
            nearf(p.metalness, 0.5f) && nearf(p.specular_weight, 0.25f) &&
-           nearf(p.subsurface_radius.x, 0.2f) &&
-           nearf(p.subsurface_radius.y, 0.4f) &&
-           nearf(p.subsurface_radius.z, 0.6f) &&
+           nearf(p.subsurface_radius.x, 0.4f) &&
+           nearf(p.subsurface_radius.y, 1.2f) &&
+           nearf(p.subsurface_radius.z, 2.4f) &&
+           nearf(p.subsurface_scale, 1.5f) &&
            nearf(p.specular_roughness, 0.35f) && nearf(p.specular_ior, 1.6f) &&
            nearf(p.coat_weight, 0.3f) && nearf(p.coat_roughness, 0.2f) &&
            nearf(p.emission, 2.0f) && nearf(p.emission_color.x, 0.1f) &&

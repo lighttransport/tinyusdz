@@ -376,6 +376,9 @@ Passed:
 - Standalone OpenPBR evaluation now preserves all three components of
   `subsurface_radius`, matching the bridge's vector transport; the evaluator
   regression covers a non-uniform radius.
+- OpenPBR `subsurface_radius_scale` now multiplies the radius vector
+  component-wise, while `subsurface_scale` is read independently as its
+  scalar parameter; the evaluator regression covers both values.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
