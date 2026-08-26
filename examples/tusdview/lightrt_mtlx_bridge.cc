@@ -1132,6 +1132,187 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     input["name"] = name;
     return input;
   };
+  using ClosureLaneMap = std::map<std::string, std::string>;
+  std::map<std::string, ClosureLaneMap> closureLanes;
+  std::map<std::string, nlohmann::json> sourceNodes;
+  for (const nlohmann::json& node : *nodesIt) {
+    const std::string name = JsonString(node, "name");
+    if (!name.empty()) sourceNodes[name] = node;
+  }
+  auto isClosureType = [](const std::string& type) {
+    return type == "BSDF" || type == "EDF" || type == "VDF" ||
+           type == "bsdf" || type == "edf" || type == "vdf";
+  };
+  auto nodeInput = [&](const nlohmann::json& node, const char* name,
+                       const nlohmann::json& value) {
+    return inputNamed(node, name,
+                      nlohmann::json{{"name", name}, {"value", value}});
+  };
+  auto emitClosureLane = [&](const std::string& owner, const std::string& lane,
+                             nlohmann::json input, const char* type) {
+    const std::string output = owner + "__closure_" + lane;
+    runtimeNodes.push_back({{"name", output}, {"category", "convert"},
+                            {"type", type},
+                            {"inputs", nlohmann::json::array(
+                                {renamedInput(std::move(input), "in")})}});
+    closureLanes[owner][lane] = output;
+  };
+  std::set<std::string> closureVisiting;
+  std::function<const ClosureLaneMap&(const std::string&)> lowerClosure;
+  lowerClosure = [&](const std::string& name) -> const ClosureLaneMap& {
+    auto ready = closureLanes.find(name);
+    if (ready != closureLanes.end()) return ready->second;
+    ClosureLaneMap& lanes = closureLanes[name];
+    const auto sourceIt = sourceNodes.find(name);
+    if (sourceIt == sourceNodes.end() || !closureVisiting.insert(name).second)
+      return lanes;
+    const nlohmann::json& node = sourceIt->second;
+    const std::string rawType = JsonString(node, "type");
+    const std::string type = NormalizeMtlxType(rawType);
+    const std::string cat = NormalizeMtlxCategory(JsonString(node, "category"),
+                                                  JsonString(node, "type"));
+    auto connectedClosure = [&](const char* inputName) -> std::string {
+      const nlohmann::json input = nodeInput(node, inputName, 0.0);
+      return JsonString(input, "nodename");
+    };
+    auto emitLeaf = [&](const char* lane, const char* inputName,
+                        const nlohmann::json& fallback, const char* laneType) {
+      emitClosureLane(name, lane, nodeInput(node, inputName, fallback), laneType);
+    };
+    const bool closureTyped = isClosureType(type) || isClosureType(rawType) ||
+        rawType.find("_bsdf") != std::string::npos ||
+        rawType.find("_edf") != std::string::npos ||
+        rawType.find("_vdf") != std::string::npos;
+    if ((cat == "add" || cat == "mix" || cat == "multiply" || cat == "layer") &&
+        closureTyped) {
+      std::string aName, bName;
+      if (cat == "layer") { aName = connectedClosure("base"); bName = connectedClosure("top"); }
+      else if (cat == "mix") { aName = connectedClosure("bg"); bName = connectedClosure("fg"); }
+      else { aName = connectedClosure("in1"); bName = connectedClosure("in2"); }
+      const ClosureLaneMap& a = lowerClosure(aName);
+      const ClosureLaneMap& b = lowerClosure(bName);
+      std::set<std::string> keys;
+      for (const auto& item : a) keys.insert(item.first);
+      for (const auto& item : b) keys.insert(item.first);
+      const nlohmann::json factor = cat == "mix"
+          ? nodeInput(node, "mix", 0.5)
+          : nodeInput(node, aName.empty() ? "in1" : "in2", 1.0);
+      for (const std::string& lane : keys) {
+        const auto ai = a.find(lane), bi = b.find(lane);
+        const std::string output = name + "__closure_" + lane;
+        const char* laneType = lane.find("color") != std::string::npos ||
+                               lane.find("radius") != std::string::npos ||
+                               lane.find("albedo") != std::string::npos
+                                   ? "color3" : "float";
+        nlohmann::json inputs = nlohmann::json::array();
+        if (cat == "multiply") {
+          const std::string& source = ai != a.end() ? ai->second : bi->second;
+          inputs.push_back({{"name", "in1"}, {"nodename", source}});
+          inputs.push_back(renamedInput(factor, "in2"));
+        } else {
+          inputs.push_back(ai != a.end()
+              ? nlohmann::json{{"name", "in1"}, {"nodename", ai->second}}
+              : nlohmann::json{{"name", "in1"}, {"value", 0.0}});
+          inputs.push_back(bi != b.end()
+              ? nlohmann::json{{"name", "in2"}, {"nodename", bi->second}}
+              : nlohmann::json{{"name", "in2"}, {"value", 0.0}});
+          if (cat == "mix") inputs.push_back(renamedInput(factor, "mix"));
+        }
+        runtimeNodes.push_back({{"name", output},
+                                {"category", cat == "layer" ? "add" : cat},
+                                {"type", laneType}, {"inputs", std::move(inputs)}});
+        lanes[lane] = output;
+      }
+    } else if (cat == "oren_nayar_diffuse_bsdf" ||
+               cat == "burley_diffuse_bsdf") {
+      emitLeaf("base_weight", "weight", 1.0, "float");
+      emitLeaf("base_color", "color", nlohmann::json::array({0.18,0.18,0.18}), "color3");
+      emitLeaf("base_diffuse_roughness", "roughness", 0.0, "float");
+    } else if (cat == "translucent_bsdf") {
+      emitLeaf("transmission_weight", "weight", 1.0, "float");
+      emitLeaf("transmission_color", "color", nlohmann::json::array({1,1,1}), "color3");
+    } else if (cat == "dielectric_bsdf") {
+      const std::string mode = JsonString(nodeInput(node, "scatter_mode", "R"), "value", "R");
+      if (mode.find('R') != std::string::npos) {
+        emitLeaf("specular_weight", "weight", 1.0, "float");
+        emitLeaf("specular_color", "tint", nlohmann::json::array({1,1,1}), "color3");
+      }
+      if (mode.find('T') != std::string::npos) {
+        emitLeaf("transmission_weight", "weight", 1.0, "float");
+        emitLeaf("transmission_color", "tint", nlohmann::json::array({1,1,1}), "color3");
+      }
+      emitLeaf("specular_ior", "ior", 1.5, "float");
+      emitLeaf("specular_roughness", "roughness", 0.05, "float");
+      emitLeaf("thin_film_thickness", "thinfilm_thickness", 0.0, "float");
+      emitLeaf("thin_film_ior", "thinfilm_ior", 1.5, "float");
+    } else if (cat == "conductor_bsdf") {
+      emitLeaf("base_weight", "weight", 1.0, "float");
+      emitLeaf("base_color", "ior", nlohmann::json::array({0.183,0.421,1.373}), "color3");
+      emitClosureLane(name, "base_metalness", nlohmann::json{{"value",1.0}}, "float");
+      emitLeaf("specular_roughness", "roughness", 0.05, "float");
+    } else if (cat == "generalized_schlick_bsdf") {
+      emitLeaf("specular_weight", "weight", 1.0, "float");
+      emitLeaf("specular_color", "color0", nlohmann::json::array({1,1,1}), "color3");
+      emitLeaf("specular_roughness", "roughness", 0.05, "float");
+    } else if (cat == "subsurface_bsdf") {
+      emitLeaf("subsurface_weight", "weight", 1.0, "float");
+      emitLeaf("subsurface_color", "color", nlohmann::json::array({0.18,0.18,0.18}), "color3");
+      emitLeaf("subsurface_radius", "radius", nlohmann::json::array({1,1,1}), "color3");
+      emitLeaf("subsurface_anisotropy", "anisotropy", 0.0, "float");
+    } else if (cat == "sheen_bsdf") {
+      emitLeaf("sheen_weight", "weight", 1.0, "float");
+      emitLeaf("sheen_color", "color", nlohmann::json::array({1,1,1}), "color3");
+      emitLeaf("sheen_roughness", "roughness", 0.3, "float");
+    } else if (cat == "chiang_hair_bsdf") {
+      emitLeaf("sheen_weight", "weight", 0.5, "float");
+      emitLeaf("sheen_color", "tint_R", nlohmann::json::array({1,1,1}), "color3");
+      emitLeaf("transmission_weight", "weight", 0.5, "float");
+      emitLeaf("transmission_color", "tint_TT", nlohmann::json::array({1,1,1}), "color3");
+      emitLeaf("specular_ior", "ior", 1.55, "float");
+      emitLeaf("sheen_roughness", "roughness_R", 0.1, "float");
+    } else if (cat == "uniform_edf" || cat == "conical_edf" || cat == "measured_edf") {
+      emitLeaf("emission_color", "color", nlohmann::json::array({1,1,1}), "color3");
+      emitClosureLane(name, "emission_luminance", nlohmann::json{{"value",1.0}}, "float");
+      emitClosureLane(name, "volume_emission_color", nodeInput(node, "color", nlohmann::json::array({1,1,1})), "color3");
+      emitClosureLane(name, "volume_emission_scale", nlohmann::json{{"value",1.0}}, "float");
+    } else if (cat == "absorption_vdf" || cat == "anisotropic_vdf") {
+      const nlohmann::json absorption = nodeInput(node, "absorption", nlohmann::json::array({0,0,0}));
+      const nlohmann::json scattering = nodeInput(node, "scattering", nlohmann::json::array({0,0,0}));
+      const std::string extinction = name + "__closure_extinction";
+      runtimeNodes.push_back({{"name",extinction},{"category","add"},{"type","color3"},
+                              {"inputs",nlohmann::json::array({renamedInput(absorption,"in1"),renamedInput(scattering,"in2")})}});
+      const std::string density = name + "__closure_volume_density";
+      runtimeNodes.push_back({{"name",density},{"category","maxcomponent"},{"type","float"},
+                              {"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",extinction}}})}});
+      lanes["volume_density"] = density;
+      const std::string albedo = name + "__closure_volume_albedo";
+      runtimeNodes.push_back({{"name",albedo},{"category","divide"},{"type","color3"},
+                              {"inputs",nlohmann::json::array({renamedInput(scattering,"in1"),nlohmann::json{{"name","in2"},{"nodename",extinction}}})}});
+      lanes["volume_albedo"] = albedo;
+    }
+    closureVisiting.erase(name);
+    return lanes;
+  };
+  std::map<std::string, std::string> sourceOutputs;
+  const auto sourceOutputsIt = ng.find("outputs");
+  if (sourceOutputsIt != ng.end() && sourceOutputsIt->is_array()) {
+    for (const nlohmann::json& output : *sourceOutputsIt) {
+      const std::string outputName = JsonString(output, "name");
+      const std::string nodeName = JsonString(output, "nodename");
+      if (!outputName.empty() && !nodeName.empty())
+        sourceOutputs[outputName] = nodeName;
+    }
+  }
+  const auto sourceConnectionsIt = j.find("connections");
+  if (sourceConnectionsIt != j.end() && sourceConnectionsIt->is_array()) {
+    for (const nlohmann::json& connection : *sourceConnectionsIt) {
+      const std::string terminalInput = JsonString(connection, "input");
+      if (terminalInput != "bsdf" && terminalInput != "edf" &&
+          terminalInput != "vdf") continue;
+      const auto output = sourceOutputs.find(JsonString(connection, "output"));
+      if (output != sourceOutputs.end()) lowerClosure(output->second);
+    }
+  }
   auto emitMatrixInput = [&](const nlohmann::json& node,const char* inputName,
                              const std::string& owner,int dim)->std::string {
     nlohmann::json input=inputNamed(node,inputName,nlohmann::json::object());
@@ -1781,6 +1962,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       emitUnifiedRange(name,selected,inputNamed(node,"outmin",{{"value",0}}),inputNamed(node,"outmax",{{"value",1}}),inputNamed(node,"clampoutput",{{"value",true}}));
       continue;
     }
+    // Closure nodes reached from terminal BSDF/EDF/VDF inputs were expanded
+    // above into ordinary scalar/color utility nodes and renderer lanes.
+    if (closureLanes.find(name) != closureLanes.end()) continue;
     runtimeNodes.push_back(node);
   }
   std::map<std::string, int> nodeIds;
@@ -2311,12 +2495,44 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     }
   }
   const auto connIt = j.find("connections");
+  const std::map<std::string, int> closureLaneOutput = {
+      {"base_color",0},{"base_metalness",1},{"specular_roughness",2},
+      {"geometry_opacity",3},{"emission_color",4},{"geometry_normal",5},
+      {"subsurface_weight",6},{"subsurface_color",7},{"subsurface_radius",8},
+      {"specular_weight",9},{"specular_color",10},{"transmission_weight",11},
+      {"transmission_color",12},{"coat_weight",13},{"coat_color",14},
+      {"coat_roughness",15},{"sheen_weight",16},{"sheen_color",17},
+      {"sheen_roughness",18},{"specular_ior",19},{"base_weight",20},
+      {"base_diffuse_roughness",21},{"transmission_scatter",22},
+      {"transmission_depth",23},{"transmission_scatter_anisotropy",24},
+      {"subsurface_scale",25},{"subsurface_anisotropy",26},{"coat_ior",27},
+      {"thin_film_weight",28},{"thin_film_thickness",29},{"thin_film_ior",30},
+      {"specular_anisotropy",31},{"specular_rotation",32},
+      {"specular_roughness_anisotropy",33},{"transmission_dispersion",34},
+      {"transmission_dispersion_abbe_number",35},
+      {"transmission_dispersion_scale",36},{"coat_anisotropy",37},
+      {"coat_rotation",38},{"coat_roughness_anisotropy",39},
+      {"volume_density",40},{"volume_albedo",41},
+      {"volume_emission_color",42},{"volume_emission_scale",43},
+      {"emission_luminance",44},{"coat_affect_color",45},
+      {"coat_affect_roughness",46},{"coat_darkening",47}};
   if (connIt != j.end() && connIt->is_array()) {
     for (const nlohmann::json& connection : *connIt) {
       const std::string input = OpenPBREvalInputName(
           JsonString(connection, "input"));
       const auto outputIt = outputs.find(JsonString(connection, "output"));
       if (outputIt == outputs.end()) continue;
+      if (input == "bsdf" || input == "edf" || input == "vdf") {
+        const auto closure = closureLanes.find(outputIt->second);
+        if (closure == closureLanes.end()) continue;
+        for (const auto& lane : closure->second) {
+          const auto route = closureLaneOutput.find(lane.first);
+          const auto node = nodeIds.find(lane.second);
+          if (route != closureLaneOutput.end() && node != nodeIds.end())
+            graph.output[static_cast<size_t>(route->second)] = node->second;
+        }
+        continue;
+      }
       const auto nodeIt = nodeIds.find(outputIt->second);
       if (nodeIt == nodeIds.end()) continue;
       int* destination = nullptr;

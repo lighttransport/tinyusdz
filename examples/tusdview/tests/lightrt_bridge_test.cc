@@ -1933,6 +1933,68 @@ int main() {
     return 1;
   }
 
+  // Direct closure connections are lowered into the shared OpenPBR lanes.
+  // Keep these graphs intentionally small: this verifies the Shader-to-Shader
+  // connection shape used by imported MaterialX nodegraphs without relying on
+  // a full surface wrapper.
+  auto CheckDirectClosure = [](const char* json, const char* label,
+                               const std::vector<int>& routes) {
+    tusdview::DrawMaterialCPU material;
+    material.materialXNodeGraphJson = json;
+    std::string compileError;
+    if (!tusdview::CompileMaterialXGraphRuntime(&material, &compileError) ||
+        !material.materialXGraph.valid) {
+      std::fprintf(stderr, "%s closure graph failed: %s\n", label,
+                   compileError.c_str());
+      return false;
+    }
+    for (int route : routes) {
+      if (route < 0 || route >= tusdview::MaterialXGraphRuntimeCPU::kOutputCount ||
+          material.materialXGraph.output[static_cast<size_t>(route)] < 0) {
+        std::fprintf(stderr, "%s closure route %d was not emitted\n", label,
+                     route);
+        return false;
+      }
+    }
+    std::vector<float> packed(tusdview::kRtMaterialGraphFloats, 0.0f);
+    tusdview::PackMaterialXGraphRuntime(material, packed.data());
+    for (int route : routes) {
+      const size_t header = static_cast<size_t>(1 + route);
+      if (!Near(packed[header], static_cast<float>(
+          material.materialXGraph.output[static_cast<size_t>(route)]))) {
+        std::fprintf(stderr, "%s packed route %d drifted\n", label, route);
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"w","category":"constant","type":"float","inputs":[{"name":"value","value":0.7}]},
+      {"name":"c","category":"constant","type":"color3","inputs":[{"name":"value","value":[0.2,0.4,0.6]}]},
+      {"name":"rough","category":"constant","type":"float","inputs":[{"name":"value","value":0.25}]},
+      {"name":"diff","category":"oren_nayar_diffuse_bsdf","type":"BSDF","inputs":[
+        {"name":"weight","nodename":"w"},{"name":"color","nodename":"c"},{"name":"roughness","nodename":"rough"}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"diff"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "direct BSDF", {20, 0, 21}) ||
+      !CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"emit","category":"uniform_edf","type":"EDF","inputs":[{"name":"color","value":[0.1,0.3,0.8]}]}
+    ],"outputs":[{"name":"shader","type":"EDF","nodename":"emit"}]},
+    "connections":[{"input":"edf","output":"shader"}]})json",
+      "direct EDF", {4, 44}) ||
+      !CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"a","category":"constant","type":"color3","inputs":[{"name":"value","value":[0.2,0.1,0.0]}]},
+      {"name":"s","category":"constant","type":"color3","inputs":[{"name":"value","value":[0.3,0.4,0.5]}]},
+      {"name":"fog","category":"absorption_vdf","type":"VDF","inputs":[{"name":"absorption","nodename":"a"},{"name":"scattering","nodename":"s"}]}
+    ],"outputs":[{"name":"shader","type":"VDF","nodename":"fog"}]},
+    "connections":[{"input":"vdf","output":"shader"}]})json",
+      "direct VDF", {40, 41})) {
+    return 1;
+  }
+
   const char* volumeXml =
       "<materialx version=\"1.39\">"
       "<anisotropic_vdf name=\"Fog\" type=\"VDF\">"
