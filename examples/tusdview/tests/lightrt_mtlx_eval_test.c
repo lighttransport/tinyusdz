@@ -164,6 +164,29 @@ int main(void) {
     return 1;
   }
 
+  /* Conical EDF angles are full cone angles. At 90 degrees from the authored
+   * axis, a 60/120 degree cone is outside its 60 degree outer half-angle and
+   * must emit zero. This also guards the cosine-space smoothstep contract. */
+  const char *conical_xml =
+      "<materialx version=\"1.39\">"
+      " <conical_edf name=\"Cone\" type=\"EDF\">"
+      "  <input name=\"color\" type=\"color3\" value=\"0.2,0.4,0.8\"/>"
+      "  <input name=\"normal\" type=\"vector3\" value=\"0,1,0\"/>"
+      "  <input name=\"inner_angle\" type=\"float\" value=\"60\"/>"
+      "  <input name=\"outer_angle\" type=\"float\" value=\"120\"/>"
+      " </conical_edf>"
+      " <surface name=\"ConeSurface\" type=\"surfaceshader\">"
+      "  <input name=\"edf\" type=\"EDF\" nodename=\"Cone\"/>"
+      " </surface>"
+      " <surfacematerial name=\"ConeMat\">"
+      "  <input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"ConeSurface\"/>"
+      " </surfacematerial></materialx>";
+  if (!eval_xml(conical_xml, &p) || !nearf(p.emission_color.x, 0.0f) ||
+      !nearf(p.emission_color.y, 0.0f) || !nearf(p.emission_color.z, 0.0f)) {
+    fprintf(stderr, "MaterialX conical EDF full-angle falloff was not evaluated\n");
+    return 1;
+  }
+
   const char *standard_xml =
       "<materialx version=\"1.38\">"
       "  <nodegraph name=\"NG\">"
