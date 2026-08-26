@@ -238,6 +238,9 @@ Passed:
 - Post-conical bridge MaterialX parity/graph/ABI validation: 11/11 passed,
   including CPU graph, flake/projection/OpenPBR parity, Vulkan render, NVIDIA
   warmup, bridge/evaluator/graph tests, and GPU material ABI.
+- Final current-HEAD optimized native/viewer/tusdrender regression after
+  conical EDF lowering: 298/298 passed in 1110.36 seconds; the 24 documented
+  unavailable asset/capability profiles remained skipped.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
