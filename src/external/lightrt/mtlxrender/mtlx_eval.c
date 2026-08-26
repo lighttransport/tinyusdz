@@ -261,7 +261,7 @@ typedef enum {
     OP_HEIGHTTONORMAL, OP_BUMP, OP_VIEWDIRECTION, OP_TIME, OP_FRAME,
     OP_TRANSFORMPOINT, OP_TRANSFORMVECTOR, OP_TRANSFORMNORMAL,
     OP_GEOMPROPVALUE, OP_BLACKBODY, OP_ROUGHNESS_ANISOTROPY,
-    OP_ROUGHNESS_DUAL
+    OP_ROUGHNESS_DUAL, OP_ARTISTIC_IOR
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -420,12 +420,15 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c,"blackbody")) return OP_BLACKBODY;
     if (!strcmp(c,"roughness_anisotropy")) return OP_ROUGHNESS_ANISOTROPY;
     if (!strcmp(c,"roughness_dual")) return OP_ROUGHNESS_DUAL;
+    if (!strcmp(c,"artistic_ior")) return OP_ARTISTIC_IOR;
     return OP_UNKNOWN;
 }
 
 static MtlxValue eval_node(ShadeContext *ctx, int node_id);
 static MtlxValue eval_flake_output(ShadeContext *ctx,const MtlxNode *n,
                                    const char *output);
+static MtlxValue eval_artistic_ior(ShadeContext *ctx,const MtlxNode *n,
+                                   int extinction);
 
 static const MtlxInput *find_input(const MtlxNode *n, const char *name) {
     for (int i = 0; i < n->ninput; i++)
@@ -485,6 +488,8 @@ static MtlxValue eval_input(ShadeContext *ctx, const MtlxInput *in) {
         if ((!strcmp(src->category,"flake2d")||!strcmp(src->category,"flake3d")) &&
             in->src_output)
             r=eval_flake_output(ctx,src,in->src_output);
+        else if(!strcmp(src->category,"artistic_ior")&&in->src_output)
+            r=eval_artistic_ior(ctx,src,!strcmp(in->src_output,"extinction"));
         else r=swizzle_out(eval_node(ctx,in->src_node),in->src_output);
     }
     else if (in->has_value) r = in->value;
@@ -769,6 +774,14 @@ static v3 eval_blackbody(float kelvin){
                    fmaxf(.0557f*X-.2040f+1.0570f*Z,0));
 }
 
+static MtlxValue eval_artistic_ior(ShadeContext *ctx,const MtlxNode *n,
+                                   int extinction){
+    MtlxValue rv=in_or(ctx,n,"reflectivity",mv_color3(v3_make(.944f,.776f,.373f))),
+              ev=in_or(ctx,n,"edge_color",mv_color3(v3_make(1,1,1))),out=mv_zero(MV_COLOR3);
+    for(int lane=0;lane<3;lane++){float q=fminf(fmaxf(rv.v[lane],0),.99f),s=sqrtf(q),nmin=(1-q)/(1+q),nmax=(1+s)/(1-s),ior=nmax+(nmin-nmax)*ev.v[lane],k2=fmaxf(((ior+1)*(ior+1)*q-(ior-1)*(ior-1))/(1-q),0);out.v[lane]=extinction?sqrtf(k2):ior;}
+    return out;
+}
+
 static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
     if (node_id < 0 || node_id >= ctx->doc->nnode) return mv_zero(MV_NONE);
     if (ctx->memo_done[node_id]) return ctx->memo[node_id];
@@ -801,6 +814,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_BLACKBODY: {a=in_or(ctx,n,"temperature",mv_float(5000));r=mv_color3(eval_blackbody(a.v[0]));break;}
         case OP_ROUGHNESS_ANISOTROPY: {a=in_or(ctx,n,"roughness",mv_float(0));b=in_or(ctx,n,"anisotropy",mv_float(0));float q=fminf(fmaxf(a.v[0]*a.v[0],1e-8f),1),aspect=b.v[0]>0?sqrtf(1-fminf(fmaxf(b.v[0],0),.98f)):1;r=mv_vec2(fminf(q/aspect,1),q*aspect);break;}
         case OP_ROUGHNESS_DUAL: {a=in_or(ctx,n,"roughness",mv_vec2(0,-1));float y=a.v[1]<0?a.v[0]:a.v[1];r=mv_vec2(fminf(fmaxf(a.v[0]*a.v[0],1e-8f),1),fminf(fmaxf(y*y,1e-8f),1));break;}
+        case OP_ARTISTIC_IOR: r=eval_artistic_ior(ctx,n,0);break;
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
         case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;

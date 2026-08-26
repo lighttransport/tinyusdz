@@ -752,6 +752,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         else dst={r,r,0,1};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::RoughnessDual)) {
         const float y=a[1]<0.0f?a[0]:a[1];dst={std::clamp(a[0]*a[0],1.0e-8f,1.0f),std::clamp(y*y,1.0e-8f,1.0f),0,1};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::ArtisticIor)) {
+        for(int lane=0;lane<3;++lane){const float r=std::clamp(a[lane],0.0f,.99f),rs=std::sqrt(r),nmin=(1-r)/(1+r),nmax=(1+rs)/(1-rs),ior=nmax+(nmin-nmax)*b[lane];const float k2=std::max((((ior+1)*(ior+1)*r)-((ior-1)*(ior-1)))/(1-r),0.0f);dst[lane]=scene.matGraph[p+17]>=.5f?std::sqrt(k2):ior;}dst[3]=1;
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::HsvAdjust)) {
         const float mx = std::max(a[0], std::max(a[1], a[2]));
         const float mn = std::min(a[0], std::min(a[1], a[2]));

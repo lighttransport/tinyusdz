@@ -149,6 +149,8 @@ int main(void) {
       " <blackbody name=\"blackbody_warm\" type=\"color3\"><input name=\"temperature\" type=\"float\" value=\"800\"/></blackbody>"
       " <roughness_anisotropy name=\"rough_aniso\" type=\"vector2\"><input name=\"roughness\" type=\"float\" value=\"0.5\"/><input name=\"anisotropy\" type=\"float\" value=\"0.75\"/></roughness_anisotropy>"
       " <roughness_dual name=\"rough_dual\" type=\"vector2\"><input name=\"roughness\" type=\"vector2\" value=\"0.5,-1\"/></roughness_dual>"
+      " <artistic_ior name=\"artistic\" type=\"multioutput\"><input name=\"reflectivity\" type=\"color3\" value=\"0.25,0.25,0.25\"/><input name=\"edge_color\" type=\"color3\" value=\"1,1,1\"/></artistic_ior>"
+      " <multiply name=\"artistic_extinction\" type=\"color3\"><input name=\"in1\" type=\"color3\" nodename=\"artistic\" output=\"extinction\"/><input name=\"in2\" type=\"float\" value=\"1\"/></multiply>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -251,7 +253,9 @@ int main(void) {
        check1("geomprop-callback",eval_named(&ctx,"temperature"),6500.0f) &&
        check1("geomprop-default",eval_named(&ctx,"missing_prop"),12.0f) &&
        check3("roughness-anisotropy",eval_named(&ctx,"rough_aniso"),.5f,.125f,0) &&
-       check3("roughness-dual",eval_named(&ctx,"rough_dual"),.25f,.25f,0) && ok;
+       check3("roughness-dual",eval_named(&ctx,"rough_dual"),.25f,.25f,0) &&
+       check3("artistic-ior",eval_named(&ctx,"artistic"),.6f,.6f,.6f) &&
+       check3("artistic-extinction",eval_named(&ctx,"artistic_extinction"),.8f,.8f,.8f) && ok;
   { MtlxValue warm=eval_named(&ctx,"blackbody_warm");
     if(!(warm.v[0]>warm.v[1]&&warm.v[1]>=warm.v[2]&&warm.v[2]>=0)){
       fprintf(stderr,"blackbody warm spectrum invalid: %g %g %g\n",warm.v[0],warm.v[1],warm.v[2]);ok=0;
