@@ -799,5 +799,30 @@ int main(void) {
     return 1;
   }
 
+  const char *subsurface_bsdf_xml =
+      "<materialx version=\"1.39\">"
+      " <subsurface_bsdf name=\"SubsurfaceBsdf\" type=\"BSDF\">"
+      "  <input name=\"weight\" type=\"float\" value=\"0.7\"/>"
+      "  <input name=\"color\" type=\"color3\" value=\"0.2,0.4,0.6\"/>"
+      "  <input name=\"radius\" type=\"color3\" value=\"0.3,0.5,0.7\"/>"
+      "  <input name=\"scale\" type=\"float\" value=\"2.5\"/>"
+      " </subsurface_bsdf>"
+      " <surface name=\"SubsurfaceSurface\" type=\"surfaceshader\">"
+      "  <input name=\"bsdf\" type=\"BSDF\" nodename=\"SubsurfaceBsdf\"/>"
+      " </surface>"
+      " <surfacematerial name=\"SubsurfaceMat\" type=\"material\">"
+      "  <input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"SubsurfaceSurface\"/>"
+      " </surfacematerial></materialx>";
+  OpenPBRParams subsurface;
+  if (!eval_xml(subsurface_bsdf_xml, &subsurface) ||
+      !nearf(subsurface.subsurface, 0.7f) ||
+      !nearf(subsurface.subsurface_radius.x, 0.3f) ||
+      !nearf(subsurface.subsurface_radius.y, 0.5f) ||
+      !nearf(subsurface.subsurface_radius.z, 0.7f) ||
+      !nearf(subsurface.subsurface_scale, 2.5f)) {
+    fprintf(stderr, "MaterialX subsurface BSDF scale was not evaluated\n");
+    return 1;
+  }
+
   return 0;
 }

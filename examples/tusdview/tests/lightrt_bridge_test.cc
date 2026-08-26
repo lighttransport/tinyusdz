@@ -2295,6 +2295,17 @@ int main() {
   }
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
+      {"name":"subsurface","category":"subsurface_bsdf","type":"BSDF","inputs":[
+        {"name":"weight","value":0.7},{"name":"color","value":[0.2,0.4,0.6]},
+        {"name":"radius","value":[0.3,0.5,0.7]},{"name":"scale","value":2.5},
+        {"name":"anisotropy","value":0.2}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"subsurface"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "direct subsurface BSDF", {6, 7, 8, 25, 26})) {
+    return 1;
+  }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
       {"name":"schlick","category":"generalized_schlick_bsdf","type":"BSDF","inputs":[
         {"name":"weight","value":0.5},{"name":"color0","value":[0.2,0.3,0.4]},
         {"name":"color90","value":[0.8,0.7,0.6]},

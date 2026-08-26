@@ -1536,6 +1536,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       emitLeaf("subsurface_weight", "weight", 1.0, "float");
       emitLeaf("subsurface_color", "color", nlohmann::json::array({0.18,0.18,0.18}), "color3");
       emitLeaf("subsurface_radius", "radius", nlohmann::json::array({1,1,1}), "color3");
+      emitLeaf("subsurface_scale", "scale", 1.0, "float");
       emitLeaf("subsurface_anisotropy", "anisotropy", 0.0, "float");
     } else if (cat == "sheen_bsdf") {
       emitLeaf("sheen_weight", "weight", 1.0, "float");
