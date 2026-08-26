@@ -523,6 +523,9 @@ enum class MaterialXGraphOpCPU : uint32_t {
   ViewDirection,
   Time,
   Frame,
+  Blackbody,
+  RoughnessAnisotropy,
+  RoughnessDual,
   Unknown,
 };
 

@@ -98,6 +98,7 @@ vec4 graphInput(int idx, vec4 fallback, vec4 values[64], int count) {
 }
 vec3 rgbToHsv(vec3 c){vec4 K=vec4(0,-1.0/3.0,2.0/3.0,-1),p=mix(vec4(c.bg,K.wz),vec4(c.gb,K.xy),step(c.b,c.g)),q=mix(vec4(p.xyw,c.r),vec4(c.r,p.yzx),step(p.x,c.r));float d=q.x-min(q.w,q.y),e=1e-10;return vec3(abs(q.z+(q.w-q.y)/(6.0*d+e)),d/(q.x+e),q.x);}
 vec3 hsvToRgb(vec3 c){vec3 p=abs(fract(c.xxx+vec3(0,2.0/3.0,1.0/3.0))*6.0-3.0);return c.z*mix(vec3(1),clamp(p-1.0,0.0,1.0),c.y);}
+vec3 mtlxBlackbody(float kelvin){float temperature=clamp(kelvin,800.0,25000.0),t=1000.0/temperature,t2=t*t,t3=t2*t;float x=temperature<4000.0?-0.2661239*t3-0.2343580*t2+0.8776956*t+0.179910:-3.0258469*t3+2.1070379*t2+0.2226347*t+0.240390,x2=x*x,x3=x2*x,y=temperature<2222.0?-1.1063814*x3-1.34811020*x2+2.18555832*x-0.20219683:(temperature<4000.0?-0.9549476*x3-1.37418593*x2+2.09137015*x-0.16748867:3.0817580*x3-5.87338670*x2+3.75112997*x-0.37001483);if(y<=0.0)return vec3(1);float X=x/y,Z=(1.0-x-y)/y;return max(vec3(3.2406*X-1.5372-.4986*Z,-.9689*X+1.8758+.0415*Z,.0557*X-.2040+1.0570*Z),vec3(0));}
 void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position,
                   vec3 viewDirection, float sceneTime, float sceneFrame,
                   out vec4 routed[48]) {
@@ -155,6 +156,9 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position,
     else if(op==114)value[i]=vec4(normalize(viewDirection),1);
     else if(op==115)value[i]=vec4(sceneTime);
     else if(op==116)value[i]=vec4(sceneFrame);
+    else if(op==117)value[i]=vec4(mtlxBlackbody(a.x),1);
+    else if(op==118){float q=clamp(a.x*a.x,1e-8,1.0),aspect=b.x>0.0?sqrt(1.0-clamp(b.x,0.0,.98)):1.0;value[i]=vec4(min(q/aspect,1.0),q*aspect,0,1);}
+    else if(op==119){float y=a.y<0.0?a.x:a.y;value[i]=vec4(clamp(a.x*a.x,1e-8,1.0),clamp(y*y,1e-8,1.0),0,1);}
     else if(op==50) value[i]=asin(clamp(a,vec4(-1),vec4(1)));
     else if(op==51) value[i]=acos(clamp(a,vec4(-1),vec4(1)));
     else if(op==52) value[i]=(a-c)*b+c;

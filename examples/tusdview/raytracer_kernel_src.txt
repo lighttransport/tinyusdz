@@ -138,6 +138,7 @@ __device__ F4 sampleMaterialTexture(const unsigned char* texels,
                                     const TexDesc* tex, int numTex, int id,
                                     float u, float v, unsigned int face,
                                     float lod, F4 missing);
+__device__ F4 mtlxBlackbody(float kelvin){float temperature=fminf(fmaxf(kelvin,800.f),25000.f),t=1000.f/temperature,t2=t*t,t3=t2*t;float x=temperature<4000.f?-0.2661239f*t3-0.2343580f*t2+0.8776956f*t+0.179910f:-3.0258469f*t3+2.1070379f*t2+0.2226347f*t+0.240390f,x2=x*x,x3=x2*x,y=temperature<2222.f?-1.1063814f*x3-1.34811020f*x2+2.18555832f*x-0.20219683f:(temperature<4000.f?-0.9549476f*x3-1.37418593f*x2+2.09137015f*x-0.16748867f:3.0817580f*x3-5.87338670f*x2+3.75112997f*x-0.37001483f);if(y<=0.f)return mk4(1,1,1,1);float X=x/y,Z=(1.f-x-y)/y;return mk4(fmaxf(3.2406f*X-1.5372f-.4986f*Z,0.f),fmaxf(-.9689f*X+1.8758f+.0415f*Z,0.f),fmaxf(.0557f*X-.2040f+1.057f*Z,0.f),1.f);}
 
 // Compact MaterialX graph interpreter shared by CUDA and HIP. Graph blocks
 // are fixed-size, bounded, and dependency-first. Texture ids are already
@@ -254,6 +255,9 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
       else if(op==114){F3 q=norm3(viewDirection);values[i]=mk4(q.x,q.y,q.z,1.f);}
       else if(op==115) values[i]=mk4(sceneTime,sceneTime,sceneTime,sceneTime);
       else if(op==116) values[i]=mk4(sceneFrame,sceneFrame,sceneFrame,sceneFrame);
+      else if(op==117) values[i]=mtlxBlackbody(a.x);
+      else if(op==118){float q=fminf(fmaxf(a.x*a.x,1e-8f),1.f),aspect=b.x>0.f?sqrtf(1.f-fminf(fmaxf(b.x,0.f),.98f)):1.f;values[i]=mk4(fminf(q/aspect,1.f),q*aspect,0.f,1.f);}
+      else if(op==119){float y=a.y<0.f?a.x:a.y;values[i]=mk4(fminf(fmaxf(a.x*a.x,1e-8f),1.f),fminf(fmaxf(y*y,1e-8f),1.f),0.f,1.f);}
       else if (op==50) values[i]=mk4(asinf(fminf(fmaxf(a.x,-1.f),1.f)),asinf(fminf(fmaxf(a.y,-1.f),1.f)),asinf(fminf(fmaxf(a.z,-1.f),1.f)),asinf(fminf(fmaxf(a.w,-1.f),1.f)));
       else if (op==51) values[i]=mk4(acosf(fminf(fmaxf(a.x,-1.f),1.f)),acosf(fminf(fmaxf(a.y,-1.f),1.f)),acosf(fminf(fmaxf(a.z,-1.f),1.f)),acosf(fminf(fmaxf(a.w,-1.f),1.f)));
       else if (op==52) values[i]=mk4((a.x-c.x)*b.x+c.x,(a.y-c.y)*b.y+c.y,(a.z-c.z)*b.z+c.z,(a.w-c.w)*b.w+c.w);
