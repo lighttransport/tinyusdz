@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: current checkout (see `git log`; latest commit records this evidence)
+- HEAD: `94b22e060` (`Preserve zero-valued displacement terminals`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -253,6 +253,16 @@ Passed:
 - Final current-HEAD optimized native/viewer/tusdrender regression after the
   MaterialX light-wrapper change: 298/298 passed in 1109.01 seconds; the same
   24 documented unavailable asset/capability profiles remained skipped.
+- Measured-EDF fixture inputs now use the schema-correct `file`/`filename`
+  field (`f686776d2`); the focused bridge/evaluator/graph test group passed
+  4/4 afterward.
+- Separate displacement terminals remain present even when their resolved
+  scalar is exactly zero (`94b22e060`); bridge, displacement-UDIM, and viewer
+  rebuild checks passed.
+- Final current-HEAD optimized native/viewer/tusdrender regression after the
+  zero-valued displacement fix: 298/298 passed in 1107.08 seconds; only the
+  documented unavailable external-asset, real-texture/validation, corpus, and
+  OpenChess profiles were skipped.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -285,12 +295,13 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
 6. Add graph connection/evaluation/render tests for closure composition, wrapper
    nesting, multi-output selectors, cycles, missing inputs, type conversion,
    direct Shader-to-Shader graphs, and the 64-node limit.
-7. Focused CUDA/NVIDIA, HIP, and Vulkan RT checks pass after the matrix slice;
-   AMD hardware remains unavailable and must stay capability-skipped with
-   evidence.
-8. Re-run optimized full native/viewer/tusdrender regression after the final
-   matrix slice and keep the suite near the established 20-minute budget.
-9. Update this file with the new HEAD and evidence after each coherent slice.
+7. Completed for this environment: focused CUDA/NVIDIA, HIP, and Vulkan RT
+   checks pass; AMD hardware remains unavailable and is capability-skipped
+   with evidence.
+8. Completed for this slice: optimized full native/viewer/tusdrender regression
+   passed 298/298 in 1107.08 seconds.
+9. Keep updating this file with the new HEAD and evidence after each coherent
+   slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
     paths, build artifacts, large binaries/assets, and stale generated output;
     request fresh authorization immediately before `git push`.
