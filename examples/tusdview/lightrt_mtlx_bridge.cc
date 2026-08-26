@@ -1179,6 +1179,7 @@ bool EvaluateMaterialXStringToLightRtVolume(const char* xml,
   out->volumeEmission[0] = volume.emission.x;
   out->volumeEmission[1] = volume.emission.y;
   out->volumeEmission[2] = volume.emission.z;
+  out->volumeAnisotropy = volume.anisotropy;
   out->volumeEmissionScale = v3_maxc(volume.emission) > 0.0f ? 1.0f : 0.0f;
   out->hasVolumeOutput = true;
   return true;
@@ -3280,6 +3281,7 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
       mat->volumeDensity = volume.volumeDensity;
       std::memcpy(mat->volumeAlbedo, volume.volumeAlbedo,
                   sizeof(mat->volumeAlbedo));
+      mat->volumeAnisotropy = volume.volumeAnisotropy;
       std::memcpy(mat->volumeEmission, volume.volumeEmission,
                   sizeof(mat->volumeEmission));
       mat->volumeEmissionScale = volume.volumeEmissionScale;
@@ -3303,6 +3305,9 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
   p.hasNormalInput = HasNormalInput(*mat);
   p.volumeDensity = mat->volumeDensity;
   std::memcpy(p.volumeAlbedo, mat->volumeAlbedo, sizeof(p.volumeAlbedo));
+  if (mat->hasVolumeOutput) {
+    p.transmissionScatterAnisotropy = mat->volumeAnisotropy;
+  }
   std::memcpy(p.volumeEmission, mat->volumeEmission, sizeof(p.volumeEmission));
   p.volumeEmissionScale = mat->volumeEmissionScale;
   ClampLightRtParams(&p);

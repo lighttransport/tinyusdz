@@ -2125,6 +2125,7 @@ int main() {
       "<anisotropic_vdf name=\"Fog\" type=\"VDF\">"
       "<input name=\"absorption\" type=\"vector3\" value=\"0.1,0.2,0.3\"/>"
       "<input name=\"scattering\" type=\"vector3\" value=\"0.4,0.3,0.2\"/>"
+      "<input name=\"anisotropy\" type=\"float\" value=\"0.35\"/>"
       "</anisotropic_vdf>"
       "<uniform_edf name=\"Glow\" type=\"EDF\"><input name=\"color\" "
       "type=\"color3\" value=\"0.2,0.4,0.8\"/></uniform_edf>"
@@ -2143,6 +2144,7 @@ int main() {
       !Near(volumeMaterial.volumeAlbedo[0], 0.8f) ||
       !Near(volumeMaterial.volumeAlbedo[1], 0.6f) ||
       !Near(volumeMaterial.volumeAlbedo[2], 0.4f) ||
+      !Near(volumeMaterial.volumeAnisotropy, 0.35f) ||
       !Near(volumeMaterial.volumeEmission[2], 0.8f) ||
       !Near(volumeMaterial.volumeEmissionScale, 1.0f)) {
     std::fprintf(stderr, "MaterialX volume transport evaluation failed: %s\n",

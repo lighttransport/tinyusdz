@@ -607,6 +607,7 @@ struct DrawMaterialCPU {
   std::string volumeShaderPath;
   float volumeDensity{0.0f};
   float volumeAlbedo[3]{0.5f, 0.5f, 0.5f};
+  float volumeAnisotropy{0.0f};
   float volumeEmission[3]{0.0f, 0.0f, 0.0f};
   float volumeEmissionScale{0.0f};
   std::string materialXNodeGraphJson;
