@@ -1064,6 +1064,28 @@ int main() {
     std::fprintf(stderr, "MaterialX blur lowering failed: %s\n", blurError.c_str());
     return 1;
   }
+  tusdview::DrawMaterialCPU flakeMat;
+  flakeMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"flakes","category":"flake2d","type":"multioutput","inputs":[
+      {"name":"size","value":0.1},{"name":"roughness","value":0.2},
+      {"name":"coverage","value":0.75}]},
+    {"name":"scaled_presence","category":"multiply","type":"float","inputs":[
+      {"name":"in1","nodename":"flakes","output":"presence"},{"name":"in2","value":0.5}]}
+  ],"outputs":[{"name":"flake_normal","type":"vector3","nodename":"flakes","output":"flakenormal"}]},
+  "connections":[{"input":"geometry_normal","output":"flake_normal"}]})json";
+  std::string flakeError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&flakeMat, &flakeError) ||
+      flakeMat.materialXGraph.nodes.size() != 17 ||
+      flakeMat.materialXGraph.nodes[11].op != tusdview::MaterialXGraphOpCPU::Flake ||
+      flakeMat.materialXGraph.nodes[14].op != tusdview::MaterialXGraphOpCPU::Flake ||
+      flakeMat.materialXGraph.nodes[16].input[0] != 13 ||
+      flakeMat.materialXGraph.output[5] != 14 ||
+      !Near(flakeMat.materialXGraph.nodes[11].auxValue[0], 0.0f) ||
+      !Near(flakeMat.materialXGraph.nodes[14].auxValue[1], 3.0f)) {
+    std::fprintf(stderr, "MaterialX flake multi-output lowering failed: %s (nodes=%zu)\n",
+                 flakeError.c_str(), flakeMat.materialXGraph.nodes.size());
+    return 1;
+  }
   tusdview::DrawMaterialCPU aliasesMat;
   aliasesMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"plus","category":"plus","inputs":[{"value":1},{"value":2}]},

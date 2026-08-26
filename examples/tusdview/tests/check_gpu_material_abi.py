@@ -93,7 +93,7 @@ for operation in ("Arcsine", "Arccosine", "Arctangent", "Contrast", "Screen",
                   "Cloverleaf", "Hexagon",
                   "Grid", "Crosshatch", "TiledCircles", "TiledCloverleafs",
                   "TiledHexagons",
-                  "RampCoordinate", "Ramp", "RampGradient",
+                  "RampCoordinate", "Ramp", "RampGradient", "Flake",
                   "Swizzle"):
     require(cpu, rf"MaterialXGraphOpCPU::{operation}\b",
             f"CPU graph {operation} parity")
