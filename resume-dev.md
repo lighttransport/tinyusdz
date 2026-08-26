@@ -305,6 +305,11 @@ Passed:
   focused nine-test MaterialX/bridge matrix pass. The Vulkan RT
   texture-semantic-AOV case still needs a valid hardware run; its CTest
   warm-up dependency failed here because the inherited X display was absent.
+- A direct `coat-normal` RT attempt with the documented NVIDIA selector
+  confirms this environment exposes only llvmpipe; tusdview reports no Vulkan
+  physical device matching `nvidia`. The RT semantic case is therefore
+  capability-skipped here pending a machine with the configured NVIDIA Vulkan
+  ICD.
 - A fresh full configured regression at this HEAD is not clean: the aggregate
   GL/Vulkan parity test reports the unsupported-real-time-lobes comparison
   failing (19.6% of pixels), while its standalone test passes; the subsequent
