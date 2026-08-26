@@ -124,6 +124,8 @@ Passed:
   `tusdview`: passed
 - Compute-BVH shader regeneration, viewer rebuild, ABI, and safety checks:
   passed
+- SWBVH stacked-glass regression: passed; general SWBVH render profile:
+  environment-skipped
 - Full configured native CTest rerun after conductor and generalized-Schlick
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
