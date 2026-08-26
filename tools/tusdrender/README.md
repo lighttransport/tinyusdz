@@ -75,6 +75,14 @@ shader-language shorthand for clamping values to `[0, 1]`. The headless
 blend-chain fixture executes this operation after screen, overlay, burn, and
 dodge on every requested backend.
 
+High-arity `ramp4` and `switch` nodes are lowered at graph compile time into
+bounded extract/mix and equality-select primitives. This retains connected
+inputs without expanding the fixed GPU material ABI. The spatial fixture uses
+a connected texcoord-driven `ramp4`, while the color fixture selects through a
+lowered switch on all hardware backends. Default CPU tusdrender separately runs
+a deep 16-node graph regression; its evaluator and NodeGraph traversal share a
+64-level safety bound with the runtime node limit.
+
 CUDA cache transitions can be made part of the same headless gate. Point
 `XDG_CACHE_HOME` at an empty temporary directory and set
 `TUSDR_PARITY_CUDA_CACHE_EXPECT=cold` for the first run; repeat with `warm` and

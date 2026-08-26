@@ -147,6 +147,21 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position, out vec4 rout
     else if(op==59||op==60){float t=clamp(ci>=0?(op==59?c.x:c.y):(op==59?uv.x:uv.y),0.0,1.0);value[i]=mix(a,b,t);}
     else if(op==61||op==62){int xi=int(floor(graphs[p+16u]+0.5));vec4 q=xi>=0&&xi<count?value[xi]:vec4(uv,0,1);value[i]=((op==61?q.x:q.y)>=c.x)?b:a;}
     else if(op==63){float l=dot(a.rgb,vec3(0.2126,0.7152,0.0722));value[i]=vec4(vec3(l)+b.rgb*(a.rgb-vec3(l)),a.w);}
+    else if(op==64||op==65||op==66){int xi=int(floor(graphs[p+16u]+0.5));vec4 q=xi>=0&&xi<count?value[xi]:vec4(graphs[p+17u],graphs[p+18u],graphs[p+19u],graphs[p+20u]);bool take=op==64?a.x>b.x:(op==65?a.x>=b.x:a.x==b.x);value[i]=take?c:q;}
+    else if(op==67)value[i]=vec4(rgbToHsv(a.rgb),a.w);
+    else if(op==68)value[i]=vec4(hsvToRgb(a.rgb),a.w);
+    else if(op==69){float q=radians(b.x);value[i]=vec4(mat2(cos(q),sin(q),-sin(q),cos(q))*a.xy,a.zw);}
+    else if(op==70)value[i]=vec4(distance(a.xyz,b.xyz));
+    else if(op==71)value[i]=vec4(reflect(a.xyz,b.xyz),a.w);
+    else if(op==72)value[i]=vec4(refract(a.xyz,b.xyz,c.x),a.w);
+    else if(op==73)value[i]=vec4(a.rgb*a.a,a.a);
+    else if(op==74)value[i]=abs(a.a)>1e-6?vec4(a.rgb/a.a,a.a):vec4(0,0,0,a.a);
+    else if(op==75||op==76){float q=op==75?min(a.x,min(a.y,a.z)):max(a.x,max(a.y,a.z));value[i]=vec4(q);}
+    else if(op==77||op==78||op==79){bool av=a.x!=0,bv=b.x!=0,q=op==77?(av&&bv):(op==78?(av||bv):(av!=bv));value[i]=vec4(q?1.0:0.0);}
+    else if(op==80)value[i]=vec4(a.x==0?1.0:0.0);
+    else if(op==81||op==82)value[i]=a*(op==81?b.x:1.0-b.x);
+    else if(op==83)value[i]=vec4(1);
+    else if(op==84)value[i]=vec4(normalize(cross(normal,abs(normal.z)<0.9?vec3(0,0,1):vec3(0,1,0))),1);
     else value[i]=a;
   }
   for(uint r=0u;r<GRAPH_OUTPUTS;++r){int wanted=int(round(graphs[gb+1u+r]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}

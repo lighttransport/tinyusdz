@@ -71,6 +71,8 @@ namespace tydra {
 
 namespace {
 
+constexpr int kMtlxGraphEvaluationDepth = 64;
+
 
 // Structure to hold MaterialX NodeGraph info extracted from geometry_normal/geometry_tangent connections
 // Used to capture tangent rotation and normal map scale for anisotropic materials
@@ -298,7 +300,7 @@ static void ExtractMtlxTexcoordInfoFromConnection(
   }
 
   Path current_path = start_path;
-  int depth = 10;
+  int depth = kMtlxGraphEvaluationDepth;
   while (depth-- > 0) {
     const Shader *shader =
         FindMtlxShaderForPath(stage, material_prim, current_path.prim_part());
@@ -1108,7 +1110,7 @@ static nonstd::expected<std::pair<const Prim *, const Shader *>, std::string>
 ResolveNodeGraphTarget(const Stage &stage, const Path &connection_path,
                        std::string *target_out_name) {
   return ResolveNodeGraphTargetImpl(stage, connection_path, target_out_name,
-                                    /*max_depth=*/10);
+                                    /*max_depth=*/kMtlxGraphEvaluationDepth);
 }
 
 // Evaluate a MaterialX NodeGraph connection as a constant value (float or color3).
@@ -1123,7 +1125,8 @@ nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxNodeGraphAsConstant(
       ResolveNodeGraphTarget(stage, connection_path, &target_out_name);
   if (!target) return nonstd::make_unexpected(target.error());
   return EvaluateMtlxConstant(stage, target->first, target->second,
-                              /*max_depth=*/10, evaluation_space,
+                              /*max_depth=*/kMtlxGraphEvaluationDepth,
+                              evaluation_space,
                               target_out_name);
 }
 

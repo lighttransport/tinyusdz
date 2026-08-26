@@ -82,5 +82,26 @@ int main(void) {
     ok = 0;
   }
   mtlx_free(doc);
+  if (!ok) return 1;
+
+  const char *scoped_xml =
+      "<materialx version=\"1.39\">"
+      " <nodegraph name=\"A\"><constant name=\"same\" type=\"float\"><input name=\"value\" value=\"1\"/></constant><add name=\"use\" type=\"float\"><input name=\"in1\" nodename=\"same\"/><input name=\"in2\" value=\"1\"/></add></nodegraph>"
+      " <nodegraph name=\"B\"><constant name=\"same\" type=\"float\"><input name=\"value\" value=\"2\"/></constant><add name=\"use\" type=\"float\"><input name=\"in1\" nodename=\"same\"/><input name=\"in2\" value=\"1\"/></add></nodegraph>"
+      " <add name=\"broken\" type=\"float\"><input name=\"in1\" nodename=\"missing\"/><input name=\"in2\" value=\"1\"/></add>"
+      "</materialx>";
+  doc = mtlx_load_string(scoped_xml);
+  if (!doc || doc->ngraph != 2) return 1;
+  const int a_same = mtlx_find_node(doc, 0, "same");
+  const int b_same = mtlx_find_node(doc, 1, "same");
+  const int a_use = mtlx_find_node(doc, 0, "use");
+  const int b_use = mtlx_find_node(doc, 1, "use");
+  const int broken = mtlx_find_node(doc, -1, "broken");
+  ok = a_same >= 0 && b_same >= 0 && a_same != b_same && a_use >= 0 &&
+       b_use >= 0 && find_input(&doc->nodes[a_use], "in1")->src_node == a_same &&
+       find_input(&doc->nodes[b_use], "in1")->src_node == b_same && broken >= 0 &&
+       find_input(&doc->nodes[broken], "in1")->src_node == -1;
+  if (!ok) fprintf(stderr, "MaterialX graph scope/unresolved-edge test failed\n");
+  mtlx_free(doc);
   return ok ? 0 : 1;
 }

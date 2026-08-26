@@ -303,6 +303,7 @@ The tusdview viewer example registers GPU-dependent tests under the `tusdview` c
 | `tusdview_lightrt_mtlx_eval_test` | MaterialX ND_image evaluation | None (compiled unit) |
 | `tusdview_lightrt_mtlx_graph_connection_test` | MaterialX graph edge resolution, forward references, graph outputs, selectors, and surface binding | None (compiled unit) |
 | `tusdview_lightrt_mtlx_graph_evaluation_test` | Numerical evaluation of connected arithmetic, vector, conditional, blend, and UV-spatial MaterialX nodes | None (compiled unit) |
+| `tool-tusdrender-materialx-cpu-graph` | Default CPU tusdrender evaluation of deep connected MaterialX graphs without fallback | None (headless CLI) |
 | `tusdview_geometry_primvar_test` | Geometry primvar reconstruction | None (compiled unit) |
 | `tusdview_camera_nav_test` | Camera navigation | None (compiled unit) |
 | `tusdview-next-nonmesh-extraction` | Default-loader Points/Curves records | Vulkan backend |

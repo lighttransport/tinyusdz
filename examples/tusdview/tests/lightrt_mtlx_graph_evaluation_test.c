@@ -44,7 +44,23 @@ int main(void) {
       " <saturate name=\"desaturate\" type=\"color3\"><input name=\"in\" type=\"color3\" value=\"0.2,0.4,0.8\"/><input name=\"amount\" type=\"float\" value=\"0\"/></saturate>"
       " <dotproduct name=\"dot\" type=\"float\"><input name=\"in1\" type=\"vector3\" value=\"1,2,3\"/><input name=\"in2\" type=\"vector3\" value=\"4,5,6\"/></dotproduct>"
       " <normalize name=\"norm\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"0,3,4\"/></normalize>"
+      " <fraction name=\"fraction\" type=\"color3\"><input name=\"in\" type=\"color3\" value=\"-1.25,1.5,2.75\"/></fraction>"
+      " <step name=\"step\" type=\"color3\"><input name=\"in\" type=\"color3\" value=\"0.2,0.5,0.8\"/><input name=\"edge\" type=\"float\" value=\"0.5\"/></step>"
+      " <rgbtohsv name=\"hsv\" type=\"color3\"><input name=\"in\" type=\"color3\" value=\"0.2,0.4,0.8\"/></rgbtohsv>"
+      " <hsvtorgb name=\"rgb\" type=\"color3\"><input name=\"in\" type=\"color3\" nodename=\"hsv\"/></hsvtorgb>"
+      " <rotate2d name=\"rotate\" type=\"vector2\"><input name=\"in\" type=\"vector2\" value=\"1,0\"/><input name=\"amount\" type=\"float\" value=\"90\"/></rotate2d>"
+      " <ramp4 name=\"quad\" type=\"color3\"><input name=\"valuetl\" type=\"color3\" value=\"1,0,0\"/><input name=\"valuetr\" type=\"color3\" value=\"0,1,0\"/><input name=\"valuebl\" type=\"color3\" value=\"0,0,1\"/><input name=\"valuebr\" type=\"color3\" value=\"1,1,1\"/><input name=\"texcoord\" type=\"vector2\" value=\"0.25,0.75\"/></ramp4>"
+      " <switch name=\"pick\" type=\"color3\"><input name=\"which\" type=\"integer\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" nodename=\"quad\"/><input name=\"in3\" type=\"color3\" value=\"0,0,1\"/></switch>"
+      " <distance name=\"distance\" type=\"float\"><input name=\"in1\" type=\"vector3\" value=\"1,2,3\"/><input name=\"in2\" type=\"vector3\" value=\"1,5,7\"/></distance>"
+      " <reflect name=\"reflect\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,-1,0\"/><input name=\"normal\" type=\"vector3\" value=\"0,1,0\"/></reflect>"
+      " <premult name=\"premult\" type=\"color4\"><input name=\"in\" type=\"color4\" value=\"0.8,0.4,0.2,0.5\"/></premult>"
+      " <unpremult name=\"unpremult\" type=\"color4\"><input name=\"in\" type=\"color4\" nodename=\"premult\"/></unpremult>"
+      " <mincomponent name=\"mincomp\" type=\"float\"><input name=\"in\" type=\"color3\" value=\"0.8,0.2,0.5\"/></mincomponent>"
+      " <xor name=\"xor\" type=\"boolean\"><input name=\"in1\" type=\"boolean\" value=\"true\"/><input name=\"in2\" type=\"boolean\" value=\"false\"/></xor>"
+      " <inside name=\"inside\" type=\"color3\"><input name=\"in\" type=\"color3\" value=\"0.2,0.4,0.8\"/><input name=\"mask\" type=\"float\" value=\"0.25\"/></inside>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
+      " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
+      " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
       "</nodegraph></materialx>";
   MtlxDoc *doc = mtlx_load_string(xml);
   if (!doc) return 1;
@@ -70,8 +86,27 @@ int main(void) {
            check3("saturate", eval_named(&ctx, "desaturate"), 0.38636f,
                   0.38636f, 0.38636f) &&
            check3("conditional", eval_named(&ctx, "choose"), 0.75f, 0.0f, 0.25f) &&
+           check3("conditional-gte-boundary", eval_named(&ctx, "choose_eq"),
+                  0.1f, 0.2f, 0.3f) &&
+           check3("conditional-equal-false", eval_named(&ctx, "choose_ne"),
+                  0.0f, 0.0f, 1.0f) &&
            nearf_eps(eval_named(&ctx, "dot").v[0], 32.0f) &&
            check3("normalize", eval_named(&ctx, "norm"), 0.0f, 0.6f, 0.8f);
+  ok = check3("fraction-alias", eval_named(&ctx, "fraction"), 0.75f, 0.5f,
+              0.75f) &&
+       check3("step-boundary", eval_named(&ctx, "step"), 0.0f, 1.0f, 1.0f) && ok;
+  ok = check3("hsv-roundtrip", eval_named(&ctx, "rgb"), 0.2f, 0.4f, 0.8f) &&
+       nearf_eps(eval_named(&ctx, "rotate").v[0], 0.0f) &&
+       nearf_eps(eval_named(&ctx, "rotate").v[1], 1.0f) && ok;
+  ok = check3("ramp4", eval_named(&ctx, "quad"), 0.375f, 0.25f, 0.75f) &&
+       check3("switch-connected", eval_named(&ctx, "pick"), 0.375f, 0.25f,
+              0.75f) && ok;
+  ok = nearf_eps(eval_named(&ctx, "distance").v[0], 5.0f) &&
+       check3("reflect", eval_named(&ctx, "reflect"), 1.0f, 1.0f, 0.0f) &&
+       check3("unpremult", eval_named(&ctx, "unpremult"), 0.8f, 0.4f, 0.2f) &&
+       nearf_eps(eval_named(&ctx, "mincomp").v[0], 0.2f) &&
+       nearf_eps(eval_named(&ctx, "xor").v[0], 1.0f) &&
+       check3("inside", eval_named(&ctx, "inside"), 0.05f, 0.1f, 0.2f) && ok;
   /* mtlx_eval_node_test must clear memoization between shade points. */
   ctx.uv[0] = 0.8f;
   ctx.uv[1] = 0.9f;

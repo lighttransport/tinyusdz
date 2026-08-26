@@ -2328,6 +2328,14 @@ if(TINYUSDZ_BUILD_TESTS)
               ${CMAKE_BINARY_DIR}/tools/tusdrender
     )
 
+    add_test(
+      NAME tool-tusdrender-materialx-cpu-graph
+      COMMAND ${TUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_materialx_cpu_graph.py
+              "$<TARGET_FILE:tusdrender>" ${PROJECT_SOURCE_DIR})
+    set_tests_properties(tool-tusdrender-materialx-cpu-graph PROPERTIES
+                         TIMEOUT 45 LABELS "tusdrender;cpu;materialx;graph")
+
     # The legacy (eager tydra) path handles every .usda/.usdz; it used to drop
     # every UsdUVTexture and render a flat constant base color.
     add_test(

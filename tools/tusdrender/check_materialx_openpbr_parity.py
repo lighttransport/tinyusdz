@@ -328,7 +328,7 @@ def Xform "World" {
       token outputs:surface
     }
     def NodeGraph "NG" {
-      color3f outputs:base.connect = </World/M/NG/Saturate.outputs:out>
+      color3f outputs:base.connect = </World/M/NG/Pick.outputs:out>
       def Shader "Screen" {
         uniform token info:id = "ND_screen_color3"
         color3f inputs:fg = (0.2,0.4,0.8)
@@ -364,6 +364,37 @@ def Xform "World" {
         float inputs:amount = 0.35
         color3f outputs:out
       }
+      def Shader "ToHSV" {
+        uniform token info:id = "ND_rgbtohsv_color3"
+        color3f inputs:in.connect = </World/M/NG/Saturate.outputs:out>
+        color3f outputs:out
+      }
+      def Shader "ToRGB" {
+        uniform token info:id = "ND_hsvtorgb_color3"
+        color3f inputs:in.connect = </World/M/NG/ToHSV.outputs:out>
+        color3f outputs:out
+      }
+      def Shader "Other" {
+        uniform token info:id = "ND_constant_color3"
+        color3f inputs:value = (0.9,0.02,0.02)
+        color3f outputs:out
+      }
+      def Shader "Choose" {
+        uniform token info:id = "ND_ifgreater_float"
+        float inputs:value1 = 2
+        float inputs:value2 = 1
+        float inputs:in1 = 1
+        float inputs:in2 = 0
+        float outputs:out
+      }
+      def Shader "Pick" {
+        uniform token info:id = "ND_switch_color3"
+        int inputs:which.connect = </World/M/NG/Choose.outputs:out>
+        color3f inputs:in1.connect = </World/M/NG/Other.outputs:out>
+        color3f inputs:in2.connect = </World/M/NG/ToRGB.outputs:out>
+        color3f inputs:in3 = (0.02,0.02,0.9)
+        color3f outputs:out
+      }
     }
   }
   def DistantLight "Key" { float inputs:intensity = 0.5 }
@@ -393,17 +424,18 @@ def Xform "World" {
       token outputs:surface
     }
     def NodeGraph "NG" {
-      color3f outputs:base.connect = </World/M/NG/TB.outputs:out>
-      def Shader "LR" {
-        uniform token info:id = "ND_ramplr_color3"
-        color3f inputs:valuel = (0.9,0.02,0.02)
-        color3f inputs:valuer = (0.02,0.02,0.9)
-        color3f outputs:out
+      color3f outputs:base.connect = </World/M/NG/Ramp.outputs:out>
+      def Shader "ST" {
+        uniform token info:id = "ND_texcoord_vector2"
+        float2 outputs:out
       }
-      def Shader "TB" {
-        uniform token info:id = "ND_ramptb_color3"
-        color3f inputs:valuet.connect = </World/M/NG/LR.outputs:out>
-        color3f inputs:valueb = (0.02,0.9,0.02)
+      def Shader "Ramp" {
+        uniform token info:id = "ND_ramp4_color3"
+        color3f inputs:valuetl = (0.9,0.02,0.02)
+        color3f inputs:valuetr = (0.02,0.02,0.9)
+        color3f inputs:valuebl = (0.02,0.9,0.02)
+        color3f inputs:valuebr = (0.02,0.9,0.02)
+        float2 inputs:texcoord.connect = </World/M/NG/ST.outputs:out>
         color3f outputs:out
       }
     }
@@ -617,9 +649,9 @@ def main() -> int:
             require_topology(log, backend)
             mean = center_mean(output, read_image)
             if not (mean[2] > mean[1] > mean[0] and mean[2] - mean[0] > 8.0):
-                fail(f"{backend} did not execute blend/atan/saturate chain: mean={mean}",
+                fail(f"{backend} did not execute extended color/conditional chain: mean={mean}",
                      log)
-            print(f"  {backend}: screen/overlay/atan/burn/dodge/saturate mean=" +
+            print(f"  {backend}: blend/saturate/HSV/conditional mean=" +
                   "%.1f,%.1f,%.1f" % mean)
 
         print("=== tusdrender spatial MaterialX ramps ===")

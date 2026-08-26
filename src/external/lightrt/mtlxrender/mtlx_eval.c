@@ -167,7 +167,8 @@ typedef enum {
     OP_ADD, OP_SUBTRACT, OP_MULTIPLY, OP_DIVIDE, OP_MODULO, OP_POWER,
     OP_MIN, OP_MAX, OP_ATAN2,
     OP_SIN, OP_COS, OP_TAN, OP_ASIN, OP_ACOS, OP_ATAN, OP_SQRT, OP_LN, OP_EXP,
-    OP_ABS, OP_FLOOR, OP_CEIL, OP_ROUND, OP_SIGN, OP_INVERT, OP_NORMALIZE,
+    OP_ABS, OP_FLOOR, OP_CEIL, OP_FRACT, OP_STEP, OP_ROUND, OP_SIGN,
+    OP_INVERT, OP_NORMALIZE,
     OP_MAGNITUDE, OP_DOTPRODUCT, OP_CROSSPRODUCT,
     OP_MIX, OP_SCREEN, OP_OVERLAY, OP_BURN, OP_DODGE,
     OP_CLAMP, OP_SMOOTHSTEP, OP_REMAP, OP_LUMINANCE, OP_RGBTOHSV,
@@ -176,7 +177,9 @@ typedef enum {
     OP_SWIZZLE, OP_NOISE3D, OP_FRACTAL3D, OP_CELLNOISE3D,
     OP_RAMPLR, OP_RAMPTB, OP_SPLITLR, OP_SPLITTB,
     OP_IFGREATER, OP_IFGREATEREQ, OP_IFEQUAL, OP_SWITCH, OP_DOT, OP_RAMP4,
-    OP_ROTATE2D, OP_ONEMINUS
+    OP_ROTATE2D, OP_ONEMINUS, OP_DISTANCE, OP_REFLECT, OP_REFRACT,
+    OP_PREMULT, OP_UNPREMULT, OP_MINCOMPONENT, OP_MAXCOMPONENT,
+    OP_AND, OP_OR, OP_XOR, OP_NOT, OP_INSIDE, OP_OUTSIDE
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -184,9 +187,11 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "hextiledimage")) return OP_HEXTILEDIMAGE;
     if (!strcmp(c, "image") || !strcmp(c, "tiledimage") ||
         !strcmp(c, "gltf_image") || !strcmp(c, "gltf_colorimage")) return OP_IMAGE;
-    if (!strcmp(c, "normalmap") || !strcmp(c, "gltf_normalmap")) return OP_NORMALMAP;
+    if (!strcmp(c, "normalmap") || !strcmp(c, "gltf_normalmap") ||
+        !strcmp(c, "hextilednormalmap")) return OP_NORMALMAP;
     /* geometric */
-    if (!strcmp(c, "texcoord")) return OP_TEXCOORD;
+    if (!strcmp(c, "texcoord") || !strcmp(c, "texcoord0") ||
+        !strcmp(c, "texcoord1")) return OP_TEXCOORD;
     if (!strcmp(c, "position")) return OP_POSITION;
     if (!strcmp(c, "normal")) return OP_NORMAL;
     if (!strcmp(c, "tangent")) return OP_TANGENT;
@@ -195,15 +200,15 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "place2d")) return OP_PLACE2D;
     if (!strcmp(c, "constant")) return OP_CONSTANT;
     /* math binary */
-    if (!strcmp(c, "add")) return OP_ADD;
-    if (!strcmp(c, "subtract")) return OP_SUBTRACT;
+    if (!strcmp(c, "add") || !strcmp(c, "plus")) return OP_ADD;
+    if (!strcmp(c, "subtract") || !strcmp(c, "minus")) return OP_SUBTRACT;
     if (!strcmp(c, "multiply")) return OP_MULTIPLY;
     if (!strcmp(c, "divide")) return OP_DIVIDE;
     if (!strcmp(c, "modulo")) return OP_MODULO;
-    if (!strcmp(c, "power")) return OP_POWER;
-    if (!strcmp(c, "min")) return OP_MIN;
-    if (!strcmp(c, "max")) return OP_MAX;
-    if (!strcmp(c, "atan2")) return OP_ATAN2;
+    if (!strcmp(c, "power") || !strcmp(c, "safepower")) return OP_POWER;
+    if (!strcmp(c, "min") || !strcmp(c, "minimum")) return OP_MIN;
+    if (!strcmp(c, "max") || !strcmp(c, "maximum")) return OP_MAX;
+    if (!strcmp(c, "atan2") || !strcmp(c, "arctan2")) return OP_ATAN2;
     /* math unary */
     if (!strcmp(c, "sin")) return OP_SIN;
     if (!strcmp(c, "cos")) return OP_COS;
@@ -212,18 +217,20 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "acos")) return OP_ACOS;
     if (!strcmp(c, "atan")) return OP_ATAN;
     if (!strcmp(c, "sqrt")) return OP_SQRT;
-    if (!strcmp(c, "ln")) return OP_LN;
+    if (!strcmp(c, "ln") || !strcmp(c, "log") || !strcmp(c, "logarithm")) return OP_LN;
     if (!strcmp(c, "exp")) return OP_EXP;
     if (!strcmp(c, "absval") || !strcmp(c, "abs")) return OP_ABS;
     if (!strcmp(c, "floor")) return OP_FLOOR;
-    if (!strcmp(c, "ceil")) return OP_CEIL;
+    if (!strcmp(c, "ceil") || !strcmp(c, "ceiling")) return OP_CEIL;
+    if (!strcmp(c, "fract") || !strcmp(c, "fraction")) return OP_FRACT;
+    if (!strcmp(c, "step")) return OP_STEP;
     if (!strcmp(c, "round")) return OP_ROUND;
     if (!strcmp(c, "sign")) return OP_SIGN;
     if (!strcmp(c, "invert")) return OP_INVERT;
     if (!strcmp(c, "normalize")) return OP_NORMALIZE;
-    if (!strcmp(c, "magnitude")) return OP_MAGNITUDE;
-    if (!strcmp(c, "dotproduct")) return OP_DOTPRODUCT;
-    if (!strcmp(c, "crossproduct")) return OP_CROSSPRODUCT;
+    if (!strcmp(c, "magnitude") || !strcmp(c, "length")) return OP_MAGNITUDE;
+    if (!strcmp(c, "dotproduct") || !strcmp(c, "dot")) return OP_DOTPRODUCT;
+    if (!strcmp(c, "crossproduct") || !strcmp(c, "cross")) return OP_CROSSPRODUCT;
     /* compositing / adjust */
     if (!strcmp(c, "mix")) return OP_MIX;
     if (!strcmp(c, "screen")) return OP_SCREEN;
@@ -245,7 +252,7 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "combine3")) return OP_COMBINE3;
     if (!strcmp(c, "combine4")) return OP_COMBINE4;
     if (!strcmp(c, "extract")) return OP_EXTRACT;
-    if (!strcmp(c, "convert")) return OP_CONVERT;
+    if (!strcmp(c, "convert") || !strncmp(c, "convert_", 8)) return OP_CONVERT;
     if (!strcmp(c, "swizzle")) return OP_SWIZZLE;
     /* procedural */
     if (!strcmp(c, "noise3d")) return OP_NOISE3D;
@@ -264,6 +271,19 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "dot")) return OP_DOT;
     if (!strcmp(c, "rotate2d")) return OP_ROTATE2D;
     if (!strcmp(c, "oneminus")) return OP_ONEMINUS;
+    if (!strcmp(c, "distance")) return OP_DISTANCE;
+    if (!strcmp(c, "reflect")) return OP_REFLECT;
+    if (!strcmp(c, "refract")) return OP_REFRACT;
+    if (!strcmp(c, "premult")) return OP_PREMULT;
+    if (!strcmp(c, "unpremult")) return OP_UNPREMULT;
+    if (!strcmp(c, "mincomponent")) return OP_MINCOMPONENT;
+    if (!strcmp(c, "maxcomponent")) return OP_MAXCOMPONENT;
+    if (!strcmp(c, "and")) return OP_AND;
+    if (!strcmp(c, "or")) return OP_OR;
+    if (!strcmp(c, "xor")) return OP_XOR;
+    if (!strcmp(c, "not")) return OP_NOT;
+    if (!strcmp(c, "inside")) return OP_INSIDE;
+    if (!strcmp(c, "outside")) return OP_OUTSIDE;
     return OP_UNKNOWN;
 }
 
@@ -534,6 +554,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_ABS: r = unop(in_or(ctx,n,"in",mv_float(0)), u_abs); break;
         case OP_FLOOR: r = unop(in_or(ctx,n,"in",mv_float(0)), u_floor); break;
         case OP_CEIL: r = unop(in_or(ctx,n,"in",mv_float(0)), u_ceil); break;
+        case OP_FRACT: { a=in_or(ctx,n,"in",mv_float(0)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++) r.v[i]=a.v[i]-floorf(a.v[i]); break; }
+        case OP_STEP: { a=in_or(ctx,n,"in",mv_float(0)); b=in_or(ctx,n,"edge",mv_float(0)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){float edge=ncomp_of(&b)==1?b.v[0]:b.v[i];r.v[i]=a.v[i]<edge?0.0f:1.0f;} break; }
         case OP_ROUND: r = unop(in_or(ctx,n,"in",mv_float(0)), u_round); break;
         case OP_SIGN: r = unop(in_or(ctx,n,"in",mv_float(0)), u_sign); break;
         case OP_INVERT: { a = in_or(ctx,n,"in",mv_float(0)); MtlxValue amt = in_or(ctx,n,"amount",mv_float(1)); int nc=ncomp_of(&a); for(int i=0;i<nc;i++) a.v[i]=(nc==ncomp_of(&amt)?amt.v[i]:amt.v[0])-a.v[i]; r=a; break; }
@@ -577,6 +599,15 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_DOT: r=in_or(ctx,n,"in",mv_zero(n->type)); break;
         case OP_ONEMINUS: { a=in_or(ctx,n,"in",mv_zero(n->type)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++) r.v[i]=1.0f-a.v[i]; break; }
         case OP_ROTATE2D: { a=in_or(ctx,n,"in",mv_vec2(0,0)); MtlxValue am=in_or(ctx,n,"amount",mv_float(0)); float ang=am.v[0]*(MTLX_PI/180.0f),cs=cosf(ang),sn=sinf(ang); r=mv_vec2(a.v[0]*cs-a.v[1]*sn, a.v[0]*sn+a.v[1]*cs); break; }
+        case OP_DISTANCE: { a=in_or(ctx,n,"in1",mv_zero(MV_VEC3));b=in_or(ctx,n,"in2",mv_zero(MV_VEC3));r=mv_float(v3_len(v3_sub(mv_as_v3(&a),mv_as_v3(&b))));break; }
+        case OP_REFLECT: { a=in_or(ctx,n,"in",mv_zero(MV_VEC3));b=in_or(ctx,n,"normal",mv_vec3(v3_make(0,0,1)));v3 av=mv_as_v3(&a),bv=mv_as_v3(&b);r=mv_vec3(v3_sub(av,v3_scale(bv,2*v3_dot(av,bv))));break; }
+        case OP_REFRACT: { a=in_or(ctx,n,"in",mv_zero(MV_VEC3));b=in_or(ctx,n,"normal",mv_vec3(v3_make(0,0,1)));MtlxValue et=in_or(ctx,n,"ior",mv_float(1));v3 av=mv_as_v3(&a),bv=mv_as_v3(&b);float d=v3_dot(av,bv),e=et.v[0],k=1-e*e*(1-d*d);r=mv_vec3(k<0?v3_make(0,0,0):v3_sub(v3_scale(av,e),v3_scale(bv,e*d+sqrtf(k))));break; }
+        case OP_PREMULT: { a=in_or(ctx,n,"in",mv_zero(MV_COLOR4));r=a;r.v[0]*=r.v[3];r.v[1]*=r.v[3];r.v[2]*=r.v[3];break; }
+        case OP_UNPREMULT: { a=in_or(ctx,n,"in",mv_zero(MV_COLOR4));r=a;float q=fabsf(r.v[3])>1e-6f?1/r.v[3]:0;r.v[0]*=q;r.v[1]*=q;r.v[2]*=q;break; }
+        case OP_MINCOMPONENT: case OP_MAXCOMPONENT: { a=in_or(ctx,n,"in",mv_zero(MV_COLOR3));int nc=ncomp_of(&a);float q=a.v[0];NodeOp op=classify(n->category);for(int i=1;i<nc;i++)q=op==OP_MINCOMPONENT?fminf(q,a.v[i]):fmaxf(q,a.v[i]);r=mv_float(q);break; }
+        case OP_AND: case OP_OR: case OP_XOR: { a=in_or(ctx,n,"in1",mv_float(0));b=in_or(ctx,n,"in2",mv_float(0));int av=mv_as_float(&a)!=0,bv=mv_as_float(&b)!=0;NodeOp op=classify(n->category);int q=op==OP_AND?(av&&bv):(op==OP_OR?(av||bv):(av!=bv));r=mv_float((float)q);break; }
+        case OP_NOT: { a=in_or(ctx,n,"in",mv_float(0));r=mv_float(mv_as_float(&a)==0?1:0);break; }
+        case OP_INSIDE: case OP_OUTSIDE: { a=in_or(ctx,n,"in",mv_zero(n->type));b=in_or(ctx,n,"mask",mv_float(0));float q=classify(n->category)==OP_INSIDE?b.v[0]:1-b.v[0];r=a;for(int i=0;i<ncomp_of(&r);i++)r.v[i]*=q;break; }
         case OP_UNKNOWN:
         default:
             if (n->ninput > 0) r = eval_input(ctx, &n->inputs[0]);

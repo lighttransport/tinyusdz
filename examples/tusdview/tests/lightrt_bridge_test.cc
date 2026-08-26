@@ -965,6 +965,85 @@ int main() {
                  scalarError.c_str());
     return 1;
   }
+  tusdview::DrawMaterialCPU colorUtilityMat;
+  colorUtilityMat.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"to_hsv","category":"rgbtohsv","inputs":[{"name":"in","value":[1,0,0]}]},
+      {"name":"to_rgb","category":"hsvtorgb","inputs":[{"name":"in","nodename":"to_hsv"}]},
+      {"name":"rot","category":"rotate2d","inputs":[{"name":"in","value":[1,0]},{"name":"amount","value":90}]},
+      {"name":"one_minus","category":"oneminus","inputs":[{"name":"in","value":0.25}]}
+    ],"outputs":[]},"connections":[]})json";
+  std::string colorUtilityError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&colorUtilityMat,
+                                               &colorUtilityError) ||
+      colorUtilityMat.materialXGraph.nodes.size() != 4 ||
+      colorUtilityMat.materialXGraph.nodes[0].op !=
+          tusdview::MaterialXGraphOpCPU::RgbToHsv ||
+      colorUtilityMat.materialXGraph.nodes[1].op !=
+          tusdview::MaterialXGraphOpCPU::HsvToRgb ||
+      colorUtilityMat.materialXGraph.nodes[2].op !=
+          tusdview::MaterialXGraphOpCPU::Rotate2D ||
+      colorUtilityMat.materialXGraph.nodes[3].op !=
+          tusdview::MaterialXGraphOpCPU::Invert) {
+    std::fprintf(stderr, "MaterialX color/rotation utilities failed: %s\n",
+                 colorUtilityError.c_str());
+    return 1;
+  }
+  tusdview::DrawMaterialCPU loweredMat;
+  loweredMat.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"quad","category":"ramp4","type":"color3","inputs":[
+        {"name":"valuetl","value":[1,0,0]},{"name":"valuetr","value":[0,1,0]},
+        {"name":"valuebl","value":[0,0,1]},{"name":"valuebr","value":[1,1,1]},
+        {"name":"texcoord","value":[0.25,0.75]}]},
+      {"name":"pick","category":"switch","type":"color3","inputs":[
+        {"name":"which","value":1},{"name":"in1","value":[1,0,0]},
+        {"name":"in2","nodename":"quad"},{"name":"in3","value":[0,0,1]}]}
+    ],"outputs":[{"name":"base","nodename":"pick"}]},
+    "connections":[{"input":"base_color","output":"base"}]})json";
+  std::string loweredError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&loweredMat, &loweredError) ||
+      loweredMat.materialXGraph.nodes.size() != 14 ||
+      loweredMat.materialXGraph.output[0] < 0) {
+    std::fprintf(stderr, "MaterialX high-arity lowering failed: %s (nodes=%zu output=%d)\n",
+                 loweredError.c_str(), loweredMat.materialXGraph.nodes.size(),
+                 loweredMat.materialXGraph.output[0]);
+    return 1;
+  }
+  int rampFinal = -1, switchFinal = -1;
+  for (size_t i = 0; i < loweredMat.materialXGraph.nodes.size(); ++i) {
+    const auto& lowered = loweredMat.materialXGraph.nodes[i];
+    if (lowered.name == "quad") rampFinal = static_cast<int>(i);
+    if (lowered.name == "pick") switchFinal = static_cast<int>(i);
+  }
+  if (rampFinal < 0 || switchFinal < 0 ||
+      loweredMat.materialXGraph.nodes[rampFinal].op !=
+          tusdview::MaterialXGraphOpCPU::Mix ||
+      loweredMat.materialXGraph.nodes[switchFinal].op !=
+          tusdview::MaterialXGraphOpCPU::IfEqual ||
+      loweredMat.materialXGraph.output[0] != switchFinal) {
+    std::fprintf(stderr, "MaterialX lowered graph routes are incorrect\n");
+    return 1;
+  }
+  tusdview::DrawMaterialCPU aliasesMat;
+  aliasesMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"plus","category":"plus","inputs":[{"value":1},{"value":2}]},
+    {"name":"minus","category":"minus","inputs":[{"value":3},{"value":1}]},
+    {"name":"safe","category":"safepower","inputs":[{"value":2},{"value":3}]},
+    {"name":"absolute","category":"absval","inputs":[{"value":-1}]},
+    {"name":"cross","category":"crossproduct","inputs":[{"value":[1,0,0]},{"value":[0,1,0]}]},
+    {"name":"length","category":"magnitude","inputs":[{"value":[3,4,0]}]},
+    {"name":"log","category":"ln","inputs":[{"value":2.7182818}]},
+    {"name":"sep","category":"separate3","inputs":[{"value":[1,2,3]}]},
+    {"name":"hexn","category":"hextilednormalmap","inputs":[{"name":"in","value":[0.5,0.5,1]}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string aliasesError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&aliasesMat, &aliasesError) ||
+      aliasesMat.materialXGraph.nodes.size() != 9) {
+    std::fprintf(stderr, "MaterialX standard aliases failed: %s\n",
+                 aliasesError.c_str());
+    return 1;
+  }
 
   // MaterialX connections may reference a node authored later. GPU graph
   // evaluators are single-pass, so compilation must pack dependencies first.
@@ -987,6 +1066,80 @@ int main() {
       forwardGraphMat.materialXGraph.output[0] != 1) {
     std::fprintf(stderr, "MaterialX dependency ordering failed: %s\n",
                  forwardError.c_str());
+    return 1;
+  }
+
+  // Four-input MaterialX conditionals use the auxiliary graph lane for in2.
+  // Keep both a forward-connected branch and a literal fallback covered.
+  tusdview::DrawMaterialCPU conditionalMat;
+  conditionalMat.materialXNodeGraphJson = R"json({
+    "nodegraph": {"nodes": [
+      {"name":"greater", "category":"ifgreater", "type":"color3",
+       "inputs":[{"name":"value1","value":2.0},{"name":"value2","value":1.0},
+                 {"name":"in1","value":[1.0,0.0,0.0]},
+                 {"name":"in2","nodename":"other"}]},
+      {"name":"other", "category":"constant", "type":"color3",
+       "inputs":[{"name":"value","value":[0.0,0.0,1.0]}]},
+      {"name":"equal", "category":"ifequal", "type":"color3",
+       "inputs":[{"name":"value1","value":0.0},{"name":"value2","value":1.0},
+                 {"name":"in1","value":[0.0,1.0,0.0]},
+                 {"name":"in2","value":[0.2,0.4,0.8]}]}
+    ], "outputs": []}, "connections": []
+  })json";
+  std::string conditionalError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&conditionalMat,
+                                               &conditionalError) ||
+      conditionalMat.materialXGraph.nodes.size() != 3 ||
+      conditionalMat.materialXGraph.nodes[1].op !=
+          tusdview::MaterialXGraphOpCPU::IfGreater ||
+      conditionalMat.materialXGraph.nodes[1].auxInput != 0 ||
+      conditionalMat.materialXGraph.nodes[2].op !=
+          tusdview::MaterialXGraphOpCPU::IfEqual ||
+      conditionalMat.materialXGraph.nodes[2].auxInput != -1 ||
+      !Near(conditionalMat.materialXGraph.nodes[2].auxValue[2], 0.8f)) {
+    std::fprintf(stderr, "MaterialX four-input conditionals failed: %s\n",
+                 conditionalError.c_str());
+    return 1;
+  }
+  std::vector<float> conditionalPack(tusdview::kRtMaterialGraphFloats, 0.0f);
+  tusdview::PackMaterialXGraphRuntime(conditionalMat, conditionalPack.data());
+  const size_t greaterPack = tusdview::kRtMaterialGraphHeaderFloats +
+      tusdview::kRtMaterialGraphNodeFloats;
+  const size_t equalPack = greaterPack + tusdview::kRtMaterialGraphNodeFloats;
+  if (!Near(conditionalPack[greaterPack + 16], 0.0f) ||
+      !Near(conditionalPack[equalPack + 16], -1.0f) ||
+      !Near(conditionalPack[equalPack + 19], 0.8f)) {
+    std::fprintf(stderr, "MaterialX conditional auxiliary packing failed\n");
+    return 1;
+  }
+
+  tusdview::DrawMaterialCPU cyclicMat;
+  cyclicMat.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"a","category":"add","inputs":[{"nodename":"b"},{"value":1}]},
+      {"name":"b","category":"multiply","inputs":[{"nodename":"a"},{"value":2}]}
+    ],"outputs":[]},"connections":[]})json";
+  std::string malformedError;
+  if (tusdview::CompileMaterialXGraphRuntime(&cyclicMat, &malformedError) ||
+      malformedError.find("cycle") == std::string::npos) {
+    std::fprintf(stderr, "cyclic MaterialX graph was not rejected: %s\n",
+                 malformedError.c_str());
+    return 1;
+  }
+  tusdview::DrawMaterialCPU oversizedMat;
+  oversizedMat.materialXNodeGraphJson = "{\"nodegraph\":{\"nodes\":[";
+  for (int i = 0; i <= tusdview::kRtMaterialGraphMaxNodes; ++i) {
+    if (i) oversizedMat.materialXNodeGraphJson += ',';
+    oversizedMat.materialXNodeGraphJson +=
+        "{\"name\":\"n" + std::to_string(i) +
+        "\",\"category\":\"constant\",\"inputs\":[{\"value\":1}]}";
+  }
+  oversizedMat.materialXNodeGraphJson += "],\"outputs\":[]},\"connections\":[]}";
+  malformedError.clear();
+  if (tusdview::CompileMaterialXGraphRuntime(&oversizedMat, &malformedError) ||
+      malformedError.find("64-node") == std::string::npos) {
+    std::fprintf(stderr, "oversized MaterialX graph was not rejected: %s\n",
+                 malformedError.c_str());
     return 1;
   }
 

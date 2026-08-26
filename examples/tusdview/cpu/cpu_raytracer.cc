@@ -626,6 +626,85 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         for (int cidx = 0; cidx < 3; ++cidx)
           dst[cidx] = luminance + b[cidx] * (a[cidx] - luminance);
         dst[3] = a[3];
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::IfGreater) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::IfGreaterEqual) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::IfEqual)) {
+        const auto other = textureId >= 0 && textureId < count
+                               ? values[textureId]
+                               : std::array<float, 4>{scene.matGraph[p + 17],
+                                      scene.matGraph[p + 18], scene.matGraph[p + 19],
+                                      scene.matGraph[p + 20]};
+        const bool chooseFirst =
+            op == static_cast<int>(MaterialXGraphOpCPU::IfGreater)
+                ? a[0] > b[0]
+                : (op == static_cast<int>(MaterialXGraphOpCPU::IfGreaterEqual)
+                       ? a[0] >= b[0] : a[0] == b[0]);
+        dst = chooseFirst ? c : other;
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::RgbToHsv)) {
+        const float mx = std::max(a[0], std::max(a[1], a[2]));
+        const float mn = std::min(a[0], std::min(a[1], a[2]));
+        const float chroma = mx - mn;
+        float hue = 0.0f;
+        if (chroma > 1.0e-6f) {
+          if (mx == a[0]) hue = std::fmod((a[1] - a[2]) / chroma, 6.0f);
+          else if (mx == a[1]) hue = (a[2] - a[0]) / chroma + 2.0f;
+          else hue = (a[0] - a[1]) / chroma + 4.0f;
+          hue = hue / 6.0f;
+          if (hue < 0.0f) hue += 1.0f;
+        }
+        dst = {hue, mx > 1.0e-6f ? chroma / mx : 0.0f, mx, a[3]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::HsvToRgb)) {
+        const float h = (a[0] - std::floor(a[0])) * 6.0f;
+        const float chroma = a[2] * a[1];
+        const float x = chroma * (1.0f - std::fabs(std::fmod(h, 2.0f) - 1.0f));
+        const int sector = static_cast<int>(std::floor(h)) % 6;
+        const float rgb[6][3] = {{chroma,x,0},{x,chroma,0},{0,chroma,x},
+                                 {0,x,chroma},{x,0,chroma},{chroma,0,x}};
+        const float m = a[2] - chroma;
+        dst = {rgb[sector][0] + m, rgb[sector][1] + m,
+               rgb[sector][2] + m, a[3]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Rotate2D)) {
+        const float angle = b[0] * 0.0174532925199433f;
+        const float cs = std::cos(angle), sn = std::sin(angle);
+        dst = {a[0] * cs - a[1] * sn, a[0] * sn + a[1] * cs, a[2], a[3]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Distance)) {
+        const float x=a[0]-b[0], y=a[1]-b[1], z=a[2]-b[2];
+        const float d=std::sqrt(x*x+y*y+z*z); dst={d,d,d,d};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Reflect)) {
+        const float d=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+        dst={a[0]-2*d*b[0],a[1]-2*d*b[1],a[2]-2*d*b[2],a[3]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Refract)) {
+        const float d=a[0]*b[0]+a[1]*b[1]+a[2]*b[2], eta=c[0];
+        const float k=1-eta*eta*(1-d*d);
+        dst=k<0?std::array<float,4>{0,0,0,a[3]}:
+            std::array<float,4>{eta*a[0]-(eta*d+std::sqrt(k))*b[0],eta*a[1]-(eta*d+std::sqrt(k))*b[1],eta*a[2]-(eta*d+std::sqrt(k))*b[2],a[3]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Premult)) {
+        dst={a[0]*a[3],a[1]*a[3],a[2]*a[3],a[3]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Unpremult)) {
+        const float q=std::fabs(a[3])>1e-6f?1.0f/a[3]:0.0f;
+        dst={a[0]*q,a[1]*q,a[2]*q,a[3]};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::MinComponent) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::MaxComponent)) {
+        const float q=op==static_cast<int>(MaterialXGraphOpCPU::MinComponent)?
+            std::min(a[0],std::min(a[1],a[2])):std::max(a[0],std::max(a[1],a[2]));
+        dst={q,q,q,q};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::LogicalAnd) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::LogicalOr) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::LogicalXor)) {
+        const bool av=a[0]!=0, bv=b[0]!=0;
+        const bool q=op==static_cast<int>(MaterialXGraphOpCPU::LogicalAnd)?av&&bv:
+            (op==static_cast<int>(MaterialXGraphOpCPU::LogicalOr)?av||bv:av!=bv);
+        dst={q?1.0f:0.0f,q?1.0f:0.0f,q?1.0f:0.0f,q?1.0f:0.0f};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::LogicalNot)) {
+        const float q=a[0]==0?1.0f:0.0f; dst={q,q,q,q};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Inside) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::Outside)) {
+        const float m=op==static_cast<int>(MaterialXGraphOpCPU::Inside)?b[0]:1-b[0];
+        for(int lane=0;lane<4;++lane) dst[lane]=a[lane]*m;
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::GeomColor)) {
+        dst={1,1,1,1};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Bitangent)) {
+        dst={0,1,0,1};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Swizzle)) {
         for (int cidx = 0; cidx < 4; ++cidx) {
           const int selector = std::clamp(
