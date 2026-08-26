@@ -99,6 +99,10 @@ int main(void) {
       " <unifiednoise2d name=\"unified_worley\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"jitter\" type=\"float\" value=\"0.8\"/><input name=\"type\" type=\"integer\" value=\"2\"/></unifiednoise2d>"
       " <unifiednoise2d name=\"unified_fractal\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.4\"/><input name=\"jitter\" type=\"float\" value=\"0.8\"/><input name=\"type\" type=\"integer\" value=\"3\"/></unifiednoise2d>"
       " <unifiednoise3d name=\"unified3_fractal\" type=\"float\"><input name=\"position\" type=\"vector3\" value=\"0.2,0.4,0.7\"/><input name=\"jitter\" type=\"float\" value=\"0.8\"/><input name=\"type\" type=\"integer\" value=\"3\"/></unifiednoise3d>"
+      " <cloverleaf name=\"clover_inside\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.65\"/><input name=\"center\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"radius\" type=\"float\" value=\"0.4\"/></cloverleaf>"
+      " <cloverleaf name=\"clover_outside\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.95,0.95\"/><input name=\"center\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"radius\" type=\"float\" value=\"0.4\"/></cloverleaf>"
+      " <hexagon name=\"hex_inside\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"center\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"radius\" type=\"float\" value=\"0.4\"/></hexagon>"
+      " <hexagon name=\"hex_outside\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.95,0.95\"/><input name=\"center\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"radius\" type=\"float\" value=\"0.4\"/></hexagon>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -200,6 +204,10 @@ int main(void) {
               0.475442290f) && ok;
   ok = check1("unified3-fractal", eval_named(&ctx, "unified3_fractal"),
               0.079035468f) && ok;
+  ok = check1("cloverleaf-inside", eval_named(&ctx, "clover_inside"), 1.0f) && ok;
+  ok = check1("cloverleaf-outside", eval_named(&ctx, "clover_outside"), 0.0f) && ok;
+  ok = check1("hexagon-inside", eval_named(&ctx, "hex_inside"), 1.0f) && ok;
+  ok = check1("hexagon-outside", eval_named(&ctx, "hex_outside"), 0.0f) && ok;
   /* mtlx_eval_node_test must clear memoization between shade points. */
   ctx.uv[0] = 0.8f;
   ctx.uv[1] = 0.9f;

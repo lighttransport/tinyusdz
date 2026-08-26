@@ -1323,6 +1323,12 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       runtimeNodes.push_back(std::move(lowered));
       continue;
     }
+    if ((cat == "cloverleaf" || cat == "hexagon") && !name.empty()) {
+      const std::string st=name+"__st";
+      nlohmann::json tc=inputNamed(node,"texcoord",{{"name","texcoord"},{"nodename",st}});
+      if(JsonString(tc,"nodename")==st)runtimeNodes.push_back({{"name",st},{"category","texcoord"},{"type","vector2"},{"inputs",nlohmann::json::array()}});
+      nlohmann::json lowered=node;lowered["inputs"]=nlohmann::json::array({renamedInput(tc,"texcoord"),renamedInput(inputNamed(node,"center",{{"value",nlohmann::json::array({0.5,0.5})}}),"center"),renamedInput(inputNamed(node,"radius",{{"value",0.5}}),"radius")});runtimeNodes.push_back(std::move(lowered));continue;
+    }
     if (cat == "randomfloat" && !name.empty()) {
       const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
       emitRandomFloat(name, input, inputNamed(node,"seed",{{"value",0}}),
@@ -1534,6 +1540,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "worleynoise2d") out.op = MaterialXGraphOpCPU::WorleyNoise2D;
     else if (cat == "worleynoise3d") out.op = MaterialXGraphOpCPU::WorleyNoise3D;
     else if (cat == "fractal3dcore") out.op = MaterialXGraphOpCPU::Fractal3D;
+    else if (cat == "cloverleaf") out.op = MaterialXGraphOpCPU::Cloverleaf;
+    else if (cat == "hexagon") out.op = MaterialXGraphOpCPU::Hexagon;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1705,6 +1713,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                  (inputName == "texcoord" || inputName == "position")) inputSlot = 0;
         else if ((cat == "noise2d" || cat == "noise3d") && inputName == "amplitude") inputSlot = 1;
         else if ((cat == "noise2d" || cat == "noise3d") && inputName == "pivot") inputSlot = 2;
+        else if ((cat == "cloverleaf" || cat == "hexagon") && inputName == "texcoord") inputSlot = 0;
+        else if ((cat == "cloverleaf" || cat == "hexagon") && inputName == "center") inputSlot = 1;
+        else if ((cat == "cloverleaf" || cat == "hexagon") && inputName == "radius") inputSlot = 2;
         else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
                  (inputName == "texcoord" || inputName == "position")) inputSlot = 0;
         else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&

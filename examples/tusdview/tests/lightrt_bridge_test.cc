@@ -1137,6 +1137,18 @@ int main() {
                  unifiedNoiseError.c_str());
     return 1;
   }
+  tusdview::DrawMaterialCPU shapeMat;
+  shapeMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"clover","category":"cloverleaf","type":"float","inputs":[{"name":"texcoord","value":[0.5,0.6]},{"name":"center","value":[0.5,0.5]},{"name":"radius","value":0.4}]},
+    {"name":"hex","category":"hexagon","type":"float","inputs":[{"name":"texcoord","value":[0.5,0.5]},{"name":"center","value":[0.5,0.5]},{"name":"radius","value":0.4}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string shapeError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&shapeMat,&shapeError) ||
+      shapeMat.materialXGraph.nodes.size()!=2 ||
+      shapeMat.materialXGraph.nodes[0].op!=tusdview::MaterialXGraphOpCPU::Cloverleaf ||
+      shapeMat.materialXGraph.nodes[1].op!=tusdview::MaterialXGraphOpCPU::Hexagon) {
+    std::fprintf(stderr,"MaterialX shape lowering failed: %s\n",shapeError.c_str());return 1;
+  }
   tusdview::DrawMaterialCPU compositeMat;
   compositeMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"difference","category":"difference","type":"color3","inputs":[{"name":"fg","value":[0.8,0.1,0.4]},{"name":"bg","value":[0.2,0.5,0.1]}]},
