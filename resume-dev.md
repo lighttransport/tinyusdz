@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `eaeafba1c` (`Use runtime view direction for latlong graphs`)
+- HEAD: `3228d85cd` (`Preserve generic geomprops in next scene meshes`)
 - Upstream: `origin/dev`
 - Worktree: clean tracked state, plus the two unrelated untracked paths above.
 - Recent completed commits:
@@ -29,6 +29,7 @@ not hand-edit generated headers.
   - `f74f31384` Fix scalar multiplication of closure graphs
   - `5c6d425f5` Resolve MaterialX wrapper nodegraph outputs
   - `eaeafba1c` Use runtime view direction for latlong graphs
+  - `3228d85cd` Preserve generic geomprops in next scene meshes
 
 ## Completed coverage
 
@@ -68,6 +69,10 @@ through `nodegraph` outputs, including graph-local surface shader nodes
 (`5c6d425f5`).
 Latlong image lowering now uses the runtime view direction when `viewdir` is
 omitted instead of baking a +Z direction (`eaeafba1c`).
+The next scene loader now preserves authored float/vector geomprops through
+interpolation/index expansion, corner welding, Ptex expansion, and material
+batching; validation and CPU resource accounting cover the new streams
+(`3228d85cd`). Backend shader lookup and typed GPU ABI consumption remain open.
 
 ## Current implementation status
 
@@ -78,8 +83,9 @@ ordinary bounded graph nodes and OpenPBR lanes. The remaining closure work is
 fidelity review for weighted composition and wrapper nesting; the direct
 closure slice is committed and validated.
 The next MaterialX converter resolves both direct surface bindings and
-nodegraph-backed `surfacematerial` outputs; arbitrary GPU geomprops remain an
-ABI-level gap.
+nodegraph-backed `surfacematerial` outputs. Host-side generic float/vector
+geomprops are now retained by the next scene loader, but arbitrary typed and
+GPU-consumed geomprops remain an ABI-level gap.
 
 ## Verified tests after HEAD
 
@@ -106,6 +112,8 @@ Passed:
   in an earlier unrelated `TestChunkedArrayShareCowBudgetFailure` test.
 - `tusdview_lightrt_bridge_test` after latlong default-view fix: passed
 - Stable `next` regression after wrapper changes: 40/40 passed
+- Viewer rebuild plus focused geomprop/bridge/ABI/nonmesh/safety checks: 6/6
+  passed after generic geomprop stream preservation (`3228d85cd`)
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
