@@ -403,6 +403,9 @@ size_t ProgressiveSceneStream::queuedBytes() const {
 static void ResolveNextSurfaceVolumeMaterial(const tnext::Stage& stage,
                                              const tnext::UsdPrim& material,
                                              DrawMaterialCPU* out);
+static void ResolveNextDisplacementMaterial(const tnext::Stage& stage,
+                                            const tnext::UsdPrim& material,
+                                            DrawMaterialCPU* out);
 
 namespace {
 
@@ -3493,6 +3496,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   dm.displacementShaderPath = rm.displacement_shader_path;
   dm.volumeShaderPath = rm.volume_shader_path;
   dm.volumeMaterialXNodeGraphJson = rm.volume_nodegraph_json;
+  ResolveNextDisplacementMaterial(stage, matPrim, &dm);
   if (rm.has_volume)
     ResolveNextSurfaceVolumeMaterial(stage, matPrim, &dm);
   bool reportedDegradedMaterial = false;
@@ -5372,6 +5376,38 @@ static void ResolveNextSurfaceVolumeMaterial(const tnext::Stage& stage,
   scalar("inputs:emissionIntensity", &out->volumeEmissionScale);
   out->volumeDensity = std::max(0.0f, out->volumeDensity);
   out->volumeEmissionScale = std::max(0.0f, out->volumeEmissionScale);
+}
+
+// MaterialX permits displacement to be authored as a separate material
+// terminal rather than as a surface input. Preserve its scalar fallback in
+// the same geometry lane used by PreviewSurface/OpenPBR displacement instead
+// of recording the terminal path and silently ignoring the value.
+static void ResolveNextDisplacementMaterial(const tnext::Stage& stage,
+                                            const tnext::UsdPrim& material,
+                                            DrawMaterialCPU* out) {
+  if (!out || !out->hasDisplacementOutput || out->hasDisplacement()) return;
+  const std::string shaderPath = tnext::GetDisplacementShader(stage, material);
+  if (shaderPath.empty()) return;
+  const tnext::UsdPrim shader = stage.GetPrimAtPath(shaderPath);
+  if (!shader) return;
+  static const char* kInputs[] = {"inputs:displacement", "inputs:height",
+                                  "inputs:dispScalar", "inputs:value"};
+  for (const char* input : kInputs) {
+    tnext::Value value;
+    if (!tnext::ResolveShaderPortValue(stage, shader, input, &value)) continue;
+    if (const float* f = value.as_float()) {
+      out->displacementConst = *f;
+      return;
+    }
+    if (const double* d = value.as_double()) {
+      out->displacementConst = static_cast<float>(*d);
+      return;
+    }
+    if (const int32_t* i = value.as_int()) {
+      out->displacementConst = static_cast<float>(*i);
+      return;
+    }
+  }
 }
 
 bool BuildNextVolumes(
