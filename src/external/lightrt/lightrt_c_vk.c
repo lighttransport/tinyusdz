@@ -3147,6 +3147,7 @@ int lrt_vk_rtx_scene_trace_wide(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
 
 typedef struct material_path_push {
     float inv_view_proj[16], camera[4], clear_color[4];
+    float context[4];
     uint32_t frame[4], path[4];
 } material_path_push;
 
@@ -3253,6 +3254,7 @@ int lrt_vk_rtx_scene_render_materialx_path(
     memset(&pc,0,sizeof(pc)); memcpy(pc.inv_view_proj,d->inv_view_proj,sizeof(pc.inv_view_proj));
     memcpy(pc.camera,d->camera,3u*sizeof(float)); memcpy(pc.clear_color,d->clear_color,3u*sizeof(float));
     pc.clear_color[3]=d->exposure; pc.frame[0]=d->width; pc.frame[1]=d->height;
+    pc.context[0]=d->scene_time; pc.context[1]=d->scene_frame;
     pc.frame[2]=d->samples?d->samples:1u; pc.frame[3]=d->max_depth?d->max_depth:1u;
     pc.path[0]=d->rr_depth; pc.path[1]=d->seed; pc.path[2]=d->nmaterials; pc.path[3]=d->nlights;
     stage = "dispatch";

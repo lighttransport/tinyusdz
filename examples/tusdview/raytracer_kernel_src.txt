@@ -8,7 +8,7 @@
 
 struct Node { float bmin[3]; float bmax[3]; int left; int right; int count; };
 struct PointBvhChunk { int first; int count; int orderFirst; int bvhFirst; int bvhCount; };
-struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; float sceneMin[4]; float sceneExtent[4]; float vp[16]; float lens[4]; float pathLimits[4]; };
+struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; float sceneMin[4]; float sceneExtent[4]; float vp[16]; float lens[4]; float pathLimits[4]; float context[4]; };
 // Per-instance placement for 2-level traversal. w2o transforms a world ray into
 // the prototype's object space (kept un-normalized so object t == world t). o2w
 // reconstructs world-space verts for area/normal AOVs. blasRoot = global node
@@ -963,9 +963,10 @@ __device__ PtMat ptResolveMaterial(
     int numMats,const int* matTex,const float* matTexParam,
     const unsigned char* texels,const TexDesc* textures,int numTextures,
     const float* uvs,const float* uvs1,const Inst* insts,
-    F3 graphNormal,F3 graphPosition,F3 graphViewDirection){
+    F3 graphNormal,F3 graphPosition,F3 graphViewDirection,
+    float graphSceneTime,float graphSceneFrame){
 #define evalMaterialXGraphUv(graph_,mid_,route_,u_,v_,u1_,v1_,face_,texels_,textures_,numTextures_) \
-  evalMaterialXGraphUv(graph_,mid_,route_,u_,v_,u1_,v1_,face_,texels_,textures_,numTextures_,graphNormal,graphPosition,graphViewDirection,0.f,0.f)
+  evalMaterialXGraphUv(graph_,mid_,route_,u_,v_,u1_,v1_,face_,texels_,textures_,numTextures_,graphNormal,graphPosition,graphViewDirection,graphSceneTime,graphSceneFrame)
   PtMat m; m.base=mk(.6f,.6f,.6f);m.emission=mk(0.f,0.f,0.f);
   m.transmissionColor=mk(1.f,1.f,1.f);m.subsurfaceColor=mk(.8f,.8f,.8f);
   m.specularColor=mk(1.f,1.f,1.f);m.coatColor=mk(1.f,1.f,1.f);
@@ -1084,7 +1085,8 @@ __device__ F3 productionPath(
     const int* matTex,const float* matTexParam,const unsigned char* texels,
     const TexDesc* textures,int numTextures,const float* uvs,const float* uvs1,
     const Node* blas,const Node* tlas,const Inst* insts,F3 ro,F3 rd,F3 clear,
-    unsigned seed,int maxDepth,int rrDepth,int maxSubsurfaceEvents){
+    unsigned seed,int maxDepth,int rrDepth,int maxSubsurfaceEvents,
+    float graphSceneTime,float graphSceneFrame){
   F3 L=mk(0.f,0.f,0.f),beta=mk(1.f,1.f,1.f);
   int subsurfaceEvents=0,transparentEvents=0;bool inSubsurface=false;
   float subsurfaceSigma=1.f;F3 subsurfaceAlbedo=mk(1.f,1.f,1.f);
@@ -1116,7 +1118,7 @@ __device__ F3 productionPath(
     F3 p0=xfPt(insts[ii].o2w,mk(tv[0],tv[1],tv[2]));F3 p1=xfPt(insts[ii].o2w,mk(tv[3],tv[4],tv[5]));F3 p2=xfPt(insts[ii].o2w,mk(tv[6],tv[7],tv[8]));
     F3 gn=norm3(cross3(sub(p1,p0),sub(p2,p0)));bool front=dot3(gn,rd)<0.f;
     F3 n=front?gn:scale(gn,-1.f);
-    PtMat m=ptResolveMaterial(tri,bu,bv,ii,front,cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,uvs,uvs1,insts,n,p,scale(rd,-1.f));
+    PtMat m=ptResolveMaterial(tri,bu,bv,ii,front,cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,uvs,uvs1,insts,n,p,scale(rd,-1.f),graphSceneTime,graphSceneFrame);
     if(m.alphaMode>1.5f&&m.opacity<1.f&&transparentEvents<16&&rndf(seed)>=m.opacity){
       ro=add(ro,scale(rd,t+1e-4f));++transparentEvents;--bounce;continue;
     }
@@ -1560,7 +1562,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
         matGraph,numMats,lightParams,numLights,matTex,matTexParam,texels,
         textures,numTextures,uvs,uvs1,blas,tlas,insts,o,d,
         mk(cam.clear[0],cam.clear[1],cam.clear[2]),pathSeed,
-        maxDepth>0?maxDepth:1,rrDepth,(int)fmaxf(cam.pathLimits[0],1.f));
+        maxDepth>0?maxDepth:1,rrDepth,(int)fmaxf(cam.pathLimits[0],1.f),
+        cam.context[0],cam.context[1]);
     for(int vi=0;vi<numVols;++vi)
       path=compositeVolume(volDens,&volParams[vi],o,d,path);
     int idx=(py*W+px)*4;
@@ -1966,36 +1969,36 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       const int gb=mid*TUSD_GPU_GRAPH_FLOATS;
       const F3 graphNormal=N,graphPosition=hit,graphView=scale(d,-1.f);
       if (matGraph[gb+1]>=0.f) {
-        F4 g=evalMaterialXGraphUv(matGraph,mid,0,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,N,hit,scale(d,-1.f),0.f,0.f);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,0,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,N,hit,scale(d,-1.f),cam.context[0],cam.context[1]);
         base=mk(g.x,g.y,g.z);
       }
       if (matGraph[gb+2]>=0.f)
-        metallic=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,muu,mvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f).x,0.f),1.f);
+        metallic=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,muu,mvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,cam.context[0],cam.context[1]).x,0.f),1.f);
       if (matGraph[gb+3]>=0.f)
-        roughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,ruu,rvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f).x,0.03f),1.f);
+        roughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,ruu,rvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,cam.context[0],cam.context[1]).x,0.03f),1.f);
       if (matGraph[gb+4]>=0.f) {
-        opacity=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,3,ouu,ovv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f).x,0.f),1.f);
+        opacity=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,3,ouu,ovv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,cam.context[0],cam.context[1]).x,0.f),1.f);
         materialOpacity=fminf(fmaxf(opacity*vertexOpacity*I->tint[3],0.f),1.f);
       }
       if (matGraph[gb+5]>=0.f) {
-        F4 g=evalMaterialXGraphUv(matGraph,mid,4,euu,evv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,4,euu,evv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,cam.context[0],cam.context[1]);
         emissionConst=mk(g.x,g.y,g.z);
       }
       if (matGraph[gb+7]>=0.f)
-        subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f).x,0.f),1.f);
+        subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,cam.context[0],cam.context[1]).x,0.f),1.f);
       if (matGraph[gb+8]>=0.f) {
-        F4 g=evalMaterialXGraphUv(matGraph,mid,7,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,7,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,cam.context[0],cam.context[1]);
         subsurfaceColor=mk(fmaxf(g.x,0.f),fmaxf(g.y,0.f),fmaxf(g.z,0.f));
       }
       if (matGraph[gb+9]>=0.f) {
-        F4 g=evalMaterialXGraphUv(matGraph,mid,8,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,8,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,cam.context[0],cam.context[1]);
         subsurfaceRadius=mk(fmaxf(g.x,0.f),fmaxf(g.y,0.f),fmaxf(g.z,0.f));
       }
       if (matGraph[gb+6]>=0.f) {
         // MaterialX normalmap output: decode the graph's tangent-space
         // [0,1] value and apply it in the same triangle tangent frame as the
         // semantic normal-texture path above.
-        F4 gn=evalMaterialXGraphUv(matGraph,mid,5,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f);
+        F4 gn=evalMaterialXGraphUv(matGraph,mid,5,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,cam.context[0],cam.context[1]);
         F3 ge1=sub(wp1,wp0), ge2=sub(wp2,wp0);
         F3 gN=norm3(cross3(ge1,ge2));
         float gd1u=uvh[2]-uvh[0], gd1v=uvh[3]-uvh[1];

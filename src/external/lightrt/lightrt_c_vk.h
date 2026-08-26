@@ -258,6 +258,8 @@ typedef struct lrt_vk_material_path_desc {
     float camera[3];
     float clear_color[3];
     float exposure;
+    float scene_time;
+    float scene_frame;
     uint32_t width, height;
     uint32_t samples, max_depth, rr_depth, seed;
 } lrt_vk_material_path_desc;

@@ -83,7 +83,8 @@ class CudaRayTracer {
              int spp = 1, const RtCameraLens* lens = nullptr,
              const PathTraceSettings* pathTrace = nullptr,
              std::vector<float>* linearRgba = nullptr,
-             uint32_t* renderedSamples = nullptr);
+             uint32_t* renderedSamples = nullptr,
+             float sceneTime = 0.0f, float sceneFrame = 0.0f);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 

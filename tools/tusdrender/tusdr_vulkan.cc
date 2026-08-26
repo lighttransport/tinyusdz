@@ -207,6 +207,9 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
   desc.camera[2] = camera.origin.z; desc.clear_color[0] = opt.bg.x;
   desc.clear_color[1] = opt.bg.y; desc.clear_color[2] = opt.bg.z;
   desc.exposure = 1.0f; desc.width = static_cast<uint32_t>(width);
+  desc.scene_frame = std::isfinite(opt.timecode)
+                         ? static_cast<float>(opt.timecode) : 0.0f;
+  desc.scene_time = desc.scene_frame / 24.0f;
   desc.height = static_cast<uint32_t>(h);
   desc.samples = opt.path_trace && opt.path_trace_samples > 0
                      ? opt.path_trace_samples : static_cast<uint32_t>(std::max(1, opt.samples));
