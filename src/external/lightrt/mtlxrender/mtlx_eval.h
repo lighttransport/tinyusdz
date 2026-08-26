@@ -72,6 +72,9 @@ typedef struct {
     float object_to_world[16], world_to_object[16];
     float world_to_view[16], view_to_world[16];
     int has_space_transforms;
+    /* Optional renderer callback for arbitrary geompropvalue primvars. */
+    int (*geomprop)(void *user,const char *name,MtlxType type,MtlxValue *out);
+    void *geomprop_user;
     /* per-shade-point memo (size doc->nnode) */
     MtlxValue *memo;
     char      *memo_done;

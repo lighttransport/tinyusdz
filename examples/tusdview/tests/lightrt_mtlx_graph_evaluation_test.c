@@ -9,6 +9,13 @@
 
 static int nearf_eps(float a, float b) { return fabsf(a - b) <= 1.0e-5f; }
 
+static int lookup_geomprop(void *user,const char *name,MtlxType type,
+                           MtlxValue *out){
+  (void)user;
+  if(strcmp(name,"temperature")||type!=MV_FLOAT)return 0;
+  memset(out,0,sizeof(*out));out->type=MV_FLOAT;out->v[0]=6500.0f;return 1;
+}
+
 static int check1(const char *name, MtlxValue value, float expected) {
   if (!nearf_eps(value.v[0], expected)) {
     fprintf(stderr, "%s: got %.9f, expected %.9f\n", name, value.v[0],
@@ -137,6 +144,8 @@ int main(void) {
       " <transformpoint name=\"object_point\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformpoint>"
       " <transformvector name=\"object_vector\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformvector>"
       " <transformnormal name=\"object_normal\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,1,1\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformnormal>"
+      " <geompropvalue name=\"temperature\" type=\"float\"><input name=\"geomprop\" type=\"string\" value=\"temperature\"/><input name=\"default\" type=\"float\" value=\"2700\"/></geompropvalue>"
+      " <geompropvalue name=\"missing_prop\" type=\"float\"><input name=\"geomprop\" type=\"string\" value=\"missing\"/><input name=\"default\" type=\"float\" value=\"12\"/></geompropvalue>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -156,6 +165,7 @@ int main(void) {
     memcpy(ctx.world_to_object,w2o,sizeof(w2o));
     ctx.has_space_transforms=1;
   }
+  ctx.geomprop=lookup_geomprop;
   ctx.memo = (MtlxValue *)calloc((size_t)doc->nnode, sizeof(MtlxValue));
   ctx.memo_done = (char *)calloc((size_t)doc->nnode, 1);
   if (!ctx.memo || !ctx.memo_done) {
@@ -234,7 +244,9 @@ int main(void) {
        check3("transform-point",eval_named(&ctx,"object_point"),7,12,19) &&
        check3("transform-vector",eval_named(&ctx,"object_vector"),2,6,12) &&
        check3("transform-normal",eval_named(&ctx,"object_normal"),
-              0.7682213f,0.5121475f,0.3841106f) && ok;
+              0.7682213f,0.5121475f,0.3841106f) &&
+       check1("geomprop-callback",eval_named(&ctx,"temperature"),6500.0f) &&
+       check1("geomprop-default",eval_named(&ctx,"missing_prop"),12.0f) && ok;
   ok = check3("difference", eval_named(&ctx, "difference"), 0.4f, 0.45f,
               0.2f) && ok;
   ok = check4("over", eval_named(&ctx, "over"), 0.5f, 0.3f, 0.5f,
