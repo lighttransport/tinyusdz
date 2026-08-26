@@ -21,6 +21,8 @@ struct FramePacket {
   float proj[16]{};
   float cameraPos[3]{0, 0, 0};
   float exposure{0.0f};
+  float materialXTime{0.0f};
+  float materialXFrame{0.0f};
   RtCameraLens cameraLens;
   PathTraceSettings pathTrace;
   RenderMode mode{RenderMode::Shaded};
@@ -60,6 +62,8 @@ struct FramePacket {
     p.cameraPos[1] = cameraPos[1];
     p.cameraPos[2] = cameraPos[2];
     p.exposure = exposure;
+    p.materialXTime = materialXTime;
+    p.materialXFrame = materialXFrame;
     p.cameraLens = cameraLens;
     p.pathTrace = pathTrace;
     p.mode = mode;

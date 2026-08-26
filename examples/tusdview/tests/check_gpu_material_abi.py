@@ -17,6 +17,7 @@ bridge = (root / "examples/tusdview/lightrt_mtlx_bridge.hh").read_text()
 kernel = (root / "examples/tusdview/raytracer_kernel_src.txt").read_text()
 cpu = (root / "examples/tusdview/cpu/cpu_raytracer.cc").read_text()
 shader = (root / "src/external/lightrt/vk/shaders/trace_materialx_path.comp").read_text()
+viewer_vk_shader = (root / "examples/tusdview/vk/shaders/raytrace.comp").read_text()
 openpbr = (root / "src/tydra/openpbr-params.hh").read_text()
 vk_header = (root / "src/external/lightrt/lightrt_c_vk.h").read_text()
 vk_source = (root / "src/external/lightrt/lightrt_c_vk.c").read_text()
@@ -84,6 +85,19 @@ require(shader, r"vec4 context;\s*// MaterialX time, frame",
         "Vulkan MaterialX context ABI")
 require(shader, r"pc\.context\.x,pc\.context\.y,gr",
         "Vulkan MaterialX time/frame transport")
+require(viewer_vk_shader,
+        r"evalMaterialXGraphContext\([^)]*graphNormal[^)]*graphPosition[^)]*graphViewDirection",
+        "tusdview Vulkan MaterialX hit context")
+require(viewer_vk_shader, r"vec4 context;\s*// MaterialX time, frame",
+        "tusdview Vulkan MaterialX context ABI")
+require(viewer_vk_shader, r"pc\.context\.x,\s*pc\.context\.y",
+        "tusdview Vulkan MaterialX time/frame transport")
+for op in (44, 47, 50, 57, 63, 67, 70, 77, 84, 85, 92, 114, 115,
+           116, 117, 118, 119, 120, 121):
+    require(viewer_vk_shader, rf"op\s*==\s*{op}\b",
+            f"tusdview Vulkan graph op {op}")
+require(viewer_vk_shader, r"op\s*>=\s*86\s*&&\s*op\s*<=\s*91",
+        "tusdview Vulkan compositing op range")
 for offset, label in (("p \\+ 1", "input"), ("p \\+ 16", "texture")):
     require(cpu, rf"floor\(\s*scene\.matGraph\[{offset}\] \+ 0\.5f\)",
             f"CPU graph {label} sentinel decode")
