@@ -12,9 +12,10 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `3228d85cd` (`Preserve generic geomprops in next scene meshes`)
+- HEAD: `abc287650` (`Evaluate arbitrary geomprops in CPU material graphs`)
 - Upstream: `origin/dev`
-- Worktree: clean tracked state, plus the two unrelated untracked paths above.
+- Worktree: tracked follow-up shader/renderer/test/evidence edits are pending;
+  the two unrelated untracked paths above remain untouched.
 - Recent completed commits:
   - `4c7e80c07` Complete MaterialX Vulkan RT graph evaluation
   - `63c5b9a29` Transport MaterialX time context to GPU RT
@@ -30,6 +31,7 @@ not hand-edit generated headers.
   - `5c6d425f5` Resolve MaterialX wrapper nodegraph outputs
   - `eaeafba1c` Use runtime view direction for latlong graphs
   - `3228d85cd` Preserve generic geomprops in next scene meshes
+  - `abc287650` Evaluate arbitrary geomprops in CPU material graphs
 
 ## Completed coverage
 
@@ -49,7 +51,8 @@ not hand-edit generated headers.
   procedural derivatives, and named geomprop callbacks.
 - Texture paths cover image/tiled-image, UDIM, Ptex, latlong/triplanar,
   normal maps, mip selection, colorspace handling, and centered height
-  derivatives; edge cases remain incomplete.
+  derivatives; CPU RT now matches Vulkan's sRGB RGB decode while preserving
+  alpha, and additional edge cases remain incomplete.
 
 ## Recent completed slice
 
@@ -73,6 +76,13 @@ The next scene loader now preserves authored float/vector geomprops through
 interpolation/index expansion, corner welding, Ptex expansion, and material
 batching; validation and CPU resource accounting cover the new streams
 (`3228d85cd`). Backend shader lookup and typed GPU ABI consumption remain open.
+Arbitrary geomprop nodes now survive JSON normalization and carry a stable
+name hash through the fixed graph record; the CPU RT reference evaluates
+float/vector streams from triangle-corner data with authored defaults for
+missing streams (`abc287650`). The Vulkan hardware ray-query path now uploads
+per-mesh descriptor/value streams and evaluates the opcode with barycentric
+interpolation; compute-BVH, CUDA, and HIP consumers still need equivalent
+per-hit transport.
 
 ## Current implementation status
 
@@ -84,8 +94,9 @@ fidelity review for weighted composition and wrapper nesting; the direct
 closure slice is committed and validated.
 The next MaterialX converter resolves both direct surface bindings and
 nodegraph-backed `surfacematerial` outputs. Host-side generic float/vector
-geomprops are now retained by the next scene loader, but arbitrary typed and
-GPU-consumed geomprops remain an ABI-level gap.
+geomprops are retained by the next scene loader; CPU RT and Vulkan hardware
+ray-query now evaluate the supported streams, while compute-BVH/CUDA/HIP
+transport and arbitrary typed variants remain open.
 
 ## Verified tests after HEAD
 
@@ -103,6 +114,10 @@ Passed:
 - both interactive Vulkan shader variants compile via
   `examples/tusdview/vk/shaders/build-shaders.sh`
 - `tusdview` rebuild after Vulkan shader/context changes
+- Vulkan hardware geomprop shader regeneration, viewer rebuild, and focused
+  CPU/bridge/safety checks: 3/3 passed
+- Texture/material regression batch after CPU sRGB parity change: 45/45
+  passed, including 15 documented unavailable-hardware/asset skips
 - Full configured native CTest rerun after conductor and generalized-Schlick
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
@@ -114,6 +129,8 @@ Passed:
 - Stable `next` regression after wrapper changes: 40/40 passed
 - Viewer rebuild plus focused geomprop/bridge/ABI/nonmesh/safety checks: 6/6
   passed after generic geomprop stream preservation (`3228d85cd`)
+- Focused CPU RT, bridge, and safety checks after live arbitrary geomprop
+  evaluation: 6/6 passed (`abc287650`)
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
