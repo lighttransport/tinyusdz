@@ -364,7 +364,7 @@ int main(void) {
       "<materialx version=\"1.39\">"
       " <measured_edf name=\"MeasuredGlow\" type=\"EDF\">"
       "  <input name=\"color\" type=\"color3\" value=\"0.15,0.35,0.65\"/>"
-      "  <input name=\"measurement\" type=\"filename\" value=\"profile.mxd\"/>"
+      "  <input name=\"file\" type=\"filename\" value=\"profile.ies\"/>"
       " </measured_edf>"
       " <volume name=\"MeasuredVolume\" type=\"volumeshader\">"
       "  <input name=\"edf\" type=\"EDF\" nodename=\"MeasuredGlow\"/>"
