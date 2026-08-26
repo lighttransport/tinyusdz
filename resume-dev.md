@@ -222,18 +222,20 @@ capability-skipped in this environment.
 3. Complete shader constructors/wrappers: `surface`, `surfacematerial`,
    `volume`, `volumematerial`, `light`, displacement, and unlit behavior in
    legacy and next converters.
-4. Complete matrix-valued/interpolated/uniform GPU geomprop transport and
-   object/world/view transform matrices, including Vulkan instance transforms.
+4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
+   matrix-valued transport is implemented across the RT graph paths, while
+   object/world/view transform and Vulkan instance-transform fidelity remain.
 5. Close texture/projection gaps: camera-aware latlong defaults, filtering and
    derivatives, colorspace/alpha, UDIM missing-tile behavior, and measured EDF
    profile handling.
 6. Add graph connection/evaluation/render tests for closure composition, wrapper
    nesting, multi-output selectors, cycles, missing inputs, type conversion,
    direct Shader-to-Shader graphs, and the 64-node limit.
-7. Run focused CUDA/NVIDIA and HIP/AMD tests, then Vulkan RT on NVIDIA and AMD;
-   capability-skip only when documented hardware is genuinely unavailable.
-8. Run optimized full native/viewer/tusdrender regression and keep the suite
-   near the established 20-minute budget.
+7. Focused CUDA/NVIDIA, HIP, and Vulkan RT checks pass after the matrix slice;
+   AMD hardware remains unavailable and must stay capability-skipped with
+   evidence.
+8. Re-run optimized full native/viewer/tusdrender regression after the final
+   matrix slice and keep the suite near the established 20-minute budget.
 9. Update this file with the new HEAD and evidence after each coherent slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
     paths, build artifacts, large binaries/assets, and stale generated output;
