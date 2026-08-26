@@ -715,6 +715,60 @@ int main(void) {
     return 1;
   }
 
+  /* A volume's VDF inputs may be ordinary MaterialX image nodes. Exercise the
+   * texture-backed path separately from the constant-only graph above. */
+  const char *volume_texture_file = "lightrt_volume_regression.ppm";
+  FILE *volume_texture = fopen(volume_texture_file, "wb");
+  if (!volume_texture) return 1;
+  fputs("P6\n1 1\n255\n", volume_texture);
+  fputc(51, volume_texture); fputc(102, volume_texture);
+  fputc(153, volume_texture);
+  fclose(volume_texture);
+  const char *volume_texture_xml =
+      "<materialx version=\"1.39\">"
+      " <image name=\"volume_tex\" type=\"color3\"><input name=\"file\""
+      " type=\"filename\" value=\"lightrt_volume_regression.ppm\"/></image>"
+      " <absorption_vdf name=\"TexturedFog\" type=\"VDF\">"
+      "  <input name=\"absorption\" type=\"color3\" nodename=\"volume_tex\"/>"
+      " </absorption_vdf>"
+      " <volume name=\"TexturedVolume\" type=\"volumeshader\">"
+      "  <input name=\"vdf\" type=\"VDF\" nodename=\"TexturedFog\"/>"
+      " </volume>"
+      " <volumematerial name=\"TexturedMat\" type=\"material\">"
+      "  <input name=\"volumeshader\" type=\"volumeshader\""
+      " nodename=\"TexturedVolume\"/></volumematerial></materialx>";
+  MtlxDoc *volume_texture_doc = mtlx_load_string(volume_texture_xml);
+  TextureCache *volume_texture_cache = texcache_create(".");
+  int volume_texture_ok = volume_texture_doc && volume_texture_cache;
+  if (volume_texture_ok) {
+    texcache_preload(volume_texture_cache, volume_texture_doc);
+    ShadeContext volume_texture_ctx;
+    memset(&volume_texture_ctx, 0, sizeof(volume_texture_ctx));
+    volume_texture_ctx.doc = volume_texture_doc;
+    volume_texture_ctx.tex = volume_texture_cache;
+    volume_texture_ctx.uv[0] = volume_texture_ctx.uv[1] = 0.5f;
+    volume_texture_ctx.memo = (MtlxValue *)calloc(
+        (size_t)volume_texture_doc->nnode, sizeof(MtlxValue));
+    volume_texture_ctx.memo_done = (char *)calloc(
+        (size_t)volume_texture_doc->nnode, 1);
+    const int volume_node = volume_texture_doc->mats[0].volume_node;
+    volume_texture_ok = volume_texture_ctx.memo && volume_texture_ctx.memo_done &&
+        volume_node >= 0 && mtlx_eval_volume(
+            &volume_texture_ctx, volume_node, &volume) == 0 &&
+        nearf(volume.absorption.x, 0.2f) &&
+        nearf(volume.absorption.y, 0.4f) &&
+        nearf(volume.absorption.z, 0.6f);
+    free(volume_texture_ctx.memo);
+    free(volume_texture_ctx.memo_done);
+  }
+  texcache_free(volume_texture_cache);
+  mtlx_free(volume_texture_doc);
+  remove(volume_texture_file);
+  if (!volume_texture_ok) {
+    fprintf(stderr, "texture-backed MaterialX volume was not evaluated\n");
+    return 1;
+  }
+
   const char *subsurface_volume_xml =
       "<materialx version=\"1.39\">"
       " <subsurface_vdf name=\"Subsurface\" type=\"VDF\">"

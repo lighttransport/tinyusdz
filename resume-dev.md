@@ -363,6 +363,8 @@ Passed:
 - Standalone `latlongimage` evaluation now defaults to the normalized shading
   view direction, matching the bridge lowering, with a +Z fallback for empty
   contexts; the projection evaluator test covers the runtime direction.
+- Volume evaluation now has a texture-backed regression covering an image-fed
+  absorption VDF, in addition to the existing constant and composed VDF tests.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
@@ -391,8 +393,8 @@ capability-skipped in this environment.
    displacement, and unlit behavior in legacy and next converters; public
    `surfacematerial`/`surface_unlit` resolution is now covered,
    and the `light` EDF wrapper is now covered in both evaluator and bridge,
-   volume/volumematerial graph transport is now implemented,
-but texture-driven and schema-specific volume validation remains. Separate
+   volume/volumematerial graph transport and texture-fed absorption validation
+   are now covered; schema-specific volume validation remains. Separate
 displacement terminals now resolve authored scalar `displacement`, `height`,
 `dispScalar`, or `value` inputs into the next loader's geometry lane.
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
