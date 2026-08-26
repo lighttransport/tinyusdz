@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `da8b1ac62` (`Honor MaterialX texture address modes`)
+- HEAD: `43c1cb068` (`Fix CUDA HIP geomprop path plumbing`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -35,8 +35,9 @@ not hand-edit generated headers.
   - `309fbee0e` Transport geomprops through CUDA and HIP RT
   - `7e9af3aee` Add compute BVH geomprop transport
   - `05b1c970b` Record SWBVH geomprop regression
-  - `f6d9a7af0` Support integer geomprops in next viewer
+- `f6d9a7af0` Support integer geomprops in next viewer
 - `da8b1ac62` Honor MaterialX texture address modes
+- `43c1cb068` Fix CUDA HIP geomprop path plumbing
 
 ## Completed coverage
 
@@ -117,7 +118,8 @@ geomprop call signature valid under NVRTC and hipRTC.
 
 Passed:
 
-- Complete configured native CTest suite: 298/298 passed (24 documented
+- Complete configured native CTest suite after CUDA/HIP geomprop path
+  plumbing: 298/298 passed in 1112.57 seconds (24 documented
   capability/asset skips)
 - `tusdview_lightrt_bridge_test`, OpenPBR, evaluator, and graph tests after
   vector2 roughness extraction
@@ -166,13 +168,10 @@ The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
 timeout is 180 seconds so a healthy cold device is not incorrectly skipped.
 
-The previous configured full native regression was green before the latest
-CUDA/HIP kernel plumbing change. A fresh full run reached test 122 cleanly;
-the pre-fix CUDA/HIP live-reload tests then exposed the missing `productionPath`
-arguments and were interrupted after recording that failure. A fresh full run
-is required after the fix. Dedicated AMD Vulkan, real-texture/validation
-profiles, and external-asset profiles remain capability-skipped in this
-environment.
+The configured full native regression is green after the CUDA/HIP kernel
+plumbing fix: 298/298 passed in 1112.57 seconds. Dedicated AMD Vulkan,
+real-texture/validation profiles, and external-asset profiles remain
+capability-skipped in this environment.
 
 ## Remaining work, in priority order
 
