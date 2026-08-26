@@ -2089,6 +2089,17 @@ int main() {
     ],"outputs":[{"name":"shader","type":"EDF","nodename":"emit"}]},
     "connections":[{"input":"edf","output":"shader"}]})json",
       "direct EDF", {4, 44}) ||
+      !CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"emit","category":"uniform_edf","type":"EDF","inputs":[
+        {"name":"color","value":[0.2,0.4,0.8]}]},
+      {"name":"lamp","category":"light","type":"lightshader","inputs":[
+        {"name":"edf","type":"EDF","nodename":"emit"},
+        {"name":"intensity","value":[2,1,0.5]},
+        {"name":"exposure","value":1}]}
+    ],"outputs":[{"name":"shader","type":"EDF","nodename":"lamp"}]},
+    "connections":[{"input":"edf","output":"shader"}]})json",
+      "light EDF wrapper", {4, 44}) ||
       !CheckConicalClosure() ||
       !CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[

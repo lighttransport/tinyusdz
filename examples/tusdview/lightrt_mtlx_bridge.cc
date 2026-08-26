@@ -1337,6 +1337,37 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                                 {"type", laneType}, {"inputs", std::move(inputs)}});
         lanes[lane] = output;
       }
+    } else if (cat == "light") {
+      // A MaterialX light is a wrapper around an EDF. Preserve the closure
+      // lanes and apply the light's color intensity plus EV exposure in the
+      // same bounded arithmetic used by the direct EDF path.
+      const ClosureLaneMap& edf = lowerClosure(connectedClosure("edf"));
+      for (const auto& item : edf) lanes[item.first] = item.second;
+      const std::string gain = name + "__light_gain";
+      const std::string exposure = name + "__light_exposure";
+      runtimeNodes.push_back({{"name", exposure}, {"category", "power"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in1"}, {"value", 2.0}},
+                                  renamedInput(nodeInput(node, "exposure", 0.0), "in2")})}});
+      runtimeNodes.push_back({{"name", gain}, {"category", "multiply"},
+                              {"type", "color3"}, {"inputs", nlohmann::json::array({
+                                  renamedInput(nodeInput(node, "intensity", nlohmann::json::array({1, 1, 1})), "in1"),
+                                  nlohmann::json{{"name", "in2"}, {"nodename", exposure}}})}});
+      auto multiplyLane = [&](const char* lane, const char* type,
+                              const std::string& factor) {
+        const auto source = lanes.find(lane);
+        if (source == lanes.end()) return;
+        const std::string output = name + "__light_" + lane;
+        runtimeNodes.push_back({{"name", output}, {"category", "multiply"},
+                                {"type", type}, {"inputs", nlohmann::json::array({
+                                    nlohmann::json{{"name", "in1"}, {"nodename", source->second}},
+                                    nlohmann::json{{"name", "in2"}, {"nodename", factor}}})}});
+        lanes[lane] = output;
+      };
+      multiplyLane("emission_color", "color3", gain);
+      multiplyLane("volume_emission_color", "color3", gain);
+      multiplyLane("emission_luminance", "float", exposure);
+      multiplyLane("volume_emission_scale", "float", exposure);
     } else if (cat == "oren_nayar_diffuse_bsdf" ||
                cat == "burley_diffuse_bsdf") {
       emitLeaf("base_weight", "weight", 1.0, "float");
