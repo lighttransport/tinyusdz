@@ -541,6 +541,7 @@ enum class MaterialXGraphOpCPU : uint32_t {
   ArtisticIor,
   ChiangHairAbsorption,
   Unknown,
+  GeomProp,
 };
 
 // Canonical, backend-neutral MaterialX graph record. Input indices refer to
@@ -564,6 +565,9 @@ struct MaterialXGraphNodeCPU {
   bool isUdim{false}; // textureId names a UDIM atlas, not a plain 2D image
   float uvScale[2]{1.0f, 1.0f};
   float uvOffset[2]{0.0f, 0.0f};
+  // Authored name for GeomProp nodes. The packed runtime stores a stable
+  // 32-bit hash in the otherwise-unused UV-transform lane.
+  std::string geomPropName;
   std::string imagePath;
   std::string name;
 };

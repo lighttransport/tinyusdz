@@ -21,6 +21,15 @@ extern "C" {
 }
 
 namespace tusdview {
+
+uint32_t MaterialXGeomPropHash(const std::string& name) {
+  uint32_t h = 2166136261u;
+  for (unsigned char c : name) {
+    h ^= static_cast<uint32_t>(c);
+    h *= 16777619u;
+  }
+  return h;
+}
 namespace {
 
 const DrawMaterialParamCPU* FindParam(const DrawMaterialCPU& mat,
@@ -1919,9 +1928,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
          prop!="displayColor"&&prop!="Cd"&&prop!="color"&&
          prop!="P"&&prop!="position"&&prop!="N"&&prop!="normal"&&
          prop!="tangent"&&prop!="bitangent") {
-        runtimeNodes.push_back({{"name",name},{"category","constant"},
-            {"type",JsonString(node,"type")},{"inputs",nlohmann::json::array({
-                renamedInput(inputNamed(node,"default",{{"value",0.0}}),"value")})}});
+        // Keep arbitrary geompropvalue nodes live. The scene/backend supplies
+        // the named stream; the graph evaluator applies the authored default
+        // only when that stream is unavailable.
+        runtimeNodes.push_back(node);
         continue;
       }
     }
@@ -2146,7 +2156,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       else if(prop=="N"||prop=="normal") out.op=MaterialXGraphOpCPU::GeometricNormal;
       else if(prop=="tangent") out.op=MaterialXGraphOpCPU::GeometricTangent;
       else if(prop=="bitangent") out.op=MaterialXGraphOpCPU::Bitangent;
-      else out.op=MaterialXGraphOpCPU::Constant;
+      else {
+        out.op = MaterialXGraphOpCPU::GeomProp;
+        out.geomPropName = prop;
+        const std::string valueType = JsonString(node, "type");
+        out.auxValue[1] = valueType == "vector2" ? 2.0f :
+                          valueType == "vector3" || valueType == "color3" ? 3.0f :
+                          valueType == "vector4" || valueType == "color4" ? 4.0f : 1.0f;
+      }
     }
     else if (cat == "viewdirection" || cat == "viewdir")
       out.op = MaterialXGraphOpCPU::ViewDirection;
@@ -3342,6 +3359,14 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
       textureId = (*sourceToTable)[static_cast<size_t>(textureId)];
     }
     dst[base + 16] = static_cast<float>(textureId);
+    if (node.op == MaterialXGraphOpCPU::GeomProp) {
+      const uint32_t hash = MaterialXGeomPropHash(node.geomPropName);
+      float encoded = 0.0f;
+      std::memcpy(&encoded, &hash, sizeof(encoded));
+      dst[base + 17] = encoded;
+      dst[base + 18] = node.auxValue[1];
+      continue;
+    }
     if (node.op == MaterialXGraphOpCPU::IfGreater ||
         node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
         node.op == MaterialXGraphOpCPU::IfEqual ||

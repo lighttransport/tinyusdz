@@ -31,6 +31,7 @@ void CpuRayTracer::freeScene() {
   cpuUv1_.clear();
   cpuMat_.clear();
   cpuInstance_.clear();
+  cpuSourceTri_.clear();
 }
 
 bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
@@ -83,6 +84,7 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
   cpuUv1_.reserve(expandedCount * 6);
   cpuMat_.reserve(expandedCount);
   cpuInstance_.reserve(expandedCount);
+  cpuSourceTri_.reserve(expandedCount);
 
   for (size_t instanceIndex = 0; instanceIndex < hs_.instances.size(); ++instanceIndex) {
     const Inst& inst = hs_.instances[instanceIndex];
@@ -128,6 +130,7 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
           cpuUv1_.insert(cpuUv1_.end(), 6, 0.0f);
         cpuMat_.push_back(src < hs_.mat.size() ? hs_.mat[src] : -1);
         cpuInstance_.push_back(static_cast<int>(instanceIndex));
+        cpuSourceTri_.push_back(static_cast<int>(src));
       }
     }
   }
@@ -543,7 +546,7 @@ std::array<float, 4> EvalCpuMaterialXGraph(
     const HostScene& scene, int materialId, int route, float u, float v,
     float u1, float v1, const float* normal = nullptr,
     const float* position = nullptr, const float* viewDirection = nullptr,
-    float time = 0.0f, float frame = 0.0f) {
+    float time = 0.0f, float frame = 0.0f, int geomPropTri = -1) {
   constexpr int kStride = kRtMaterialGraphFloats;
   std::array<float, 4> zero{0.0f, 0.0f, 0.0f, 0.0f};
   const size_t base = static_cast<size_t>(materialId) * kStride;
@@ -579,6 +582,35 @@ std::array<float, 4> EvalCpuMaterialXGraph(
           scene.matGraph[p + 16] + 0.5f));
       auto& dst = values[i];
       if (op == static_cast<int>(MaterialXGraphOpCPU::Constant)) dst = fallback(0);
+      else if (op == static_cast<int>(MaterialXGraphOpCPU::GeomProp)) {
+        dst = fallback(0);  // MaterialX default when the mesh has no stream.
+        uint32_t wantedHash = 0;
+        float encoded = scene.matGraph[p + 17];
+        std::memcpy(&wantedHash, &encoded, sizeof(wantedHash));
+        const int components = std::clamp(
+            static_cast<int>(std::floor(scene.matGraph[p + 18] + 0.5f)), 1, 4);
+        if (geomPropTri >= 0 &&
+            static_cast<size_t>(geomPropTri) < scene.triCount) {
+          for (const HostGeomProp& prop : scene.geomProps) {
+            if (prop.components != static_cast<uint32_t>(components) ||
+                MaterialXGeomPropHash(prop.name) != wantedHash) continue;
+            const size_t begin = static_cast<size_t>(geomPropTri) * 3u *
+                                 static_cast<size_t>(components);
+            if (begin + static_cast<size_t>(components) * 3u > prop.values.size())
+              break;
+            const float w = 1.0f - u - v;
+            for (int lane = 0; lane < components; ++lane)
+              dst[lane] = w * prop.values[begin + lane] +
+                          u * prop.values[begin + components + lane] +
+                          v * prop.values[begin + 2 * components + lane];
+            dst[3] = components == 4 ?
+                         w * prop.values[begin + 3] +
+                         u * prop.values[begin + components + 3] +
+                         v * prop.values[begin + 2 * components + 3] : 1.0f;
+            break;
+          }
+        }
+      }
       else if (op == static_cast<int>(MaterialXGraphOpCPU::Image) ||
                op == static_cast<int>(MaterialXGraphOpCPU::TiledImage)) {
         float rgb[3];
@@ -1264,7 +1296,11 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         if (graphBase + kRtMaterialGraphHeaderFloats <= hs_.matGraph.size() &&
             hs_.matGraph[graphBase + 1] >= 0.0f) {
           const auto graph = EvalCpuMaterialXGraph(hs_, mid, 0, uv[0], uv[1],
-                                                   uv1[0], uv1[1]);
+                                                   uv1[0], uv1[1], nullptr,
+                                                   nullptr, nullptr, 0.0f, 0.0f,
+                                                   (static_cast<size_t>(tri) < cpuSourceTri_.size())
+                                                       ? cpuSourceTri_[static_cast<size_t>(tri)]
+                                                       : -1);
           color[0] = graph[0]; color[1] = graph[1]; color[2] = graph[2];
         }
       }
@@ -1661,7 +1697,11 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                                                   uv[0], uv[1],
                                                                   uv1[0], uv1[1],
                                                                   nrm,graphPosition,
-                                                                  graphViewDirection);
+                                                                  graphViewDirection,
+                                                                  0.0f, 0.0f,
+                                                                  (static_cast<size_t>(tri) < cpuSourceTri_.size())
+                                                                      ? cpuSourceTri_[static_cast<size_t>(tri)]
+                                                                      : -1);
               base[0] = graphBaseColor[0];
               base[1] = graphBaseColor[1];
               base[2] = graphBaseColor[2];

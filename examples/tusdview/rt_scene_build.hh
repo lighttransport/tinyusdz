@@ -107,6 +107,15 @@ struct HostTextureTable {
   std::vector<int> sourceToTable;
 };
 
+// Generic float/vector primvars expanded to triangle-corner order. Values are
+// components floats per triangle vertex, so a value at hit barycentrics can be
+// reconstructed without retaining DrawMeshCPU objects.
+struct HostGeomProp {
+  std::string name;
+  uint32_t components{0};
+  std::vector<float> values;
+};
+
 // A bounded analytic-Gaussian BVH range. Point attributes remain in one
 // compact global stream; each range owns a local BVH root and order span so
 // backends can build/traverse large fields incrementally without one monolithic
@@ -150,6 +159,7 @@ struct HostScene {
   size_t pointCount{0};
   // cols is RGBA per triangle vertex: displayColor.rgb + displayOpacity.
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
+  std::vector<HostGeomProp> geomProps;
   std::vector<uint8_t> geo;
   // Per-triangle wireframe edge mask (bit0: edge v1v2, bit1: edge v2v0, bit2: edge
   // v0v1 is an original polygon edge). Lets the RT wireframe draw quad/ngon edges
