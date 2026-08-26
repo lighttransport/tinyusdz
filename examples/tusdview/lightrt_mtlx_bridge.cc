@@ -1599,6 +1599,18 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
               renamedInput(inputNamed(node,"bitangent",{{"value",nlohmann::json::array({0,1,0})}}),"bitangent")})}});
       continue;
     }
+    if ((cat=="geompropvalue"||cat=="geompropvalueuniform")&&!name.empty()) {
+      const std::string prop=JsonString(inputNamed(node,"geomprop",{}),"value");
+      if(prop!="st"&&prop!="uv"&&prop!="texcoord"&&
+         prop!="displayColor"&&prop!="Cd"&&prop!="color"&&
+         prop!="P"&&prop!="position"&&prop!="N"&&prop!="normal"&&
+         prop!="tangent"&&prop!="bitangent") {
+        runtimeNodes.push_back({{"name",name},{"category","constant"},
+            {"type",JsonString(node,"type")},{"inputs",nlohmann::json::array({
+                renamedInput(inputNamed(node,"default",{{"value",0.0}}),"value")})}});
+        continue;
+      }
+    }
     if (cat == "randomcolor" && !name.empty()) {
       const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
       const nlohmann::json seed=inputNamed(node,"seed",{{"value",0}});
@@ -1758,6 +1770,16 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat.rfind("convert", 0) == 0)
       out.op = MaterialXGraphOpCPU::Convert;
     else if (cat == "position") out.op = MaterialXGraphOpCPU::Position;
+    else if (cat == "geompropvalue" || cat == "geompropvalueuniform") {
+      const std::string prop=JsonString(inputNamed(node,"geomprop",{}),"value");
+      if(prop=="st"||prop=="uv"||prop=="texcoord") out.op=MaterialXGraphOpCPU::Texcoord;
+      else if(prop=="displayColor"||prop=="Cd"||prop=="color") out.op=MaterialXGraphOpCPU::GeomColor;
+      else if(prop=="P"||prop=="position") out.op=MaterialXGraphOpCPU::Position;
+      else if(prop=="N"||prop=="normal") out.op=MaterialXGraphOpCPU::GeometricNormal;
+      else if(prop=="tangent") out.op=MaterialXGraphOpCPU::GeometricTangent;
+      else if(prop=="bitangent") out.op=MaterialXGraphOpCPU::Bitangent;
+      else out.op=MaterialXGraphOpCPU::Constant;
+    }
     else if (cat == "viewdirection" || cat == "viewdir")
       out.op = MaterialXGraphOpCPU::ViewDirection;
     else if (cat == "time") out.op = MaterialXGraphOpCPU::Time;

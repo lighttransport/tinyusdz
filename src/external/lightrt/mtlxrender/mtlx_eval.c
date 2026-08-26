@@ -259,7 +259,8 @@ typedef enum {
     OP_COLORCORRECT, OP_BLUR, OP_FLAKE2D, OP_FLAKE3D, OP_RANDOMFLOAT,
     OP_RANDOMCOLOR, OP_LATLONGIMAGE, OP_TRIPLANARPROJECTION,
     OP_HEIGHTTONORMAL, OP_BUMP, OP_VIEWDIRECTION, OP_TIME, OP_FRAME,
-    OP_TRANSFORMPOINT, OP_TRANSFORMVECTOR, OP_TRANSFORMNORMAL
+    OP_TRANSFORMPOINT, OP_TRANSFORMVECTOR, OP_TRANSFORMNORMAL,
+    OP_GEOMPROPVALUE
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -413,6 +414,8 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "transformpoint")) return OP_TRANSFORMPOINT;
     if (!strcmp(c, "transformvector")) return OP_TRANSFORMVECTOR;
     if (!strcmp(c, "transformnormal")) return OP_TRANSFORMNORMAL;
+    if (!strcmp(c, "geompropvalue") || !strcmp(c, "geompropvalueuniform"))
+        return OP_GEOMPROPVALUE;
     return OP_UNKNOWN;
 }
 
@@ -774,6 +777,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_TRANSFORMPOINT:
         case OP_TRANSFORMVECTOR:
         case OP_TRANSFORMNORMAL: {a=in_or(ctx,n,"in",mv_zero(MV_VEC3));int kind=node_op==OP_TRANSFORMPOINT?0:(node_op==OP_TRANSFORMVECTOR?1:2);r=mv_vec3(transform_space(ctx,mv_as_v3(&a),string_input(n,"fromspace","object"),string_input(n,"tospace","world"),kind));break;}
+        case OP_GEOMPROPVALUE: {const char *name=string_input(n,"geomprop","");const MtlxInput *fallback=find_input(n,"default");r=fallback?eval_input(ctx,fallback):mv_zero(n->type);if(ctx->geomprop&&name[0]){MtlxValue q;if(ctx->geomprop(ctx->geomprop_user,name,n->type,&q))r=q;}break;}
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
         case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;

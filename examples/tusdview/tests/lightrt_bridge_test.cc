@@ -1124,14 +1124,19 @@ int main() {
   contextMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
     {"name":"view","category":"viewdirection","type":"vector3","inputs":[]},
     {"name":"time","category":"time","type":"float","inputs":[]},
-    {"name":"frame","category":"frame","type":"float","inputs":[]}
+    {"name":"frame","category":"frame","type":"float","inputs":[]},
+    {"name":"st","category":"geompropvalue","type":"vector2","inputs":[{"name":"geomprop","type":"string","value":"st"}]},
+    {"name":"custom","category":"geompropvalue","type":"float","inputs":[{"name":"geomprop","type":"string","value":"temperature"},{"name":"default","type":"float","value":2700}]}
   ],"outputs":[]},"connections":[]})json";
   std::string contextError;
   if(!tusdview::CompileMaterialXGraphRuntime(&contextMat,&contextError)||
-     contextMat.materialXGraph.nodes.size()!=3||
+     contextMat.materialXGraph.nodes.size()!=5||
      contextMat.materialXGraph.nodes[0].op!=tusdview::MaterialXGraphOpCPU::ViewDirection||
      contextMat.materialXGraph.nodes[1].op!=tusdview::MaterialXGraphOpCPU::Time||
-     contextMat.materialXGraph.nodes[2].op!=tusdview::MaterialXGraphOpCPU::Frame){
+     contextMat.materialXGraph.nodes[2].op!=tusdview::MaterialXGraphOpCPU::Frame||
+     contextMat.materialXGraph.nodes[3].op!=tusdview::MaterialXGraphOpCPU::Texcoord||
+     contextMat.materialXGraph.nodes[4].op!=tusdview::MaterialXGraphOpCPU::Constant||
+     !Near(contextMat.materialXGraph.nodes[4].value[0][0],2700.0f)){
     std::fprintf(stderr,"MaterialX runtime context lowering failed: %s (nodes=%zu)\n",contextError.c_str(),contextMat.materialXGraph.nodes.size());return 1;
   }
   tusdview::DrawMaterialCPU latlongMat;
