@@ -730,6 +730,35 @@ run() {
 ran=0; fail=0; vk_software=0; degraded=0
 declare -A backend_available=()
 declare -A backend_unavailable=()
+# Detect an all-CPU Vulkan installation before the first RT mode sweep. Some
+# software drivers advertise ray-query extensions but spend minutes in shader
+# JIT/initialization without producing a log line that the post-launch guard
+# can inspect. Keep Vulkan raster coverage, but skip only the hardware RT lane.
+if command -v vulkaninfo >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 &&
+   timeout 10s vulkaninfo --summary >"$OUT/vulkaninfo-summary.log" 2>&1; then
+  if grep -q 'PHYSICAL_DEVICE_TYPE_CPU' "$OUT/vulkaninfo-summary.log" &&
+     ! grep -Eq 'PHYSICAL_DEVICE_TYPE_(DISCRETE|INTEGRATED|VIRTUAL)_GPU' \
+       "$OUT/vulkaninfo-summary.log"; then
+    vk_software=1
+    backend_unavailable[vk-rt]=1
+    degraded=1
+    echo "SKIP: Vulkan RT on software Vulkan (preflight)"
+  fi
+elif command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
+  # Minimal fallback for hosts without vulkaninfo. The viewer reports the
+  # selected device before entering its headless loop; timeout is expected on
+  # builds that keep the window loop alive after the first frame.
+  timeout 10s "$BIN" --headless --backend vk --frames 1 --mode shaded \
+    --screenshot "$OUT/vulkan-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
+    >"$OUT/vulkan-preflight.log" 2>&1 || :
+  if grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer|device=cpu' \
+      "$OUT/vulkan-preflight.log"; then
+    vk_software=1
+    backend_unavailable[vk-rt]=1
+    degraded=1
+    echo "SKIP: Vulkan RT on software Vulkan (preflight viewer probe)"
+  fi
+fi
 GL_RUN=()
 if [ -n "${DISPLAY:-}" ] && command -v xdpyinfo >/dev/null 2>&1 &&
    xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
