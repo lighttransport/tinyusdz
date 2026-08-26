@@ -815,6 +815,11 @@ NextAttr FindNextPrimvar(const tydn::RenderMesh& m, const char* name,
         if (pv.float_data.empty()) continue;
         a.data = &pv.float_data;
         break;
+      case tydn::VertexFormat::Matrix33:
+      case tydn::VertexFormat::Matrix44:
+        if (pv.float_data.empty()) continue;
+        a.data = &pv.float_data;
+        break;
       case tydn::VertexFormat::Int:
       case tydn::VertexFormat::IVec2:
       case tydn::VertexFormat::IVec3:
@@ -929,6 +934,8 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
       case tydn::VertexFormat::UVec4:
         components = 4;
         break;
+      case tydn::VertexFormat::Matrix33: components = 9; break;
+      case tydn::VertexFormat::Matrix44: components = 16; break;
       default: break;  // matrix primvars do not fit the packed vec4 ABI
     }
     const bool hasData = !pv.float_data.empty() || !pv.int_data.empty() ||
@@ -963,6 +970,10 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
       case tydn::VertexFormat::UVec3:
       case tydn::VertexFormat::UVec4:
         prop.attr.uint_data = &pv.uint_data;
+        break;
+      case tydn::VertexFormat::Matrix33:
+      case tydn::VertexFormat::Matrix44:
+        prop.attr.data = &pv.float_data;
         break;
     }
     genericProps.push_back(std::move(prop));

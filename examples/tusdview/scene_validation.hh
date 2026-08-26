@@ -84,7 +84,10 @@ inline bool ValidateDrawMesh(const DrawMeshCPU& mesh, size_t materialCount,
   }
   for (size_t i = 0; i < mesh.geomProps.size(); ++i) {
     const DrawGeomPropCPU& prop = mesh.geomProps[i];
-    if (prop.name.empty() || prop.components == 0 || prop.components > 4) {
+    if (prop.name.empty() || prop.components == 0 ||
+        (prop.components != 1 && prop.components != 2 &&
+         prop.components != 3 && prop.components != 4 &&
+         prop.components != 9 && prop.components != 16)) {
       return fail("geomProps[" + std::to_string(i) + "] has invalid metadata");
     }
     size_t expected = 0;

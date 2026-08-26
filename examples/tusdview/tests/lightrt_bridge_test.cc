@@ -1497,6 +1497,46 @@ int main() {
     return 1;
   }
 
+  // Matrix geomprops are transported as one interpolated 9/16-component
+  // stream and exposed to the bounded matrix operators one column at a time.
+  tusdview::DrawMaterialCPU matrixGeompropMat;
+  matrixGeompropMat.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"M","category":"geompropvalue","type":"matrix44",
+       "inputs":[{"name":"geomprop","value":"M"}]},
+      {"name":"x","category":"transformmatrix","type":"vector3",
+       "inputs":[{"name":"in","value":[1,2,3]},
+                 {"name":"mat","nodename":"M","type":"matrix44"}]}
+    ],"outputs":[]},"connections":[]})json";
+  std::string matrixGeompropError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&matrixGeompropMat,
+                                               &matrixGeompropError) ||
+      matrixGeompropMat.materialXGraph.nodes.size() != 5) {
+    std::fprintf(stderr, "matrix geomprop graph lowering failed (%zu): %s\n",
+                 matrixGeompropMat.materialXGraph.nodes.size(),
+                 matrixGeompropError.c_str());
+    return 1;
+  }
+  std::vector<float> matrixPack(tusdview::kRtMaterialGraphFloats, 0.0f);
+  tusdview::PackMaterialXGraphRuntime(matrixGeompropMat, matrixPack.data());
+  int matrixColumns = 0;
+  for (size_t i = 0; i < matrixGeompropMat.materialXGraph.nodes.size(); ++i) {
+    const auto& node = matrixGeompropMat.materialXGraph.nodes[i];
+    if (node.op != tusdview::MaterialXGraphOpCPU::GeomProp) continue;
+    const size_t p = tusdview::kRtMaterialGraphHeaderFloats +
+        i * tusdview::kRtMaterialGraphNodeFloats;
+    if (!Near(matrixPack[p + 18], 16.0f) ||
+        !Near(matrixPack[p + 19], static_cast<float>(matrixColumns))) {
+      std::fprintf(stderr, "matrix geomprop column packing failed\n");
+      return 1;
+    }
+    ++matrixColumns;
+  }
+  if (matrixColumns != 4) {
+    std::fprintf(stderr, "matrix geomprop columns were not emitted\n");
+    return 1;
+  }
+
   tusdview::DrawMaterialCPU cyclicMat;
   cyclicMat.materialXNodeGraphJson = R"json({
     "nodegraph":{"nodes":[

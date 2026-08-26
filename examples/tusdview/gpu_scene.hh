@@ -53,6 +53,8 @@ struct DrawVertex {
 // resolved once on the host before a backend consumes the mesh.
 struct DrawGeomPropCPU {
   std::string name;
+  // Scalar/vector streams use 1..4; matrix33/matrix44 streams use 9/16 and
+  // are exposed to graph matrix operators one column at a time.
   uint32_t components{0};
   std::vector<float> values;  // components floats per DrawVertex
 };

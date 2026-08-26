@@ -7512,7 +7512,8 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       std::vector<RtGeomPropDescGPU> props;
       std::vector<float> values;
       for (const DrawGeomPropCPU& prop : sm.geomProps) {
-        if (prop.components < 1 || prop.components > 4 ||
+        if (((prop.components < 1 || prop.components > 4) &&
+             prop.components != 9 && prop.components != 16) ||
             prop.values.size() != sm.vertices.size() * prop.components)
           continue;
         RtGeomPropDescGPU desc{};
@@ -10678,7 +10679,8 @@ void VulkanRenderer::rebuildSwBvh() {
   std::vector<HostGeomPropDesc> geomPropDesc;
   std::vector<float> geomPropValues;
   for (const HostGeomProp& prop : hs.geomProps) {
-    if (prop.components < 1 || prop.components > 4 ||
+    if (((prop.components < 1 || prop.components > 4) &&
+         prop.components != 9 && prop.components != 16) ||
         prop.values.size() != hs.triCount * 3u * prop.components) continue;
     HostGeomPropDesc desc;
     desc.hash = MaterialXGeomPropHash(prop.name);

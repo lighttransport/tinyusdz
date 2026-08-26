@@ -699,7 +699,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
     std::vector<HostGeomPropDesc> desc;
     std::vector<float> values;
     for (const HostGeomProp& prop : hs.geomProps) {
-      if (prop.components < 1 || prop.components > 4 ||
+      if (((prop.components < 1 || prop.components > 4) &&
+           prop.components != 9 && prop.components != 16) ||
           prop.values.size() != hs.triCount * 3u * prop.components) continue;
       HostGeomPropDesc d;
       d.hash = MaterialXGeomPropHash(prop.name);
