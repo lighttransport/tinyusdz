@@ -113,6 +113,23 @@ static int wrap(int x, int n) {
     return x;
 }
 
+static int address_index(int x, int n, const char *mode, int *outside) {
+    *outside = 0;
+    if (!mode || !strcmp(mode, "periodic")) return wrap(x, n);
+    if (!strcmp(mode, "clamp")) return x < 0 ? 0 : (x >= n ? n - 1 : x);
+    if (!strcmp(mode, "mirror")) {
+        const int period = n * 2;
+        int p = x % period;
+        if (p < 0) p += period;
+        return p < n ? p : period - 1 - p;
+    }
+    if (!strcmp(mode, "constant")) {
+        if (x < 0 || x >= n) *outside = 1;
+        return x < 0 ? 0 : (x >= n ? n - 1 : x);
+    }
+    return wrap(x, n);
+}
+
 static void fetch_texel(const Texture *t, int x, int y, float out[4]) {
     x = wrap(x, t->w);
     y = wrap(y, t->h);
@@ -124,7 +141,9 @@ static void fetch_texel(const Texture *t, int x, int y, float out[4]) {
     out[0] = r; out[1] = g; out[2] = b; out[3] = a;
 }
 
-void texcache_sample(TextureCache *tc, int id, float u, float v, float out[4]) {
+void texcache_sample_address(TextureCache *tc, int id, float u, float v,
+                             const char *wrap_s, const char *wrap_t,
+                             float out[4]) {
     if (id < 0 || id >= tc->ntex) { out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f; return; }
     const Texture *t = &tc->tex[id];
     /* flip V to match image-space (OpenEXR/glTF: V grows downward in texel space) */
@@ -133,13 +152,27 @@ void texcache_sample(TextureCache *tc, int id, float u, float v, float out[4]) {
     int x0 = (int)floorf(fu), y0 = (int)floorf(fv);
     float dx = fu - x0, dy = fv - y0;
     float c00[4], c10[4], c01[4], c11[4];
-    fetch_texel(t, x0, y0, c00);
-    fetch_texel(t, x0 + 1, y0, c10);
-    fetch_texel(t, x0, y0 + 1, c01);
-    fetch_texel(t, x0 + 1, y0 + 1, c11);
+    int ox0, ox1, oy0, oy1;
+    int xx0 = address_index(x0, t->w, wrap_s, &ox0);
+    int xx1 = address_index(x0 + 1, t->w, wrap_s, &ox1);
+    int yy0 = address_index(y0, t->h, wrap_t, &oy0);
+    int yy1 = address_index(y0 + 1, t->h, wrap_t, &oy1);
+    if (ox0 || ox1 || oy0 || oy1) {
+        for (int c = 0; c < 4; c++) out[c] = 0.0f;
+        out[3] = 1.0f;
+        return;
+    }
+    fetch_texel(t, xx0, yy0, c00);
+    fetch_texel(t, xx1, yy0, c10);
+    fetch_texel(t, xx0, yy1, c01);
+    fetch_texel(t, xx1, yy1, c11);
     for (int c = 0; c < 4; c++) {
         float a = c00[c] * (1 - dx) + c10[c] * dx;
         float b = c01[c] * (1 - dx) + c11[c] * dx;
         out[c] = a * (1 - dy) + b * dy;
     }
+}
+
+void texcache_sample(TextureCache *tc, int id, float u, float v, float out[4]) {
+    texcache_sample_address(tc, id, u, v, "periodic", "periodic", out);
 }

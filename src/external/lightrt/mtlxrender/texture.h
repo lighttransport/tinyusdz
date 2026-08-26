@@ -28,4 +28,11 @@ int texcache_get(TextureCache *tc, const char *rel_path, int srgb);
  * luminance for 1-channel, alpha defaults to 1. id<0 yields (0,0,0,1). */
 void texcache_sample(TextureCache *tc, int id, float u, float v, float out[4]);
 
+/* Address-aware variant. Modes are MaterialX names: periodic, clamp, mirror,
+ * and constant (constant currently returns the same neutral value as a
+ * missing texture for out-of-range coordinates). */
+void texcache_sample_address(TextureCache *tc, int id, float u, float v,
+                             const char *wrap_s, const char *wrap_t,
+                             float out[4]);
+
 #endif /* MTLXRENDER_TEXTURE_H_ */

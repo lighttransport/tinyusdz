@@ -540,7 +540,11 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     if (tc && tc->src_node >= 0) { MtlxValue t = eval_input(ctx, tc); u = t.v[0]; v = t.v[1]; }
     int id = path ? texcache_get(ctx->tex, path, srgb) : -1;
     float s[4];
-    if (id >= 0) texcache_sample(ctx->tex, id, u, v, s);
+    const MtlxInput *us = find_input(n, "uaddressmode");
+    const MtlxInput *vs = find_input(n, "vaddressmode");
+    if (id >= 0) texcache_sample_address(
+        ctx->tex, id, u, v, us ? us->value.s : "periodic",
+        vs ? vs->value.s : "periodic", s);
     else { MtlxValue d = in_or(ctx, n, "default", mv_zero(n->type)); v3 dc = mv_as_v3(&d); s[0]=dc.x; s[1]=dc.y; s[2]=dc.z; s[3]=1; }
     switch (n->type) {
         case MV_FLOAT: return mv_float(s[0]);
