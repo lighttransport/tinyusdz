@@ -578,7 +578,12 @@ static MtlxValue eval_latlongimage(ShadeContext *ctx, const MtlxNode *n) {
     const MtlxInput *file = find_input(n, "file");
     int srgb = file ? file->colorspace_srgb : 0;
     const char *path = (file && file->value.s) ? file->value.s : NULL;
-    MtlxValue vd = in_or(ctx, n, "viewdir", mv_vec3(v3_make(0, 0, 1)));
+    /* MaterialX's latlongimage defaults to the shading view direction. Keep a
+     * deterministic +Z fallback for callers that do not populate the context
+     * (standalone graph tests and malformed hit records). */
+    v3 default_view = v3_len(ctx->V) > 1.0e-20f
+        ? v3_normalize(ctx->V) : v3_make(0, 0, 1);
+    MtlxValue vd = in_or(ctx, n, "viewdir", mv_vec3(default_view));
     MtlxValue rotation = in_or(ctx, n, "rotation", mv_float(0));
     float u = atan2f(vd.v[0], vd.v[2]) * -0.15915494f + 0.5f +
               rotation.v[0] * 0.00277778f;

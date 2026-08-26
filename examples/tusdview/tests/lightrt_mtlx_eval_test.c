@@ -215,6 +215,7 @@ int main(void) {
     projection_filter_ctx.uv[1] = 0.5f;
     projection_filter_ctx.P = v3_make(0.5f, 0.0f, 0.0f);
     projection_filter_ctx.Ns = v3_make(0.0f, 0.0f, 1.0f);
+    projection_filter_ctx.V = v3_make(1.0f, 0.0f, 0.0f);
     projection_filter_ctx.memo = (MtlxValue *)calloc((size_t)projection_filter_doc->nnode, sizeof(MtlxValue));
     projection_filter_ctx.memo_done = (char *)calloc((size_t)projection_filter_doc->nnode, 1);
     int latf = mtlx_find_node(projection_filter_doc, -1, "latf");
@@ -229,8 +230,8 @@ int main(void) {
       memset(projection_filter_ctx.memo_done, 0,
              (size_t)projection_filter_doc->nnode);
       trif_value = mtlx_eval_node_test(&projection_filter_ctx, trif);
-      projection_filter_ok = latf_value.v[2] > 0.99f &&
-          latf_value.v[0] < 0.01f && trif_value.v[2] > 0.99f &&
+      projection_filter_ok = latf_value.v[0] > 0.99f &&
+          latf_value.v[2] < 0.01f && trif_value.v[2] > 0.99f &&
           trif_value.v[0] < 0.01f;
     } else {
       projection_filter_ok = 0;
