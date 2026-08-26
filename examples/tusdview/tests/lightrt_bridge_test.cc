@@ -558,6 +558,35 @@ int main() {
     return 1;
   }
 
+  const char* unlitXml =
+      "<materialx version=\"1.39\">"
+      "  <surface_unlit name=\"UnlitSurface\" type=\"surfaceshader\">"
+      "    <input name=\"emission\" type=\"float\" value=\"2.5\"/>"
+      "    <input name=\"emission_color\" type=\"color3\" value=\"0.2,0.4,0.8\"/>"
+      "    <input name=\"transmission\" type=\"float\" value=\"0.35\"/>"
+      "    <input name=\"transmission_color\" type=\"color3\" value=\"0.8,0.6,0.4\"/>"
+      "    <input name=\"opacity\" type=\"float\" value=\"0.65\"/>"
+      "  </surface_unlit>"
+      "  <surfacematerial name=\"UnlitMat\"><input name=\"surfaceshader\""
+      "    type=\"surfaceshader\" nodename=\"UnlitSurface\"/></surfacematerial>"
+      "</materialx>";
+  tusdview::tydra::LightRtOpenPBRParams unlitEval;
+  if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBR(
+          unlitXml, "UnlitMat", &unlitEval, &graphErr) ||
+      !Near(unlitEval.emission, 2.5f) ||
+      !Near(unlitEval.emissionColor[0], 0.2f) ||
+      !Near(unlitEval.emissionColor[1], 0.4f) ||
+      !Near(unlitEval.emissionColor[2], 0.8f) ||
+      !Near(unlitEval.transmission, 0.35f) ||
+      !Near(unlitEval.transmissionColor[0], 0.8f) ||
+      !Near(unlitEval.transmissionColor[1], 0.6f) ||
+      !Near(unlitEval.transmissionColor[2], 0.4f) ||
+      !Near(unlitEval.opacity, 0.65f)) {
+    std::fprintf(stderr, "surface_unlit bridge evaluation failed: %s\n",
+                 graphErr.c_str());
+    return 1;
+  }
+
   const char* standardGraphXml =
       "<materialx version=\"1.38\">"
       "  <nodegraph name=\"NG_standard\">"
