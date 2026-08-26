@@ -369,7 +369,7 @@ Passed:
   latlong and volume changes, including the GL warm-up dependency.
 - The standard `diffuse_bsdf` closure category is now accepted alongside
   Oren–Nayar and Burley diffuse closures in both evaluator and bridge paths;
-  the evaluator and bridge regressions pass.
+  direct bridge and evaluator regressions pass.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
