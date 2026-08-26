@@ -227,13 +227,14 @@ typedef enum {
     OP_UNIFIEDNOISE2D, OP_UNIFIEDNOISE3D,
     OP_RAMPLR, OP_RAMPTB, OP_SPLITLR, OP_SPLITTB,
     OP_IFGREATER, OP_IFGREATEREQ, OP_IFEQUAL, OP_SWITCH, OP_DOT, OP_RAMP4,
+    OP_RAMP, OP_RAMP_GRADIENT,
     OP_ROTATE2D, OP_ONEMINUS, OP_DISTANCE, OP_REFLECT, OP_REFRACT,
     OP_PREMULT, OP_UNPREMULT, OP_MINCOMPONENT, OP_MAXCOMPONENT,
     OP_AND, OP_OR, OP_XOR, OP_NOT, OP_INSIDE, OP_OUTSIDE, OP_TRIANGLEWAVE,
     OP_CHECKERBOARD, OP_DIFFERENCE, OP_IN, OP_MASK, OP_MATTE, OP_OUT, OP_OVER,
     OP_DISJOINTOVER, OP_CIRCLE, OP_LINE, OP_CLOVERLEAF, OP_HEXAGON,
     OP_GRID, OP_CROSSHATCH, OP_TILEDCIRCLES, OP_TILEDCLOVERLEAFS, OP_TILEDHEXAGONS,
-    OP_COLORCORRECT, OP_RANDOMFLOAT,
+    OP_COLORCORRECT, OP_BLUR, OP_RANDOMFLOAT,
     OP_RANDOMCOLOR
 } NodeOp;
 
@@ -333,6 +334,8 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "splitlr")) return OP_SPLITLR;
     if (!strcmp(c, "splittb")) return OP_SPLITTB;
     if (!strcmp(c, "ramp4")) return OP_RAMP4;
+    if (!strcmp(c, "ramp")) return OP_RAMP;
+    if (!strcmp(c, "ramp_gradient")) return OP_RAMP_GRADIENT;
     /* conditional / utility */
     if (!strcmp(c, "ifgreater")) return OP_IFGREATER;
     if (!strcmp(c, "ifgreatereq")) return OP_IFGREATEREQ;
@@ -366,6 +369,7 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "tiledcloverleafs")) return OP_TILEDCLOVERLEAFS;
     if (!strcmp(c, "tiledhexagons")) return OP_TILEDHEXAGONS;
     if (!strcmp(c, "colorcorrect")) return OP_COLORCORRECT;
+    if (!strcmp(c, "blur")) return OP_BLUR;
     if (!strcmp(c, "randomfloat")) return OP_RANDOMFLOAT;
     if (!strcmp(c, "randomcolor")) return OP_RANDOMCOLOR;
     return OP_UNKNOWN;
@@ -686,12 +690,15 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_SPLITLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),ct=in_or(ctx,n,"center",mv_float(0.5f)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); r=(tc.v[0]<ct.v[0])?l:rr; break; }
         case OP_SPLITTB: { MtlxValue tval=in_or(ctx,n,"valuet",mv_zero(n->type)),bval=in_or(ctx,n,"valueb",mv_zero(n->type)),ct=in_or(ctx,n,"center",mv_float(0.5f)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); r=(tc.v[1]<ct.v[0])?tval:bval; break; }
         case OP_RAMP4: { MtlxValue tl=in_or(ctx,n,"valuetl",mv_zero(n->type)),tr=in_or(ctx,n,"valuetr",mv_zero(n->type)),bl=in_or(ctx,n,"valuebl",mv_zero(n->type)),br=in_or(ctx,n,"valuebr",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float u=clampf(tc.v[0],0,1),vv=clampf(tc.v[1],0,1); int nc=ncomp_of(&tl); r=tl; for(int i=0;i<nc;i++){ float top=tl.v[i]*(1-u)+tr.v[i]*u, bot=bl.v[i]*(1-u)+br.v[i]*u; r.v[i]=top*(1-vv)+bot*vv; } break; }
+        case OP_RAMP: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),kind=in_or(ctx,n,"type",mv_zero(MV_INT)),interp=in_or(ctx,n,"interpolation",mv_float(1)),countv=in_or(ctx,n,"num_intervals",mv_float(2));float dx=tc.v[0]-.5f,dy=tc.v[1]-.5f,x=tc.v[0];switch((int)kind.v[0]){case 1:x=atan2f(dy,dx)/(2*(float)MTLX_PI)+.5f;break;case 2:x=sqrtf(dx*dx+dy*dy)*1.41421356f;break;case 3:x=2*fmaxf(fabsf(dx),fabsf(dy));break;default:break;}int count=(int)countv.v[0];if(count<2)count=2;if(count>10)count=10;r=in_or(ctx,n,"color1",mv_zero(MV_COLOR4));for(int k=1;k<count;k++){char lo_name[16],hi_name[16],color_name[16];snprintf(lo_name,sizeof(lo_name),"interval%d",k);snprintf(hi_name,sizeof(hi_name),"interval%d",k+1);snprintf(color_name,sizeof(color_name),"color%d",k+1);MtlxValue lo=in_or(ctx,n,lo_name,mv_float(k==1?0:1)),hi=in_or(ctx,n,hi_name,mv_float(1)),next=in_or(ctx,n,color_name,mv_zero(MV_COLOR4));if(x<=lo.v[0])continue;float t;if((int)interp.v[0]==2)t=x>=hi.v[0]?1:0;else{t=clampf((x-lo.v[0])/((hi.v[0]-lo.v[0])!=0?hi.v[0]-lo.v[0]:1),0,1);if((int)interp.v[0]==1)t=t*t*(3-2*t);}for(int i=0;i<4;i++)r.v[i]=r.v[i]+t*(next.v[i]-r.v[i]);}r.type=MV_COLOR4;break; }
+        case OP_RAMP_GRADIENT: { MtlxValue x=in_or(ctx,n,"x",mv_float(0)),lo=in_or(ctx,n,"interval1",mv_float(0)),hi=in_or(ctx,n,"interval2",mv_float(1)),c1=in_or(ctx,n,"color1",mv_zero(MV_COLOR4)),c2=in_or(ctx,n,"color2",mv_zero(MV_COLOR4)),interp=in_or(ctx,n,"interpolation",mv_float(1)),prev=in_or(ctx,n,"prev_color",mv_zero(MV_COLOR4)),inum=in_or(ctx,n,"interval_num",mv_float(1)),count=in_or(ctx,n,"num_intervals",mv_float(2));r=prev;if(inum.v[0]<count.v[0]&&x.v[0]>lo.v[0]){float t;if((int)interp.v[0]==2)t=x.v[0]>=hi.v[0]?1:0;else{t=clampf((x.v[0]-lo.v[0])/((hi.v[0]-lo.v[0])!=0?hi.v[0]-lo.v[0]:1),0,1);if((int)interp.v[0]==1)t=t*t*(3-2*t);}r=c1;for(int i=0;i<4;i++)r.v[i]=c1.v[i]+t*(c2.v[i]-c1.v[i]);}r.type=MV_COLOR4;break; }
         case OP_CIRCLE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.5f));float x=tc.v[0]-center.v[0],y=tc.v[1]-center.v[1];r=mv_float(x*x+y*y>radius.v[0]*radius.v[0]?0.0f:1.0f);break; }
         case OP_LINE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.1f)),p1=in_or(ctx,n,"point1",mv_vec2(0.25f,0.25f)),p2=in_or(ctx,n,"point2",mv_vec2(0.75f,0.75f));float px=tc.v[0]-center.v[0]-p1.v[0],py=tc.v[1]-center.v[1]-p1.v[1],bx=p2.v[0]-p1.v[0],by=p2.v[1]-p1.v[1],bb=bx*bx+by*by,t=clampf(bb>1e-12f?(px*bx+py*by)/bb:0,0,1),dx=px-bx*t,dy=py-by*t;r=mv_float(sqrtf(dx*dx+dy*dy)>radius.v[0]?0.0f:1.0f);break; }
         case OP_CLOVERLEAF: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(.5f,.5f)),radius=in_or(ctx,n,"radius",mv_float(.5f));float sx=2*tc.v[0],sy=2*tc.v[1],cx=2*center.v[0],cy=2*center.v[1],rr=radius.v[0],r2=rr*rr,dx[4]={sx+rr-cx,sx-rr-cx,sx-cx,sx-cx},dy[4]={sy-cy,sy-cy,sy-rr-cy,sy+rr-cy},inside=0;for(int i=0;i<4;i++)if(dx[i]*dx[i]+dy[i]*dy[i]<=r2)inside=1;r=mv_float(inside);break; }
         case OP_HEXAGON: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(.5f,.5f)),radius=in_or(ctx,n,"radius",mv_float(.5f));float px=fabsf(tc.v[1]-center.v[1]),py=fabsf(tc.v[0]-center.v[0]),kx=-.866025f,ky=.5f,kz=.57735f,rr=radius.v[0],projection=fminf(kx*px+ky*py,0);px-=2*projection*kx;py-=2*projection*ky;px-=clampf(px,-kz*rr,kz*rr);py-=rr;float sd=sqrtf(px*px+py*py)*(py<0?-1:1);r=mv_float(sd<=0?1:0);break; }
         case OP_GRID: case OP_CROSSHATCH: case OP_TILEDCIRCLES: case OP_TILEDCLOVERLEAFS: case OP_TILEDHEXAGONS: { NodeOp po=classify(n->category);int kind=po-OP_GRID;MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),tiling=in_or(ctx,n,"uvtiling",mv_vec2(1,1)),offset=in_or(ctx,n,"uvoffset",mv_vec2(0,0)),parameter=in_or(ctx,n,kind<=1?"thickness":"size",mv_float(kind<=1?.05f:.5f)),staggered=in_or(ctx,n,"staggered",mv_float(0));float q=pattern_value(tc.v[0]*tiling.v[0]-offset.v[0],tc.v[1]*tiling.v[1]-offset.v[1],parameter.v[0],staggered.v[0]!=0,kind);r=mv_color3(v3_make(q,q,q));break; }
         case OP_COLORCORRECT: { a=in_or(ctx,n,"in",mv_zero(n->type));MtlxValue hue=in_or(ctx,n,"hue",mv_float(0)),sat=in_or(ctx,n,"saturation",mv_float(1)),gamma=in_or(ctx,n,"gamma",mv_float(1)),lift=in_or(ctx,n,"lift",mv_float(0)),gain=in_or(ctx,n,"gain",mv_float(1)),contrast=in_or(ctx,n,"contrast",mv_float(1)),pivot=in_or(ctx,n,"contrastpivot",mv_float(0.5f)),exposure=in_or(ctx,n,"exposure",mv_float(0));v3 hsv=rgb_to_hsv(mv_as_v3(&a));hsv.x=hsv.x+hue.v[0]-floorf(hsv.x+hue.v[0]);v3 rgb=hsv_to_rgb(hsv);float lum=luminance(rgb),scale=powf(2.0f,exposure.v[0]),recip=fabsf(gamma.v[0])>1e-6f?1.0f/gamma.v[0]:0.0f;r=a;for(int i=0;i<3;i++){float x=lum+sat.v[0]*((i==0?rgb.x:(i==1?rgb.y:rgb.z))-lum);x=(x<0?-1.0f:1.0f)*powf(fabsf(x),recip);x=(x*(1-lift.v[0])+lift.v[0])*gain.v[0];r.v[i]=((x-pivot.v[0])*contrast.v[0]+pivot.v[0])*scale;}break; }
+        case OP_BLUR: r=in_or(ctx,n,"in",mv_zero(n->type));break;
         case OP_RANDOMFLOAT: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),lo=in_or(ctx,n,"min",mv_float(0)),hi=in_or(ctx,n,"max",mv_float(1));int x=(int)floorf(a.v[0]*(a.type==MV_INT?1.0f:4096.0f)),y=(int)floorf(seed.v[0]);float q=(float)mx_hash_int2(x,y)/(float)0xffffffffu;r=mv_float(lo.v[0]+q*(hi.v[0]-lo.v[0]));break; }
         case OP_RANDOMCOLOR: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),hl=in_or(ctx,n,"huelow",mv_float(0)),hh=in_or(ctx,n,"huehigh",mv_float(1)),sl=in_or(ctx,n,"saturationlow",mv_float(0.825f)),sh=in_or(ctx,n,"saturationhigh",mv_float(1)),bl=in_or(ctx,n,"brightnesslow",mv_float(1)),bh=in_or(ctx,n,"brightnesshigh",mv_float(1));int s=(int)floorf(seed.v[0]);float h=randomfloat_value(a.v[0],(int)ceilf((float)s+413.3f),hl.v[0],hh.v[0]),ss=randomfloat_value(a.v[0],(int)ceilf((float)s+1522.4f),sl.v[0],sh.v[0]),v=randomfloat_value(a.v[0],(int)ceilf((float)s+1813.8f),bl.v[0],bh.v[0]);r=mv_color3(hsv_to_rgb(v3_make(h,ss,v)));break; }
         case OP_IFGREATER: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }

@@ -879,6 +879,16 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const float parameter=textureId>=0&&textureId<count?values[textureId][0]:scene.matGraph[p+17];
         const bool staggered=scene.matGraph[p+18]!=0;const int kind=op-static_cast<int>(MaterialXGraphOpCPU::Grid);
         const float q=MtlxPattern(a[0]*b[0]-c[0],a[1]*b[1]-c[1],parameter,staggered,kind);dst={q,q,q,q};
+      } else if(op==static_cast<int>(MaterialXGraphOpCPU::RampCoordinate)){
+        const int type=static_cast<int>(std::floor(b[0]+.5f));const float x=a[0]-.5f,y=a[1]-.5f;
+        const float q=type==1?std::atan2(y,x)/6.28319f+.5f:(type==2?std::sqrt(x*x+y*y)*1.414f:(type==3?2*std::max(std::fabs(x),std::fabs(y)):a[0]));dst={q,q,q,q};
+      } else if(op==static_cast<int>(MaterialXGraphOpCPU::Ramp)||
+                op==static_cast<int>(MaterialXGraphOpCPU::RampGradient)){
+        const int start=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+17]+.5f)),0,count-1);
+        const int interpolation=static_cast<int>(std::floor(b[0]+.5f)),num=std::clamp(static_cast<int>(std::floor(c[0]+.5f)),2,10);const float x=a[0];
+        auto blend=[&](float lo,float hi,const std::array<float,4>& c0,const std::array<float,4>& c1){float t=std::fabs(hi-lo)>1e-8f?std::clamp((std::clamp(x,lo,hi)-lo)/(hi-lo),0.0f,1.0f):0;if(interpolation==1)t=t*t*(3-2*t);if(interpolation==2)t=x>=hi?1.0f:0.0f;std::array<float,4> q;for(int lane=0;lane<4;lane++)q[lane]=c0[lane]+t*(c1[lane]-c0[lane]);return q;};
+        if(op==static_cast<int>(MaterialXGraphOpCPU::Ramp)){dst=values[std::min(start+1,count-1)];for(int interval=1;interval<=9;interval++){if(interval>=num)continue;const int base=start+(interval-1)*2;const float lo=values[std::min(base,count-1)][0],hi=values[std::min(base+2,count-1)][0];const auto q=blend(lo,hi,values[std::min(base+1,count-1)],values[std::min(base+3,count-1)]);if(x>lo)dst=q;}}
+        else{const float lo=values[start][0],hi=values[std::min(start+1,count-1)][0];const int intervalNum=static_cast<int>(values[std::min(start+5,count-1)][0]);dst=values[std::min(start+4,count-1)];if(intervalNum<num&&x>lo)dst=blend(lo,hi,values[std::min(start+2,count-1)],values[std::min(start+3,count-1)]);}
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);
