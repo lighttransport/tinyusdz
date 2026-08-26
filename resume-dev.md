@@ -184,6 +184,9 @@ Passed:
 - Complete registered MaterialX graph/parity group: 7/7 passed, including
   CPU graph, flake/projection/OpenPBR parity, evaluator, connection, and graph
   evaluation tests.
+- Optimized Release build plus complete registered native/viewer/tusdrender
+  regression: 298/298 passed in 1112.26 seconds. The 24 skips were documented
+  unavailable external-asset, corpus, or validation-capability profiles.
 - Stable `next` regression after wrapper changes: 40/40 passed
 - Viewer rebuild plus focused geomprop/bridge/ABI/nonmesh/safety checks: 6/6
   passed after generic geomprop stream preservation (`3228d85cd`)
