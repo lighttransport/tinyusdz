@@ -39,6 +39,7 @@ not hand-edit generated headers.
 - `da8b1ac62` Honor MaterialX texture address modes
 - `43c1cb068` Fix CUDA HIP geomprop path plumbing
 - `e882ce7c1` Preserve lanes in generalized EDF bridge
+- `0d29de89e` Transport matrix geomprops through RT graphs
 
 ## Completed coverage
 
@@ -111,6 +112,10 @@ evaluate the supported streams. Matrix-valued transport remains open.
 The CPU LightRT texture sampler now honors MaterialX periodic, clamp, and
 mirror address modes (and returns a neutral missing-texture value for constant
 outside samples); the legacy periodic entry point remains unchanged.
+Matrix33/Matrix44 geomprops are now retained by the next render converter,
+expanded as column views in the bounded graph IR, and interpolated through the
+CPU, Vulkan, CUDA, and HIP RT paths (`0d29de89e`). Object/world/view transform
+and instance-transform fidelity still require separate validation.
 Standalone EDF evaluation now recursively handles add/layer, mix, and
 scalar-or-EDF multiply composition, so composed emission survives into both
 surface and volume evaluation.
@@ -187,6 +192,9 @@ Passed:
 - Optimized Release build plus complete registered native/viewer/tusdrender
   regression: 298/298 passed in 1112.26 seconds. The 24 skips were documented
   unavailable external-asset, corpus, or validation-capability profiles.
+- Matrix geomprop bridge/packing, Release rebuild, Vulkan render, geometry
+  primvar, and GPU ABI checks: 5/5 passed; Vulkan shaders were regenerated
+  from source.
 - Stable `next` regression after wrapper changes: 40/40 passed
 - Viewer rebuild plus focused geomprop/bridge/ABI/nonmesh/safety checks: 6/6
   passed after generic geomprop stream preservation (`3228d85cd`)
