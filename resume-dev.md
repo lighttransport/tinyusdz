@@ -301,6 +301,10 @@ Passed:
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
+- After the projection preload and parity-harness fixes, the full rebuild and
+  focused nine-test MaterialX/bridge matrix pass. The Vulkan RT
+  texture-semantic-AOV case still needs a valid hardware run; its CTest
+  warm-up dependency failed here because the inherited X display was absent.
 - A fresh full configured regression at this HEAD is not clean: the aggregate
   GL/Vulkan parity test reports the unsupported-real-time-lobes comparison
   failing (19.6% of pixels), while its standalone test passes; the subsequent
