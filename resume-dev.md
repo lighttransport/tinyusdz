@@ -27,6 +27,7 @@ not hand-edit generated headers.
   - `bab865016` Extract vector roughness in MaterialX closures
   - `c518d8fc3` Test nested MaterialX closure composition
   - `97d1cd317` Preserve conductor F0 in MaterialX closure lowering
+  - `1ffade301` Honor generalized Schlick transmission mode
 
 ## Completed coverage
 
@@ -57,6 +58,8 @@ packed graph-header parity; nested typed BSDF mixing is covered as well. The
 vector extraction change is committed in `bab865016`, with the nested test in
 `c518d8fc3`. Conductor closures now lower eta/extinction to the same bounded
 F0 arithmetic used by the standalone evaluator (`97d1cd317`).
+Generalized-Schlick R/T scatter mode now emits matching specular/transmission
+lanes (`1ffade301`).
 
 ## Uncommitted work in progress
 
