@@ -776,13 +776,15 @@ struct RenderMaterial {
   float alpha_cutoff = 0.5f;
 
   // Material displacement/volume terminals (outputs:displacement /
-  // outputs:volume connections). Recorded as metadata (legacy parity:
-  // has_displacement/displacement_shader_path etc.); the shader networks
-  // themselves are not converted.
+  // outputs:volume connections). Terminal paths remain available for geometry
+  // consumers; MaterialX volume topology is retained separately below.
   bool has_displacement = false;
   std::string displacement_shader_path;
   bool has_volume = false;
   std::string volume_shader_path;
+  // Retained MaterialX graph for the volume terminal. Kept separate from the
+  // surface graph because a material may author both terminals.
+  std::string volume_nodegraph_json;
 
   MaterialXConfig mtlx_config;
 };

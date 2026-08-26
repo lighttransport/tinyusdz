@@ -2150,5 +2150,25 @@ int main() {
     return 1;
   }
 
+  // The next converter stores volume terminals separately from surface
+  // graphs. Verify that the shared bridge evaluates that retained graph
+  // instead of falling back to the scalar terminal defaults.
+  tusdview::DrawMaterialCPU nextVolumeGraph;
+  nextVolumeGraph.volumeMaterialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"densityNode","category":"constant","type":"float",
+       "inputs":[{"name":"value","value":0.75}]}
+    ],"outputs":[{"name":"volume_density","type":"float",
+                   "nodename":"densityNode","output":"out"}]},
+    "connections":[{"input":"volume_density","output":"volume_density"}]})json";
+  nextVolumeGraph.hasVolumeOutput = true;
+  tusdview::BakeRealtimePbrMaterial(&nextVolumeGraph);
+  if (!nextVolumeGraph.hasVolumeOutput ||
+      !Near(nextVolumeGraph.volumeDensity, 0.75f)) {
+    std::fprintf(stderr, "next MaterialX volume graph evaluation failed (density=%g)\n",
+                 nextVolumeGraph.volumeDensity);
+    return 1;
+  }
+
   return 0;
 }

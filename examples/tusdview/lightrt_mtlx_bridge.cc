@@ -760,7 +760,8 @@ struct MtlxConnection {
 
 bool BuildMaterialXXmlFromJsonGraph(const DrawMaterialCPU& mat,
                                     std::string* xml,
-                                    std::string* err) {
+                                    std::string* err,
+                                    bool volume_graph = false) {
   if (!xml) {
     if (err) *err = "Output XML pointer is null";
     return false;
@@ -857,9 +858,57 @@ bool BuildMaterialXXmlFromJsonGraph(const DrawMaterialCPU& mat,
   }
   ss << "  </nodegraph>\n";
 
-  ss << "  <open_pbr_surface name=\"tusdview_openpbr\" type=\"surfaceshader\">\n";
+  if (!volume_graph) {
+    ss << "  <open_pbr_surface name=\"tusdview_openpbr\" type=\"surfaceshader\">\n";
+  }
   std::set<std::string> emitted;
-  for (const auto& conn : connections) {
+  auto emit_graph_input = [&](const char* input,
+                              const char* type, const MtlxConnection& conn) {
+    ss << "    <input name=\"" << input << "\" type=\"" << type
+       << "\" nodegraph=\"" << XmlEscape(conn.graph)
+       << "\" output=\"" << XmlEscape(conn.output) << "\"/>\n";
+  };
+  if (volume_graph) {
+    // The runtime representation stores density and albedo, while MaterialX
+    // volume evaluation consumes absorption and scattering. Build that small
+    // conversion explicitly so composed graph outputs retain their physical
+    // meaning instead of being mistaken for raw extinction coefficients.
+    const auto density = connections.find("volume_density");
+    const auto albedo = connections.find("volume_albedo");
+    if (density != connections.end() && albedo != connections.end()) {
+      ss << "  <subtract name=\"tusdview_volume_one_minus\" type=\"color3\">\n"
+         << "    <input name=\"in1\" type=\"color3\" value=\"1,1,1\"/>\n";
+      emit_graph_input("in2", "color3", albedo->second);
+      ss << "  </subtract>\n"
+         << "  <multiply name=\"tusdview_volume_absorption\" type=\"color3\">\n";
+      emit_graph_input("in1", "color3", density->second);
+      ss << "    <input name=\"in2\" type=\"color3\" nodename=\"tusdview_volume_one_minus\"/>\n"
+         << "  </multiply>\n"
+         << "  <multiply name=\"tusdview_volume_scattering\" type=\"color3\">\n";
+      emit_graph_input("in1", "color3", density->second);
+      emit_graph_input("in2", "color3", albedo->second);
+      ss << "  </multiply>\n";
+    }
+    ss << "  <anisotropic_vdf name=\"tusdview_vdf\" type=\"VDF\">\n";
+    if (density != connections.end() && albedo != connections.end()) {
+      ss << "    <input name=\"absorption\" type=\"color3\" nodename=\"tusdview_volume_absorption\"/>\n"
+         << "    <input name=\"scattering\" type=\"color3\" nodename=\"tusdview_volume_scattering\"/>\n";
+    } else if (density != connections.end()) {
+      emit_graph_input("absorption", "color3", density->second);
+    }
+    ss << "  </anisotropic_vdf>\n";
+    const auto emission = connections.find("volume_emission_color");
+    if (emission != connections.end()) {
+      ss << "  <uniform_edf name=\"tusdview_edf\" type=\"EDF\">\n";
+      emit_graph_input("color", "color3", emission->second);
+      ss << "  </uniform_edf>\n";
+    }
+    ss << "  <volume name=\"tusdview_volume\" type=\"volumeshader\">\n"
+       << "    <input name=\"vdf\" type=\"VDF\" nodename=\"tusdview_vdf\"/>\n";
+    if (emission != connections.end())
+      ss << "    <input name=\"edf\" type=\"EDF\" nodename=\"tusdview_edf\"/>\n";
+    ss << "  </volume>\n";
+  } else for (const auto& conn : connections) {
     const std::string type = outputTypes.count(conn.second.output)
                                  ? outputTypes[conn.second.output]
                                  : "float";
@@ -873,7 +922,7 @@ bool BuildMaterialXXmlFromJsonGraph(const DrawMaterialCPU& mat,
     ss << "/>\n";
     emitted.insert(conn.first);
   }
-  for (const DrawMaterialParamCPU& p : mat.params) {
+  if (!volume_graph) for (const DrawMaterialParamCPU& p : mat.params) {
     if (p.shader != "OpenPBRSurface") continue;
     const std::string name = OpenPBREvalInputName(p.name);
     if (emitted.count(name)) continue;
@@ -885,11 +934,18 @@ bool BuildMaterialXXmlFromJsonGraph(const DrawMaterialCPU& mat,
        << "\" value=\"" << XmlEscape(ValueForParam(p)) << "\"/>\n";
     emitted.insert(name);
   }
-  ss << "  </open_pbr_surface>\n";
-  ss << "  <surfacematerial name=\"tusdview_material\" type=\"material\">\n";
-  ss << "    <input name=\"surfaceshader\" type=\"surfaceshader\" "
-        "nodename=\"tusdview_openpbr\"/>\n";
-  ss << "  </surfacematerial>\n";
+  if (volume_graph) {
+    ss << "  <volumematerial name=\"tusdview_material\" type=\"material\">\n";
+    ss << "    <input name=\"volumeshader\" type=\"volumeshader\" "
+          "nodename=\"tusdview_volume\"/>\n";
+    ss << "  </volumematerial>\n";
+  } else {
+    ss << "  </open_pbr_surface>\n";
+    ss << "  <surfacematerial name=\"tusdview_material\" type=\"material\">\n";
+    ss << "    <input name=\"surfaceshader\" type=\"surfaceshader\" "
+          "nodename=\"tusdview_openpbr\"/>\n";
+    ss << "  </surfacematerial>\n";
+  }
   ss << "</materialx>\n";
 
   *xml = ss.str();
@@ -913,6 +969,21 @@ bool EvaluateMaterialXJsonGraphForMaterial(const DrawMaterialCPU& mat,
 
   return EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
       xml.c_str(), "tusdview_material", baseDir.c_str(), out, err);
+}
+
+bool EvaluateMaterialXJsonGraphForVolume(const DrawMaterialCPU& mat,
+                                         DrawMaterialCPU* out,
+                                         std::string* err) {
+  if (!out) {
+    if (err) *err = "Output pointer is null";
+    return false;
+  }
+  DrawMaterialCPU graph = mat;
+  graph.materialXNodeGraphJson = mat.volumeMaterialXNodeGraphJson;
+  std::string xml;
+  if (!BuildMaterialXXmlFromJsonGraph(graph, &xml, err, true)) return false;
+  return EvaluateMaterialXStringToLightRtVolume(
+      xml.c_str(), "tusdview_material", out, err);
 }
 
 int FindSurfaceNode(const MtlxDoc* doc, const char* materialName,
@@ -3190,6 +3261,19 @@ void MakeConstantOpenPBRMaterial(DrawMaterialCPU* mat) {
 
 void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
   if (!mat) return;
+  if (!mat->volumeMaterialXNodeGraphJson.empty()) {
+    DrawMaterialCPU volume;
+    std::string volumeErr;
+    if (EvaluateMaterialXJsonGraphForVolume(*mat, &volume, &volumeErr)) {
+      mat->volumeDensity = volume.volumeDensity;
+      std::memcpy(mat->volumeAlbedo, volume.volumeAlbedo,
+                  sizeof(mat->volumeAlbedo));
+      std::memcpy(mat->volumeEmission, volume.volumeEmission,
+                  sizeof(mat->volumeEmission));
+      mat->volumeEmissionScale = volume.volumeEmissionScale;
+      mat->hasVolumeOutput = true;
+    }
+  }
   DrawLightRtOpenPBRCPU p;
   if (mat->hasOpenPBRSurface) {
     BakeOpenPBRSurface(*mat, &p);

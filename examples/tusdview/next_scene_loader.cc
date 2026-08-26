@@ -3492,6 +3492,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   dm.hasVolumeOutput = rm.has_volume;
   dm.displacementShaderPath = rm.displacement_shader_path;
   dm.volumeShaderPath = rm.volume_shader_path;
+  dm.volumeMaterialXNodeGraphJson = rm.volume_nodegraph_json;
   if (rm.has_volume)
     ResolveNextSurfaceVolumeMaterial(stage, matPrim, &dm);
   bool reportedDegradedMaterial = false;

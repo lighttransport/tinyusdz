@@ -1064,7 +1064,8 @@ void EmitNextGraphValue(std::ostream& os, const Value& value) {
 // resolves simple constants and images; this record retains the full utility
 // node topology for descriptor-backed renderers instead of silently baking it.
 std::string BuildNextMaterialXGraphJson(const Stage& stage,
-                                        const UsdPrim& shader) {
+                                        const UsdPrim& shader,
+                                        bool volume_graph = false) {
   const UsdPrim material = shader.GetParent();
   if (!material.IsValid()) return {};
   std::vector<UsdPrim> graphs;
@@ -1220,6 +1221,17 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   os << "],\"outputs\":[";
   bool first_output = true;
   ::tinyusdz::next::AttributeEval shader_eval(&stage);
+  auto runtime_input_name = [&](const std::string& name) {
+    if (!volume_graph) return name;
+    if (name == "density") return std::string("volume_density");
+    if (name == "scattering_color" || name == "scatter_color")
+      return std::string("volume_albedo");
+    if (name == "emission_color" || name == "emissionColor")
+      return std::string("volume_emission_color");
+    if (name == "emission" || name == "emission_intensity" ||
+        name == "emissionIntensity") return std::string("volume_emission_scale");
+    return name;
+  };
   if (direct_graph) {
     for (const std::string& prop : shader.GetPropertyNames()) {
       if (prop.compare(0, 7, "inputs:") != 0 ||
@@ -1231,7 +1243,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
       if (source_name == graph_node_names.end()) continue;
       if (!first_output) os << ',';
       first_output = false;
-      os << "{\"name\":\"" << JsonEscape(prop.substr(7))
+      os << "{\"name\":\"" << JsonEscape(runtime_input_name(prop.substr(7)))
          << "\",\"nodename\":\"" << JsonEscape(source_name->second)
          << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection))
          << "\"}";
@@ -1271,7 +1283,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
         continue;
       if (!first_connection) os << ',';
       first_connection = false;
-      os << "{\"input\":\"" << JsonEscape(prop.substr(7))
+      os << "{\"input\":\"" << JsonEscape(runtime_input_name(prop.substr(7)))
          << "\",\"nodegraph\":\"" << JsonEscape(graph_name)
          << "\",\"output\":\"" << JsonEscape(prop.substr(7)) << "\"}";
       continue;
@@ -1284,7 +1296,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
     if (graph_it == graphs.end()) continue;
     if (!first_connection) os << ',';
     first_connection = false;
-    os << "{\"input\":\"" << JsonEscape(prop.substr(7))
+      os << "{\"input\":\"" << JsonEscape(runtime_input_name(prop.substr(7)))
        << "\",\"nodegraph\":\"" << JsonEscape(graph_name)
        << "\",\"output\":\""
        << JsonEscape((graph_forest ? source.GetName() + '_' : std::string()) +
@@ -8519,6 +8531,11 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     if (!vol.empty()) {
       out->has_volume = true;
       out->volume_shader_path = vol;
+      const UsdPrim volume_shader = stage.GetPrimAtPath(vol);
+      if (volume_shader.IsValid()) {
+        out->volume_nodegraph_json =
+            BuildNextMaterialXGraphJson(stage, volume_shader, true);
+      }
     }
   }
 
