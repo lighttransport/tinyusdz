@@ -320,6 +320,9 @@ Passed:
   independent RGBA alpha preservation using a minimal 32-bit TGA fixture.
 - The public bridge now has an end-to-end `surfacematerial` to
   `surface_unlit` regression covering emission, transmission, and opacity.
+- Standalone EDF evaluation now handles the MaterialX `light` wrapper,
+  applying its color intensity and EV exposure to the nested EDF; a focused
+  wrapper regression passes and matches the bridge lowering.
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
@@ -366,9 +369,10 @@ capability-skipped in this environment.
    permits it; vector2 roughness extraction, exact scatter-mode handling, and
    composed roughness weighting are now covered by focused tests. Weighted
    color lowering for all wrapper/layer combinations remains to be audited.
-3. Complete remaining shader constructors/wrappers: `surface`, `light`,
+3. Complete remaining shader constructors/wrappers: `surface`,
    displacement, and unlit behavior in legacy and next converters; public
    `surfacematerial`/`surface_unlit` resolution is now covered,
+   and the `light` EDF wrapper is now covered in both evaluator and bridge,
    volume/volumematerial graph transport is now implemented,
 but texture-driven and schema-specific volume validation remains. Separate
 displacement terminals now resolve authored scalar `displacement`, `height`,
