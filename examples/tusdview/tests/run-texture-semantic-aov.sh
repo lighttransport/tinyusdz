@@ -751,12 +751,12 @@ elif command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" 
   timeout 10s "$BIN" --headless --backend vk --frames 1 --mode shaded \
     --screenshot "$OUT/vulkan-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
     >"$OUT/vulkan-preflight.log" 2>&1 || :
-  if grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer|device=cpu' \
+  if grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer|device=cpu|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
       "$OUT/vulkan-preflight.log"; then
     vk_software=1
     backend_unavailable[vk-rt]=1
     degraded=1
-    echo "SKIP: Vulkan RT on software Vulkan (preflight viewer probe)"
+    echo "SKIP: Vulkan RT unavailable (preflight viewer probe)"
   fi
 fi
 GL_RUN=()
