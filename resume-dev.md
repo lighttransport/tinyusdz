@@ -292,6 +292,9 @@ Passed:
 - Next volume graph export now retains unconnected authored shader values as
   synthetic constant nodes, including direct `emission` mapped to
   `volume_emission_scale`; the next converter regression passes.
+- CPU/RT host-scene normal baking now applies the inverse-transpose for
+  non-uniform object-to-world transforms, matching Vulkan; a scaled-triangle
+  regression passes in the bridge test.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test

@@ -245,6 +245,10 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
       W[4] == 0.0f && W[5] == 1.0f && W[6] == 0.0f && W[7] == 0.0f &&
       W[8] == 0.0f && W[9] == 0.0f && W[10] == 1.0f && W[11] == 0.0f &&
       W[12] == 0.0f && W[13] == 0.0f && W[14] == 0.0f && W[15] == 1.0f;
+  float worldO2W[12]{};
+  float worldW2O[12]{};
+  const bool worldNormalInvertible = !worldIsIdentity &&
+      (Mat4ToO2W(W, worldO2W), Affine3x4Inverse(worldO2W, worldW2O));
   for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
     float wp[9], wn[9], wc[12], wuv[6], wuv1[6], winfl[3], wdomw[3];
     int domJoint = -1;
@@ -258,12 +262,22 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
         wp[k * 3 + 0] = W[0] * vtx.px + W[4] * vtx.py + W[8] * vtx.pz + W[12];
         wp[k * 3 + 1] = W[1] * vtx.px + W[5] * vtx.py + W[9] * vtx.pz + W[13];
         wp[k * 3 + 2] = W[2] * vtx.px + W[6] * vtx.py + W[10] * vtx.pz + W[14];
-        // Direction vector: linear 3x3 part only (no translation). Ignores the
-        // inverse-transpose correction for non-uniform scale, matching the
-        // simplification already used for point normals a few lines above.
-        wn[k * 3 + 0] = W[0] * vtx.nx + W[4] * vtx.ny + W[8] * vtx.nz;
-        wn[k * 3 + 1] = W[1] * vtx.nx + W[5] * vtx.ny + W[9] * vtx.nz;
-        wn[k * 3 + 2] = W[2] * vtx.nx + W[6] * vtx.ny + W[10] * vtx.nz;
+        if (worldNormalInvertible) {
+          // Normals transform by the inverse transpose of the object-to-world
+          // linear transform. `worldW2O` is row-major, so its columns provide
+          // the inverse-transpose rows used here.
+          wn[k * 3 + 0] = worldW2O[0] * vtx.nx + worldW2O[4] * vtx.ny +
+                          worldW2O[8] * vtx.nz;
+          wn[k * 3 + 1] = worldW2O[1] * vtx.nx + worldW2O[5] * vtx.ny +
+                          worldW2O[9] * vtx.nz;
+          wn[k * 3 + 2] = worldW2O[2] * vtx.nx + worldW2O[6] * vtx.ny +
+                          worldW2O[10] * vtx.nz;
+        } else {
+          // Preserve the previous linear fallback for singular transforms.
+          wn[k * 3 + 0] = W[0] * vtx.nx + W[4] * vtx.ny + W[8] * vtx.nz;
+          wn[k * 3 + 1] = W[1] * vtx.nx + W[5] * vtx.ny + W[9] * vtx.nz;
+          wn[k * 3 + 2] = W[2] * vtx.nx + W[6] * vtx.ny + W[10] * vtx.nz;
+        }
       }
       wuv[k * 2 + 0] = vtx.u; wuv[k * 2 + 1] = vtx.v;
       wuv1[k * 2 + 0] = hasUV1 ? m.uv1[vidx * 2 + 0] : 0.0f;
