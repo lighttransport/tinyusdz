@@ -1263,6 +1263,8 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
       return std::string("volume_emission_color");
     if (name == "emission" || name == "emission_intensity" ||
         name == "emissionIntensity") return std::string("volume_emission_scale");
+    if (name == "anisotropy" || name == "scatter_anisotropy" ||
+        name == "scattering_anisotropy") return std::string("volume_anisotropy");
     return name;
   };
   if (direct_graph) {
