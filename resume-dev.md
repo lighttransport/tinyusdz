@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `c159d14bf` (`Test textured MaterialX volume inputs`)
+- HEAD: `6a7677286` (`Preserve OpenPBR subsurface radius vector`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -367,6 +367,9 @@ Passed:
   absorption VDF, in addition to the existing constant and composed VDF tests.
 - The focused nine-test MaterialX/bridge/parity matrix passes 9/9 after the
   latlong and volume changes, including the GL warm-up dependency.
+- A broad CTest run excluding the known Vulkan RT semantic case again reached
+  the early OpenPBR parity test but did not record a completed result before
+  the runner stopped; no aggregate pass is claimed.
 - The standard `diffuse_bsdf` closure category is now accepted alongside
   Oren–Nayar and Burley diffuse closures in both evaluator and bridge paths;
   direct bridge and evaluator regressions pass.
