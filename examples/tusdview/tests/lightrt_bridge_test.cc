@@ -1035,13 +1035,38 @@ int main() {
     {"name":"length","category":"magnitude","inputs":[{"value":[3,4,0]}]},
     {"name":"log","category":"ln","inputs":[{"value":2.7182818}]},
     {"name":"sep","category":"separate3","inputs":[{"value":[1,2,3]}]},
-    {"name":"hexn","category":"hextilednormalmap","inputs":[{"name":"in","value":[0.5,0.5,1]}]}
+    {"name":"hexn","category":"hextilednormalmap","inputs":[{"name":"in","value":[0.5,0.5,1]}]},
+    {"name":"wave","category":"trianglewave","inputs":[{"name":"in","value":1.25}]},
+    {"name":"checker","category":"checkerboard","type":"color3","inputs":[{"name":"color1","value":[1,0,0]},{"name":"color2","value":[0,0,1]},{"name":"uvtiling","value":[2,2]},{"name":"texcoord","value":[0.6,0.1]}]},
+    {"name":"circle","category":"circle","type":"float","inputs":[{"name":"center","value":[0.5,0.5]},{"name":"radius","value":0.4},{"name":"texcoord","value":[0.5,0.5]}]},
+    {"name":"line","category":"line","type":"float","inputs":[{"name":"point1","value":[0.25,0.25]},{"name":"point2","value":[0.75,0.75]},{"name":"radius","value":0.1},{"name":"texcoord","value":[0.5,0.5]}]}
   ],"outputs":[]},"connections":[]})json";
   std::string aliasesError;
   if (!tusdview::CompileMaterialXGraphRuntime(&aliasesMat, &aliasesError) ||
-      aliasesMat.materialXGraph.nodes.size() != 9) {
+      aliasesMat.materialXGraph.nodes.size() != 36) {
     std::fprintf(stderr, "MaterialX standard aliases failed: %s\n",
                  aliasesError.c_str());
+    return 1;
+  }
+  tusdview::DrawMaterialCPU compositeMat;
+  compositeMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"difference","category":"difference","type":"color3","inputs":[{"name":"fg","value":[0.8,0.1,0.4]},{"name":"bg","value":[0.2,0.5,0.1]}]},
+    {"name":"in","category":"in","type":"color4","inputs":[]},
+    {"name":"mask","category":"mask","type":"color4","inputs":[]},
+    {"name":"matte","category":"matte","type":"color4","inputs":[]},
+    {"name":"out","category":"out","type":"color4","inputs":[]},
+    {"name":"over","category":"over","type":"color4","inputs":[]},
+    {"name":"disjoint","category":"disjointover","type":"color4","inputs":[]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string compositeError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&compositeMat, &compositeError) ||
+      compositeMat.materialXGraph.nodes.size() != 7 ||
+      compositeMat.materialXGraph.nodes[0].op !=
+          tusdview::MaterialXGraphOpCPU::Difference ||
+      compositeMat.materialXGraph.nodes[6].op !=
+          tusdview::MaterialXGraphOpCPU::DisjointOver) {
+    std::fprintf(stderr, "MaterialX compositing operators failed: %s\n",
+                 compositeError.c_str());
     return 1;
   }
 

@@ -87,6 +87,8 @@ for operation in ("Arcsine", "Arccosine", "Arctangent", "Contrast", "Screen",
                   "Reflect", "Refract", "Premult", "Unpremult", "MinComponent",
                   "MaxComponent", "LogicalAnd", "LogicalOr", "LogicalXor",
                   "LogicalNot", "Inside", "Outside", "GeomColor", "Bitangent",
+                  "Difference", "In", "Mask", "Matte", "Out", "Over",
+                  "DisjointOver",
                   "Swizzle"):
     require(cpu, rf"MaterialXGraphOpCPU::{operation}\b",
             f"CPU graph {operation} parity")

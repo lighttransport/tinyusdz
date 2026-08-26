@@ -7,10 +7,11 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
 
 - Branch: `dev`
 - Public remote: `https://github.com/lighttransport/tinyusdz.git`
-- `HEAD` and `origin/dev`: `d8068d7fc` (`Expand headless MaterialX GPU parity`)
-- The renderer parity batch below is committed, audited, and pushed.
-- The `atan`/blend-node and OpenPBR golden enhancements described in items
-  15-16 are currently uncommitted.
+- Local `HEAD`: `30074637a` (`Extend MaterialX standard node execution`)
+- `origin/dev`: `d8068d7fc` (`Expand headless MaterialX GPU parity`)
+- Local `dev` is two commits ahead. The triangle-wave/checkerboard,
+  compositing, circle, and line enhancements described in items 27-29 are
+  currently uncommitted.
 
 ## Implemented in the worktree
 
@@ -126,6 +127,15 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
 26. Raised default CPU tusdrender's guarded MaterialX graph evaluation depth
     from 10 to the renderer's 64-node bound. A new headless CTest renders the
     authored deep-16 ChainTest and rejects the former fallback warnings.
+27. Added exact stdlib graph lowerings for `trianglewave` and `checkerboard`,
+    with connected hit-UV execution and standalone numerical evaluation. The
+    strict hardware fixture now checks their rendered spatial pattern.
+28. Added `difference`, `in`, `mask`, `matte`, `out`, `over`, and
+    `disjointover` to CPU, CUDA/HIP, Vulkan, and the standalone evaluator,
+    including upstream alpha and `mix` semantics.
+29. Added exact stdlib graph lowerings for `circle` and `line` using existing
+    bounded runtime primitives, plus direct standalone evaluation and numerical
+    tests.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.
@@ -167,14 +177,18 @@ The Vulkan compute shader was recompiled into
   conditional passed in 158.29 s across Vulkan RT on NVIDIA/AMD, CUDA, and HIP.
 - Strict hardware parity with connected `ramp4` lowering and a conditional-
   driven lowered `switch` passed in 156.46 s across the same four paths.
+- The current focused CPU/bridge/evaluator/ABI suite passes 6/6 in 0.64 s.
+- The current boot exposes neither `/dev/nvidia0` nor `/dev/kfd`; the strict
+  hardware gate therefore stopped after Vulkan with required CUDA/HIP absent.
+  Re-run it when the NVIDIA and AMD device nodes are restored.
 
 ## Remaining work
 
 1. Continue incremental MaterialX coverage using the bounded graph ABI and the
    non-image auxiliary-input convention where a standard node needs a fourth
    dependency.
-2. Continue the upstream stdlib inventory with procedural pattern, matrix, and
-   remaining compositing nodes.
+2. Continue the upstream stdlib inventory with procedural patterns, noise,
+   matrix/transform, texture, geometry-property, and surface wrapper nodes.
 3. Extend spatial MaterialX evaluation into volume shader inputs; current next
    volume resolution handles connected constants but not texture/noise graphs.
 4. Keep `run.sh` and `usd-assets` untracked. If a later push is requested, run

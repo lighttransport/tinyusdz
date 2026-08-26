@@ -179,7 +179,9 @@ typedef enum {
     OP_IFGREATER, OP_IFGREATEREQ, OP_IFEQUAL, OP_SWITCH, OP_DOT, OP_RAMP4,
     OP_ROTATE2D, OP_ONEMINUS, OP_DISTANCE, OP_REFLECT, OP_REFRACT,
     OP_PREMULT, OP_UNPREMULT, OP_MINCOMPONENT, OP_MAXCOMPONENT,
-    OP_AND, OP_OR, OP_XOR, OP_NOT, OP_INSIDE, OP_OUTSIDE
+    OP_AND, OP_OR, OP_XOR, OP_NOT, OP_INSIDE, OP_OUTSIDE, OP_TRIANGLEWAVE,
+    OP_CHECKERBOARD, OP_DIFFERENCE, OP_IN, OP_MASK, OP_MATTE, OP_OUT, OP_OVER,
+    OP_DISJOINTOVER, OP_CIRCLE, OP_LINE
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -237,6 +239,13 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "overlay")) return OP_OVERLAY;
     if (!strcmp(c, "burn")) return OP_BURN;
     if (!strcmp(c, "dodge")) return OP_DODGE;
+    if (!strcmp(c, "difference")) return OP_DIFFERENCE;
+    if (!strcmp(c, "in")) return OP_IN;
+    if (!strcmp(c, "mask")) return OP_MASK;
+    if (!strcmp(c, "matte")) return OP_MATTE;
+    if (!strcmp(c, "out")) return OP_OUT;
+    if (!strcmp(c, "over")) return OP_OVER;
+    if (!strcmp(c, "disjointover")) return OP_DISJOINTOVER;
     if (!strcmp(c, "clamp")) return OP_CLAMP;
     if (!strcmp(c, "smoothstep")) return OP_SMOOTHSTEP;
     if (!strcmp(c, "remap")) return OP_REMAP;
@@ -284,6 +293,10 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "not")) return OP_NOT;
     if (!strcmp(c, "inside")) return OP_INSIDE;
     if (!strcmp(c, "outside")) return OP_OUTSIDE;
+    if (!strcmp(c, "trianglewave")) return OP_TRIANGLEWAVE;
+    if (!strcmp(c, "checkerboard")) return OP_CHECKERBOARD;
+    if (!strcmp(c, "circle")) return OP_CIRCLE;
+    if (!strcmp(c, "line")) return OP_LINE;
     return OP_UNKNOWN;
 }
 
@@ -568,6 +581,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_OVERLAY: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(n->type)),bg=in_or(ctx,n,"bg",mv_zero(n->type)),m=in_or(ctx,n,"mix",mv_float(1)); int nc=ncomp_of(&fg); r=bg; for(int i=0;i<nc;i++){ float t=ncomp_of(&m)==1?m.v[0]:m.v[i],v=bg.v[i]>=0.5f?1-2*(1-fg.v[i])*(1-bg.v[i]):2*fg.v[i]*bg.v[i]; r.v[i]=bg.v[i]+t*(v-bg.v[i]); } break; }
         case OP_BURN: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(n->type)),bg=in_or(ctx,n,"bg",mv_zero(n->type)),m=in_or(ctx,n,"mix",mv_float(1)); int nc=ncomp_of(&fg); r=bg; for(int i=0;i<nc;i++){ float t=ncomp_of(&m)==1?m.v[0]:m.v[i]; r.v[i]=fabsf(fg.v[i])<1e-6f?0:t*(1-(1-bg.v[i])/fg.v[i])+(1-t)*bg.v[i]; } break; }
         case OP_DODGE: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(n->type)),bg=in_or(ctx,n,"bg",mv_zero(n->type)),m=in_or(ctx,n,"mix",mv_float(1)); int nc=ncomp_of(&fg); r=bg; for(int i=0;i<nc;i++){ float t=ncomp_of(&m)==1?m.v[0]:m.v[i]; r.v[i]=fabsf(1-fg.v[i])<1e-6f?0:t*(bg.v[i]/(1-fg.v[i]))+(1-t)*bg.v[i]; } break; }
+        case OP_DIFFERENCE: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(n->type)),bg=in_or(ctx,n,"bg",mv_zero(n->type)),m=in_or(ctx,n,"mix",mv_float(1));int nc=ncomp_of(&fg);r=bg;for(int i=0;i<nc;i++){float t=ncomp_of(&m)==1?m.v[0]:m.v[i],q=fabsf(fg.v[i]-bg.v[i]);r.v[i]=bg.v[i]+t*(q-bg.v[i]);}break; }
+        case OP_IN: case OP_MASK: case OP_MATTE: case OP_OUT: case OP_OVER: case OP_DISJOINTOVER: { MtlxValue fg=in_or(ctx,n,"fg",mv_zero(MV_COLOR4)),bg=in_or(ctx,n,"bg",mv_zero(MV_COLOR4)),m=in_or(ctx,n,"mix",mv_float(1)),q=mv_zero(MV_COLOR4);NodeOp op=classify(n->category);if(op==OP_IN){for(int i=0;i<4;i++)q.v[i]=fg.v[i]*bg.v[3];}else if(op==OP_MASK){for(int i=0;i<4;i++)q.v[i]=bg.v[i]*fg.v[3];}else if(op==OP_OUT){for(int i=0;i<4;i++)q.v[i]=fg.v[i]*(1-bg.v[3]);}else if(op==OP_DISJOINTOVER){float s=fg.v[3]+bg.v[3];if(s<=1){for(int i=0;i<3;i++)q.v[i]=fg.v[i]+bg.v[i];}else if(fabsf(bg.v[3])>=1e-6f){float x=(1-fg.v[3])/bg.v[3];for(int i=0;i<3;i++)q.v[i]=fg.v[i]+bg.v[i]*x;}q.v[3]=fminf(s,1);}else{for(int i=0;i<3;i++)q.v[i]=(op==OP_MATTE?fg.v[i]*fg.v[3]:fg.v[i])+bg.v[i]*(1-fg.v[3]);q.v[3]=fg.v[3]+bg.v[3]*(1-fg.v[3]);}r=bg;for(int i=0;i<4;i++){float t=ncomp_of(&m)==1?m.v[0]:m.v[i];r.v[i]=bg.v[i]+t*(q.v[i]-bg.v[i]);}break; }
         case OP_CLAMP: { a=in_or(ctx,n,"in",mv_float(0)); MtlxValue lo=in_or(ctx,n,"low",mv_float(0)), hi=in_or(ctx,n,"high",mv_float(1)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){ float l=(ncomp_of(&lo)==1)?lo.v[0]:lo.v[i], h=(ncomp_of(&hi)==1)?hi.v[0]:hi.v[i]; r.v[i]=clampf(a.v[i],l,h);} break; }
         case OP_SMOOTHSTEP: { a=in_or(ctx,n,"in",mv_float(0)); MtlxValue lo=in_or(ctx,n,"low",mv_float(0)), hi=in_or(ctx,n,"high",mv_float(1)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){ float l=(ncomp_of(&lo)==1)?lo.v[0]:lo.v[i], h=(ncomp_of(&hi)==1)?hi.v[0]:hi.v[i]; float t=clampf((a.v[i]-l)/(h-l!=0?h-l:1),0,1); r.v[i]=t*t*(3-2*t);} break; }
         case OP_REMAP: { a=in_or(ctx,n,"in",mv_float(0)); MtlxValue il=in_or(ctx,n,"inlow",mv_float(0)),ih=in_or(ctx,n,"inhigh",mv_float(1)),ol=in_or(ctx,n,"outlow",mv_float(0)),oh=in_or(ctx,n,"outhigh",mv_float(1)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){ float t=(a.v[i]-il.v[0])/((ih.v[0]-il.v[0])!=0?ih.v[0]-il.v[0]:1); r.v[i]=ol.v[0]+t*(oh.v[0]-ol.v[0]);} break; }
@@ -592,6 +607,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_SPLITLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),ct=in_or(ctx,n,"center",mv_float(0.5f)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); r=(tc.v[0]<ct.v[0])?l:rr; break; }
         case OP_SPLITTB: { MtlxValue tval=in_or(ctx,n,"valuet",mv_zero(n->type)),bval=in_or(ctx,n,"valueb",mv_zero(n->type)),ct=in_or(ctx,n,"center",mv_float(0.5f)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); r=(tc.v[1]<ct.v[0])?tval:bval; break; }
         case OP_RAMP4: { MtlxValue tl=in_or(ctx,n,"valuetl",mv_zero(n->type)),tr=in_or(ctx,n,"valuetr",mv_zero(n->type)),bl=in_or(ctx,n,"valuebl",mv_zero(n->type)),br=in_or(ctx,n,"valuebr",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float u=clampf(tc.v[0],0,1),vv=clampf(tc.v[1],0,1); int nc=ncomp_of(&tl); r=tl; for(int i=0;i<nc;i++){ float top=tl.v[i]*(1-u)+tr.v[i]*u, bot=bl.v[i]*(1-u)+br.v[i]*u; r.v[i]=top*(1-vv)+bot*vv; } break; }
+        case OP_CIRCLE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.5f));float x=tc.v[0]-center.v[0],y=tc.v[1]-center.v[1];r=mv_float(x*x+y*y>radius.v[0]*radius.v[0]?0.0f:1.0f);break; }
+        case OP_LINE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.1f)),p1=in_or(ctx,n,"point1",mv_vec2(0.25f,0.25f)),p2=in_or(ctx,n,"point2",mv_vec2(0.75f,0.75f));float px=tc.v[0]-center.v[0]-p1.v[0],py=tc.v[1]-center.v[1]-p1.v[1],bx=p2.v[0]-p1.v[0],by=p2.v[1]-p1.v[1],bb=bx*bx+by*by,t=clampf(bb>1e-12f?(px*bx+py*by)/bb:0,0,1),dx=px-bx*t,dy=py-by*t;r=mv_float(sqrtf(dx*dx+dy*dy)>radius.v[0]?0.0f:1.0f);break; }
         case OP_IFGREATER: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
         case OP_IFGREATEREQ: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>=mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
         case OP_IFEQUAL: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)==mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
@@ -608,6 +625,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_AND: case OP_OR: case OP_XOR: { a=in_or(ctx,n,"in1",mv_float(0));b=in_or(ctx,n,"in2",mv_float(0));int av=mv_as_float(&a)!=0,bv=mv_as_float(&b)!=0;NodeOp op=classify(n->category);int q=op==OP_AND?(av&&bv):(op==OP_OR?(av||bv):(av!=bv));r=mv_float((float)q);break; }
         case OP_NOT: { a=in_or(ctx,n,"in",mv_float(0));r=mv_float(mv_as_float(&a)==0?1:0);break; }
         case OP_INSIDE: case OP_OUTSIDE: { a=in_or(ctx,n,"in",mv_zero(n->type));b=in_or(ctx,n,"mask",mv_float(0));float q=classify(n->category)==OP_INSIDE?b.v[0]:1-b.v[0];r=a;for(int i=0;i<ncomp_of(&r);i++)r.v[i]*=q;break; }
+        case OP_TRIANGLEWAVE: { a=in_or(ctx,n,"in",mv_float(0));float q=fmodf(fabsf(a.v[0]),1.0f);r=mv_float(0.5f-fabsf(q-0.5f));break; }
+        case OP_CHECKERBOARD: { MtlxValue c1=in_or(ctx,n,"color1",mv_color3(v3_splat(1))),c2=in_or(ctx,n,"color2",mv_color3(v3_splat(0))),tile=in_or(ctx,n,"uvtiling",mv_vec2(8,8)),off=in_or(ctx,n,"uvoffset",mv_vec2(0,0)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1]));int q=((int)floorf(tc.v[0]*tile.v[0]+off.v[0])+(int)floorf(tc.v[1]*tile.v[1]+off.v[1]))&1;r=q?c2:c1;break; }
         case OP_UNKNOWN:
         default:
             if (n->ninput > 0) r = eval_input(ctx, &n->inputs[0]);

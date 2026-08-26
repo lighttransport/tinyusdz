@@ -705,6 +705,42 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst={1,1,1,1};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Bitangent)) {
         dst={0,1,0,1};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
+        for (int lane = 0; lane < 4; ++lane) {
+          const float q = std::fabs(a[lane] - b[lane]);
+          dst[lane] = b[lane] + c[lane] * (q - b[lane]);
+        }
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::In) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::Mask) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::Out) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::Matte) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::Over) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::DisjointOver)) {
+        std::array<float, 4> q{};
+        if (op == static_cast<int>(MaterialXGraphOpCPU::In)) {
+          for (int lane = 0; lane < 4; ++lane) q[lane] = a[lane] * b[3];
+        } else if (op == static_cast<int>(MaterialXGraphOpCPU::Mask)) {
+          for (int lane = 0; lane < 4; ++lane) q[lane] = b[lane] * a[3];
+        } else if (op == static_cast<int>(MaterialXGraphOpCPU::Out)) {
+          for (int lane = 0; lane < 4; ++lane) q[lane] = a[lane] * (1.0f - b[3]);
+        } else if (op == static_cast<int>(MaterialXGraphOpCPU::DisjointOver)) {
+          const float alpha = a[3] + b[3];
+          const bool zeroBackground = std::fabs(b[3]) < 1.0e-6f;
+          const float scale = alpha <= 1.0f ? 1.0f :
+              (zeroBackground ? 0.0f : (1.0f - a[3]) / b[3]);
+          for (int lane = 0; lane < 3; ++lane)
+            q[lane] = alpha <= 1.0f ? a[lane] + b[lane]
+                                    : (zeroBackground ? 0.0f : a[lane] + b[lane] * scale);
+          q[3] = std::min(alpha, 1.0f);
+        } else {
+          const bool matte = op == static_cast<int>(MaterialXGraphOpCPU::Matte);
+          for (int lane = 0; lane < 3; ++lane)
+            q[lane] = (matte ? a[lane] * a[3] : a[lane]) +
+                      b[lane] * (1.0f - a[3]);
+          q[3] = a[3] + b[3] * (1.0f - a[3]);
+        }
+        for (int lane = 0; lane < 4; ++lane)
+          dst[lane] = b[lane] + c[lane] * (q[lane] - b[lane]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Swizzle)) {
         for (int cidx = 0; cidx < 4; ++cidx) {
           const int selector = std::clamp(
