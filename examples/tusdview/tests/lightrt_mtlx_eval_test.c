@@ -123,6 +123,49 @@ int main(void) {
     return 1;
   }
 
+  /* Projection nodes also own image filenames, but their lookups happen after
+   * the cache is frozen.  Verify all of those files are preloaded instead of
+   * falling back to the node default during render-time evaluation. */
+  const char *projection_files[] = {"lightrt_latlong.ppm",
+                                    "lightrt_triplanar_x.ppm",
+                                    "lightrt_triplanar_y.ppm",
+                                    "lightrt_triplanar_z.ppm"};
+  for (size_t i = 0; i < sizeof(projection_files) / sizeof(projection_files[0]);
+       i++) {
+    FILE *f = fopen(projection_files[i], "wb");
+    if (!f) return 1;
+    fputs("P6\n1 1\n255\n", f);
+    fputc(255, f); fputc(255, f); fputc(255, f);
+    fclose(f);
+  }
+  MtlxDoc *projection_doc = mtlx_load_string(
+      "<materialx>"
+      "<latlongimage name=\"lat\" type=\"color3\"><input name=\"file\" "
+      "type=\"filename\" value=\"lightrt_latlong.ppm\"/></latlongimage>"
+      "<triplanarprojection name=\"tri\" type=\"color3\">"
+      "<input name=\"filex\" type=\"filename\" value=\"lightrt_triplanar_x.ppm\"/>"
+      "<input name=\"filey\" type=\"filename\" value=\"lightrt_triplanar_y.ppm\"/>"
+      "<input name=\"filez\" type=\"filename\" value=\"lightrt_triplanar_z.ppm\"/>"
+      "</triplanarprojection></materialx>");
+  TextureCache *projection_cache = texcache_create(".");
+  int projection_ok = projection_doc && projection_cache;
+  if (projection_ok) {
+    texcache_preload(projection_cache, projection_doc);
+    for (size_t i = 0; i < sizeof(projection_files) / sizeof(projection_files[0]);
+         i++) {
+      if (texcache_get(projection_cache, projection_files[i], 0) < 0)
+        projection_ok = 0;
+    }
+  }
+  texcache_free(projection_cache);
+  mtlx_free(projection_doc);
+  for (size_t i = 0; i < sizeof(projection_files) / sizeof(projection_files[0]);
+       i++) remove(projection_files[i]);
+  if (!projection_ok) {
+    fprintf(stderr, "projection image preload failed\n");
+    return 1;
+  }
+
   const char *xml =
       "<materialx version=\"1.38\">"
       "  <open_pbr_surface name=\"Preview\" type=\"surfaceshader\">"

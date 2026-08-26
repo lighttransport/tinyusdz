@@ -295,6 +295,9 @@ Passed:
 - CPU/RT host-scene normal baking now applies the inverse-transpose for
   non-uniform object-to-world transforms, matching Vulkan; a scaled-triangle
   regression passes in the bridge test.
+- Frozen LightRT texture caches now preload `latlongimage` and all three
+  `triplanarprojection` file inputs; the evaluator regression verifies these
+  projection textures remain available after preload/freeze.
 - A fresh full configured regression at this HEAD is not clean: the aggregate
   GL/Vulkan parity test reports the unsupported-real-time-lobes comparison
   failing (19.6% of pixels), while its standalone test passes; the subsequent
