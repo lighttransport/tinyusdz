@@ -181,6 +181,71 @@ int main(void) {
     return 1;
   }
 
+  /* Projection nodes use the same explicit filter contract as image nodes.
+   * Keep a two-texel fixture so nearest sampling cannot be mistaken for the
+   * default bilinear midpoint. */
+  const char *projection_filter_file = "lightrt_projection_filter.ppm";
+  FILE *projection_filter = fopen(projection_filter_file, "wb");
+  if (!projection_filter) return 1;
+  fputs("P6\n2 1\n255\n", projection_filter);
+  fputc(255, projection_filter); fputc(0, projection_filter); fputc(0, projection_filter);
+  fputc(0, projection_filter); fputc(0, projection_filter); fputc(255, projection_filter);
+  fclose(projection_filter);
+  MtlxDoc *projection_filter_doc = mtlx_load_string(
+      "<materialx>"
+      "<latlongimage name=\"latf\" type=\"color3\"><input name=\"file\" "
+      "type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "</latlongimage>"
+      "<triplanarprojection name=\"trif\" type=\"color3\">"
+      "<input name=\"filex\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
+      "<input name=\"filey\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
+      "<input name=\"filez\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "</triplanarprojection></materialx>");
+  TextureCache *projection_filter_cache = texcache_create(".");
+  int projection_filter_ok = projection_filter_doc && projection_filter_cache;
+  if (projection_filter_ok) {
+    texcache_preload(projection_filter_cache, projection_filter_doc);
+    ShadeContext projection_filter_ctx;
+    memset(&projection_filter_ctx, 0, sizeof(projection_filter_ctx));
+    projection_filter_ctx.doc = projection_filter_doc;
+    projection_filter_ctx.tex = projection_filter_cache;
+    projection_filter_ctx.uv[0] = 0.5f;
+    projection_filter_ctx.uv[1] = 0.5f;
+    projection_filter_ctx.P = v3_make(0.5f, 0.0f, 0.0f);
+    projection_filter_ctx.Ns = v3_make(0.0f, 0.0f, 1.0f);
+    projection_filter_ctx.memo = (MtlxValue *)calloc((size_t)projection_filter_doc->nnode, sizeof(MtlxValue));
+    projection_filter_ctx.memo_done = (char *)calloc((size_t)projection_filter_doc->nnode, 1);
+    int latf = mtlx_find_node(projection_filter_doc, -1, "latf");
+    int trif = mtlx_find_node(projection_filter_doc, -1, "trif");
+    MtlxValue latf_value;
+    MtlxValue trif_value;
+    memset(&latf_value, 0, sizeof(latf_value));
+    memset(&trif_value, 0, sizeof(trif_value));
+    if (projection_filter_ctx.memo && projection_filter_ctx.memo_done &&
+        latf >= 0 && trif >= 0) {
+      latf_value = mtlx_eval_node_test(&projection_filter_ctx, latf);
+      memset(projection_filter_ctx.memo_done, 0,
+             (size_t)projection_filter_doc->nnode);
+      trif_value = mtlx_eval_node_test(&projection_filter_ctx, trif);
+      projection_filter_ok = latf_value.v[2] > 0.99f &&
+          latf_value.v[0] < 0.01f && trif_value.v[2] > 0.99f &&
+          trif_value.v[0] < 0.01f;
+    } else {
+      projection_filter_ok = 0;
+    }
+    free(projection_filter_ctx.memo);
+    free(projection_filter_ctx.memo_done);
+  }
+  texcache_free(projection_filter_cache);
+  mtlx_free(projection_filter_doc);
+  remove(projection_filter_file);
+  if (!projection_filter_ok) {
+    fprintf(stderr, "projection nearest filtering failed\n");
+    return 1;
+  }
+
   const char *nearest_file = "lightrt_nearest_regression.ppm";
   FILE *nearest_stream = fopen(nearest_file, "wb");
   if (!nearest_stream) return 1;
