@@ -588,7 +588,14 @@ static MtlxValue eval_latlongimage(ShadeContext *ctx, const MtlxNode *n) {
      * longitude seam behavior. */
     int id = path ? texcache_get(ctx->tex, path, srgb) : -1;
     float s[4];
-    if (id >= 0) texcache_sample(ctx->tex, id, u, v, s);
+    const MtlxInput *filter = find_input(n, "filtertype");
+    const int nearest = filter && filter->has_value && filter->value.s &&
+                        !strcmp(filter->value.s, "nearest");
+    if (id >= 0) {
+        if (nearest) texcache_sample_nearest_address(
+            ctx->tex, id, u, v, "periodic", "mirror", s);
+        else texcache_sample_address(ctx->tex, id, u, v, "periodic", "mirror", s);
+    }
     else {
         MtlxValue d = in_or(ctx, n, "default", mv_zero(MV_COLOR3));
         s[0] = d.v[0]; s[1] = d.v[1]; s[2] = d.v[2]; s[3] = 1.0f;
@@ -609,9 +616,12 @@ static MtlxValue eval_triplanarprojection(ShadeContext *ctx,
     float tc[3][2]={{p.y,p.z},{p.x,p.z},{p.x,p.y}};int up=(int)uv.v[0];
     if(up!=2){tc[0][0]=p.z;tc[0][1]=p.y;}if(up==0){tc[1][0]=p.z;tc[1][1]=p.x;tc[2][0]=-p.y;tc[2][1]=p.x;}
     MtlxValue sample[3];const char *files[3]={"filex","filey","filez"};
+    const MtlxInput *filter=find_input(n,"filtertype");
+    const int nearest=filter&&filter->has_value&&filter->value.s&&
+                      !strcmp(filter->value.s,"nearest");
     for(int axis=0;axis<3;axis++){
         const MtlxInput *file=find_input(n,files[axis]);const char *path=file&&file->value.s?file->value.s:NULL;int id=path?texcache_get(ctx->tex,path,file?file->colorspace_srgb:0):-1;float s[4];
-        if(id>=0)texcache_sample(ctx->tex,id,tc[axis][0],tc[axis][1],s);else{MtlxValue d=in_or(ctx,n,"default",mv_zero(n->type));s[0]=d.v[0];s[1]=d.v[1];s[2]=d.v[2];s[3]=n->type==MV_COLOR4||n->type==MV_VEC4?d.v[3]:1;}
+        if(id>=0){if(nearest)texcache_sample_nearest_address(ctx->tex,id,tc[axis][0],tc[axis][1],"periodic","periodic",s);else texcache_sample(ctx->tex,id,tc[axis][0],tc[axis][1],s);}else{MtlxValue d=in_or(ctx,n,"default",mv_zero(n->type));s[0]=d.v[0];s[1]=d.v[1];s[2]=d.v[2];s[3]=n->type==MV_COLOR4||n->type==MV_VEC4?d.v[3]:1;}
         sample[axis]=mv_zero(n->type);int nc=ncomp_of(&sample[axis]);if(nc<1)nc=1;for(int c=0;c<nc;c++)sample[axis].v[c]=s[c];
     }
     MtlxValue r=sample[0];int nc=ncomp_of(&r);if(nc<1)nc=1;for(int c=0;c<nc;c++)r.v[c]=sample[0].v[c]*w[0]+sample[1].v[c]*w[1]+sample[2].v[c]*w[2];return r;
