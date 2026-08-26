@@ -2005,6 +2005,17 @@ int main() {
       "nested BSDF mix", {0, 9, 10, 19, 20, 21})) {
     return 1;
   }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"metal","category":"conductor_bsdf","type":"BSDF","inputs":[
+        {"name":"ior","value":[0.2,0.8,1.4]},
+        {"name":"extinction","value":[3.0,2.0,1.0]},
+        {"name":"roughness","value":0.18}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"metal"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "direct conductor", {0, 1, 2, 20})) {
+    return 1;
+  }
 
   const char* volumeXml =
       "<materialx version=\"1.39\">"
