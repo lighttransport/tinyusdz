@@ -12,10 +12,15 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `8840d598f` (`Preserve typed lanes in mixed MaterialX graphs`)
+- HEAD: `c4bc32b5d` (`Preserve typed lanes in mixed MaterialX graphs`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
+- Deterministic native gates after the mixed-graph fix: 29/29 selected
+  unit/parser/roundtrip/feature tests passed, and the stable `next` suite
+  passed 40/40 tests. The full viewer aggregate is not yet a clean pass: the
+  headless GL/Vulkan parity test timed out on llvmpipe, and a later GL semantic
+  test hung before its registered timeout.
 - Recent completed commits:
   - `4c7e80c07` Complete MaterialX Vulkan RT graph evaluation
   - `63c5b9a29` Transport MaterialX time context to GPU RT
