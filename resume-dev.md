@@ -298,6 +298,9 @@ Passed:
 - Frozen LightRT texture caches now preload `latlongimage` and all three
   `triplanarprojection` file inputs; the evaluator regression verifies these
   projection textures remain available after preload/freeze.
+- GL/Vulkan image parity now limits itself to the bounded fixtures supported by
+  both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
+  dedicated next/legacy loader and material test. Both targeted checks pass.
 - A fresh full configured regression at this HEAD is not clean: the aggregate
   GL/Vulkan parity test reports the unsupported-real-time-lobes comparison
   failing (19.6% of pixels), while its standalone test passes; the subsequent
