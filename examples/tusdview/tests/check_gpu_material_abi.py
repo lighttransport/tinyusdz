@@ -92,12 +92,19 @@ require(viewer_vk_shader, r"vec4 context;\s*// MaterialX time, frame",
         "tusdview Vulkan MaterialX context ABI")
 require(viewer_vk_shader, r"pc\.context\.x,\s*pc\.context\.y",
         "tusdview Vulkan MaterialX time/frame transport")
-for op in (44, 47, 50, 57, 63, 67, 70, 77, 84, 85, 92, 114, 115,
-           116, 117, 118, 119, 120, 121):
+for op in (44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
+           58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,
+           72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
+           92, 93, 94, 95, 96, 97, 98, 99, 100, 106, 107, 108, 109,
+           114, 115, 116, 117, 118, 119, 120, 121):
     require(viewer_vk_shader, rf"op\s*==\s*{op}\b",
             f"tusdview Vulkan graph op {op}")
 require(viewer_vk_shader, r"op\s*>=\s*86\s*&&\s*op\s*<=\s*91",
         "tusdview Vulkan compositing op range")
+require(viewer_vk_shader, r"op\s*>=\s*101\s*&&\s*op\s*<=\s*105",
+        "tusdview Vulkan tiled-pattern op range")
+require(viewer_vk_shader, r"op\s*>=\s*110\s*&&\s*op\s*<=\s*113",
+        "tusdview Vulkan matrix op range")
 for offset, label in (("p \\+ 1", "input"), ("p \\+ 16", "texture")):
     require(cpu, rf"floor\(\s*scene\.matGraph\[{offset}\] \+ 0\.5f\)",
             f"CPU graph {label} sentinel decode")
