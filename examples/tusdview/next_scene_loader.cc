@@ -867,13 +867,47 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
   // converter in LoadUSDViaNext); xyzw with w = handedness.
   const NextAttr tan = MakeNextAttr(m.tangents, m.tangents_interp, 4);
 
+  struct GenericGeomProp {
+    std::string name;
+    NextAttr attr;
+    uint32_t components{0};
+  };
+  std::vector<GenericGeomProp> genericProps;
+  for (const tydn::VertexAttribute& pv : m.primvars) {
+    uint32_t components = 0;
+    switch (pv.format) {
+      case tydn::VertexFormat::Float: components = 1; break;
+      case tydn::VertexFormat::Vec2: components = 2; break;
+      case tydn::VertexFormat::Vec3: components = 3; break;
+      case tydn::VertexFormat::Vec4: components = 4; break;
+      default: break;  // integer and matrix primvars need a typed ABI first
+    }
+    if (components == 0 || pv.float_data.empty() ||
+        pv.name == "displayColor" || pv.name == "displayOpacity" ||
+        pv.name == "normals" || pv.name == "tangents" ||
+        pv.name == "binormals") {
+      continue;
+    }
+    GenericGeomProp prop;
+    prop.name = pv.name;
+    prop.components = components;
+    prop.attr.data = &pv.float_data;
+    prop.attr.indices = pv.has_indices() ? &pv.indices : nullptr;
+    prop.attr.interp = pv.interpolation;
+    prop.attr.comps = components;
+    genericProps.push_back(std::move(prop));
+  }
+
   auto usesFaceVarying = [&](const NextAttr& a) {
     return a && a.interp == tydn::Interpolation::FaceVarying;
   };
   if (!haveCornerMap &&
       (usesFaceVarying(nrm) || usesFaceVarying(uv0) || usesFaceVarying(uv1) ||
        usesFaceVarying(col) || usesFaceVarying(opacity) ||
-       usesFaceVarying(tan))) {
+       usesFaceVarying(tan) || std::any_of(genericProps.begin(), genericProps.end(),
+                                           [&](const GenericGeomProp& p) {
+                                             return usesFaceVarying(p.attr);
+                                           }))) {
     return false;  // triangulation did not produce a usable corner remap
   }
 
@@ -889,7 +923,9 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
   };
   std::vector<uint32_t> cornerToFace;
   if (usesUniform(nrm) || usesUniform(uv0) || usesUniform(uv1) ||
-      usesUniform(col) || usesUniform(opacity) || usesUniform(tan)) {
+      usesUniform(col) || usesUniform(opacity) || usesUniform(tan) ||
+      std::any_of(genericProps.begin(), genericProps.end(),
+                  [&](const GenericGeomProp& p) { return usesUniform(p.attr); })) {
     const size_t nfaces = m.face_vertex_counts.size();
     size_t authoredCorners = 0;
     for (size_t f = 0; f < nfaces; ++f) authoredCorners += m.face_vertex_counts[f];
@@ -925,6 +961,14 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
   dm->vertices.reserve(np);
   dm->indices.resize(ncorners);
   dm->sourceFaceId.resize(ncorners / 3, 0);
+  dm->geomProps.clear();
+  dm->geomProps.reserve(genericProps.size());
+  for (const GenericGeomProp& prop : genericProps) {
+    DrawGeomPropCPU& dst = dm->geomProps.emplace_back();
+    dst.name = prop.name;
+    dst.components = prop.components;
+    dst.values.reserve(np * prop.components);
+  }
 
   auto sameFloats = [](const float* a, const float* b, uint32_t n) {
     for (uint32_t i = 0; i < n; ++i) {
@@ -950,6 +994,8 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
             : faceId;
 
     float n[3], t0[2], t1[2], rgb[4], a = 1.0f, tg[4];
+    std::vector<std::array<float, 4>> geomValues(genericProps.size(),
+                                                  {0.0f, 0.0f, 0.0f, 0.0f});
     nrm.read(pid, cornerId, faceId, 3, n);
     uv0.read(pid, cornerId, faceId, 2, t0);
     uv1.read(pid, cornerId, faceId, 2, t1);
@@ -966,6 +1012,11 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
       a = o[0];
     }
     if (wantTangents) tan.read(pid, cornerId, faceId, 4, tg);
+    for (size_t pi = 0; pi < genericProps.size(); ++pi) {
+      genericProps[pi].attr.read(pid, cornerId, faceId,
+                                 genericProps[pi].components,
+                                 geomValues[pi].data());
+    }
 
     // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
     // top-row-first and uploaded so v=0 samples the top, so invert here (same as
@@ -991,6 +1042,16 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
           !sameFloats(&dm->tangents[size_t(vi) * 3], tg, 3)) {
         continue;
       }
+      bool geomPropSame = true;
+      for (size_t pi = 0; pi < genericProps.size(); ++pi) {
+        const DrawGeomPropCPU& stored = dm->geomProps[pi];
+        if (!sameFloats(&stored.values[size_t(vi) * stored.components],
+                        geomValues[pi].data(), stored.components)) {
+          geomPropSame = false;
+          break;
+        }
+      }
+      if (!geomPropSame) continue;
       found = vi;
       break;
     }
@@ -1020,6 +1081,10 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
         dm->binormals.push_back((n[1] * tg[2] - n[2] * tg[1]) * w);
         dm->binormals.push_back((n[2] * tg[0] - n[0] * tg[2]) * w);
         dm->binormals.push_back((n[0] * tg[1] - n[1] * tg[0]) * w);
+      }
+      for (size_t pi = 0; pi < genericProps.size(); ++pi) {
+        for (uint32_t cidx = 0; cidx < genericProps[pi].components; ++cidx)
+          dm->geomProps[pi].values.push_back(geomValues[pi][cidx]);
       }
       nextVariant.push_back(firstVariant[pid]);
       v2p.push_back(pid);
@@ -1151,6 +1216,7 @@ bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
   expanded.tangents.clear();
   expanded.binormals.clear();
   expanded.uv1.clear();
+  for (DrawGeomPropCPU& prop : expanded.geomProps) prop.values.clear();
   expanded.morphInfluence.clear();
   expanded.jointIdx.clear();
   expanded.jointWt.clear();
@@ -1201,6 +1267,19 @@ bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
     if (hasUv1) {
       expanded.uv1.push_back(mesh->uv1[size_t(old) * 2]);
       expanded.uv1.push_back(mesh->uv1[size_t(old) * 2 + 1]);
+    }
+    for (size_t pi = 0; pi < expanded.geomProps.size(); ++pi) {
+      const DrawGeomPropCPU& source = mesh->geomProps[pi];
+      if (source.components == 0 ||
+          (size_t(old) + 1) * source.components > source.values.size()) {
+        expanded.geomProps[pi].values.resize(
+            expanded.geomProps[pi].values.size() + source.components, 0.0f);
+        continue;
+      }
+      const size_t begin = size_t(old) * source.components;
+      expanded.geomProps[pi].values.insert(
+          expanded.geomProps[pi].values.end(), source.values.begin() + begin,
+          source.values.begin() + begin + source.components);
     }
     if (hasInfluence)
       expanded.morphInfluence.push_back(mesh->morphInfluence[old]);
@@ -8114,6 +8193,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     const bool hasC = !loc.vertexColors.empty();
     const bool hasAlpha = loc.vertexAlpha.size() == loc.vertices.size();
     const bool hasUv1 = loc.uv1.size() == loc.vertices.size() * 2;
+    const bool hasGeomProps = !loc.geomProps.empty();
     const bool hasSkin = loc.jointIdx.size() == loc.vertices.size() * 4 &&
                          loc.jointWt.size() == loc.vertices.size() * 4;
     const bool hasExtendedSkin =
@@ -8209,7 +8289,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       const int batchIsolationId =
           morphBatchId != 0
               ? morphBatchId
-              : ((needsPtex || hasSkin) ? ++nextMorphBatchId : 0);
+              : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
       Batch& b = getBatch({purpose, loc.geometricNormal, m.double_sided, wholeMat,
                            wholeBackMat, batchIsolationId, lightLinkBatchId,
                            animatedWorldBatchId});
@@ -8219,6 +8299,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
         flushBatch(b);  // resets b in the map slot
       }
+      if (hasGeomProps && b.dm.vertices.empty())
+        b.dm.geomProps = loc.geomProps;
       b.dm.purpose = purpose;
       b.dm.geometricNormal = loc.geometricNormal;
       b.dm.doubleSided = m.double_sided;
@@ -8319,7 +8401,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         const int batchIsolationId =
             morphBatchId != 0
                 ? morphBatchId
-                : ((needsPtex || hasSkin) ? ++nextMorphBatchId : 0);
+                : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
         Batch& b = getBatch({purpose, loc.geometricNormal, m.double_sided, gm.first,
                              gm.second, batchIsolationId, lightLinkBatchId,
                              animatedWorldBatchId});
@@ -8356,6 +8438,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
           b.anyUv1 = true;
         }
+        if (hasGeomProps && b.dm.geomProps.empty()) {
+          b.dm.geomProps = loc.geomProps;
+          for (DrawGeomPropCPU& prop : b.dm.geomProps) prop.values.clear();
+        }
         openSkin(b);
         openMorph(b);
         const uint32_t faceBase = needsPtex ? 0u : b.nextFaceId;
@@ -8382,6 +8468,20 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             if (b.anyUv1) {
               b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 0] : 0.0f);
               b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 1] : 0.0f);
+            }
+            for (size_t pi = 0; pi < b.dm.geomProps.size(); ++pi) {
+              const DrawGeomPropCPU& source = loc.geomProps[pi];
+              const size_t begin = size_t(vi) * source.components;
+              if (source.components == 0 ||
+                  begin + source.components > source.values.size()) {
+                b.dm.geomProps[pi].values.resize(
+                    b.dm.geomProps[pi].values.size() + source.components, 0.0f);
+                continue;
+              }
+              b.dm.geomProps[pi].values.insert(
+                  b.dm.geomProps[pi].values.end(),
+                  source.values.begin() + begin,
+                  source.values.begin() + begin + source.components);
             }
           }
           return static_cast<uint32_t>(remap[vi]);
