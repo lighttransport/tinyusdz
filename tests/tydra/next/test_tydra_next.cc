@@ -6155,6 +6155,7 @@ def Xform "World"
         {
             uniform token info:id = "UsdPreviewSurface"
             float inputs:density.connect = </World/DispMat/Density.outputs:out>
+            float inputs:emission = 2.0
             token outputs:volume
         }
         def Shader "Density"
@@ -6379,6 +6380,8 @@ def Xform "World"
     assert(mat.volume_shader_path == "/World/DispMat/Vol");
     assert(!mat.volume_nodegraph_json.empty());
     assert(mat.volume_nodegraph_json.find("volume_density") != std::string::npos);
+    assert(mat.volume_nodegraph_json.find("__direct_emission") != std::string::npos);
+    assert(mat.volume_nodegraph_json.find("volume_emission_scale") != std::string::npos);
     auto ita = scene.material_by_path.find("/World/MatA");
     assert(ita != scene.material_by_path.end());
     assert(!scene.materials[static_cast<size_t>(ita->second)].has_displacement);

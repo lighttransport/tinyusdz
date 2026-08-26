@@ -289,6 +289,9 @@ Passed:
 - Volume MaterialX graph baking now roots texture evaluation at the owning
   asset directory through a base-directory-aware evaluator; a relative
   density texture regression passes in the bridge test.
+- Next volume graph export now retains unconnected authored shader values as
+  synthetic constant nodes, including direct `emission` mapped to
+  `volume_emission_scale`; the next converter regression passes.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test

@@ -1171,6 +1171,29 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
     }
     return connection;
   };
+  struct DirectGraphInput {
+    std::string input_name;
+    std::string node_name;
+    std::string type;
+    const Value* value = nullptr;
+  };
+  std::vector<DirectGraphInput> direct_graph_inputs;
+  {
+    ::tinyusdz::next::AttributeEval input_eval(&stage);
+    const ::tinyusdz::next::PrimSpec* shader_spec = shader.GetPrimSpec();
+    for (const std::string& prop : shader.GetPropertyNames()) {
+      if (prop.compare(0, 7, "inputs:") != 0 ||
+          input_eval.HasConnection(shader, prop)) continue;
+      const Value* value = shader.GetPropertyValueOrEarliestTimeSample(prop);
+      if (!value) continue;
+      const std::string input_name = prop.substr(7);
+      const std::string* property_type =
+          shader_spec ? shader_spec->property_type_name(prop) : nullptr;
+      direct_graph_inputs.push_back({input_name, "__direct_" + input_name,
+                                     property_type ? *property_type : "float",
+                                     value});
+    }
+  }
   std::ostringstream os;
   os << "{\"version\":\"1.39\",\"nodegraph\":{\"name\":\""
      << JsonEscape(graph_name) << "\",\"inputs\":[],\"nodes\":[";
@@ -1217,6 +1240,16 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
       os << '}';
     }
     os << "]}";
+  }
+  for (const DirectGraphInput& input : direct_graph_inputs) {
+    if (!first_node) os << ',';
+    first_node = false;
+    os << "{\"name\":\"" << JsonEscape(input.node_name)
+       << "\",\"category\":\"constant\",\"type\":\""
+       << JsonEscape(input.type)
+       << "\",\"inputs\":[{\"name\":\"value\",\"value\":";
+    EmitNextGraphValue(os, *input.value);
+    os << "}]}";
   }
   os << "],\"outputs\":[";
   bool first_output = true;
@@ -1269,6 +1302,13 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
          << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection)) << "\"}";
     }
   }
+  for (const DirectGraphInput& input : direct_graph_inputs) {
+    if (!first_output) os << ',';
+    first_output = false;
+    os << "{\"name\":\"" << JsonEscape(runtime_input_name(input.input_name))
+       << "\",\"nodename\":\"" << JsonEscape(input.node_name)
+       << "\",\"output\":\"out\"}";
+  }
   os << "]},\"connections\":[";
   bool first_connection = true;
   for (const std::string& prop : shader.GetPropertyNames()) {
@@ -1301,6 +1341,14 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
        << "\",\"output\":\""
        << JsonEscape((graph_forest ? source.GetName() + '_' : std::string()) +
                      ConnectionOutputName(connection)) << "\"}";
+  }
+  for (const DirectGraphInput& input : direct_graph_inputs) {
+    if (!first_connection) os << ',';
+    first_connection = false;
+    os << "{\"input\":\"" << JsonEscape(runtime_input_name(input.input_name))
+       << "\",\"nodegraph\":\"" << JsonEscape(graph_name)
+       << "\",\"output\":\""
+       << JsonEscape(runtime_input_name(input.input_name)) << "\"}";
   }
   os << "]}";
   return first_node || first_output || first_connection ? std::string() : os.str();
