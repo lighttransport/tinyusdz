@@ -1088,10 +1088,12 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
     UsdPrim child = material.GetChildAt(i);
     if (::tinyusdz::next::IsNodeGraph(child)) { graphs.push_back(child); break; }
   }
-  if (graphs.empty()) return {};
+  const bool direct_graph = graphs.empty();
   const bool graph_forest = graphs.size() > 1;
-  const std::string graph_name = graph_forest
-      ? material.GetName() + "_graphs" : graphs.front().GetName();
+  const std::string graph_name = direct_graph
+      ? material.GetName() + "_direct_graph"
+      : (graph_forest ? material.GetName() + "_graphs"
+                      : graphs.front().GetName());
   std::vector<UsdPrim> graph_nodes;
   std::function<void(const UsdPrim&)> collect_nodes = [&](const UsdPrim& parent) {
     for (size_t ci = 0; ci < parent.GetChildCount(); ++ci) {
@@ -1100,9 +1102,44 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
       else if (::tinyusdz::next::IsNodeGraph(child)) collect_nodes(child);
     }
   };
-  for (const UsdPrim& graph : graphs) collect_nodes(graph);
+  if (direct_graph) {
+    std::unordered_set<std::string> visited;
+    std::function<void(const UsdPrim&)> collect_upstream =
+        [&](const UsdPrim& node) {
+          if (!node.IsValid() || !::tinyusdz::next::IsShader(node) ||
+              node.GetPath() == shader.GetPath() ||
+              !visited.insert(node.GetPath().str()).second) return;
+          ::tinyusdz::next::AttributeEval eval(&stage);
+          for (const std::string& prop : node.GetPropertyNames()) {
+            if (prop.compare(0, 7, "inputs:") != 0 ||
+                !eval.HasConnection(node, prop)) continue;
+            collect_upstream(stage.GetPrimAtPath(SourcePrimPathFromConnection(
+                eval.GetConnectionPath(node, prop))));
+          }
+          graph_nodes.push_back(node);
+        };
+    for (const std::string& prop : shader.GetPropertyNames()) {
+      if (prop.compare(0, 7, "inputs:") != 0 ||
+          !shader_connections.HasConnection(shader, prop)) continue;
+      collect_upstream(stage.GetPrimAtPath(SourcePrimPathFromConnection(
+          shader_connections.GetConnectionPath(shader, prop))));
+    }
+  } else {
+    for (const UsdPrim& graph : graphs) collect_nodes(graph);
+  }
   std::unordered_map<std::string, std::string> graph_node_names;
-  for (const UsdPrim& graph : graphs) {
+  if (direct_graph) {
+    for (const UsdPrim& node : graph_nodes) {
+      std::string relative = node.GetPath().str();
+      const std::string material_path = material.GetPath().str();
+      if (relative.compare(0, material_path.size(), material_path) == 0)
+        relative.erase(0, material_path.size());
+      while (!relative.empty() && relative.front() == '/') relative.erase(0, 1);
+      std::replace(relative.begin(), relative.end(), '/', '_');
+      graph_node_names[node.GetPath().str()] =
+          relative.empty() ? node.GetName() : relative;
+    }
+  } else for (const UsdPrim& graph : graphs) {
     const std::string graph_path = graph.GetPath().str();
     for (const UsdPrim& node : graph_nodes) {
       std::string relative = node.GetPath().str();
@@ -1182,7 +1219,24 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   }
   os << "],\"outputs\":[";
   bool first_output = true;
-  for (const UsdPrim& graph : graphs) {
+  ::tinyusdz::next::AttributeEval shader_eval(&stage);
+  if (direct_graph) {
+    for (const std::string& prop : shader.GetPropertyNames()) {
+      if (prop.compare(0, 7, "inputs:") != 0 ||
+          !shader_eval.HasConnection(shader, prop)) continue;
+      const std::string connection = resolve_connection(
+          shader_eval.GetConnectionPath(shader, prop));
+      const std::string source_path = SourcePrimPathFromConnection(connection);
+      const auto source_name = graph_node_names.find(source_path);
+      if (source_name == graph_node_names.end()) continue;
+      if (!first_output) os << ',';
+      first_output = false;
+      os << "{\"name\":\"" << JsonEscape(prop.substr(7))
+         << "\",\"nodename\":\"" << JsonEscape(source_name->second)
+         << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection))
+         << "\"}";
+    }
+  } else for (const UsdPrim& graph : graphs) {
     ::tinyusdz::next::AttributeEval graph_eval(&stage);
     for (const std::string& prop : graph.GetPropertyNames()) {
       if (prop.compare(0, 8, "outputs:") != 0 ||
@@ -1205,13 +1259,23 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
   }
   os << "]},\"connections\":[";
   bool first_connection = true;
-  ::tinyusdz::next::AttributeEval shader_eval(&stage);
   for (const std::string& prop : shader.GetPropertyNames()) {
     if (prop.compare(0, 7, "inputs:") != 0 ||
         !shader_eval.HasConnection(shader, prop)) continue;
     const std::string connection = shader_eval.GetConnectionPath(shader, prop);
     const UsdPrim source = stage.GetPrimAtPath(
         SourcePrimPathFromConnection(connection));
+    if (direct_graph) {
+      if (!::tinyusdz::next::IsShader(source) ||
+          graph_node_names.find(source.GetPath().str()) == graph_node_names.end())
+        continue;
+      if (!first_connection) os << ',';
+      first_connection = false;
+      os << "{\"input\":\"" << JsonEscape(prop.substr(7))
+         << "\",\"nodegraph\":\"" << JsonEscape(graph_name)
+         << "\",\"output\":\"" << JsonEscape(prop.substr(7)) << "\"}";
+      continue;
+    }
     if (!::tinyusdz::next::IsNodeGraph(source)) continue;
     const auto graph_it = std::find_if(
         graphs.begin(), graphs.end(), [&](const UsdPrim& graph) {

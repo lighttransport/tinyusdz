@@ -962,7 +962,10 @@ __device__ PtMat ptResolveMaterial(
     const float* matPbr,const float* matLightRt,const float* matGraph,
     int numMats,const int* matTex,const float* matTexParam,
     const unsigned char* texels,const TexDesc* textures,int numTextures,
-    const float* uvs,const float* uvs1,const Inst* insts){
+    const float* uvs,const float* uvs1,const Inst* insts,
+    F3 graphNormal,F3 graphPosition,F3 graphViewDirection){
+#define evalMaterialXGraphUv(graph_,mid_,route_,u_,v_,u1_,v1_,face_,texels_,textures_,numTextures_) \
+  evalMaterialXGraphUv(graph_,mid_,route_,u_,v_,u1_,v1_,face_,texels_,textures_,numTextures_,graphNormal,graphPosition,graphViewDirection,0.f,0.f)
   PtMat m; m.base=mk(.6f,.6f,.6f);m.emission=mk(0.f,0.f,0.f);
   m.transmissionColor=mk(1.f,1.f,1.f);m.subsurfaceColor=mk(.8f,.8f,.8f);
   m.specularColor=mk(1.f,1.f,1.f);m.coatColor=mk(1.f,1.f,1.f);
@@ -1032,6 +1035,7 @@ __device__ PtMat ptResolveMaterial(
   }
   if(insts){m.base=ptMul(m.base,mk(insts[hitInst].tint[0],insts[hitInst].tint[1],insts[hitInst].tint[2]));m.opacity*=insts[hitInst].tint[3];}
   m.opacity=fminf(fmaxf(m.opacity,0.f),1.f);
+#undef evalMaterialXGraphUv
   return m;
 }
 
@@ -1112,7 +1116,7 @@ __device__ F3 productionPath(
     F3 p0=xfPt(insts[ii].o2w,mk(tv[0],tv[1],tv[2]));F3 p1=xfPt(insts[ii].o2w,mk(tv[3],tv[4],tv[5]));F3 p2=xfPt(insts[ii].o2w,mk(tv[6],tv[7],tv[8]));
     F3 gn=norm3(cross3(sub(p1,p0),sub(p2,p0)));bool front=dot3(gn,rd)<0.f;
     F3 n=front?gn:scale(gn,-1.f);
-    PtMat m=ptResolveMaterial(tri,bu,bv,ii,front,cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,uvs,uvs1,insts);
+    PtMat m=ptResolveMaterial(tri,bu,bv,ii,front,cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,uvs,uvs1,insts,n,p,scale(rd,-1.f));
     if(m.alphaMode>1.5f&&m.opacity<1.f&&transparentEvents<16&&rndf(seed)>=m.opacity){
       ro=add(ro,scale(rd,t+1e-4f));++transparentEvents;--bounce;continue;
     }
@@ -1960,37 +1964,38 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     // regular material path above.
     if (matGraph && mid >= 0 && mid < numMats) {
       const int gb=mid*TUSD_GPU_GRAPH_FLOATS;
+      const F3 graphNormal=N,graphPosition=hit,graphView=scale(d,-1.f);
       if (matGraph[gb+1]>=0.f) {
         F4 g=evalMaterialXGraphUv(matGraph,mid,0,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,N,hit,scale(d,-1.f),0.f,0.f);
         base=mk(g.x,g.y,g.z);
       }
       if (matGraph[gb+2]>=0.f)
-        metallic=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,muu,mvv,uu1,vv21,faces[ht],texels,textures,numTextures).x,0.f),1.f);
+        metallic=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,1,muu,mvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f).x,0.f),1.f);
       if (matGraph[gb+3]>=0.f)
-        roughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,ruu,rvv,uu1,vv21,faces[ht],texels,textures,numTextures).x,0.03f),1.f);
+        roughness=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,2,ruu,rvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f).x,0.03f),1.f);
       if (matGraph[gb+4]>=0.f) {
-        opacity=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,3,ouu,ovv,uu1,vv21,faces[ht],texels,textures,numTextures).x,0.f),1.f);
+        opacity=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,3,ouu,ovv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f).x,0.f),1.f);
         materialOpacity=fminf(fmaxf(opacity*vertexOpacity*I->tint[3],0.f),1.f);
       }
       if (matGraph[gb+5]>=0.f) {
-        F4 g=evalMaterialXGraphUv(matGraph,mid,4,euu,evv,uu1,vv21,faces[ht],texels,textures,numTextures);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,4,euu,evv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f);
         emissionConst=mk(g.x,g.y,g.z);
       }
       if (matGraph[gb+7]>=0.f)
-        subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures).x,0.f),1.f);
+        subsurface=fminf(fmaxf(evalMaterialXGraphUv(matGraph,mid,6,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f).x,0.f),1.f);
       if (matGraph[gb+8]>=0.f) {
-        F4 g=evalMaterialXGraphUv(matGraph,mid,7,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,7,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f);
         subsurfaceColor=mk(fmaxf(g.x,0.f),fmaxf(g.y,0.f),fmaxf(g.z,0.f));
       }
       if (matGraph[gb+9]>=0.f) {
-        F4 g=evalMaterialXGraphUv(matGraph,mid,8,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
+        F4 g=evalMaterialXGraphUv(matGraph,mid,8,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f);
         subsurfaceRadius=mk(fmaxf(g.x,0.f),fmaxf(g.y,0.f),fmaxf(g.z,0.f));
       }
       if (matGraph[gb+6]>=0.f) {
         // MaterialX normalmap output: decode the graph's tangent-space
         // [0,1] value and apply it in the same triangle tangent frame as the
         // semantic normal-texture path above.
-        F4 gn=evalMaterialXGraphUv(matGraph,mid,5,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures);
+        F4 gn=evalMaterialXGraphUv(matGraph,mid,5,buu,bvv,uu1,vv21,faces[ht],texels,textures,numTextures,graphNormal,graphPosition,graphView,0.f,0.f);
         F3 ge1=sub(wp1,wp0), ge2=sub(wp2,wp0);
         F3 gN=norm3(cross3(ge1,ge2));
         float gd1u=uvh[2]-uvh[0], gd1v=uvh[3]-uvh[1];
