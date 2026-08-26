@@ -385,7 +385,7 @@ Passed:
 - `chiang_hair_roughness` now implements the MaterialX empirical conversion
   for longitudinal variance and azimuthal logistic scale, including squared
   TT/TRT lobe scales in multi-output connections. Standalone graph and bridge
-  regressions pass.
+  regressions pass, including explicit TT/TRT selector coverage.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
