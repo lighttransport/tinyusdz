@@ -257,7 +257,7 @@ typedef enum {
     OP_DISJOINTOVER, OP_CIRCLE, OP_LINE, OP_CLOVERLEAF, OP_HEXAGON,
     OP_GRID, OP_CROSSHATCH, OP_TILEDCIRCLES, OP_TILEDCLOVERLEAFS, OP_TILEDHEXAGONS,
     OP_COLORCORRECT, OP_BLUR, OP_FLAKE2D, OP_FLAKE3D, OP_RANDOMFLOAT,
-    OP_RANDOMCOLOR
+    OP_RANDOMCOLOR, OP_LATLONGIMAGE, OP_TRIPLANARPROJECTION
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -401,6 +401,8 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "flake3d")) return OP_FLAKE3D;
     if (!strcmp(c, "randomfloat")) return OP_RANDOMFLOAT;
     if (!strcmp(c, "randomcolor")) return OP_RANDOMCOLOR;
+    if (!strcmp(c, "latlongimage")) return OP_LATLONGIMAGE;
+    if (!strcmp(c, "triplanarprojection")) return OP_TRIPLANARPROJECTION;
     return OP_UNKNOWN;
 }
 
@@ -519,6 +521,49 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
         case MV_COLOR4: { MtlxValue r = mv_zero(MV_COLOR4); r.v[0]=s[0];r.v[1]=s[1];r.v[2]=s[2];r.v[3]=s[3]; return r; }
         default: return mv_color3(v3_make(s[0], s[1], s[2]));
     }
+}
+
+static MtlxValue eval_latlongimage(ShadeContext *ctx, const MtlxNode *n) {
+    const MtlxInput *file = find_input(n, "file");
+    int srgb = file ? file->colorspace_srgb : 0;
+    const char *path = (file && file->value.s) ? file->value.s : NULL;
+    MtlxValue vd = in_or(ctx, n, "viewdir", mv_vec3(v3_make(0, 0, 1)));
+    MtlxValue rotation = in_or(ctx, n, "rotation", mv_float(0));
+    float u = atan2f(vd.v[0], vd.v[2]) * -0.15915494f + 0.5f +
+              rotation.v[0] * 0.00277778f;
+    float v = asinf(clampf(vd.v[1], -1.0f, 1.0f)) * 0.31830989f + 0.5f;
+    /* The stdlib requests periodic U and mirrored V.  Latitude is in [0,1]
+     * for finite view directions; texcache's periodic sampling provides the
+     * longitude seam behavior. */
+    int id = path ? texcache_get(ctx->tex, path, srgb) : -1;
+    float s[4];
+    if (id >= 0) texcache_sample(ctx->tex, id, u, v, s);
+    else {
+        MtlxValue d = in_or(ctx, n, "default", mv_zero(MV_COLOR3));
+        s[0] = d.v[0]; s[1] = d.v[1]; s[2] = d.v[2]; s[3] = 1.0f;
+    }
+    return mv_color3(v3_make(s[0], s[1], s[2]));
+}
+
+static MtlxValue eval_triplanarprojection(ShadeContext *ctx,
+                                          const MtlxNode *n) {
+    MtlxValue pv=in_or(ctx,n,"position",mv_vec3(ctx->P));
+    MtlxValue nv=in_or(ctx,n,"normal",mv_vec3(ctx->Ns));
+    MtlxValue bv=in_or(ctx,n,"blend",mv_float(.5f));
+    MtlxValue uv=in_or(ctx,n,"upaxis",mv_float(1));
+    v3 p=mv_as_v3(&pv),nn=v3_normalize(mv_as_v3(&nv));
+    float w[3]={fabsf(nn.x),fabsf(nn.y),fabsf(nn.z)};
+    float sum=w[0]+w[1]+w[2];if(sum<=1e-20f){w[0]=w[1]=0;w[2]=1;}else for(int i=0;i<3;i++)w[i]/=sum;
+    float exponent=1.0f/fmaxf(bv.v[0],.03f);sum=0;for(int i=0;i<3;i++){w[i]=powf(w[i],exponent);sum+=w[i];}if(sum>1e-20f)for(int i=0;i<3;i++)w[i]/=sum;
+    float tc[3][2]={{p.y,p.z},{p.x,p.z},{p.x,p.y}};int up=(int)uv.v[0];
+    if(up!=2){tc[0][0]=p.z;tc[0][1]=p.y;}if(up==0){tc[1][0]=p.z;tc[1][1]=p.x;tc[2][0]=-p.y;tc[2][1]=p.x;}
+    MtlxValue sample[3];const char *files[3]={"filex","filey","filez"};
+    for(int axis=0;axis<3;axis++){
+        const MtlxInput *file=find_input(n,files[axis]);const char *path=file&&file->value.s?file->value.s:NULL;int id=path?texcache_get(ctx->tex,path,file?file->colorspace_srgb:0):-1;float s[4];
+        if(id>=0)texcache_sample(ctx->tex,id,tc[axis][0],tc[axis][1],s);else{MtlxValue d=in_or(ctx,n,"default",mv_zero(n->type));s[0]=d.v[0];s[1]=d.v[1];s[2]=d.v[2];s[3]=n->type==MV_COLOR4||n->type==MV_VEC4?d.v[3]:1;}
+        sample[axis]=mv_zero(n->type);int nc=ncomp_of(&sample[axis]);if(nc<1)nc=1;for(int c=0;c<nc;c++)sample[axis].v[c]=s[c];
+    }
+    MtlxValue r=sample[0];int nc=ncomp_of(&r);if(nc<1)nc=1;for(int c=0;c<nc;c++)r.v[c]=sample[0].v[c]*w[0]+sample[1].v[c]*w[1]+sample[2].v[c]*w[2];return r;
 }
 
 /* ---- hex-tiling (Mikkelsen, Practical Real-Time Hex-Tiling, JCGT 2022) ---
@@ -659,6 +704,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
     }
     switch (classify(n->category)) {
         case OP_IMAGE: r = eval_image(ctx, n); break;
+        case OP_LATLONGIMAGE: r = eval_latlongimage(ctx, n); break;
+        case OP_TRIPLANARPROJECTION: r=eval_triplanarprojection(ctx,n); break;
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
         case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;

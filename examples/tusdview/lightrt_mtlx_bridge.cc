@@ -1184,6 +1184,114 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
               inputNamed(node,"in",{{"value",0}}),"in")})},
           {"matrix_source",source},{"matrix_dim",dim}});continue;
     }
+    if (cat == "latlongimage" && !name.empty()) {
+      // MaterialX stdlib NG_latlongimage.  Keep this as ordinary bounded graph
+      // arithmetic so connected view directions and rotations execute on all
+      // CPU/GPU interpreters without adding another packed-ABI opcode.
+      const std::string x = name + "__view_x";
+      const std::string y = name + "__view_y";
+      const std::string z = name + "__view_z";
+      const std::string angle = name + "__angle_xz";
+      const std::string scaledLongitude = name + "__scaled_longitude";
+      const std::string longitude = name + "__longitude";
+      const std::string rotation = name + "__rotation";
+      const std::string u = name + "__u";
+      const std::string latitude = name + "__latitude";
+      const std::string uv = name + "__uv";
+      const nlohmann::json view = inputNamed(
+          node, "viewdir", {{"value", nlohmann::json::array({0.0, 0.0, 1.0})}});
+      auto extract = [&](const std::string& dst, int lane) {
+        runtimeNodes.push_back({{"name", dst}, {"category", "extract"},
+            {"type", "float"}, {"inputs", nlohmann::json::array({
+                renamedInput(view, "in"),
+                nlohmann::json{{"name", "index"}, {"value", lane}}})}});
+      };
+      extract(x, 0); extract(y, 1); extract(z, 2);
+      runtimeNodes.push_back({{"name", angle}, {"category", "atan2"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "iny"}, {"nodename", x}},
+              nlohmann::json{{"name", "inx"}, {"nodename", z}}})}});
+      runtimeNodes.push_back({{"name", scaledLongitude}, {"category", "multiply"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"nodename", angle}},
+              nlohmann::json{{"name", "in2"}, {"value", -0.15915494}}})}});
+      runtimeNodes.push_back({{"name", longitude}, {"category", "add"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"nodename", scaledLongitude}},
+              nlohmann::json{{"name", "in2"}, {"value", 0.5}}})}});
+      runtimeNodes.push_back({{"name", rotation}, {"category", "multiply"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              renamedInput(inputNamed(node, "rotation", {{"value", 0.0}}), "in1"),
+              nlohmann::json{{"name", "in2"}, {"value", 0.00277778}}})}});
+      runtimeNodes.push_back({{"name", u}, {"category", "add"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"nodename", longitude}},
+              nlohmann::json{{"name", "in2"}, {"nodename", rotation}}})}});
+      const std::string asinY = name + "__asin_y";
+      runtimeNodes.push_back({{"name", asinY}, {"category", "asin"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in"}, {"nodename", y}}})}});
+      runtimeNodes.push_back({{"name", latitude}, {"category", "multiply"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"nodename", asinY}},
+              nlohmann::json{{"name", "in2"}, {"value", 0.31830989}}})}});
+      const std::string v = name + "__v";
+      runtimeNodes.push_back({{"name", v}, {"category", "add"},
+          {"type", "float"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"nodename", latitude}},
+              nlohmann::json{{"name", "in2"}, {"value", 0.5}}})}});
+      runtimeNodes.push_back({{"name", uv}, {"category", "combine2"},
+          {"type", "vector2"}, {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "in1"}, {"nodename", u}},
+              nlohmann::json{{"name", "in2"}, {"nodename", v}}})}});
+      runtimeNodes.push_back({{"name", name}, {"category", "image"},
+          {"type", "color3"}, {"inputs", nlohmann::json::array({
+              renamedInput(inputNamed(node, "file", {{"value", ""}}), "file"),
+              renamedInput(inputNamed(node, "default", {{"value", nlohmann::json::array({0.0, 0.0, 0.0})}}), "default"),
+              nlohmann::json{{"name", "texcoord"}, {"nodename", uv}},
+              nlohmann::json{{"name", "uaddressmode"}, {"value", "periodic"}},
+              nlohmann::json{{"name", "vaddressmode"}, {"value", "mirror"}}})}});
+      continue;
+    }
+    if (cat == "triplanarprojection" && !name.empty()) {
+      // Compact form of the MaterialX stdlib triplanar nodegraph.  Three image
+      // nodes retain independent files while ordinary graph arithmetic builds
+      // the axis projections and normalized blend weights.
+      const std::string posName=name+"__position",normalName=name+"__normal";
+      nlohmann::json position=inputNamed(node,"position",{{"nodename",posName}});
+      nlohmann::json normal=inputNamed(node,"normal",{{"nodename",normalName}});
+      if(JsonString(position,"nodename")==posName)runtimeNodes.push_back({{"name",posName},{"category","position"},{"type","vector3"},{"inputs",nlohmann::json::array()}});
+      if(JsonString(normal,"nodename")==normalName)runtimeNodes.push_back({{"name",normalName},{"category","normal"},{"type","vector3"},{"inputs",nlohmann::json::array()}});
+      std::string axis[3]={name+"__x",name+"__y",name+"__z"};
+      for(int lane=0;lane<3;lane++)runtimeNodes.push_back({{"name",axis[lane]},{"category","extract"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(position,"in"),nlohmann::json{{"name","index"},{"value",lane}}})}});
+      const std::string negY=name+"__neg_y";
+      runtimeNodes.push_back({{"name",negY},{"category","multiply"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",axis[1]}},nlohmann::json{{"name","in2"},{"value",-1}}})}});
+      auto combine2=[&](const std::string& dst,const std::string& a,const std::string& b){runtimeNodes.push_back({{"name",dst},{"category","combine2"},{"type","vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",a}},nlohmann::json{{"name","in2"},{"nodename",b}}})}});};
+      const std::string yz=name+"__yz",xz=name+"__xz",xy=name+"__xy",xyX=name+"__xy_xup",xzX=name+"__xz_xup",yzY=name+"__yz_yup";
+      combine2(yz,axis[1],axis[2]);combine2(xz,axis[0],axis[2]);combine2(xy,axis[0],axis[1]);
+      combine2(xyX,negY,axis[0]);combine2(xzX,axis[2],axis[0]);combine2(yzY,axis[2],axis[1]);
+      const nlohmann::json upaxis=inputNamed(node,"upaxis",{{"value",1}});
+      auto choose=[&](const std::string& dst,int target,const std::string& yes,const std::string& no){runtimeNodes.push_back({{"name",dst},{"category","ifequal"},{"type","vector2"},{"inputs",nlohmann::json::array({renamedInput(upaxis,"value1"),nlohmann::json{{"name","value2"},{"value",target}},nlohmann::json{{"name","in1"},{"nodename",yes}},nlohmann::json{{"name","in2"},{"nodename",no}}})}});};
+      const std::string uvX=name+"__uv_x",uvY=name+"__uv_y",uvZ=name+"__uv_z";
+      choose(uvX,2,yz,yzY);choose(uvY,0,xzX,xz);choose(uvZ,0,xyX,xy);
+      std::string imageName[3]={name+"__image_x",name+"__image_y",name+"__image_z"};
+      const char* fileName[3]={"filex","filey","filez"};const std::string* uvName[3]={&uvX,&uvY,&uvZ};
+      const nlohmann::json defaultValue=inputNamed(node,"default",{{"value",0.0}});
+      for(int lane=0;lane<3;lane++)runtimeNodes.push_back({{"name",imageName[lane]},{"category","image"},{"type",type},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,fileName[lane],{{"value",""}}),"file"),renamedInput(defaultValue,"default"),nlohmann::json{{"name","texcoord"},{"nodename",*uvName[lane]}},nlohmann::json{{"name","uaddressmode"},{"value","periodic"}},nlohmann::json{{"name","vaddressmode"},{"value","periodic"}}})}});
+      const std::string norm=name+"__normalized_normal",absn=name+"__abs_normal",sum0=name+"__weight_sum",w0=name+"__weights0",blendClamp=name+"__blend_clamp",exponent=name+"__exponent",powered=name+"__powered",sum1=name+"__powered_sum",weights=name+"__weights";
+      runtimeNodes.push_back({{"name",norm},{"category","normalize"},{"type","vector3"},{"inputs",nlohmann::json::array({renamedInput(normal,"in")})}});
+      runtimeNodes.push_back({{"name",absn},{"category","abs"},{"type","vector3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",norm}}})}});
+      auto dotOnes=[&](const std::string& dst,const std::string& src){runtimeNodes.push_back({{"name",dst},{"category","dotproduct"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",src}},nlohmann::json{{"name","in2"},{"value",nlohmann::json::array({1,1,1})}}})}});};
+      dotOnes(sum0,absn);
+      runtimeNodes.push_back({{"name",w0},{"category","divide"},{"type","vector3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",absn}},nlohmann::json{{"name","in2"},{"nodename",sum0}}})}});
+      runtimeNodes.push_back({{"name",blendClamp},{"category","clamp"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,"blend",{{"value",0.5}}),"in"),nlohmann::json{{"name","low"},{"value",0.03}},nlohmann::json{{"name","high"},{"value",1.0e30}}})}});
+      runtimeNodes.push_back({{"name",exponent},{"category","divide"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"value",1}},nlohmann::json{{"name","in2"},{"nodename",blendClamp}}})}});
+      runtimeNodes.push_back({{"name",powered},{"category","power"},{"type","vector3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",w0}},nlohmann::json{{"name","in2"},{"nodename",exponent}}})}});dotOnes(sum1,powered);
+      runtimeNodes.push_back({{"name",weights},{"category","divide"},{"type","vector3"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",powered}},nlohmann::json{{"name","in2"},{"nodename",sum1}}})}});
+      std::string weighted[3];for(int lane=0;lane<3;lane++){const std::string weight=name+"__weight_"+std::to_string(lane);weighted[lane]=name+"__weighted_"+std::to_string(lane);runtimeNodes.push_back({{"name",weight},{"category","extract"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",weights}},nlohmann::json{{"name","index"},{"value",lane}}})}});runtimeNodes.push_back({{"name",weighted[lane]},{"category","multiply"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",imageName[lane]}},nlohmann::json{{"name","in2"},{"nodename",weight}}})}});}
+      const std::string first=name+"__xy_blend";runtimeNodes.push_back({{"name",first},{"category","add"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",weighted[0]}},nlohmann::json{{"name","in2"},{"nodename",weighted[1]}}})}});runtimeNodes.push_back({{"name",name},{"category","add"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",first}},nlohmann::json{{"name","in2"},{"nodename",weighted[2]}}})}});
+      continue;
+    }
     if (cat == "ramp4" && !name.empty()) {
       const std::string st = name + "__st";
       const std::string u = name + "__u";
