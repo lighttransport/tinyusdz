@@ -21,7 +21,7 @@
 #   examples/tusdview/tests/run-vk-render.sh
 # Overrides: TUSDVIEW=<binary>  ASSET=<usd file>
 #            CURVES_ASSET=<usd file>  NURBS_ASSET=<usd file>
-#            TUSDVIEW_RENDER_TIMEOUT=30s
+#            TUSDVIEW_RENDER_TIMEOUT=180s
 # Also run via ctest: `ctest -R tusdview-vk-render`.
 set -uo pipefail
 SKIP=77
@@ -32,7 +32,11 @@ TUSDVIEW="${TUSDVIEW:-$REPO_ROOT/build/tusdview}"
 ASSET="${ASSET:-$REPO_ROOT/models/suzanne-pbr.usda}"
 CURVES_ASSET="${CURVES_ASSET:-$REPO_ROOT/models/tusdview-curves-ribbons.usda}"
 NURBS_ASSET="${NURBS_ASSET:-$REPO_ROOT/models/tusdview-nurbs-patch.usda}"
-TUSDVIEW_RENDER_TIMEOUT="${TUSDVIEW_RENDER_TIMEOUT:-30s}"
+# A cold full-MaterialX ray-query pipeline takes roughly 155 seconds to compile
+# with current NVIDIA drivers; subsequent cache hits take milliseconds. Keep the
+# isolated hardware smoke test bounded to three minutes instead of misclassifying
+# a healthy RT device as unavailable after 30 seconds.
+TUSDVIEW_RENDER_TIMEOUT="${TUSDVIEW_RENDER_TIMEOUT:-180s}"
 
 if [ ! -x "$TUSDVIEW" ]; then
   echo "SKIP: tusdview binary not found at $TUSDVIEW (set TUSDVIEW=...)"

@@ -1016,6 +1016,8 @@ class VulkanRenderer final : public Renderer {
   float proj_[16];
   float cameraPos_[3]{0, 0, 0};
   float exposure_{0.0f};
+  float materialXTime_{0.0f};
+  float materialXFrame_{0.0f};
   RtCameraLens cameraLens_;
   PathTraceSettings pathTrace_;
   float lightDir_[3]{0.40160966f, 0.64257544f, 0.48193160f};

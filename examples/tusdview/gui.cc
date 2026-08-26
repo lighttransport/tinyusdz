@@ -5881,6 +5881,10 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
   p.exposure = cam_->exposure();
+  p.materialXFrame = static_cast<float>(timeline_.current);
+  p.materialXTime = static_cast<float>(timeline_.fps > 0.0
+                                           ? timeline_.current / timeline_.fps
+                                           : 0.0);
   p.cameraLens = cameraLens_;
   p.pathTrace = pathTrace_;
   p.mode = mode_;
@@ -6011,6 +6015,8 @@ void Gui::renderViewportScene(FramePacket* packet) {
   std::memcpy(packet->proj, projM.m, sizeof(packet->proj));
   packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
   packet->exposure = p.exposure;
+  packet->materialXTime = p.materialXTime;
+  packet->materialXFrame = p.materialXFrame;
   packet->cameraLens = p.cameraLens;
   packet->pathTrace = p.pathTrace;
   packet->mode = p.mode;

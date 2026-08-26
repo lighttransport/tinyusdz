@@ -211,6 +211,8 @@ struct RenderFrameParams {
   const float* proj{nullptr};  // column-major 4x4 (GL: Z[-1,1]; VK: Z[0,1])
   float cameraPos[3]{0, 0, 0};
   float exposure{0.0f};  // photographic exposure in stops (linear multiplier 2^x)
+  float materialXTime{0.0f};   // MaterialX time in seconds
+  float materialXFrame{0.0f};  // MaterialX frame/timeCode
   RtCameraLens cameraLens;
   PathTraceSettings pathTrace;
   RenderMode mode{RenderMode::Shaded};

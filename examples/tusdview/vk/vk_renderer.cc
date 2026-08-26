@@ -460,6 +460,7 @@ struct RtPushC {
   float sceneMin[4];    // position AOV bbox
   float sceneExtent[4];
   float lens[4];        // focus distance, aperture radius, enabled, reserved
+  float context[4];     // MaterialX time, frame, reserved, reserved
   uint32_t pointParams[4]; // native Gaussian point count, node count, chunk count
 };
 
@@ -10959,6 +10960,8 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lens[1] = cameraLens_.apertureRadius;
   pc.lens[2] = cameraLens_.enabled() ? 1.0f : 0.0f;
   pc.lens[3] = static_cast<float>(rtTlasChunkStride_);
+  pc.context[0] = materialXTime_;
+  pc.context[1] = materialXFrame_;
   pc.pointParams[0] = rtPointCount_;
   pc.pointParams[1] = rtPointNodeCount_;
   pc.pointParams[2] = rtPointChunkCount_;
@@ -11705,6 +11708,8 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   if (params.proj) std::memcpy(proj_, params.proj, sizeof(proj_));
   for (int i = 0; i < 3; ++i) cameraPos_[i] = params.cameraPos[i];
   exposure_ = params.exposure;
+  materialXTime_ = params.materialXTime;
+  materialXFrame_ = params.materialXFrame;
   if (pathTrace_.enabled != params.pathTrace.enabled ||
       pathTrace_.maxDepth != params.pathTrace.maxDepth ||
       pathTrace_.russianRouletteDepth !=
