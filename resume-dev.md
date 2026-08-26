@@ -121,6 +121,7 @@ Passed:
 - Complete configured native CTest suite after CUDA/HIP geomprop path
   plumbing: 298/298 passed in 1112.57 seconds (24 documented
   capability/asset skips)
+- Stable `build-next` rebuild and regression: 40/40 passed
 - `tusdview_lightrt_bridge_test`, OpenPBR, evaluator, and graph tests after
   vector2 roughness extraction
 - `tusdview-vk-render`, CUDA/HIP semantic RT parity, and headless
