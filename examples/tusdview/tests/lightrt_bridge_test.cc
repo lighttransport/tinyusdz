@@ -2057,6 +2057,14 @@ int main() {
       "direct EDF", {4, 44}) ||
       !CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
+      {"name":"measured","category":"measured_edf","type":"EDF","inputs":[
+        {"name":"color","value":[0.15,0.35,0.65]},
+        {"name":"measurement","value":"profile.mxd"}]}
+    ],"outputs":[{"name":"shader","type":"EDF","nodename":"measured"}]},
+    "connections":[{"input":"edf","output":"shader"}]})json",
+      "measured EDF color fallback", {4, 44}) ||
+      !CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
       {"name":"base","category":"uniform_edf","type":"EDF","inputs":[{"name":"color","value":[0.2,0.4,0.8]}]},
       {"name":"schlick","category":"generalized_schlick_edf","type":"EDF","inputs":[
         {"name":"base","nodename":"base"},{"name":"color0","value":[0.5,0.5,0.5]},
