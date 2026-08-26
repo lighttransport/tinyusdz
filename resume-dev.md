@@ -12,10 +12,10 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `abc287650` (`Evaluate arbitrary geomprops in CPU material graphs`)
+- HEAD: `da8b1ac62` (`Honor MaterialX texture address modes`)
 - Upstream: `origin/dev`
-- Worktree: tracked follow-up shader/renderer/test/evidence edits are pending;
-  the two unrelated untracked paths above remain untouched.
+- Worktree: no tracked modifications; the two unrelated untracked paths above
+  remain untouched.
 - Recent completed commits:
   - `4c7e80c07` Complete MaterialX Vulkan RT graph evaluation
   - `63c5b9a29` Transport MaterialX time context to GPU RT
@@ -32,6 +32,11 @@ not hand-edit generated headers.
   - `eaeafba1c` Use runtime view direction for latlong graphs
   - `3228d85cd` Preserve generic geomprops in next scene meshes
   - `abc287650` Evaluate arbitrary geomprops in CPU material graphs
+  - `309fbee0e` Transport geomprops through CUDA and HIP RT
+  - `7e9af3aee` Add compute BVH geomprop transport
+  - `05b1c970b` Record SWBVH geomprop regression
+  - `f6d9a7af0` Support integer geomprops in next viewer
+  - `da8b1ac62` Honor MaterialX texture address modes
 
 ## Completed coverage
 
