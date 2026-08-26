@@ -203,6 +203,34 @@ int main() {
     return 1;
   }
 
+  // Non-uniform object-to-world scale must use the inverse-transpose normal
+  // transform in the flattened CPU/RT scene, matching the Vulkan path.
+  {
+    tusdview::DrawScene normalScene;
+    normalScene.materials.push_back(mat);
+    tusdview::DrawMeshCPU normalMesh = mesh;
+    normalMesh.world[0] = 2.0f;
+    normalMesh.world[5] = 3.0f;
+    normalMesh.world[10] = 1.0f;
+    for (tusdview::DrawVertex& vertex : normalMesh.vertices) {
+      vertex.nx = 1.0f;
+      vertex.ny = 1.0f;
+      vertex.nz = 0.0f;
+    }
+    normalScene.meshes.push_back(std::move(normalMesh));
+    tusdview::HostScene normalHost;
+    std::string normalErr;
+    if (!tusdview::BuildHostScene(normalScene, 0, 0, 0.0f, &normalHost,
+                                  &normalErr) || normalHost.nrms.size() < 3 ||
+        !Near(normalHost.nrms[0], 0.5f) ||
+        !Near(normalHost.nrms[1], 1.0f / 3.0f) ||
+        !Near(normalHost.nrms[2], 0.0f)) {
+      std::fprintf(stderr, "non-uniform normal inverse-transpose failed: %s\n",
+                   normalErr.c_str());
+      return 1;
+    }
+  }
+
   // CUDA and HIP upload HostScene::mat verbatim. Keep a focused assertion that
   // two GeomSubset-style EBO ranges survive BVH leaf reordering as two distinct
   // per-triangle material ids.
