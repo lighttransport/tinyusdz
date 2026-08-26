@@ -1226,6 +1226,38 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       runtimeNodes.push_back({{"name",name},{"category","ifgreater"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","value1"},{"nodename",distance}},renamedInput(inputNamed(node,"radius",{{"value",0.1}}),"value2"),nlohmann::json{{"name","in1"},{"value",0}},nlohmann::json{{"name","in2"},{"value",1}}})}});
       continue;
     }
+    if (cat == "colorcorrect" && !name.empty()) {
+      const std::string amount=name+"__hsv_amount",hsv=name+"__hsv";
+      const std::string saturation=name+"__saturation",gamma=name+"__gamma";
+      const std::string gammaReciprocal=name+"__gamma_reciprocal";
+      const std::string gammaAbsolute=name+"__gamma_absolute";
+      const std::string gammaPower=name+"__gamma_power";
+      const std::string gammaSign=name+"__gamma_sign";
+      const std::string liftSubtract=name+"__lift_subtract";
+      const std::string liftMultiply=name+"__lift_multiply";
+      const std::string liftAdd=name+"__lift_add",gain=name+"__gain";
+      const std::string contrast=name+"__contrast",exposurePower=name+"__exposure_power";
+      const bool preserveAlpha = type == "color4" || type == "vector4";
+      const std::string corrected = preserveAlpha ? name+"__corrected" : name;
+      const nlohmann::json source=inputNamed(node,"in",{{"value",nlohmann::json::array({1,1,1,0})}});
+      runtimeNodes.push_back({{"name",amount},{"category","combine3"},{"type","vector3"},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,"hue",{{"value",0}}),"in1"),nlohmann::json{{"name","in2"},{"value",1}},nlohmann::json{{"name","in3"},{"value",1}}})}});
+      runtimeNodes.push_back({{"name",hsv},{"category","hsvadjust"},{"type",type},{"inputs",nlohmann::json::array({renamedInput(source,"in"),nlohmann::json{{"name","amount"},{"nodename",amount}}})}});
+      runtimeNodes.push_back({{"name",saturation},{"category","saturate"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",hsv}},renamedInput(inputNamed(node,"saturation",{{"value",1}}),"amount")})}});
+      runtimeNodes.push_back({{"name",gammaReciprocal},{"category","divide"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"value",1}},renamedInput(inputNamed(node,"gamma",{{"value",1}}),"in2")})}});
+      runtimeNodes.push_back({{"name",gammaAbsolute},{"category","absval"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",saturation}}})}});
+      runtimeNodes.push_back({{"name",gammaPower},{"category","power"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",gammaAbsolute}},nlohmann::json{{"name","in2"},{"nodename",gammaReciprocal}}})}});
+      runtimeNodes.push_back({{"name",gammaSign},{"category","sign"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",saturation}}})}});
+      runtimeNodes.push_back({{"name",gamma},{"category","multiply"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",gammaPower}},nlohmann::json{{"name","in2"},{"nodename",gammaSign}}})}});
+      runtimeNodes.push_back({{"name",liftSubtract},{"category","subtract"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"value",1}},renamedInput(inputNamed(node,"lift",{{"value",0}}),"in2")})}});
+      runtimeNodes.push_back({{"name",liftMultiply},{"category","multiply"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",gamma}},nlohmann::json{{"name","in2"},{"nodename",liftSubtract}}})}});
+      runtimeNodes.push_back({{"name",liftAdd},{"category","add"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",liftMultiply}},renamedInput(inputNamed(node,"lift",{{"value",0}}),"in2")})}});
+      runtimeNodes.push_back({{"name",gain},{"category","multiply"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",liftAdd}},renamedInput(inputNamed(node,"gain",{{"value",1}}),"in2")})}});
+      runtimeNodes.push_back({{"name",contrast},{"category","contrast"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",gain}},renamedInput(inputNamed(node,"contrast",{{"value",1}}),"amount"),renamedInput(inputNamed(node,"contrastpivot",{{"value",0.5}}),"pivot")})}});
+      runtimeNodes.push_back({{"name",exposurePower},{"category","power"},{"type","float"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"value",2}},renamedInput(inputNamed(node,"exposure",{{"value",0}}),"in2")})}});
+      runtimeNodes.push_back({{"name",corrected},{"category","multiply"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in1"},{"nodename",contrast}},nlohmann::json{{"name","in2"},{"nodename",exposurePower}}})}});
+      if(preserveAlpha){const std::string alpha=name+"__alpha";runtimeNodes.push_back({{"name",alpha},{"category","extract"},{"type","float"},{"inputs",nlohmann::json::array({renamedInput(source,"in"),nlohmann::json{{"name","index"},{"value",3}}})}});runtimeNodes.push_back({{"name",name},{"category","setalpha"},{"type",type},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",corrected}},nlohmann::json{{"name","alpha"},{"nodename",alpha}}})}});}
+      continue;
+    }
     runtimeNodes.push_back(node);
   }
   std::map<std::string, int> nodeIds;
@@ -1363,6 +1395,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.value[2][0] = out.value[2][1] =
           out.value[2][2] = out.value[2][3] = 1.0f;
     }
+    else if (cat == "setalpha") out.op = MaterialXGraphOpCPU::SetAlpha;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1517,6 +1550,13 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           inputSlot = 0;
         else if (cat == "saturate" && inputName == "amount")
           inputSlot = 1;
+        else if (cat == "hsvadjust" && inputName == "in") inputSlot = 0;
+        else if (cat == "hsvadjust" && inputName == "amount") inputSlot = 1;
+        else if (cat == "contrast" && inputName == "in") inputSlot = 0;
+        else if (cat == "contrast" && inputName == "amount") inputSlot = 1;
+        else if (cat == "contrast" && inputName == "pivot") inputSlot = 2;
+        else if (cat == "setalpha" && inputName == "in") inputSlot = 0;
+        else if (cat == "setalpha" && inputName == "alpha") inputSlot = 1;
         else if (conditional && inputName == "value1") inputSlot = 0;
         else if (conditional && inputName == "value2") inputSlot = 1;
         else if (conditional && inputName == "in1") inputSlot = 2;
@@ -1594,7 +1634,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           if (found != nodeIds.end()) out.input[inputSlot] = found->second;
         }
         if (valueIt != input.end()) {
-          if (valueIt->is_number()) out.value[inputSlot][0] = valueIt->get<float>();
+          if (valueIt->is_number()) {
+            // MaterialX promotes scalar inputs lane-wise when a polymorphic
+            // vector/color operation consumes them. Keeping only x made
+            // colorcorrect gamma/gain/exposure affect red while green and blue
+            // saw the record's unrelated zero/one defaults.
+            const float scalar = valueIt->get<float>();
+            for (float& lane : out.value[inputSlot]) lane = scalar;
+          }
           else if (valueIt->is_array()) {
             for (size_t c = 0; c < valueIt->size() && c < 4; ++c)
               if ((*valueIt)[c].is_number())

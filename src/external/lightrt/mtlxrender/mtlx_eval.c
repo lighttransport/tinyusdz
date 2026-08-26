@@ -172,7 +172,7 @@ typedef enum {
     OP_MAGNITUDE, OP_DOTPRODUCT, OP_CROSSPRODUCT,
     OP_MIX, OP_SCREEN, OP_OVERLAY, OP_BURN, OP_DODGE,
     OP_CLAMP, OP_SMOOTHSTEP, OP_REMAP, OP_LUMINANCE, OP_RGBTOHSV,
-    OP_HSVTORGB, OP_SATURATE, OP_CONTRAST, OP_RANGE,
+    OP_HSVTORGB, OP_HSVADJUST, OP_SATURATE, OP_CONTRAST, OP_RANGE,
     OP_SEPARATE, OP_COMBINE2, OP_COMBINE3, OP_COMBINE4, OP_EXTRACT, OP_CONVERT,
     OP_SWIZZLE, OP_NOISE3D, OP_FRACTAL3D, OP_CELLNOISE3D,
     OP_RAMPLR, OP_RAMPTB, OP_SPLITLR, OP_SPLITTB,
@@ -181,7 +181,7 @@ typedef enum {
     OP_PREMULT, OP_UNPREMULT, OP_MINCOMPONENT, OP_MAXCOMPONENT,
     OP_AND, OP_OR, OP_XOR, OP_NOT, OP_INSIDE, OP_OUTSIDE, OP_TRIANGLEWAVE,
     OP_CHECKERBOARD, OP_DIFFERENCE, OP_IN, OP_MASK, OP_MATTE, OP_OUT, OP_OVER,
-    OP_DISJOINTOVER, OP_CIRCLE, OP_LINE
+    OP_DISJOINTOVER, OP_CIRCLE, OP_LINE, OP_COLORCORRECT
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -252,6 +252,7 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "luminance")) return OP_LUMINANCE;
     if (!strcmp(c, "rgbtohsv")) return OP_RGBTOHSV;
     if (!strcmp(c, "hsvtorgb")) return OP_HSVTORGB;
+    if (!strcmp(c, "hsvadjust")) return OP_HSVADJUST;
     if (!strcmp(c, "saturate")) return OP_SATURATE;
     if (!strcmp(c, "contrast")) return OP_CONTRAST;
     if (!strcmp(c, "range")) return OP_RANGE;
@@ -297,6 +298,7 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "checkerboard")) return OP_CHECKERBOARD;
     if (!strcmp(c, "circle")) return OP_CIRCLE;
     if (!strcmp(c, "line")) return OP_LINE;
+    if (!strcmp(c, "colorcorrect")) return OP_COLORCORRECT;
     return OP_UNKNOWN;
 }
 
@@ -589,6 +591,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_LUMINANCE: { a=in_or(ctx,n,"in",mv_zero(MV_COLOR3)); float l=luminance(mv_as_v3(&a)); r=mv_color3(v3_splat(l)); break; }
         case OP_RGBTOHSV: { a=in_or(ctx,n,"in",mv_zero(MV_COLOR3)); r=mv_color3(rgb_to_hsv(mv_as_v3(&a))); break; }
         case OP_HSVTORGB: { a=in_or(ctx,n,"in",mv_zero(MV_COLOR3)); r=mv_color3(hsv_to_rgb(mv_as_v3(&a))); break; }
+        case OP_HSVADJUST: { a=in_or(ctx,n,"in",mv_zero(n->type));MtlxValue amount=in_or(ctx,n,"amount",mv_vec3(v3_make(0,1,1)));v3 hsv=rgb_to_hsv(mv_as_v3(&a));hsv.x=hsv.x+amount.v[0]-floorf(hsv.x+amount.v[0]);hsv.y=clampf(hsv.y*amount.v[1],0,1);hsv.z=fmaxf(hsv.z*amount.v[2],0);v3 rgb=hsv_to_rgb(hsv);r=a;r.v[0]=rgb.x;r.v[1]=rgb.y;r.v[2]=rgb.z;break; }
         case OP_SATURATE: { a=in_or(ctx,n,"in",mv_zero(MV_COLOR3)); MtlxValue am=in_or(ctx,n,"amount",mv_float(1)); v3 c=mv_as_v3(&a); float l=luminance(c); r=mv_color3(v3_lerp(v3_splat(l),c,am.v[0])); break; }
         case OP_CONTRAST: { a=in_or(ctx,n,"in",mv_zero(n->type)); MtlxValue am=in_or(ctx,n,"amount",mv_float(1)),pv=in_or(ctx,n,"pivot",mv_float(0.5f)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++) r.v[i]=(a.v[i]-pv.v[0])*am.v[0]+pv.v[0]; break; }
         case OP_RANGE: { a=in_or(ctx,n,"in",mv_zero(n->type)); MtlxValue il=in_or(ctx,n,"inlow",mv_float(0)),ih=in_or(ctx,n,"inhigh",mv_float(1)),ol=in_or(ctx,n,"outlow",mv_float(0)),oh=in_or(ctx,n,"outhigh",mv_float(1)),g=in_or(ctx,n,"gamma",mv_float(1)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){ float t=clampf((a.v[i]-il.v[0])/((ih.v[0]-il.v[0])!=0?ih.v[0]-il.v[0]:1),0,1); t=powf(t,g.v[0]); r.v[i]=ol.v[0]+t*(oh.v[0]-ol.v[0]);} break; }
@@ -609,6 +612,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_RAMP4: { MtlxValue tl=in_or(ctx,n,"valuetl",mv_zero(n->type)),tr=in_or(ctx,n,"valuetr",mv_zero(n->type)),bl=in_or(ctx,n,"valuebl",mv_zero(n->type)),br=in_or(ctx,n,"valuebr",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float u=clampf(tc.v[0],0,1),vv=clampf(tc.v[1],0,1); int nc=ncomp_of(&tl); r=tl; for(int i=0;i<nc;i++){ float top=tl.v[i]*(1-u)+tr.v[i]*u, bot=bl.v[i]*(1-u)+br.v[i]*u; r.v[i]=top*(1-vv)+bot*vv; } break; }
         case OP_CIRCLE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.5f));float x=tc.v[0]-center.v[0],y=tc.v[1]-center.v[1];r=mv_float(x*x+y*y>radius.v[0]*radius.v[0]?0.0f:1.0f);break; }
         case OP_LINE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.1f)),p1=in_or(ctx,n,"point1",mv_vec2(0.25f,0.25f)),p2=in_or(ctx,n,"point2",mv_vec2(0.75f,0.75f));float px=tc.v[0]-center.v[0]-p1.v[0],py=tc.v[1]-center.v[1]-p1.v[1],bx=p2.v[0]-p1.v[0],by=p2.v[1]-p1.v[1],bb=bx*bx+by*by,t=clampf(bb>1e-12f?(px*bx+py*by)/bb:0,0,1),dx=px-bx*t,dy=py-by*t;r=mv_float(sqrtf(dx*dx+dy*dy)>radius.v[0]?0.0f:1.0f);break; }
+        case OP_COLORCORRECT: { a=in_or(ctx,n,"in",mv_zero(n->type));MtlxValue hue=in_or(ctx,n,"hue",mv_float(0)),sat=in_or(ctx,n,"saturation",mv_float(1)),gamma=in_or(ctx,n,"gamma",mv_float(1)),lift=in_or(ctx,n,"lift",mv_float(0)),gain=in_or(ctx,n,"gain",mv_float(1)),contrast=in_or(ctx,n,"contrast",mv_float(1)),pivot=in_or(ctx,n,"contrastpivot",mv_float(0.5f)),exposure=in_or(ctx,n,"exposure",mv_float(0));v3 hsv=rgb_to_hsv(mv_as_v3(&a));hsv.x=hsv.x+hue.v[0]-floorf(hsv.x+hue.v[0]);v3 rgb=hsv_to_rgb(hsv);float lum=luminance(rgb),scale=powf(2.0f,exposure.v[0]),recip=fabsf(gamma.v[0])>1e-6f?1.0f/gamma.v[0]:0.0f;r=a;for(int i=0;i<3;i++){float x=lum+sat.v[0]*((i==0?rgb.x:(i==1?rgb.y:rgb.z))-lum);x=(x<0?-1.0f:1.0f)*powf(fabsf(x),recip);x=(x*(1-lift.v[0])+lift.v[0])*gain.v[0];r.v[i]=((x-pivot.v[0])*contrast.v[0]+pivot.v[0])*scale;}break; }
         case OP_IFGREATER: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
         case OP_IFGREATEREQ: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>=mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
         case OP_IFEQUAL: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)==mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
