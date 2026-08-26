@@ -445,6 +445,48 @@ def Xform "World" {
 ''', encoding="utf-8")
 
 
+def write_colorcorrect_fixture(path: pathlib.Path) -> None:
+    path.write_text('''#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def Mesh "Card" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/M>
+  }
+  def Material "M" (prepend apiSchemas = ["MaterialXConfigAPI"]) {
+    token outputs:surface.connect = </World/M/P.outputs:surface>
+    token outputs:mtlx:surface.connect = </World/M/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      color3f inputs:base_color.connect = </World/M/NG.outputs:base>
+      float inputs:specular_weight = 0
+      token outputs:surface
+    }
+    def NodeGraph "NG" {
+      color3f outputs:base.connect = </World/M/NG/Correct.outputs:out>
+      def Shader "Correct" {
+        uniform token info:id = "ND_colorcorrect_color3"
+        color3f inputs:in = (0.2,0.4,0.8)
+        float inputs:hue = 0.1
+        float inputs:saturation = 1
+        float inputs:gamma = 1
+        float inputs:lift = 0
+        float inputs:gain = 1
+        float inputs:contrast = 1
+        float inputs:contrastpivot = 0.5
+        float inputs:exposure = 0
+        color3f outputs:out
+      }
+    }
+  }
+  def DistantLight "Key" { float inputs:intensity = 0.5 }
+}
+''', encoding="utf-8")
+
+
 def write_split_fixture(path: pathlib.Path) -> None:
     path.write_text('''#usda 1.0
 (defaultPrim = "World" upAxis = "Y")
@@ -601,12 +643,14 @@ def main() -> int:
         ramps = out_dir / "ramps.usda"
         splits = out_dir / "splits.usda"
         patterns = out_dir / "patterns.usda"
+        colorcorrect = out_dir / "colorcorrect.usda"
         write_displacement_fixture(displacement)
         write_swizzle_fixture(swizzle)
         write_extended_operator_fixture(extended_ops)
         write_ramp_fixture(ramps)
         write_split_fixture(splits)
         write_pattern_fixture(patterns)
+        write_colorcorrect_fixture(colorcorrect)
         available = set()
         grid_images = {}
         grid_means = {}
@@ -717,6 +761,20 @@ def main() -> int:
                 fail(f"{backend} did not execute extended color/conditional chain: mean={mean}",
                      log)
             print(f"  {backend}: blend/saturate/HSV/conditional mean=" +
+                  "%.1f,%.1f,%.1f" % mean)
+
+        print("=== tusdrender MaterialX color correction ===")
+        for backend in sorted(available):
+            output = out_dir / f"colorcorrect-{backend}.png"
+            log, ok = render(binary, colorcorrect, backend, output)
+            if not ok:
+                fail(f"{backend} disappeared during colorcorrect validation")
+            require_topology(log, backend)
+            mean = center_mean(output, read_image)
+            if not (mean[2] > mean[0] > mean[1] and mean[2] - mean[1] > 8.0):
+                fail(f"{backend} did not execute colorcorrect hue rotation: mean={mean}",
+                     log)
+            print(f"  {backend}: hue-rotated colorcorrect mean=" +
                   "%.1f,%.1f,%.1f" % mean)
 
         print("=== tusdrender spatial MaterialX ramps ===")

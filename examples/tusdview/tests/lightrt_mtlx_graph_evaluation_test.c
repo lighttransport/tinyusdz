@@ -71,6 +71,7 @@ int main(void) {
       " <over name=\"over\" type=\"color4\"><input name=\"fg\" type=\"color4\" value=\"0.4,0.1,0.2,0.5\"/><input name=\"bg\" type=\"color4\" value=\"0.2,0.4,0.6,0.25\"/></over>"
       " <matte name=\"matte\" type=\"color4\"><input name=\"fg\" type=\"color4\" value=\"0.4,0.1,0.2,0.5\"/><input name=\"bg\" type=\"color4\" value=\"0.2,0.4,0.6,0.25\"/></matte>"
       " <disjointover name=\"disjoint\" type=\"color4\"><input name=\"fg\" type=\"color4\" value=\"0.4,0.1,0.2,0.8\"/><input name=\"bg\" type=\"color4\" value=\"0.2,0.4,0.6,0.6\"/></disjointover>"
+      " <colorcorrect name=\"colorcorrect\" type=\"color4\"><input name=\"in\" type=\"color4\" value=\"0.5,0.25,0.75,0.3\"/><input name=\"gamma\" type=\"float\" value=\"2\"/><input name=\"lift\" type=\"float\" value=\"0.1\"/><input name=\"gain\" type=\"float\" value=\"0.8\"/><input name=\"exposure\" type=\"float\" value=\"1\"/></colorcorrect>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -132,6 +133,8 @@ int main(void) {
               0.625f) && ok;
   ok = check4("disjointover", eval_named(&ctx, "disjoint"),
               0.46666667f, 0.23333333f, 0.4f, 1.0f) && ok;
+  ok = check4("colorcorrect", eval_named(&ctx, "colorcorrect"), 1.178234f,
+              0.88f, 1.407077f, 0.3f) && ok;
   /* mtlx_eval_node_test must clear memoization between shade points. */
   ctx.uv[0] = 0.8f;
   ctx.uv[1] = 0.9f;

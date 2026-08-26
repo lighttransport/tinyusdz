@@ -1069,6 +1069,42 @@ int main() {
                  compositeError.c_str());
     return 1;
   }
+  tusdview::DrawMaterialCPU colorCorrectMat;
+  colorCorrectMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"source","category":"constant","type":"color4","inputs":[
+      {"name":"value","value":[0.5,0.25,0.75,0.3]}]},
+    {"name":"cc","category":"colorcorrect","type":"color4","inputs":[
+      {"name":"in","nodename":"source"},
+      {"name":"gamma","value":2},{"name":"lift","value":0.1},
+      {"name":"gain","value":0.8},{"name":"exposure","value":1}
+    ]}],"outputs":[{"name":"base","nodename":"cc"}]},
+    "connections":[{"input":"base_color","output":"base"}]})json";
+  std::string colorCorrectError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&colorCorrectMat,
+                                               &colorCorrectError) ||
+      colorCorrectMat.materialXGraph.nodes.size() != 18 ||
+      colorCorrectMat.materialXGraph.nodes.back().op !=
+          tusdview::MaterialXGraphOpCPU::SetAlpha) {
+    std::fprintf(stderr, "MaterialX colorcorrect lowering failed: %s\n",
+                 colorCorrectError.c_str());
+    return 1;
+  }
+  int colorSource = -1, colorHsv = -1, colorGamma = -1;
+  for (size_t i = 0; i < colorCorrectMat.materialXGraph.nodes.size(); ++i) {
+    const auto& graphNode = colorCorrectMat.materialXGraph.nodes[i];
+    if (graphNode.name == "source") colorSource = static_cast<int>(i);
+    if (graphNode.name == "cc__hsv") colorHsv = static_cast<int>(i);
+    if (graphNode.name == "cc__gamma_reciprocal") colorGamma = static_cast<int>(i);
+  }
+  if (colorSource < 0 || colorHsv < 0 || colorGamma < 0 ||
+      colorCorrectMat.materialXGraph.nodes[colorHsv].input[0] != colorSource ||
+      colorCorrectMat.materialXGraph.nodes[colorGamma].value[1][0] != 2.0f ||
+      colorCorrectMat.materialXGraph.nodes[colorGamma].value[1][1] != 2.0f ||
+      colorCorrectMat.materialXGraph.nodes[colorGamma].value[1][2] != 2.0f) {
+    std::fprintf(stderr,
+                 "MaterialX colorcorrect connection/scalar promotion was lost\n");
+    return 1;
+  }
 
   // MaterialX connections may reference a node authored later. GPU graph
   // evaluators are single-pass, so compilation must pack dependencies first.

@@ -170,6 +170,7 @@ void evalGraphAll(uint matId, vec2 uv, vec3 normal, vec3 position, out vec4 rout
       else if(op==91){float s=a.w+b.w;if(s<=1.0)q=vec4(a.rgb+b.rgb,min(s,1.0));else if(abs(b.w)<1e-6)q=vec4(0,0,0,min(s,1.0));else q=vec4(a.rgb+b.rgb*((1.0-a.w)/b.w),min(s,1.0));}
       else q=vec4((op==88?a.rgb*a.w:a.rgb)+b.rgb*(1.0-a.w),a.w+b.w*(1.0-a.w));
       value[i]=mix(b,q,c);}
+    else if(op==92)value[i]=vec4(a.rgb,b.x);
     else value[i]=a;
   }
   for(uint r=0u;r<GRAPH_OUTPUTS;++r){int wanted=int(round(graphs[gb+1u+r]));if(wanted>=0&&wanted<count)routed[r]=value[wanted];}

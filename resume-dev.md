@@ -7,11 +7,11 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
 
 - Branch: `dev`
 - Public remote: `https://github.com/lighttransport/tinyusdz.git`
-- Local `HEAD`: `30074637a` (`Extend MaterialX standard node execution`)
+- Local `HEAD`: `e963234b3` (`Expand MaterialX procedural and compositing nodes`)
 - `origin/dev`: `d8068d7fc` (`Expand headless MaterialX GPU parity`)
 - Local `dev` is two commits ahead. The triangle-wave/checkerboard,
   compositing, circle, and line enhancements described in items 27-29 are
-  currently uncommitted.
+  committed locally. The color-correction work in item 30 is uncommitted.
 
 ## Implemented in the worktree
 
@@ -136,6 +136,12 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
 29. Added exact stdlib graph lowerings for `circle` and `line` using existing
     bounded runtime primitives, plus direct standalone evaluation and numerical
     tests.
+30. Added exact `colorcorrect` lowering through the upstream hue, saturation,
+    signed reciprocal-gamma, lift, gain, contrast, and exposure graph. Color4
+    preserves authored alpha through a small `SetAlpha` runtime primitive.
+    Fixed scalar-to-vector promotion in runtime graph packing and replaced the
+    CUDA/HIP `hsvadjust` pass-through with live evaluation. A dedicated
+    headless fixture checks hue rotation rather than topology alone.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.

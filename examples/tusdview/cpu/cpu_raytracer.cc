@@ -705,6 +705,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst={1,1,1,1};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Bitangent)) {
         dst={0,1,0,1};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::SetAlpha)) {
+        dst = {a[0], a[1], a[2], b[0]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);

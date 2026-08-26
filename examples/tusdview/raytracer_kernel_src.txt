@@ -225,8 +225,9 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
       else if (op==39) { float tx=a.x*graph[p+17]+graph[p+19], ty=a.y*graph[p+18]+graph[p+20], ang=graph[p+15]*0.0174532925199433f, cs=cosf(ang), sn=sinf(ang); values[i]=mk4(tx*cs-ty*sn,tx*sn+ty*cs,a.z,a.w); }
       else if (op==44) values[i]=mk4(a.x,b.x,c.x,1.f);
       else if (op==45) { int lane=(int)floorf(b.x+.5f);lane=lane<0?0:(lane>3?3:lane);const float q[4]={a.x,a.y,a.z,a.w};values[i]=mk4(q[lane],q[lane],q[lane],q[lane]); }
-      else if (op==46 || op==48) values[i]=a;
+      else if (op==46) values[i]=a;
       else if (op==47) values[i]=mk4(0.f,0.f,0.f,1.f);
+      else if (op==48) { float mx=fmaxf(a.x,fmaxf(a.y,a.z)),mn=fminf(a.x,fminf(a.y,a.z)),d=mx-mn,h=0.f;if(d>1e-6f){h=mx==a.x?fmodf((a.y-a.z)/d,6.f):(mx==a.y?(a.z-a.x)/d+2.f:(a.x-a.y)/d+4.f);h/=6.f;}h=h+b.x-floorf(h+b.x);float s=fminf(fmaxf((mx>1e-6f?d/mx:0.f)*b.y,0.f),1.f),vv=fmaxf(mx*b.z,0.f),ch=vv*s,x=ch*(1.f-fabsf(fmodf(h*6.f,2.f)-1.f)),m=vv-ch;int k=((int)floorf(h*6.f))%6;float rr=k==0||k==5?ch:(k==1||k==4?x:0.f),gg=k==1||k==2?ch:(k==0||k==3?x:0.f),bb=k==3||k==4?ch:(k==2||k==5?x:0.f);values[i]=mk4(rr+m,gg+m,bb+m,a.w); }
       else if (op==49) values[i]=mk4(.5f,.5f,1.f,1.f);
       else if (op==50) values[i]=mk4(asinf(fminf(fmaxf(a.x,-1.f),1.f)),asinf(fminf(fmaxf(a.y,-1.f),1.f)),asinf(fminf(fmaxf(a.z,-1.f),1.f)),asinf(fminf(fmaxf(a.w,-1.f),1.f)));
       else if (op==51) values[i]=mk4(acosf(fminf(fmaxf(a.x,-1.f),1.f)),acosf(fminf(fmaxf(a.y,-1.f),1.f)),acosf(fminf(fmaxf(a.z,-1.f),1.f)),acosf(fminf(fmaxf(a.w,-1.f),1.f)));
@@ -263,6 +264,7 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
         else if(op==91) { float s=a.w+b.w; if(s<=1.f) q=mk4(a.x+b.x,a.y+b.y,a.z+b.z,fminf(s,1.f)); else if(fabsf(b.w)<1e-6f) q=mk4(0,0,0,fminf(s,1.f)); else { float x=(1.f-a.w)/b.w;q=mk4(a.x+b.x*x,a.y+b.y*x,a.z+b.z*x,fminf(s,1.f)); } }
         else { float x=1.f-a.w;q=mk4((op==88?a.x*a.w:a.x)+b.x*x,(op==88?a.y*a.w:a.y)+b.y*x,(op==88?a.z*a.w:a.z)+b.z*x,a.w+b.w*x); }
         values[i]=mk4(b.x+c.x*(q.x-b.x),b.y+c.y*(q.y-b.y),b.z+c.z*(q.z-b.z),b.w+c.w*(q.w-b.w)); }
+      else if (op==92) values[i]=mk4(a.x,a.y,a.z,b.x);
       else values[i]=fallback;
   }
   (void)face;
