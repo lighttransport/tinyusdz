@@ -1583,6 +1583,21 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                       JsonString(input,"type") != "integer");
       continue;
     }
+    if (cat == "bump" && !name.empty()) {
+      const std::string heightNormal=name+"__height_normal";
+      runtimeNodes.push_back({{"name",heightNormal},{"category","heighttonormal"},
+          {"type","vector3"},{"inputs",nlohmann::json::array({
+              renamedInput(inputNamed(node,"height",{{"value",0.0}}),"in"),
+              renamedInput(inputNamed(node,"scale",{{"value",1.0}}),"scale")})}});
+      runtimeNodes.push_back({{"name",name},{"category","normalmap"},
+          {"type","vector3"},{"inputs",nlohmann::json::array({
+              nlohmann::json{{"name","in"},{"nodename",heightNormal}},
+              renamedInput(inputNamed(node,"normal",{{"value",nlohmann::json::array({0,0,1})}}),"normal"),
+              nlohmann::json{{"name","scale"},{"value",1.0}},
+              renamedInput(inputNamed(node,"tangent",{{"value",nlohmann::json::array({1,0,0})}}),"tangent"),
+              renamedInput(inputNamed(node,"bitangent",{{"value",nlohmann::json::array({0,1,0})}}),"bitangent")})}});
+      continue;
+    }
     if (cat == "randomcolor" && !name.empty()) {
       const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
       const nlohmann::json seed=inputNamed(node,"seed",{{"value",0}});

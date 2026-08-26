@@ -165,5 +165,28 @@ int main(void) {
     return 1;
   }
 
+  const char *unlit_xml =
+      "<materialx version=\"1.39\">"
+      " <surface_unlit name=\"Unlit\" type=\"surfaceshader\">"
+      "  <input name=\"emission\" type=\"float\" value=\"2.5\"/>"
+      "  <input name=\"emission_color\" type=\"color3\" value=\"0.2,0.4,0.8\"/>"
+      "  <input name=\"transmission\" type=\"float\" value=\"0.3\"/>"
+      "  <input name=\"transmission_color\" type=\"color3\" value=\"0.7,0.6,0.5\"/>"
+      "  <input name=\"opacity\" type=\"float\" value=\"0.45\"/>"
+      " </surface_unlit>"
+      " <surfacematerial name=\"UnlitMat\"><input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"Unlit\"/></surfacematerial>"
+      "</materialx>";
+  if (!eval_xml(unlit_xml, &p)) return 1;
+  ok = nearf(p.base_weight, 0.0f) && nearf(p.specular_weight, 0.0f) &&
+       nearf(p.emission, 2.5f) && nearf(p.emission_color.x, 0.2f) &&
+       nearf(p.emission_color.y, 0.4f) && nearf(p.emission_color.z, 0.8f) &&
+       nearf(p.transmission, 0.3f) && nearf(p.transmission_color.x, 0.7f) &&
+       nearf(p.transmission_color.y, 0.6f) && nearf(p.transmission_color.z, 0.5f) &&
+       nearf(p.opacity, 0.45f);
+  if (!ok) {
+    fprintf(stderr, "surface_unlit parameters were not evaluated\n");
+    return 1;
+  }
+
   return 0;
 }

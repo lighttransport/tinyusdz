@@ -1147,6 +1147,20 @@ int main() {
      triplanarMat.materialXGraph.nodes.back().op!=tusdview::MaterialXGraphOpCPU::Add){
     std::fprintf(stderr,"MaterialX triplanar topology invalid (nodes=%zu images=%d)\n",triplanarMat.materialXGraph.nodes.size(),triplanarImages);return 1;
   }
+  tusdview::DrawMaterialCPU bumpMat;
+  bumpMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
+    {"name":"height","category":"image","type":"float","inputs":[{"name":"file","value":"height.png"}]},
+    {"name":"bumped","category":"bump","type":"vector3","inputs":[{"name":"height","nodename":"height"},{"name":"scale","value":3},{"name":"normal","value":[0,0,1]}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string bumpError;
+  if(!tusdview::CompileMaterialXGraphRuntime(&bumpMat,&bumpError)||
+     bumpMat.materialXGraph.nodes.size()!=3||
+     bumpMat.materialXGraph.nodes[1].op!=tusdview::MaterialXGraphOpCPU::HeightToNormal||
+     bumpMat.materialXGraph.nodes[1].input[0]!=0||
+     bumpMat.materialXGraph.nodes[2].op!=tusdview::MaterialXGraphOpCPU::NormalMap||
+     bumpMat.materialXGraph.nodes[2].input[0]!=1){
+    std::fprintf(stderr,"MaterialX bump lowering failed: %s (nodes=%zu)\n",bumpError.c_str(),bumpMat.materialXGraph.nodes.size());return 1;
+  }
   tusdview::DrawMaterialCPU aliasesMat;
   aliasesMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"plus","category":"plus","inputs":[{"value":1},{"value":2}]},

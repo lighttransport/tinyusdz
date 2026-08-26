@@ -82,6 +82,9 @@ int main(void) {
       " <determinant name=\"matrix4_det\" type=\"float\"><input name=\"in\" type=\"matrix44\" nodename=\"matrix4\"/></determinant>"
       " <latlongimage name=\"latlong_missing\" type=\"color3\"><input name=\"file\" type=\"filename\" value=\"\"/><input name=\"default\" type=\"color3\" value=\"0.125,0.25,0.5\"/><input name=\"viewdir\" type=\"vector3\" value=\"1,0,0\"/><input name=\"rotation\" type=\"float\" value=\"90\"/></latlongimage>"
       " <triplanarprojection name=\"triplanar_missing\" type=\"color3\"><input name=\"default\" type=\"color3\" value=\"0.2,0.4,0.8\"/><input name=\"position\" type=\"vector3\" value=\"1,2,3\"/><input name=\"normal\" type=\"vector3\" value=\"1,2,3\"/><input name=\"upaxis\" type=\"integer\" value=\"2\"/><input name=\"blend\" type=\"float\" value=\"0.25\"/></triplanarprojection>"
+      " <extract name=\"height_ramp\" type=\"float\"><input name=\"in\" type=\"vector2\" nodename=\"st\"/><input name=\"index\" type=\"integer\" value=\"0\"/></extract>"
+      " <heighttonormal name=\"height_normal\" type=\"vector3\"><input name=\"in\" type=\"float\" nodename=\"height_ramp\"/><input name=\"scale\" type=\"float\" value=\"4\"/></heighttonormal>"
+      " <bump name=\"bump_normal\" type=\"vector3\"><input name=\"height\" type=\"float\" nodename=\"height_ramp\"/><input name=\"scale\" type=\"float\" value=\"4\"/><input name=\"normal\" type=\"vector3\" value=\"0,0,1\"/><input name=\"tangent\" type=\"vector3\" value=\"1,0,0\"/><input name=\"bitangent\" type=\"vector3\" value=\"0,1,0\"/></bump>"
       " <switch name=\"pick\" type=\"color3\"><input name=\"which\" type=\"integer\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" nodename=\"quad\"/><input name=\"in3\" type=\"color3\" value=\"0,0,1\"/></switch>"
       " <distance name=\"distance\" type=\"float\"><input name=\"in1\" type=\"vector3\" value=\"1,2,3\"/><input name=\"in2\" type=\"vector3\" value=\"1,5,7\"/></distance>"
       " <reflect name=\"reflect\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,-1,0\"/><input name=\"normal\" type=\"vector3\" value=\"0,1,0\"/></reflect>"
@@ -194,6 +197,12 @@ int main(void) {
               0.125f,0.25f,0.5f) &&
        check3("triplanar-missing-default",eval_named(&ctx,"triplanar_missing"),
               0.2f,0.4f,0.8f) && ok;
+  { MtlxValue hn=eval_named(&ctx,"height_normal"),bn=eval_named(&ctx,"bump_normal");
+    if(!(hn.v[0]<0.5f&&nearf_eps(hn.v[1],0.5f)&&hn.v[2]>0.99f&&
+         bn.v[0]<0.0f&&nearf_eps(bn.v[1],0.0f)&&bn.v[2]>0.99f)){
+      fprintf(stderr,"heighttonormal/bump spatial derivative failed\n");ok=0;
+    }
+  }
   ok = nearf_eps(eval_named(&ctx, "distance").v[0], 5.0f) &&
        check3("reflect", eval_named(&ctx, "reflect"), 1.0f, 1.0f, 0.0f) &&
        check3("unpremult", eval_named(&ctx, "unpremult"), 0.8f, 0.4f, 0.2f) &&
