@@ -132,10 +132,22 @@ void texcache_preload(TextureCache *tc, const MtlxDoc *doc) {
         const char *c = n->category;
         if (strcmp(c, "image") && strcmp(c, "tiledimage") && strcmp(c, "hextiledimage") &&
             strcmp(c, "gltf_image") && strcmp(c, "gltf_colorimage") &&
-            strcmp(c, "normalmap") && strcmp(c, "gltf_normalmap")) continue;
+            strcmp(c, "normalmap") && strcmp(c, "gltf_normalmap") &&
+            strcmp(c, "latlongimage") && strcmp(c, "triplanarprojection")) continue;
+        const char *file_names[3] = {"file", NULL, NULL};
+        int file_count = 1;
+        if (!strcmp(c, "triplanarprojection")) {
+            file_names[0] = "filex";
+            file_names[1] = "filey";
+            file_names[2] = "filez";
+            file_count = 3;
+        }
         for (int j = 0; j < n->ninput; j++) {
             const MtlxInput *in = &n->inputs[j];
-            if (strcmp(in->name, "file") != 0 || !in->value.s) continue;
+            int is_file = 0;
+            for (int k = 0; k < file_count; k++)
+                if (!strcmp(in->name, file_names[k])) is_file = 1;
+            if (!is_file || !in->value.s) continue;
             const char *token = strstr(in->value.s, "<UDIM>");
             if (!token) {
                 texcache_get(tc, in->value.s, in->colorspace_srgb);

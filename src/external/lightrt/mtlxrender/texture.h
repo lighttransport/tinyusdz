@@ -11,7 +11,7 @@ struct MtlxDoc;
 
 typedef struct TextureCache TextureCache;
 
-/* Preload every texture referenced by `image`/`tiledimage` nodes, then freeze
+/* Preload every texture referenced by image and projection nodes, then freeze
  * the cache so subsequent texcache_get calls are read-only (thread-safe during
  * rendering). Call once before render(). */
 void texcache_preload(TextureCache *tc, const struct MtlxDoc *doc);
