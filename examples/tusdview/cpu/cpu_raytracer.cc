@@ -412,6 +412,17 @@ std::array<float,4> MtlxWorley(const std::array<float,4>& p, bool is3d,
   }else for(int lane=0;lane<channels;++lane)out[lane]=std::sqrt(best[lane]);
   return out;
 }
+float MtlxCircleShape(float x,float y,float r){return x*x+y*y<=r*r?1.0f:0.0f;}
+float MtlxCloverShape(float x,float y,float r){const float sx=2*x,sy=2*y,r2=r*r,dx[4]={sx+r,sx-r,sx,sx},dy[4]={sy,sy,sy-r,sy+r};for(int i=0;i<4;i++)if(dx[i]*dx[i]+dy[i]*dy[i]<=r2)return 1;return 0;}
+float MtlxHexShape(float x,float y,float r){float px=std::fabs(y),py=std::fabs(x);const float kx=-.866025f,ky=.5f,kz=.57735f;const float projection=std::min(kx*px+ky*py,0.0f);px-=2*projection*kx;py-=2*projection*ky;px-=std::clamp(px,-kz*r,kz*r);py-=r;return std::sqrt(px*px+py*py)*(py<0?-1.0f:1.0f)<=0?1.0f:0.0f;}
+float MtlxPattern(float x,float y,float parameter,bool staggered,int kind){
+  if(kind==0||kind==1){float row=std::fmod(y,2.0f);if(staggered&&row>1.0f)x+=.5f;float nx=2*std::fmod(x,1.0f)-1,ny=2*std::fmod(y,1.0f)-1;if(kind==0)return (std::fabs(nx)>1-parameter||std::fabs(ny)>1-parameter)?1:0;const float inv=.70710678118f;return (std::fabs(nx-ny)*inv<=parameter||std::fabs(nx+ny)*inv<=parameter)?1:0;}
+  auto shape=[&](float sx,float sy,float r){return kind==2?MtlxCircleShape(sx,sy,r):(kind==3?MtlxCloverShape(sx,sy,r):MtlxHexShape(sx,sy,r));};
+  if(!staggered)return shape(2*std::fmod(x,1.0f)-1,2*std::fmod(y,1.0f)-1,parameter);
+  const float half=kind==3?.5f:.866025f,period=2*half,shift=std::fmod(y,period)>half?.5f:0;
+  const float mx=std::fmod(x+shift,1.0f),my=std::fmod(y,half),r=parameter*.5f;
+  return std::max(shape(mx,my,r),std::max(shape(1-mx,my,r),shape(mx-.5f,half-my,r)));
+}
 float MtlxGradient2(uint32_t hash, float x, float y) {
   const uint32_t h = hash & 7u;
   const float u = h < 4u ? x : y;
@@ -860,6 +871,14 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         px-=std::clamp(px,-kz*r,kz*r);py-=r;
         const float signedDistance=std::sqrt(px*px+py*py)*(py<0?-1.0f:1.0f);
         const float inside=signedDistance<=0?1.0f:0.0f;dst={inside,inside,inside,inside};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Grid) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::Crosshatch) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::TiledCircles) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::TiledCloverleafs) ||
+                 op == static_cast<int>(MaterialXGraphOpCPU::TiledHexagons)) {
+        const float parameter=textureId>=0&&textureId<count?values[textureId][0]:scene.matGraph[p+17];
+        const bool staggered=scene.matGraph[p+18]!=0;const int kind=op-static_cast<int>(MaterialXGraphOpCPU::Grid);
+        const float q=MtlxPattern(a[0]*b[0]-c[0],a[1]*b[1]-c[1],parameter,staggered,kind);dst={q,q,q,q};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);

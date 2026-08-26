@@ -174,6 +174,13 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
     operators across CPU, CUDA/HIP, Vulkan, and the standalone evaluator.
     Default hit-UV synthesis and connected center/radius inputs are preserved;
     numerical inside/outside tests and bridge opcode tests cover both shapes.
+36. Added `grid`, `crosshatch`, `tiledcircles`, `tiledcloverleafs`, and
+    `tiledhexagons` across all renderer paths. Each five-input node lowers to
+    regular and staggered bounded cores plus a dynamic boolean selection, so
+    every authored input remains connectable. Standalone tests cover line,
+    fill, diagonal, and tiled-shape results; bridge tests cover every opcode;
+    the rendered headless pattern fixture executes a staggered grid over hit
+    UVs.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.
