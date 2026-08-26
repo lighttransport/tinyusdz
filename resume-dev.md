@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `1b33e08ce` (`Preserve volume anisotropy in next graphs`)
+- HEAD: `f15197683` (`Preserve subsurface BSDF anisotropy`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -400,6 +400,9 @@ Passed:
 - Next volume graph conversion now preserves VDF anisotropy as
   `volume_anisotropy` and reconnects it to the generated anisotropic VDF;
   the next-volume bridge regression passes with a nonzero authored value.
+- Standard `subsurface_bsdf` now preserves authored anisotropy in standalone
+  evaluation and copies it into the LightRT OpenPBR block; the focused
+  evaluator and bridge checks pass after a clean rebuild.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
