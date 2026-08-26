@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `f74f31384` (`Fix scalar multiplication of closure graphs`)
+- HEAD: `5c6d425f5` (`Resolve MaterialX wrapper nodegraph outputs`)
 - Upstream: `origin/dev`
 - Worktree: clean tracked state, plus the two unrelated untracked paths above.
 - Recent completed commits:
@@ -27,6 +27,7 @@ not hand-edit generated headers.
   - `97d1cd317` Preserve conductor F0 in MaterialX closure lowering
   - `1ffade301` Honor generalized Schlick transmission mode
   - `f74f31384` Fix scalar multiplication of closure graphs
+  - `5c6d425f5` Resolve MaterialX wrapper nodegraph outputs
 
 ## Completed coverage
 
@@ -61,6 +62,9 @@ Generalized-Schlick R/T scatter mode now emits matching specular/transmission
 lanes (`1ffade301`).
 Typed closure `multiply` now distinguishes a closure operand from its scalar
 factor instead of lowering the factor as a second closure (`f74f31384`).
+The next MaterialX converter now resolves `surfacematerial` shader bindings
+through `nodegraph` outputs, including graph-local surface shader nodes
+(`5c6d425f5`).
 
 ## Current implementation status
 
@@ -91,6 +95,9 @@ Passed:
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
   scalar-multiply fix: 12/12 passed
+- Isolated `TestMaterialXUtilities` validation for nodegraph-backed wrapper
+  conversion passed. The aggregate `test_tydra_next` executable still crashes
+  in an earlier unrelated `TestChunkedArrayShareCowBudgetFailure` test.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
