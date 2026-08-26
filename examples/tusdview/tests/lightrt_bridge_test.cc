@@ -2038,6 +2038,40 @@ int main() {
     }
     return true;
   };
+  auto CheckConicalClosure = []() {
+    tusdview::DrawMaterialCPU material;
+    material.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"cone","category":"conical_edf","type":"EDF","inputs":[
+        {"name":"color","value":[0.2,0.4,0.8]},
+        {"name":"normal","value":[0,0,1]},
+        {"name":"inner_angle","value":20},
+        {"name":"outer_angle","value":60}]}
+    ],"outputs":[{"name":"shader","type":"EDF","nodename":"cone"}]},
+    "connections":[{"input":"edf","output":"shader"}]})json";
+    std::string error;
+    if (!tusdview::CompileMaterialXGraphRuntime(&material, &error) ||
+        !material.materialXGraph.valid ||
+        material.materialXGraph.output[4] < 0) {
+      std::fprintf(stderr, "conical EDF graph failed: %s\n", error.c_str());
+      return false;
+    }
+    const bool hasAcos = std::any_of(
+        material.materialXGraph.nodes.begin(), material.materialXGraph.nodes.end(),
+        [](const tusdview::MaterialXGraphNodeCPU& node) {
+          return node.op == tusdview::MaterialXGraphOpCPU::Arccosine;
+        });
+    const bool hasClamp = std::any_of(
+        material.materialXGraph.nodes.begin(), material.materialXGraph.nodes.end(),
+        [](const tusdview::MaterialXGraphNodeCPU& node) {
+          return node.op == tusdview::MaterialXGraphOpCPU::Clamp;
+        });
+    if (!hasAcos || !hasClamp) {
+      std::fprintf(stderr, "conical EDF angular falloff was flattened\n");
+      return false;
+    }
+    return true;
+  };
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
       {"name":"w","category":"constant","type":"float","inputs":[{"name":"value","value":0.7}]},
@@ -2055,6 +2089,7 @@ int main() {
     ],"outputs":[{"name":"shader","type":"EDF","nodename":"emit"}]},
     "connections":[{"input":"edf","output":"shader"}]})json",
       "direct EDF", {4, 44}) ||
+      !CheckConicalClosure() ||
       !CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
       {"name":"measured","category":"measured_edf","type":"EDF","inputs":[

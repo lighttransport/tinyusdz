@@ -1473,7 +1473,76 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                                     nlohmann::json{{"name", "in2"}, {"nodename", tint}}})}});
         emitClosureLane(name, "emission_color", nlohmann::json{{"nodename", result}}, "color3");
       }
-    } else if (cat == "uniform_edf" || cat == "conical_edf" || cat == "measured_edf") {
+    } else if (cat == "conical_edf") {
+      // MaterialX's conical EDF uses a linear angular falloff in degrees.
+      // Keep that view-dependent behavior in the bounded graph instead of
+      // collapsing the closure to a uniform emission color.
+      const std::string normal = name + "__conical_normal";
+      const std::string view = name + "__conical_view";
+      const std::string cosine = name + "__conical_cosine";
+      const std::string angle = name + "__conical_angle";
+      const std::string angleDegrees = name + "__conical_angle_degrees";
+      const std::string lo = name + "__conical_lo";
+      const std::string hi = name + "__conical_hi";
+      const std::string numerator = name + "__conical_numerator";
+      const std::string denominator = name + "__conical_denominator";
+      const std::string falloff = name + "__conical_falloff";
+      const std::string color = name + "__conical_color";
+      const std::string result = name + "__conical_result";
+      runtimeNodes.push_back({{"name", normal}, {"category", "normal"},
+                              {"type", "vector3"},
+                              {"inputs", nlohmann::json::array()}});
+      runtimeNodes.push_back({{"name", view}, {"category", "viewdirection"},
+                              {"type", "vector3"},
+                              {"inputs", nlohmann::json::array()}});
+      runtimeNodes.push_back({{"name", cosine}, {"category", "dotproduct"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in1"}, {"nodename", normal}},
+                                  nlohmann::json{{"name", "in2"}, {"nodename", view}}})}});
+      runtimeNodes.push_back({{"name", angle}, {"category", "acos"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in"}, {"nodename", cosine}}})}});
+      runtimeNodes.push_back({{"name", angleDegrees}, {"category", "multiply"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in1"}, {"nodename", angle}},
+                                  nlohmann::json{{"name", "in2"}, {"value", 57.29577951308232}}})}});
+      const nlohmann::json inner = nodeInput(node, "inner_angle", 60.0);
+      const nlohmann::json outer = nodeInput(node, "outer_angle", 0.0);
+      runtimeNodes.push_back({{"name", lo}, {"category", "min"}, {"type", "float"},
+                              {"inputs", nlohmann::json::array({
+                                  renamedInput(inner, "in1"), renamedInput(outer, "in2")})}});
+      runtimeNodes.push_back({{"name", hi}, {"category", "max"}, {"type", "float"},
+                              {"inputs", nlohmann::json::array({
+                                  renamedInput(inner, "in1"), renamedInput(outer, "in2")})}});
+      runtimeNodes.push_back({{"name", numerator}, {"category", "subtract"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in1"}, {"nodename", hi}},
+                                  nlohmann::json{{"name", "in2"}, {"nodename", angleDegrees}}})}});
+      runtimeNodes.push_back({{"name", denominator}, {"category", "subtract"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in1"}, {"nodename", hi}},
+                                  nlohmann::json{{"name", "in2"}, {"nodename", lo}}})}});
+      runtimeNodes.push_back({{"name", falloff}, {"category", "divide"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in1"}, {"nodename", numerator}},
+                                  nlohmann::json{{"name", "in2"}, {"nodename", denominator}}})}});
+      runtimeNodes.push_back({{"name", falloff + "__clamped"}, {"category", "clamp"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in"}, {"nodename", falloff}},
+                                  nlohmann::json{{"name", "low"}, {"value", 0.0}},
+                                  nlohmann::json{{"name", "high"}, {"value", 1.0}}})}});
+      runtimeNodes.push_back({{"name", color}, {"category", "constant"},
+                              {"type", "color3"}, {"inputs", nlohmann::json::array({
+                                  renamedInput(nodeInput(node, "color", nlohmann::json::array({1, 1, 1})), "value")})}});
+      runtimeNodes.push_back({{"name", result}, {"category", "multiply"},
+                              {"type", "color3"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in1"}, {"nodename", color}},
+                                  nlohmann::json{{"name", "in2"}, {"nodename", falloff + "__clamped"}}})}});
+      emitClosureLane(name, "emission_color", nlohmann::json{{"nodename", result}}, "color3");
+      emitClosureLane(name, "emission_luminance", nlohmann::json{{"value", 1.0}}, "float");
+      emitClosureLane(name, "volume_emission_color", nlohmann::json{{"nodename", result}}, "color3");
+      emitClosureLane(name, "volume_emission_scale", nlohmann::json{{"value", 1.0}}, "float");
+    } else if (cat == "uniform_edf" || cat == "measured_edf") {
       emitLeaf("emission_color", "color", nlohmann::json::array({1,1,1}), "color3");
       emitClosureLane(name, "emission_luminance", nlohmann::json{{"value",1.0}}, "float");
       emitClosureLane(name, "volume_emission_color", nodeInput(node, "color", nlohmann::json::array({1,1,1})), "color3");
