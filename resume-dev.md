@@ -298,6 +298,9 @@ Passed:
 - Frozen LightRT texture caches now preload `latlongimage` and all three
   `triplanarprojection` file inputs; the evaluator regression verifies these
   projection textures remain available after preload/freeze.
+- Frozen UDIM caches now probe the complete bounded `1001`–`1999` range rather
+  than stopping at row 10; the evaluator regression covers a high-row `1101`
+  tile alongside present and missing lower-row tiles.
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
