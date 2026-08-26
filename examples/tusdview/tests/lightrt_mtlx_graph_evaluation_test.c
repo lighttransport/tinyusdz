@@ -146,6 +146,9 @@ int main(void) {
       " <transformnormal name=\"object_normal\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,1,1\"/><input name=\"fromspace\" type=\"string\" value=\"object\"/><input name=\"tospace\" type=\"string\" value=\"world\"/></transformnormal>"
       " <geompropvalue name=\"temperature\" type=\"float\"><input name=\"geomprop\" type=\"string\" value=\"temperature\"/><input name=\"default\" type=\"float\" value=\"2700\"/></geompropvalue>"
       " <geompropvalue name=\"missing_prop\" type=\"float\"><input name=\"geomprop\" type=\"string\" value=\"missing\"/><input name=\"default\" type=\"float\" value=\"12\"/></geompropvalue>"
+      " <blackbody name=\"blackbody_warm\" type=\"color3\"><input name=\"temperature\" type=\"float\" value=\"800\"/></blackbody>"
+      " <roughness_anisotropy name=\"rough_aniso\" type=\"vector2\"><input name=\"roughness\" type=\"float\" value=\"0.5\"/><input name=\"anisotropy\" type=\"float\" value=\"0.75\"/></roughness_anisotropy>"
+      " <roughness_dual name=\"rough_dual\" type=\"vector2\"><input name=\"roughness\" type=\"vector2\" value=\"0.5,-1\"/></roughness_dual>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -246,7 +249,14 @@ int main(void) {
        check3("transform-normal",eval_named(&ctx,"object_normal"),
               0.7682213f,0.5121475f,0.3841106f) &&
        check1("geomprop-callback",eval_named(&ctx,"temperature"),6500.0f) &&
-       check1("geomprop-default",eval_named(&ctx,"missing_prop"),12.0f) && ok;
+       check1("geomprop-default",eval_named(&ctx,"missing_prop"),12.0f) &&
+       check3("roughness-anisotropy",eval_named(&ctx,"rough_aniso"),.5f,.125f,0) &&
+       check3("roughness-dual",eval_named(&ctx,"rough_dual"),.25f,.25f,0) && ok;
+  { MtlxValue warm=eval_named(&ctx,"blackbody_warm");
+    if(!(warm.v[0]>warm.v[1]&&warm.v[1]>=warm.v[2]&&warm.v[2]>=0)){
+      fprintf(stderr,"blackbody warm spectrum invalid: %g %g %g\n",warm.v[0],warm.v[1],warm.v[2]);ok=0;
+    }
+  }
   ok = check3("difference", eval_named(&ctx, "difference"), 0.4f, 0.45f,
               0.2f) && ok;
   ok = check4("over", eval_named(&ctx, "over"), 0.5f, 0.3f, 0.5f,

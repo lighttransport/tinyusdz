@@ -1784,6 +1784,11 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.op = MaterialXGraphOpCPU::ViewDirection;
     else if (cat == "time") out.op = MaterialXGraphOpCPU::Time;
     else if (cat == "frame") out.op = MaterialXGraphOpCPU::Frame;
+    else if (cat == "blackbody") out.op = MaterialXGraphOpCPU::Blackbody;
+    else if (cat == "roughness_anisotropy")
+      out.op = MaterialXGraphOpCPU::RoughnessAnisotropy;
+    else if (cat == "roughness_dual")
+      out.op = MaterialXGraphOpCPU::RoughnessDual;
     else if (cat == "hsvadjust") {
       out.op = MaterialXGraphOpCPU::HsvAdjust;
       out.value[1][1] = out.value[1][2] = 1.0f;

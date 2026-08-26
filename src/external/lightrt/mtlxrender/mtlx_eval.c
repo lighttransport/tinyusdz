@@ -260,7 +260,8 @@ typedef enum {
     OP_RANDOMCOLOR, OP_LATLONGIMAGE, OP_TRIPLANARPROJECTION,
     OP_HEIGHTTONORMAL, OP_BUMP, OP_VIEWDIRECTION, OP_TIME, OP_FRAME,
     OP_TRANSFORMPOINT, OP_TRANSFORMVECTOR, OP_TRANSFORMNORMAL,
-    OP_GEOMPROPVALUE
+    OP_GEOMPROPVALUE, OP_BLACKBODY, OP_ROUGHNESS_ANISOTROPY,
+    OP_ROUGHNESS_DUAL
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -416,6 +417,9 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "transformnormal")) return OP_TRANSFORMNORMAL;
     if (!strcmp(c, "geompropvalue") || !strcmp(c, "geompropvalueuniform"))
         return OP_GEOMPROPVALUE;
+    if (!strcmp(c,"blackbody")) return OP_BLACKBODY;
+    if (!strcmp(c,"roughness_anisotropy")) return OP_ROUGHNESS_ANISOTROPY;
+    if (!strcmp(c,"roughness_dual")) return OP_ROUGHNESS_DUAL;
     return OP_UNKNOWN;
 }
 
@@ -749,6 +753,22 @@ static v3 transform_space(ShadeContext *ctx,v3 value,const char *from,
     return kind==2?v3_normalize(result):result;
 }
 
+static v3 eval_blackbody(float kelvin){
+    float temperature=fminf(fmaxf(kelvin,800),25000),t=1000/temperature,
+          t2=t*t,t3=t2*t;
+    float x=temperature<4000?
+        -0.2661239f*t3-0.2343580f*t2+0.8776956f*t+0.179910f:
+        -3.0258469f*t3+2.1070379f*t2+0.2226347f*t+0.240390f;
+    float x2=x*x,x3=x2*x,y=temperature<2222?
+        -1.1063814f*x3-1.34811020f*x2+2.18555832f*x-0.20219683f:
+        (temperature<4000?-0.9549476f*x3-1.37418593f*x2+2.09137015f*x-0.16748867f:
+         3.0817580f*x3-5.87338670f*x2+3.75112997f*x-0.37001483f);
+    if(y<=0)return v3_make(1,1,1);float X=x/y,Z=(1-x-y)/y;
+    return v3_make(fmaxf(3.2406f*X-1.5372f-.4986f*Z,0),
+                   fmaxf(-.9689f*X+1.8758f+.0415f*Z,0),
+                   fmaxf(.0557f*X-.2040f+1.0570f*Z,0));
+}
+
 static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
     if (node_id < 0 || node_id >= ctx->doc->nnode) return mv_zero(MV_NONE);
     if (ctx->memo_done[node_id]) return ctx->memo[node_id];
@@ -778,6 +798,9 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_TRANSFORMVECTOR:
         case OP_TRANSFORMNORMAL: {a=in_or(ctx,n,"in",mv_zero(MV_VEC3));int kind=node_op==OP_TRANSFORMPOINT?0:(node_op==OP_TRANSFORMVECTOR?1:2);r=mv_vec3(transform_space(ctx,mv_as_v3(&a),string_input(n,"fromspace","object"),string_input(n,"tospace","world"),kind));break;}
         case OP_GEOMPROPVALUE: {const char *name=string_input(n,"geomprop","");const MtlxInput *fallback=find_input(n,"default");r=fallback?eval_input(ctx,fallback):mv_zero(n->type);if(ctx->geomprop&&name[0]){MtlxValue q;if(ctx->geomprop(ctx->geomprop_user,name,n->type,&q))r=q;}break;}
+        case OP_BLACKBODY: {a=in_or(ctx,n,"temperature",mv_float(5000));r=mv_color3(eval_blackbody(a.v[0]));break;}
+        case OP_ROUGHNESS_ANISOTROPY: {a=in_or(ctx,n,"roughness",mv_float(0));b=in_or(ctx,n,"anisotropy",mv_float(0));float q=fminf(fmaxf(a.v[0]*a.v[0],1e-8f),1),aspect=b.v[0]>0?sqrtf(1-fminf(fmaxf(b.v[0],0),.98f)):1;r=mv_vec2(fminf(q/aspect,1),q*aspect);break;}
+        case OP_ROUGHNESS_DUAL: {a=in_or(ctx,n,"roughness",mv_vec2(0,-1));float y=a.v[1]<0?a.v[0]:a.v[1];r=mv_vec2(fminf(fmaxf(a.v[0]*a.v[0],1e-8f),1),fminf(fmaxf(y*y,1e-8f),1));break;}
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
         case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;

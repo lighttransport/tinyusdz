@@ -520,6 +520,25 @@ float MtlxPerlin3(float x,float y,float z,int channel){
   return .9820f*((x00+v*(x10-x00))+w*((x01+v*(x11-x01))-(x00+v*(x10-x00))));
 }
 
+std::array<float,4> MtlxBlackbody(float kelvin){
+  const float temperature=std::clamp(kelvin,800.0f,25000.0f);
+  const float t=1000.0f/temperature,t2=t*t,t3=t2*t;
+  const float x=temperature<4000.0f?
+      -0.2661239f*t3-0.2343580f*t2+0.8776956f*t+0.179910f:
+      -3.0258469f*t3+2.1070379f*t2+0.2226347f*t+0.240390f;
+  const float x2=x*x,x3=x2*x;
+  const float y=temperature<2222.0f?
+      -1.1063814f*x3-1.34811020f*x2+2.18555832f*x-0.20219683f:
+      (temperature<4000.0f?
+       -0.9549476f*x3-1.37418593f*x2+2.09137015f*x-0.16748867f:
+       3.0817580f*x3-5.87338670f*x2+3.75112997f*x-0.37001483f);
+  if(y<=0.0f)return {1,1,1,1};
+  const float X=x/y,Z=(1.0f-x-y)/y;
+  return {std::max(3.2406f*X-1.5372f-0.4986f*Z,0.0f),
+          std::max(-0.9689f*X+1.8758f+0.0415f*Z,0.0f),
+          std::max(0.0557f*X-0.2040f+1.0570f*Z,0.0f),1.0f};
+}
+
 std::array<float, 4> EvalCpuMaterialXGraph(
     const HostScene& scene, int materialId, int route, float u, float v,
     float u1, float v1, const float* normal = nullptr,
@@ -725,6 +744,14 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst={time,time,time,time};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Frame)) {
         dst={frame,frame,frame,frame};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Blackbody)) {
+        dst=MtlxBlackbody(a[0]);
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::RoughnessAnisotropy)) {
+        const float r=std::clamp(a[0]*a[0],1.0e-8f,1.0f);
+        if(b[0]>0.0f){const float aspect=std::sqrt(1.0f-std::clamp(b[0],0.0f,0.98f));dst={std::min(r/aspect,1.0f),r*aspect,0,1};}
+        else dst={r,r,0,1};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::RoughnessDual)) {
+        const float y=a[1]<0.0f?a[0]:a[1];dst={std::clamp(a[0]*a[0],1.0e-8f,1.0f),std::clamp(y*y,1.0e-8f,1.0f),0,1};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::HsvAdjust)) {
         const float mx = std::max(a[0], std::max(a[1], a[2]));
         const float mn = std::min(a[0], std::min(a[1], a[2]));
