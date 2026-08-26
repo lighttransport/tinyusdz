@@ -432,6 +432,33 @@ int main(void) {
     return 1;
   }
 
+  const char *weighted_roughness_xml =
+      "<materialx version=\"1.39\">"
+      " <dielectric_bsdf name=\"GlassA\" type=\"BSDF\">"
+      "  <input name=\"weight\" type=\"float\" value=\"0.5\"/>"
+      "  <input name=\"roughness\" type=\"float\" value=\"0.1\"/>"
+      " </dielectric_bsdf>"
+      " <dielectric_bsdf name=\"GlassB\" type=\"BSDF\">"
+      "  <input name=\"weight\" type=\"float\" value=\"0.5\"/>"
+      "  <input name=\"roughness\" type=\"float\" value=\"0.5\"/>"
+      " </dielectric_bsdf>"
+      " <add name=\"Combined\" type=\"BSDF\">"
+      "  <input name=\"in1\" type=\"BSDF\" nodename=\"GlassA\"/>"
+      "  <input name=\"in2\" type=\"BSDF\" nodename=\"GlassB\"/>"
+      " </add>"
+      " <surface name=\"Surface\" type=\"surfaceshader\">"
+      "  <input name=\"bsdf\" type=\"BSDF\" nodename=\"Combined\"/>"
+      " </surface>"
+      " <surfacematerial name=\"Mat\"><input name=\"surfaceshader\""
+      " type=\"surfaceshader\" nodename=\"Surface\"/></surfacematerial>"
+      "</materialx>";
+  if (!eval_xml(weighted_roughness_xml, &p) ||
+      !nearf(p.specular_weight, 1.0f) ||
+      !nearf(p.specular_roughness, 0.3f)) {
+    fprintf(stderr, "composed specular roughness was not weighted\n");
+    return 1;
+  }
+
   const char *scatter_mode_xml =
       "<materialx version=\"1.39\">"
       " <dielectric_bsdf name=\"Glass\" type=\"BSDF\">"
