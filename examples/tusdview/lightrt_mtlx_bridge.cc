@@ -1623,6 +1623,16 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           {"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",name+"__ior"}}})}});
       continue;
     }
+    if(cat=="glossiness_anisotropy"&&!name.empty()){
+      const std::string rough=name+"__roughness";
+      runtimeNodes.push_back({{"name",rough},{"category","invert"},{"type","float"},
+          {"inputs",nlohmann::json::array({renamedInput(inputNamed(node,"glossiness",{{"value",1.0}}),"in")})}});
+      runtimeNodes.push_back({{"name",name},{"category","roughness_anisotropy"},
+          {"type","vector2"},{"inputs",nlohmann::json::array({
+              nlohmann::json{{"name","roughness"},{"nodename",rough}},
+              inputNamed(node,"anisotropy",{{"value",0.0}})})}});
+      continue;
+    }
     if (cat == "randomcolor" && !name.empty()) {
       const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
       const nlohmann::json seed=inputNamed(node,"seed",{{"value",0}});

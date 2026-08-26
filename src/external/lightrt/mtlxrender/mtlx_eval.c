@@ -261,7 +261,7 @@ typedef enum {
     OP_HEIGHTTONORMAL, OP_BUMP, OP_VIEWDIRECTION, OP_TIME, OP_FRAME,
     OP_TRANSFORMPOINT, OP_TRANSFORMVECTOR, OP_TRANSFORMNORMAL,
     OP_GEOMPROPVALUE, OP_BLACKBODY, OP_ROUGHNESS_ANISOTROPY,
-    OP_ROUGHNESS_DUAL, OP_ARTISTIC_IOR
+    OP_ROUGHNESS_DUAL, OP_ARTISTIC_IOR, OP_GLOSSINESS_ANISOTROPY
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -421,6 +421,7 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c,"roughness_anisotropy")) return OP_ROUGHNESS_ANISOTROPY;
     if (!strcmp(c,"roughness_dual")) return OP_ROUGHNESS_DUAL;
     if (!strcmp(c,"artistic_ior")) return OP_ARTISTIC_IOR;
+    if (!strcmp(c,"glossiness_anisotropy")) return OP_GLOSSINESS_ANISOTROPY;
     return OP_UNKNOWN;
 }
 
@@ -815,6 +816,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_ROUGHNESS_ANISOTROPY: {a=in_or(ctx,n,"roughness",mv_float(0));b=in_or(ctx,n,"anisotropy",mv_float(0));float q=fminf(fmaxf(a.v[0]*a.v[0],1e-8f),1),aspect=b.v[0]>0?sqrtf(1-fminf(fmaxf(b.v[0],0),.98f)):1;r=mv_vec2(fminf(q/aspect,1),q*aspect);break;}
         case OP_ROUGHNESS_DUAL: {a=in_or(ctx,n,"roughness",mv_vec2(0,-1));float y=a.v[1]<0?a.v[0]:a.v[1];r=mv_vec2(fminf(fmaxf(a.v[0]*a.v[0],1e-8f),1),fminf(fmaxf(y*y,1e-8f),1));break;}
         case OP_ARTISTIC_IOR: r=eval_artistic_ior(ctx,n,0);break;
+        case OP_GLOSSINESS_ANISOTROPY: {a=in_or(ctx,n,"glossiness",mv_float(1));b=in_or(ctx,n,"anisotropy",mv_float(0));float rough=1-a.v[0],q=fminf(fmaxf(rough*rough,1e-8f),1),aspect=b.v[0]>0?sqrtf(1-fminf(fmaxf(b.v[0],0),.98f)):1;r=mv_vec2(fminf(q/aspect,1),q*aspect);break;}
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
         case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;
