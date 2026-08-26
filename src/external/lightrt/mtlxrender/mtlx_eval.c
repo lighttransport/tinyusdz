@@ -538,14 +538,21 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     float u = ctx->uv[0], v = ctx->uv[1];
     const MtlxInput *tc = find_input(n, "texcoord");
     if (tc && tc->src_node >= 0) { MtlxValue t = eval_input(ctx, tc); u = t.v[0]; v = t.v[1]; }
-    int id = path ? texcache_get(ctx->tex, path, srgb) : -1;
     float s[4];
     const MtlxInput *us = find_input(n, "uaddressmode");
     const MtlxInput *vs = find_input(n, "vaddressmode");
-    if (id >= 0) texcache_sample_address(
-        ctx->tex, id, u, v, us ? us->value.s : "periodic",
-        vs ? vs->value.s : "periodic", s);
-    else { MtlxValue d = in_or(ctx, n, "default", mv_zero(n->type)); v3 dc = mv_as_v3(&d); s[0]=dc.x; s[1]=dc.y; s[2]=dc.z; s[3]=1; }
+    int sampled = 0;
+    if (path && !strstr(path, "<UDIM>")) {
+        int id = texcache_get(ctx->tex, path, srgb);
+        if (id >= 0) {
+            texcache_sample_address(ctx->tex, id, u, v,
+                us ? us->value.s : "periodic", vs ? vs->value.s : "periodic", s);
+            sampled = 1;
+        }
+    } else if (path) {
+        sampled = texcache_sample_file(ctx->tex, path, srgb, u, v, s);
+    }
+    if (!sampled) { MtlxValue d = in_or(ctx, n, "default", mv_zero(n->type)); v3 dc = mv_as_v3(&d); s[0]=dc.x; s[1]=dc.y; s[2]=dc.z; s[3]=1; }
     switch (n->type) {
         case MV_FLOAT: return mv_float(s[0]);
         case MV_VEC2: return mv_vec2(s[0], s[1]);

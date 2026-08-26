@@ -122,6 +122,9 @@ and its emission output to EDF, preserving composed MaterialX volume networks
 without conflating them with the surface graph; authored emission scale is
 applied in the EDF bridge as well. VDF anisotropy is now retained in the
 canonical real-time medium phase parameter and covered by the evaluator test.
+The standalone LightRT texture cache now resolves `<UDIM>` filenames from the
+integer UV tile and returns a clean miss for absent tiles; present/missing tile
+behavior is covered by the C evaluator regression.
 Standalone EDF evaluation now recursively handles add/layer, mix, and
 scalar-or-EDF multiply composition, so composed emission survives into both
 surface and volume evaluation.

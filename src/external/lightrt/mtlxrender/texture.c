@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "stb_image.h"
 
@@ -86,6 +87,34 @@ int texcache_get(TextureCache *tc, const char *rel_path, int srgb) {
     t->pixels = px;
     t->w = w; t->h = h; t->comp = comp; t->srgb = srgb;
     return tc->ntex++;
+}
+
+static int udim_path(const char *pattern, float u, float v, char *path,
+                     size_t path_size) {
+    const char *token = strstr(pattern, "<UDIM>");
+    if (!token) {
+        snprintf(path, path_size, "%s", pattern);
+        return 1001;
+    }
+    int tile = 1001 + (int)floorf(u) + 10 * (int)floorf(v);
+    if (tile < 1001 || tile > 1999) return -1;
+    size_t prefix = (size_t)(token - pattern);
+    size_t suffix = strlen(token + 6);
+    if (prefix + 4 + suffix + 1 > path_size) return -1;
+    memcpy(path, pattern, prefix);
+    snprintf(path + prefix, path_size - prefix, "%d%s", tile, token + 6);
+    return tile;
+}
+
+int texcache_sample_file(TextureCache *tc, const char *path, int srgb,
+                         float u, float v, float out[4]) {
+    if (!tc || !path || !path[0] || !out) return 0;
+    char resolved[1024];
+    if (udim_path(path, u, v, resolved, sizeof(resolved)) < 0) return 0;
+    int id = texcache_get(tc, resolved, srgb);
+    if (id < 0) return 0;
+    texcache_sample(tc, id, u - floorf(u), v - floorf(v), out);
+    return 1;
 }
 
 void texcache_preload(TextureCache *tc, const MtlxDoc *doc) {

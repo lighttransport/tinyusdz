@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "mtlx_doc.h"
 #include "mtlx_eval.h"
+#include "texture.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -76,6 +77,43 @@ static int eval_volume_xml(const char *xml, MtlxVolumeParams *p) {
 }
 
 int main(void) {
+  /* Exercise the shared UDIM resolver directly. Keep the fixture local to the
+   * test working directory so the texture cache's relative search semantics
+   * are identical to a real MaterialX document. */
+  const char *udim_1001 = "lightrt_udim_regression.1001.ppm";
+  const char *udim_1002 = "lightrt_udim_regression.1002.ppm";
+  FILE *udim_file = fopen(udim_1001, "wb");
+  if (!udim_file) return 1;
+  fputs("P6\n1 1\n255\n", udim_file);
+  fputc(255, udim_file); fputc(0, udim_file); fputc(0, udim_file);
+  fclose(udim_file);
+  udim_file = fopen(udim_1002, "wb");
+  if (!udim_file) { remove(udim_1001); return 1; }
+  fputs("P6\n1 1\n255\n", udim_file);
+  fputc(0, udim_file); fputc(0, udim_file); fputc(255, udim_file);
+  fclose(udim_file);
+  TextureCache *udim_cache = texcache_create(".");
+  float udim_sample[4];
+  const int udim_first = texcache_sample_file(
+      udim_cache, "lightrt_udim_regression.<UDIM>.ppm", 0, 0.25f, 0.5f,
+      udim_sample);
+  const int first_red = udim_sample[0] > 0.99f && udim_sample[2] < 0.01f;
+  const int udim_second = texcache_sample_file(
+      udim_cache, "lightrt_udim_regression.<UDIM>.ppm", 0, 1.25f, 0.5f,
+      udim_sample);
+  const int second_blue = udim_sample[0] < 0.01f && udim_sample[2] > 0.99f;
+  const int udim_missing = texcache_sample_file(
+      udim_cache, "lightrt_udim_regression.<UDIM>.ppm", 0, 2.25f, 0.5f,
+      udim_sample);
+  texcache_free(udim_cache);
+  remove(udim_1001);
+  remove(udim_1002);
+  if (!udim_first || !udim_second || !first_red || !second_blue || udim_missing ||
+      udim_sample[3] != 1.0f) {
+    fprintf(stderr, "UDIM present/missing tile resolution failed\n");
+    return 1;
+  }
+
   const char *xml =
       "<materialx version=\"1.38\">"
       "  <open_pbr_surface name=\"Preview\" type=\"surfaceshader\">"
