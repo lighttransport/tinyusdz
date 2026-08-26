@@ -126,6 +126,8 @@ Passed:
   passed
 - SWBVH stacked-glass regression: passed; general SWBVH render profile:
   environment-skipped
+- SWBVH stacked-glass regression rerun after barycentric geomprop update and
+  GPU material ABI check: 2/2 passed
 - Full configured native CTest rerun after conductor and generalized-Schlick
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
