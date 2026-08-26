@@ -197,6 +197,10 @@ Passed:
   from source.
 - Stable `build-next` rebuild and full regression after matrix format support:
   40/40 passed.
+- Final current-HEAD optimized Release full native/viewer/tusdrender
+  regression: 298/298 passed in 1109.64 seconds; the 24 skips remain the
+  documented unavailable external-asset, corpus, or validation-capability
+  profiles.
 - Stable `next` regression after wrapper changes: 40/40 passed
 - Viewer rebuild plus focused geomprop/bridge/ABI/nonmesh/safety checks: 6/6
   passed after generic geomprop stream preservation (`3228d85cd`)
