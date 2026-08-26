@@ -238,9 +238,13 @@ bool MtlxMaterial::ParseFromXML(XMLNodePtr xml_node) {
       if (shader_node.empty()) {
         shader_node = child->GetAttribute("node");
       }
+      const std::string nodegraph = child->GetAttribute("nodegraph");
+      const std::string output = child->GetAttribute("output");
 
       if (input_name == "surfaceshader" || input_name == "sr") {
         surface_shader_ = shader_node;
+        surface_nodegraph_ = nodegraph;
+        surface_output_ = output.empty() ? "out" : output;
       } else if (input_name == "displacementshader" || input_name == "dr") {
         displacement_shader_ = shader_node;
       } else if (input_name == "volumeshader" || input_name == "vr") {

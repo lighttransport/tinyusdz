@@ -411,6 +411,20 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
 
   // Find surface shader node
   std::string surface_shader = mat->GetSurfaceShader();
+  if (surface_shader.empty() && !mat->GetSurfaceNodeGraph().empty()) {
+    const auto graph = doc.FindNodeGraph(mat->GetSurfaceNodeGraph());
+    if (graph) {
+      const std::string outputName = mat->GetSurfaceOutput().empty()
+                                         ? "out"
+                                         : mat->GetSurfaceOutput();
+      for (const auto& output : graph->GetOutputs()) {
+        if (output && output->GetName() == outputName) {
+          surface_shader = output->GetNodeName();
+          break;
+        }
+      }
+    }
+  }
   if (surface_shader.empty()) {
     error_ = "Material has no surface shader";
     return false;

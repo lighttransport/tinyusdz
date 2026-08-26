@@ -2328,6 +2328,35 @@ void TestMaterialXUtilities() {
   assert(from_file.preview_surface);
   assert(std::abs(from_file.preview_surface->diffuse_color.value.x - 0.4f) < 0.001f);
 
+  // A material wrapper may bind its shader through a nodegraph output rather
+  // than a direct nodename. The converter must resolve that output to the
+  // graph's shader node before dispatching the shader conversion.
+  const char* graph_material = R"(<materialx version="1.38">
+  <surfacematerial name="GraphMat" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodegraph="Graph" output="surface" />
+  </surfacematerial>
+  <nodegraph name="Graph">
+    <output name="surface" type="surfaceshader" nodename="GraphSurface" />
+    <node name="GraphSurface" category="standard_surface" type="surfaceshader">
+      <input name="base" type="float" value="1.0" />
+      <input name="base_color" type="color3" value="0.2, 0.3, 0.4" />
+      <input name="metalness" type="float" value="0.6" />
+      <input name="specular_roughness" type="float" value="0.25" />
+    </node>
+  </nodegraph>
+</materialx>)";
+  RenderMaterial graph_material_out;
+  if (!converter.ConvertToRenderMaterial(graph_material, "GraphMat",
+                                         &graph_material_out)) {
+    std::cout << "  MaterialX nodegraph material conversion failed: "
+              << converter.GetError() << "\n";
+    assert(false);
+  }
+  assert(graph_material_out.shader_type == RenderMaterial::ShaderType::PreviewSurface);
+  assert(graph_material_out.preview_surface);
+  assert(std::abs(graph_material_out.preview_surface->diffuse_color.value.x - 0.2f) < 0.001f);
+  assert(std::abs(graph_material_out.preview_surface->metallic.value.x - 0.6f) < 0.001f);
+
   const char* usda = R"(#usda 1.0
 
 def Material "Mat"

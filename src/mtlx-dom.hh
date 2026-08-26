@@ -254,6 +254,8 @@ public:
   // Shader references
   const std::string& GetSurfaceShader() const { return surface_shader_; }
   void SetSurfaceShader(const std::string& shader) { surface_shader_ = shader; }
+  const std::string& GetSurfaceNodeGraph() const { return surface_nodegraph_; }
+  const std::string& GetSurfaceOutput() const { return surface_output_; }
   
   const std::string& GetDisplacementShader() const { return displacement_shader_; }
   void SetDisplacementShader(const std::string& shader) { displacement_shader_ = shader; }
@@ -266,6 +268,8 @@ public:
   
 private:
   std::string surface_shader_;
+  std::string surface_nodegraph_;
+  std::string surface_output_;
   std::string displacement_shader_;
   std::string volume_shader_;
 };
