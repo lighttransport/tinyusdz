@@ -129,6 +129,12 @@ preload behavior for the first ten UDIM rows.
 Standalone EDF evaluation now recursively handles add/layer, mix, and
 scalar-or-EDF multiply composition, so composed emission survives into both
 surface and volume evaluation.
+Measured EDF fallback behavior is covered in the standalone and LightRT bridge
+paths: authored color is preserved while unsupported profile filenames remain
+non-fatal.
+Conical EDF bridge lowering preserves normal/view angular falloff through acos,
+degree conversion, and clamped runtime graph arithmetic; bridge coverage
+verifies the angular nodes are retained.
 Measured EDFs now have explicit regression coverage in the standalone and
 LightRT bridge paths: authored color is preserved as the renderer-neutral
 fallback while unsupported profile filenames remain non-fatal.
