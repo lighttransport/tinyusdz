@@ -1095,6 +1095,48 @@ int main() {
                  fractal2dError.c_str());
     return 1;
   }
+  tusdview::DrawMaterialCPU fractal3dMat;
+  fractal3dMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"volumeNoise","category":"fractal3d","type":"color3","inputs":[
+      {"name":"position","value":[0.2,0.4,0.7]},
+      {"name":"amplitude","value":[1,2,3]},{"name":"octaves","value":4},
+      {"name":"lacunarity","value":2},{"name":"diminish","value":0.5}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string fractal3dError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&fractal3dMat,
+                                               &fractal3dError) ||
+      fractal3dMat.materialXGraph.nodes.size() != 2 ||
+      fractal3dMat.materialXGraph.nodes[0].op !=
+          tusdview::MaterialXGraphOpCPU::Fractal3D ||
+      fractal3dMat.materialXGraph.nodes[0].auxValue[3] != 3.0f) {
+    std::fprintf(stderr, "MaterialX fractal3d lowering failed: %s\n",
+                 fractal3dError.c_str());
+    return 1;
+  }
+  tusdview::DrawMaterialCPU unifiedNoiseMat;
+  unifiedNoiseMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+    {"name":"unified2","category":"unifiednoise2d","type":"float","inputs":[
+      {"name":"texcoord","value":[0.2,0.4]},{"name":"freq","value":[2,3]},
+      {"name":"offset","value":[0.1,0.2]},{"name":"jitter","value":0.8},
+      {"name":"outmin","value":-1},{"name":"outmax","value":2},
+      {"name":"clampoutput","value":true},{"name":"octaves","value":3},
+      {"name":"lacunarity","value":2},{"name":"diminish","value":0.5},
+      {"name":"type","value":2},{"name":"style","value":0}]},
+    {"name":"unified3","category":"unifiednoise3d","type":"float","inputs":[
+      {"name":"position","value":[0.2,0.4,0.7]},{"name":"type","value":3}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string unifiedNoiseError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&unifiedNoiseMat,
+                                               &unifiedNoiseError) ||
+      unifiedNoiseMat.materialXGraph.nodes.size() >
+          tusdview::kRtMaterialGraphMaxNodes ||
+      unifiedNoiseMat.materialXGraph.nodes.empty() ||
+      unifiedNoiseMat.materialXGraph.nodes.back().op !=
+          tusdview::MaterialXGraphOpCPU::IfEqual) {
+    std::fprintf(stderr, "MaterialX unified-noise lowering failed: %s\n",
+                 unifiedNoiseError.c_str());
+    return 1;
+  }
   tusdview::DrawMaterialCPU compositeMat;
   compositeMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"difference","category":"difference","type":"color3","inputs":[{"name":"fg","value":[0.8,0.1,0.4]},{"name":"bg","value":[0.2,0.5,0.1]}]},

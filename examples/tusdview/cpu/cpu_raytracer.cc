@@ -437,6 +437,22 @@ float MtlxPerlin2(float x, float y, int channel) {
   const float d=MtlxGradient2(hash(ix+1,iy+1),fx-1.0f,fy-1.0f);
   return 0.6616f*((1.0f-v)*(a+(b-a)*u)+v*(c+(d-c)*u));
 }
+float MtlxGrad3(uint32_t hash,float x,float y,float z){
+  const uint32_t h=hash&15u;const float u=h<8u?x:y;
+  const float v=h<4u?y:((h==12u||h==14u)?x:z);
+  return ((h&1u)?-u:u)+((h&2u)?-v:v);
+}
+float MtlxPerlin3(float x,float y,float z,int channel){
+  const int ix=static_cast<int>(std::floor(x)),iy=static_cast<int>(std::floor(y)),iz=static_cast<int>(std::floor(z));
+  const float fx=x-ix,fy=y-iy,fz=z-iz;
+  const float u=fx*fx*fx*(fx*(fx*6-15)+10),v=fy*fy*fy*(fy*(fy*6-15)+10),w=fz*fz*fz*(fz*(fz*6-15)+10);
+  auto grad=[&](int dx,int dy,int dz){uint32_t seed=0xdeadbeefu+(3u<<2u)+13u,h=MtlxBjFinal(seed+static_cast<uint32_t>(ix+dx),seed+static_cast<uint32_t>(iy+dy),seed+static_cast<uint32_t>(iz+dz));if(channel>=0)h=(h>>(channel*8))&255u;return MtlxGrad3(h,fx-dx,fy-dy,fz-dz);};
+  const float x00=grad(0,0,0)+u*(grad(1,0,0)-grad(0,0,0));
+  const float x10=grad(0,1,0)+u*(grad(1,1,0)-grad(0,1,0));
+  const float x01=grad(0,0,1)+u*(grad(1,0,1)-grad(0,0,1));
+  const float x11=grad(0,1,1)+u*(grad(1,1,1)-grad(0,1,1));
+  return .9820f*((x00+v*(x10-x00))+w*((x01+v*(x11-x01))-(x00+v*(x10-x00))));
+}
 
 std::array<float, 4> EvalCpuMaterialXGraph(
     const HostScene& scene, int materialId, int route, float u, float v,
@@ -563,16 +579,17 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const float l = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
         dst = {l, l, l, l};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Noise2D)) {
-        const float n = std::sin((a[0] + u * 17.0f) * 127.1f +
-                                 (a[1] + v * 31.0f) * 311.7f) * 43758.5453f;
-        const float f = n - std::floor(n);
-        dst = {f, f, f, f};
+        const int channels=std::clamp(static_cast<int>(std::floor(c[3]+.5f)),1,4);
+        dst={0,0,0,0};
+        if(channels==1)dst[0]=MtlxPerlin2(a[0],a[1],-1)*b[0]+c[0];
+        else if(channels==2){dst[0]=MtlxPerlin2(a[0],a[1],-1)*b[0]+c[0];dst[1]=MtlxPerlin2(a[0]+19,a[1]+193,-1)*b[1]+c[1];}
+        else{for(int lane=0;lane<3;lane++)dst[lane]=MtlxPerlin2(a[0],a[1],lane)*b[lane]+c[lane];if(channels==4)dst[3]=MtlxPerlin2(a[0]+19,a[1]+193,-1)*b[3]+c[3];}
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Noise3D)) {
-        const float n = std::sin((a[0] + u * 17.0f) * 127.1f +
-                                 (a[1] + v * 31.0f) * 311.7f +
-                                 a[2] * 74.7f) * 43758.5453f;
-        const float f = n - std::floor(n);
-        dst = {f, f, f, f};
+        const int channels=std::clamp(static_cast<int>(std::floor(c[3]+.5f)),1,4);
+        dst={0,0,0,0};
+        if(channels==1)dst[0]=MtlxPerlin3(a[0],a[1],a[2],-1)*b[0]+c[0];
+        else if(channels==2){dst[0]=MtlxPerlin3(a[0],a[1],a[2],-1)*b[0]+c[0];dst[1]=MtlxPerlin3(a[0]+19,a[1]+193,a[2]+17,-1)*b[1]+c[1];}
+        else{for(int lane=0;lane<3;lane++)dst[lane]=MtlxPerlin3(a[0],a[1],a[2],lane)*b[lane]+c[lane];if(channels==4)dst[3]=MtlxPerlin3(a[0]+19,a[1]+193,a[2]+17,-1)*b[3]+c[3];}
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Tangent)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::tan(a[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Exponential)) {
@@ -818,6 +835,17 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const int channels=std::clamp(static_cast<int>(std::floor(c[1]+0.5f)),1,3);
         dst=MtlxWorley(a,op==static_cast<int>(MaterialXGraphOpCPU::WorleyNoise3D),
                        b[0],static_cast<int>(std::floor(c[0]+0.5f)),channels);
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Fractal3D)) {
+        const float diminishValue=textureId>=0&&textureId<count?values[textureId][0]:scene.matGraph[p+17];
+        const int channels=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+20]+.5f)),1,4);
+        const int octaves=std::clamp(static_cast<int>(std::floor(b[0]+.5f)),0,16);
+        float px=a[0],py=a[1],pz=a[2],weight=1;dst={0,0,0,0};
+        for(int octave=0;octave<octaves;octave++){
+          if(channels==1)dst[0]+=weight*MtlxPerlin3(px,py,pz,-1);
+          else if(channels==2){dst[0]+=weight*MtlxPerlin3(px,py,pz,-1);dst[1]+=weight*MtlxPerlin3(px+19,py+193,pz+17,-1);}
+          else{for(int lane=0;lane<3;lane++)dst[lane]+=weight*MtlxPerlin3(px,py,pz,lane);if(channels==4)dst[3]+=weight*MtlxPerlin3(px+19,py+193,pz+17,-1);}
+          px*=c[0];py*=c[0];pz*=c[0];weight*=diminishValue;
+        }
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);
