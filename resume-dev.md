@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `43c1cb068` (`Fix CUDA HIP geomprop path plumbing`)
+- HEAD: `9a31c83d9` (`Record stable next regression`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
