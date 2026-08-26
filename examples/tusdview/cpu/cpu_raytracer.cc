@@ -522,7 +522,9 @@ float MtlxPerlin3(float x,float y,float z,int channel){
 
 std::array<float, 4> EvalCpuMaterialXGraph(
     const HostScene& scene, int materialId, int route, float u, float v,
-    float u1, float v1) {
+    float u1, float v1, const float* normal = nullptr,
+    const float* position = nullptr, const float* viewDirection = nullptr,
+    float time = 0.0f, float frame = 0.0f) {
   constexpr int kStride = kRtMaterialGraphFloats;
   std::array<float, 4> zero{0.0f, 0.0f, 0.0f, 0.0f};
   const size_t base = static_cast<size_t>(materialId) * kStride;
@@ -679,7 +681,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
           dst[cidx] = t;
         }
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::GeometricNormal)) {
-        dst = {0.0f, 0.0f, 1.0f, 1.0f};
+        dst = normal ? std::array<float, 4>{normal[0], normal[1], normal[2], 1.0f}
+                     : std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::GeometricTangent)) {
         dst = {1.0f, 0.0f, 0.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Rotate3D)) {
@@ -707,7 +710,21 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Convert)) {
         dst = a;
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Position)) {
-        dst = {0.0f, 0.0f, 0.0f, 1.0f};
+        dst = position ? std::array<float, 4>{position[0], position[1], position[2], 1.0f}
+                       : std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::ViewDirection)) {
+        if (viewDirection) {
+          const float len=std::sqrt(viewDirection[0]*viewDirection[0]+
+                                    viewDirection[1]*viewDirection[1]+
+                                    viewDirection[2]*viewDirection[2]);
+          dst=len>1.0e-8f?std::array<float,4>{viewDirection[0]/len,
+              viewDirection[1]/len,viewDirection[2]/len,1.0f}:
+              std::array<float,4>{0,0,1,1};
+        } else dst={0,0,1,1};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Time)) {
+        dst={time,time,time,time};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Frame)) {
+        dst={frame,frame,frame,frame};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::HsvAdjust)) {
         const float mx = std::max(a[0], std::max(a[1], a[2]));
         const float mn = std::min(a[0], std::min(a[1], a[2]));
@@ -1604,9 +1621,15 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               float uv1[2] = {uv[0], uv[1]};
               if (static_cast<size_t>(tri) * 6 + 5 < cpuUv1_.size())
                 Interp6(&cpuUv1_[static_cast<size_t>(tri) * 6], hit.u, hit.v, uv1);
+              const float graphPosition[3]={rayOrg[0]+dir[0]*hit.t,
+                                            rayOrg[1]+dir[1]*hit.t,
+                                            rayOrg[2]+dir[2]*hit.t};
+              const float graphViewDirection[3]={-dir[0],-dir[1],-dir[2]};
               const auto graphBaseColor = EvalCpuMaterialXGraph(hs_, matId, 0,
                                                                   uv[0], uv[1],
-                                                                  uv1[0], uv1[1]);
+                                                                  uv1[0], uv1[1],
+                                                                  nrm,graphPosition,
+                                                                  graphViewDirection);
               base[0] = graphBaseColor[0];
               base[1] = graphBaseColor[1];
               base[2] = graphBaseColor[2];

@@ -64,6 +64,14 @@ typedef struct {
     v3    Ns;      /* shading normal (world) */
     v3    Ng;      /* geometric normal (world) */
     v3    dpdu, dpdv; /* tangent frame for normal mapping */
+    v3    V;       /* normalized direction from the shade point to the camera */
+    float time;    /* scene time in seconds */
+    float frame;   /* authored/render frame number */
+    /* Column-major affine transforms.  When has_space_transforms is zero,
+     * named-space transform nodes use the identity transform. */
+    float object_to_world[16], world_to_object[16];
+    float world_to_view[16], view_to_world[16];
+    int has_space_transforms;
     /* per-shade-point memo (size doc->nnode) */
     MtlxValue *memo;
     char      *memo_done;

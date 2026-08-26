@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int nearf(float a, float b) { return fabsf(a - b) <= 1.0e-6f; }
 
@@ -21,6 +22,7 @@ static int eval_xml(const char *xml, OpenPBRParams *p) {
   }
 
   ShadeContext ctx;
+  memset(&ctx, 0, sizeof(ctx));
   ctx.doc = doc;
   ctx.tex = NULL;
   ctx.uv[0] = 0.5f;
@@ -30,6 +32,7 @@ static int eval_xml(const char *xml, OpenPBRParams *p) {
   ctx.Ng = v3_make(0.0f, 0.0f, 1.0f);
   ctx.dpdu = v3_make(1.0f, 0.0f, 0.0f);
   ctx.dpdv = v3_make(0.0f, 1.0f, 0.0f);
+  ctx.V = v3_make(0.0f, 0.0f, 1.0f);
   ctx.memo = (MtlxValue *)calloc((size_t)doc->nnode, sizeof(MtlxValue));
   ctx.memo_done = (char *)calloc((size_t)doc->nnode, 1);
   if (!ctx.memo || !ctx.memo_done) {
