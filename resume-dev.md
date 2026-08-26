@@ -82,7 +82,9 @@ float/vector streams from triangle-corner data with authored defaults for
 missing streams (`abc287650`). The Vulkan hardware ray-query path now uploads
 per-mesh descriptor/value streams and evaluates the opcode with barycentric
 interpolation. The shared CUDA/HIP kernel source and host upload path now have
-the matching lookup; compute-BVH and arbitrary typed variants remain open.
+the matching lookup. Compute-BVH now has descriptor bindings, host uploads,
+and barycentric interpolation in its full and path shader variants; arbitrary
+typed variants remain open.
 
 ## Current implementation status
 
@@ -95,8 +97,8 @@ closure slice is committed and validated.
 The next MaterialX converter resolves both direct surface bindings and
 nodegraph-backed `surfacematerial` outputs. Host-side generic float/vector
 geomprops are retained by the next scene loader; CPU RT, Vulkan hardware
-ray-query, and the shared CUDA/HIP kernel now evaluate the supported streams,
-while compute-BVH transport and arbitrary typed variants remain open.
+ray-query, the shared CUDA/HIP kernel, and compute-BVH now evaluate the
+supported streams; arbitrary typed variants remain open.
 
 ## Verified tests after HEAD
 
@@ -120,6 +122,8 @@ Passed:
   passed, including 15 documented unavailable-hardware/asset skips
 - Reconfigured native build including the shared CUDA/HIP RT host target and
   `tusdview`: passed
+- Compute-BVH shader regeneration, viewer rebuild, ABI, and safety checks:
+  passed
 - Full configured native CTest rerun after conductor and generalized-Schlick
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
