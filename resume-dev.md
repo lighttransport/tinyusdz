@@ -379,6 +379,9 @@ Passed:
 - OpenPBR `subsurface_radius_scale` now multiplies the radius vector
   component-wise, while `subsurface_scale` is read independently as its
   scalar parameter; the evaluator regression covers both values.
+- OpenPBR thin-film thickness now stays in the documented nanometer unit in
+  standalone evaluation, matching the bridge; the evaluator regression uses
+  a 450 nm film.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
