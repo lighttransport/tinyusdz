@@ -301,6 +301,9 @@ Passed:
 - Frozen UDIM caches now probe the complete bounded `1001`–`1999` range rather
   than stopping at row 10; the evaluator regression covers a high-row `1101`
   tile alongside present and missing lower-row tiles.
+- LightRT image evaluation now honors `filtertype="nearest"` for regular and
+  UDIM-capable image paths while retaining bilinear as the default; a two-texel
+  evaluator regression distinguishes nearest selection from bilinear blending.
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
