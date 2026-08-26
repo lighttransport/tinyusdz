@@ -516,6 +516,10 @@ enum class MaterialXGraphOpCPU : uint32_t {
   Ramp,
   RampGradient,
   Flake,
+  MatrixTransform,
+  MatrixTranspose,
+  MatrixInverse,
+  MatrixDeterminant,
   Unknown,
 };
 

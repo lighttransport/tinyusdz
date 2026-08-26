@@ -17,6 +17,8 @@ static int ncomp_of(const MtlxValue *v) {
         case MV_VEC2: return 2;
         case MV_COLOR3: case MV_VEC3: return 3;
         case MV_COLOR4: case MV_VEC4: return 4;
+        case MV_MATRIX33: return 9;
+        case MV_MATRIX44: return 16;
         default: return 1;
     }
 }
@@ -222,6 +224,9 @@ static float randomfloat_value(float input, int seed, float lo, float hi) {
     float q = (float)h / (float)0xffffffffu;
     return lo + q * (hi - lo);
 }
+static int matrix_dim(MtlxType t){return t==MV_MATRIX33?3:(t==MV_MATRIX44?4:0);}
+static float matrix_determinant(const MtlxValue *m){int n=matrix_dim(m->type);float a[4][4]={{0}},det=1;for(int r=0;r<n;r++)for(int c=0;c<n;c++)a[r][c]=m->v[c*n+r];for(int c=0;c<n;c++){int pivot=c;for(int r=c+1;r<n;r++)if(fabsf(a[r][c])>fabsf(a[pivot][c]))pivot=r;if(fabsf(a[pivot][c])<1e-12f)return 0;if(pivot!=c){for(int k=0;k<n;k++){float q=a[c][k];a[c][k]=a[pivot][k];a[pivot][k]=q;}det=-det;}float p=a[c][c];det*=p;for(int r=c+1;r<n;r++){float q=a[r][c]/p;for(int k=c+1;k<n;k++)a[r][k]-=q*a[c][k];}}return det;}
+static MtlxValue matrix_inverse(MtlxValue m){int n=matrix_dim(m.type);float a[4][8]={{0}};for(int r=0;r<n;r++){for(int c=0;c<n;c++)a[r][c]=m.v[c*n+r];a[r][n+r]=1;}for(int c=0;c<n;c++){int pivot=c;for(int r=c+1;r<n;r++)if(fabsf(a[r][c])>fabsf(a[pivot][c]))pivot=r;if(fabsf(a[pivot][c])<1e-12f)return m;if(pivot!=c)for(int k=0;k<2*n;k++){float q=a[c][k];a[c][k]=a[pivot][k];a[pivot][k]=q;}float p=a[c][c];for(int k=0;k<2*n;k++)a[c][k]/=p;for(int r=0;r<n;r++)if(r!=c){float q=a[r][c];for(int k=0;k<2*n;k++)a[r][k]-=q*a[c][k];}}for(int r=0;r<n;r++)for(int c=0;c<n;c++)m.v[c*n+r]=a[r][n+c];return m;}
 
 /* ---- node dispatch ---------------------------------------------------- */
 typedef enum {
@@ -243,7 +248,8 @@ typedef enum {
     OP_UNIFIEDNOISE2D, OP_UNIFIEDNOISE3D,
     OP_RAMPLR, OP_RAMPTB, OP_SPLITLR, OP_SPLITTB,
     OP_IFGREATER, OP_IFGREATEREQ, OP_IFEQUAL, OP_SWITCH, OP_DOT, OP_RAMP4,
-    OP_RAMP, OP_RAMP_GRADIENT,
+    OP_RAMP, OP_RAMP_GRADIENT, OP_CREATEMATRIX, OP_TRANSFORMMATRIX,
+    OP_TRANSPOSE, OP_DETERMINANT, OP_INVERTMATRIX,
     OP_ROTATE2D, OP_ONEMINUS, OP_DISTANCE, OP_REFLECT, OP_REFRACT,
     OP_PREMULT, OP_UNPREMULT, OP_MINCOMPONENT, OP_MAXCOMPONENT,
     OP_AND, OP_OR, OP_XOR, OP_NOT, OP_INSIDE, OP_OUTSIDE, OP_TRIANGLEWAVE,
@@ -352,6 +358,11 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "ramp4")) return OP_RAMP4;
     if (!strcmp(c, "ramp")) return OP_RAMP;
     if (!strcmp(c, "ramp_gradient")) return OP_RAMP_GRADIENT;
+    if (!strcmp(c, "creatematrix")) return OP_CREATEMATRIX;
+    if (!strcmp(c, "transformmatrix")) return OP_TRANSFORMMATRIX;
+    if (!strcmp(c, "transpose")) return OP_TRANSPOSE;
+    if (!strcmp(c, "determinant")) return OP_DETERMINANT;
+    if (!strcmp(c, "invertmatrix")) return OP_INVERTMATRIX;
     /* conditional / utility */
     if (!strcmp(c, "ifgreater")) return OP_IFGREATER;
     if (!strcmp(c, "ifgreatereq")) return OP_IFGREATEREQ;
@@ -741,6 +752,11 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_RAMP4: { MtlxValue tl=in_or(ctx,n,"valuetl",mv_zero(n->type)),tr=in_or(ctx,n,"valuetr",mv_zero(n->type)),bl=in_or(ctx,n,"valuebl",mv_zero(n->type)),br=in_or(ctx,n,"valuebr",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float u=clampf(tc.v[0],0,1),vv=clampf(tc.v[1],0,1); int nc=ncomp_of(&tl); r=tl; for(int i=0;i<nc;i++){ float top=tl.v[i]*(1-u)+tr.v[i]*u, bot=bl.v[i]*(1-u)+br.v[i]*u; r.v[i]=top*(1-vv)+bot*vv; } break; }
         case OP_RAMP: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),kind=in_or(ctx,n,"type",mv_zero(MV_INT)),interp=in_or(ctx,n,"interpolation",mv_float(1)),countv=in_or(ctx,n,"num_intervals",mv_float(2));float dx=tc.v[0]-.5f,dy=tc.v[1]-.5f,x=tc.v[0];switch((int)kind.v[0]){case 1:x=atan2f(dy,dx)/(2*(float)MTLX_PI)+.5f;break;case 2:x=sqrtf(dx*dx+dy*dy)*1.41421356f;break;case 3:x=2*fmaxf(fabsf(dx),fabsf(dy));break;default:break;}int count=(int)countv.v[0];if(count<2)count=2;if(count>10)count=10;r=in_or(ctx,n,"color1",mv_zero(MV_COLOR4));for(int k=1;k<count;k++){char lo_name[16],hi_name[16],color_name[16];snprintf(lo_name,sizeof(lo_name),"interval%d",k);snprintf(hi_name,sizeof(hi_name),"interval%d",k+1);snprintf(color_name,sizeof(color_name),"color%d",k+1);MtlxValue lo=in_or(ctx,n,lo_name,mv_float(k==1?0:1)),hi=in_or(ctx,n,hi_name,mv_float(1)),next=in_or(ctx,n,color_name,mv_zero(MV_COLOR4));if(x<=lo.v[0])continue;float t;if((int)interp.v[0]==2)t=x>=hi.v[0]?1:0;else{t=clampf((x-lo.v[0])/((hi.v[0]-lo.v[0])!=0?hi.v[0]-lo.v[0]:1),0,1);if((int)interp.v[0]==1)t=t*t*(3-2*t);}for(int i=0;i<4;i++)r.v[i]=r.v[i]+t*(next.v[i]-r.v[i]);}r.type=MV_COLOR4;break; }
         case OP_RAMP_GRADIENT: { MtlxValue x=in_or(ctx,n,"x",mv_float(0)),lo=in_or(ctx,n,"interval1",mv_float(0)),hi=in_or(ctx,n,"interval2",mv_float(1)),c1=in_or(ctx,n,"color1",mv_zero(MV_COLOR4)),c2=in_or(ctx,n,"color2",mv_zero(MV_COLOR4)),interp=in_or(ctx,n,"interpolation",mv_float(1)),prev=in_or(ctx,n,"prev_color",mv_zero(MV_COLOR4)),inum=in_or(ctx,n,"interval_num",mv_float(1)),count=in_or(ctx,n,"num_intervals",mv_float(2));r=prev;if(inum.v[0]<count.v[0]&&x.v[0]>lo.v[0]){float t;if((int)interp.v[0]==2)t=x.v[0]>=hi.v[0]?1:0;else{t=clampf((x.v[0]-lo.v[0])/((hi.v[0]-lo.v[0])!=0?hi.v[0]-lo.v[0]:1),0,1);if((int)interp.v[0]==1)t=t*t*(3-2*t);}r=c1;for(int i=0;i<4;i++)r.v[i]=c1.v[i]+t*(c2.v[i]-c1.v[i]);}r.type=MV_COLOR4;break; }
+        case OP_CREATEMATRIX: { int dim=matrix_dim(n->type);r=mv_zero(n->type);for(int col=0;col<dim;col++){char nm[8];snprintf(nm,sizeof(nm),"in%d",col+1);MtlxValue q=in_or(ctx,n,nm,mv_zero(dim==3?MV_VEC3:MV_VEC4));for(int row=0;row<dim;row++)r.v[col*dim+row]=(row<ncomp_of(&q))?q.v[row]:((row==3&&col==3)?1:0);}break; }
+        case OP_TRANSFORMMATRIX: { a=in_or(ctx,n,"in",mv_zero(n->type));MtlxValue m=in_or(ctx,n,"mat",mv_zero(MV_MATRIX44));int dim=matrix_dim(m.type),outc=ncomp_of(&a);r=mv_zero(n->type);for(int row=0;row<outc;row++){float q=0;for(int col=0;col<dim;col++){float vc=col<outc?a.v[col]:((col==dim-1&&outc+1==dim)?1:0);q+=m.v[col*dim+row]*vc;}r.v[row]=q;}break; }
+        case OP_TRANSPOSE: { a=in_or(ctx,n,"in",mv_zero(n->type));int dim=matrix_dim(a.type);r=a;for(int col=0;col<dim;col++)for(int row=0;row<dim;row++)r.v[col*dim+row]=a.v[row*dim+col];break; }
+        case OP_DETERMINANT: { a=in_or(ctx,n,"in",mv_zero(MV_MATRIX44));r=mv_float(matrix_determinant(&a));break; }
+        case OP_INVERTMATRIX: { a=in_or(ctx,n,"in",mv_zero(n->type));r=matrix_inverse(a);break; }
         case OP_CIRCLE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.5f));float x=tc.v[0]-center.v[0],y=tc.v[1]-center.v[1];r=mv_float(x*x+y*y>radius.v[0]*radius.v[0]?0.0f:1.0f);break; }
         case OP_LINE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.1f)),p1=in_or(ctx,n,"point1",mv_vec2(0.25f,0.25f)),p2=in_or(ctx,n,"point2",mv_vec2(0.75f,0.75f));float px=tc.v[0]-center.v[0]-p1.v[0],py=tc.v[1]-center.v[1]-p1.v[1],bx=p2.v[0]-p1.v[0],by=p2.v[1]-p1.v[1],bb=bx*bx+by*by,t=clampf(bb>1e-12f?(px*bx+py*by)/bb:0,0,1),dx=px-bx*t,dy=py-by*t;r=mv_float(sqrtf(dx*dx+dy*dy)>radius.v[0]?0.0f:1.0f);break; }
         case OP_CLOVERLEAF: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(.5f,.5f)),radius=in_or(ctx,n,"radius",mv_float(.5f));float sx=2*tc.v[0],sy=2*tc.v[1],cx=2*center.v[0],cy=2*center.v[1],rr=radius.v[0],r2=rr*rr,dx[4]={sx+rr-cx,sx-rr-cx,sx-cx,sx-cx},dy[4]={sy-cy,sy-cy,sy-rr-cy,sy+rr-cy},inside=0;for(int i=0;i<4;i++)if(dx[i]*dx[i]+dy[i]*dy[i]<=r2)inside=1;r=mv_float(inside);break; }

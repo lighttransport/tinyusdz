@@ -11,12 +11,13 @@
 
 typedef enum {
     MV_NONE = 0, MV_FLOAT, MV_COLOR3, MV_COLOR4,
-    MV_VEC2, MV_VEC3, MV_VEC4, MV_INT, MV_BOOL, MV_STRING, MV_FILENAME
+    MV_VEC2, MV_VEC3, MV_VEC4, MV_MATRIX33, MV_MATRIX44,
+    MV_INT, MV_BOOL, MV_STRING, MV_FILENAME
 } MtlxType;
 
 typedef struct {
     MtlxType type;
-    float    v[4];   /* numeric payload (color/vector/float/int/bool) */
+    float    v[16];  /* numeric payload, including column-major matrices */
     char    *s;      /* string/filename payload (owned), else NULL */
 } MtlxValue;
 

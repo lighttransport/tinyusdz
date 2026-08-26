@@ -70,6 +70,16 @@ int main(void) {
       " <flake2d name=\"flakes\" type=\"multioutput\"><input name=\"size\" type=\"float\" value=\"0.2\"/><input name=\"roughness\" type=\"float\" value=\"0.25\"/><input name=\"coverage\" type=\"float\" value=\"1\"/><input name=\"texcoord\" type=\"vector2\" value=\"0.37,0.61\"/><input name=\"normal\" type=\"vector3\" value=\"0,0,1\"/><input name=\"tangent\" type=\"vector3\" value=\"1,0,0\"/><input name=\"bitangent\" type=\"vector3\" value=\"0,1,0\"/></flake2d>"
       " <multiply name=\"flake_presence\" type=\"float\"><input name=\"in1\" type=\"float\" nodename=\"flakes\" output=\"presence\"/><input name=\"in2\" type=\"float\" value=\"1\"/></multiply>"
       " <multiply name=\"flake_rand\" type=\"float\"><input name=\"in1\" type=\"float\" nodename=\"flakes\" output=\"rand\"/><input name=\"in2\" type=\"float\" value=\"1\"/></multiply>"
+      " <creatematrix name=\"matrix\" type=\"matrix33\"><input name=\"in1\" type=\"vector3\" value=\"2,0,0\"/><input name=\"in2\" type=\"vector3\" value=\"0,3,0\"/><input name=\"in3\" type=\"vector3\" value=\"0,0,4\"/></creatematrix>"
+      " <determinant name=\"matrix_det\" type=\"float\"><input name=\"in\" type=\"matrix33\" nodename=\"matrix\"/></determinant>"
+      " <transformmatrix name=\"matrix_transform\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"mat\" type=\"matrix33\" nodename=\"matrix\"/></transformmatrix>"
+      " <invertmatrix name=\"matrix_inverse\" type=\"matrix33\"><input name=\"in\" type=\"matrix33\" nodename=\"matrix\"/></invertmatrix>"
+      " <transformmatrix name=\"matrix_roundtrip\" type=\"vector3\"><input name=\"in\" type=\"vector3\" nodename=\"matrix_transform\"/><input name=\"mat\" type=\"matrix33\" nodename=\"matrix_inverse\"/></transformmatrix>"
+      " <transpose name=\"matrix_transpose\" type=\"matrix33\"><input name=\"in\" type=\"matrix33\" nodename=\"matrix\"/></transpose>"
+      " <determinant name=\"transpose_det\" type=\"float\"><input name=\"in\" type=\"matrix33\" nodename=\"matrix_transpose\"/></determinant>"
+      " <creatematrix name=\"matrix4\" type=\"matrix44\"><input name=\"in1\" type=\"vector3\" value=\"1,0,0\"/><input name=\"in2\" type=\"vector3\" value=\"0,1,0\"/><input name=\"in3\" type=\"vector3\" value=\"0,0,1\"/><input name=\"in4\" type=\"vector3\" value=\"5,6,7\"/></creatematrix>"
+      " <transformmatrix name=\"matrix4_transform\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,2,3\"/><input name=\"mat\" type=\"matrix44\" nodename=\"matrix4\"/></transformmatrix>"
+      " <determinant name=\"matrix4_det\" type=\"float\"><input name=\"in\" type=\"matrix44\" nodename=\"matrix4\"/></determinant>"
       " <switch name=\"pick\" type=\"color3\"><input name=\"which\" type=\"integer\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" nodename=\"quad\"/><input name=\"in3\" type=\"color3\" value=\"0,0,1\"/></switch>"
       " <distance name=\"distance\" type=\"float\"><input name=\"in1\" type=\"vector3\" value=\"1,2,3\"/><input name=\"in2\" type=\"vector3\" value=\"1,5,7\"/></distance>"
       " <reflect name=\"reflect\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,-1,0\"/><input name=\"normal\" type=\"vector3\" value=\"0,1,0\"/></reflect>"
@@ -172,6 +182,12 @@ int main(void) {
       fprintf(stderr,"flake multi-output evaluation invalid\n");ok=0;
     }
   }
+  ok = check1("matrix-determinant",eval_named(&ctx,"matrix_det"),24.0f) &&
+       check3("matrix-transform",eval_named(&ctx,"matrix_transform"),2,6,12) &&
+       check3("matrix-inverse-roundtrip",eval_named(&ctx,"matrix_roundtrip"),1,2,3) &&
+       check1("matrix-transpose-determinant",eval_named(&ctx,"transpose_det"),24.0f) &&
+       check3("matrix44-transform",eval_named(&ctx,"matrix4_transform"),6,8,10) &&
+       check1("matrix44-determinant",eval_named(&ctx,"matrix4_det"),1.0f) && ok;
   ok = nearf_eps(eval_named(&ctx, "distance").v[0], 5.0f) &&
        check3("reflect", eval_named(&ctx, "reflect"), 1.0f, 1.0f, 0.0f) &&
        check3("unpremult", eval_named(&ctx, "unpremult"), 0.8f, 0.4f, 0.2f) &&

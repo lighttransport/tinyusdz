@@ -15,6 +15,8 @@ static MtlxType parse_type(const char *t) {
     if (!strcmp(t, "vector2")) return MV_VEC2;
     if (!strcmp(t, "vector3")) return MV_VEC3;
     if (!strcmp(t, "vector4")) return MV_VEC4;
+    if (!strcmp(t, "matrix33")) return MV_MATRIX33;
+    if (!strcmp(t, "matrix44")) return MV_MATRIX44;
     if (!strcmp(t, "integer")) return MV_INT;
     if (!strcmp(t, "boolean")) return MV_BOOL;
     if (!strcmp(t, "string")) return MV_STRING;
@@ -28,6 +30,8 @@ static int type_ncomp(MtlxType t) {
         case MV_VEC2: return 2;
         case MV_COLOR3: case MV_VEC3: return 3;
         case MV_COLOR4: case MV_VEC4: return 4;
+        case MV_MATRIX33: return 9;
+        case MV_MATRIX44: return 16;
         default: return 0;
     }
 }

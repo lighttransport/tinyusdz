@@ -1086,6 +1086,40 @@ int main() {
                  flakeError.c_str(), flakeMat.materialXGraph.nodes.size());
     return 1;
   }
+  tusdview::DrawMaterialCPU matrixMat;
+  matrixMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
+    {"name":"m","category":"creatematrix","type":"matrix33","inputs":[{"name":"in1","type":"vector3","value":[2,0,0]},{"name":"in2","type":"vector3","value":[0,3,0]},{"name":"in3","type":"vector3","value":[0,0,4]}]},
+    {"name":"x","category":"transformmatrix","type":"vector3","inputs":[{"name":"in","value":[1,2,3]},{"name":"mat","type":"matrix33","nodename":"m"}]},
+    {"name":"mt","category":"transpose","type":"matrix33","inputs":[{"name":"in","type":"matrix33","nodename":"m"}]},
+    {"name":"mi","category":"invertmatrix","type":"matrix33","inputs":[{"name":"in","type":"matrix33","nodename":"m"}]},
+    {"name":"det","category":"determinant","type":"float","inputs":[{"name":"in","type":"matrix33","nodename":"m"}]},
+    {"name":"back","category":"transformmatrix","type":"vector3","inputs":[{"name":"in","nodename":"x"},{"name":"mat","type":"matrix33","nodename":"mi"}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string matrixError;
+  if(!tusdview::CompileMaterialXGraphRuntime(&matrixMat,&matrixError)||
+     matrixMat.materialXGraph.nodes.size()!=12||
+     matrixMat.materialXGraph.nodes[3].op!=tusdview::MaterialXGraphOpCPU::MatrixTransform||
+     matrixMat.materialXGraph.nodes[4].op!=tusdview::MaterialXGraphOpCPU::MatrixTranspose||
+     matrixMat.materialXGraph.nodes[7].op!=tusdview::MaterialXGraphOpCPU::MatrixInverse||
+     matrixMat.materialXGraph.nodes[10].op!=tusdview::MaterialXGraphOpCPU::MatrixDeterminant||
+     !Near(matrixMat.materialXGraph.nodes[3].auxValue[0],0)||
+     !Near(matrixMat.materialXGraph.nodes[11].auxValue[0],7)){
+    std::fprintf(stderr,"MaterialX matrix table lowering failed: %s (nodes=%zu)\n",matrixError.c_str(),matrixMat.materialXGraph.nodes.size());return 1;
+  }
+  tusdview::DrawMaterialCPU matrix4Mat;
+  matrix4Mat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
+    {"name":"m4","category":"creatematrix_vector3","type":"matrix44","inputs":[{"name":"in1","value":[1,0,0]},{"name":"in2","value":[0,1,0]},{"name":"in3","value":[0,0,1]},{"name":"in4","value":[5,6,7]}]},
+    {"name":"x4","category":"transformmatrix_vector3","type":"vector3","inputs":[{"name":"in","value":[1,2,3]},{"name":"mat","type":"matrix44","nodename":"m4"}]},
+    {"name":"literal","category":"transformmatrix_vector3","type":"vector3","inputs":[{"name":"in","value":[1,2,3]},{"name":"mat","type":"matrix44","value":[1,0,0,0,0,1,0,0,0,0,1,0,5,6,7,1]}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string matrix4Error;
+  if(!tusdview::CompileMaterialXGraphRuntime(&matrix4Mat,&matrix4Error)||
+     matrix4Mat.materialXGraph.nodes.size()!=10||
+     !Near(matrix4Mat.materialXGraph.nodes[3].value[0][3],1)||
+     !Near(matrix4Mat.materialXGraph.nodes[4].auxValue[0],0)||
+     !Near(matrix4Mat.materialXGraph.nodes[9].auxValue[0],5)){
+    std::fprintf(stderr,"MaterialX matrix44 lowering failed: %s (nodes=%zu)\n",matrix4Error.c_str(),matrix4Mat.materialXGraph.nodes.size());return 1;
+  }
   tusdview::DrawMaterialCPU aliasesMat;
   aliasesMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"plus","category":"plus","inputs":[{"value":1},{"value":2}]},
