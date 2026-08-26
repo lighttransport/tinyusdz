@@ -250,6 +250,9 @@ Passed:
 - Final current-HEAD optimized native/viewer/tusdrender regression after
   `subsurface_vdf` support: 298/298 passed in 1108.96 seconds; the same 24
   documented unavailable asset/capability profiles remained skipped.
+- Final current-HEAD optimized native/viewer/tusdrender regression after the
+  MaterialX light-wrapper change: 298/298 passed in 1109.01 seconds; the same
+  24 documented unavailable asset/capability profiles remained skipped.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
