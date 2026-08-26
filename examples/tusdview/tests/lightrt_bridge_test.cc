@@ -1995,6 +1995,16 @@ int main() {
       "direct VDF", {40, 41})) {
     return 1;
   }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"d","category":"oren_nayar_diffuse_bsdf","type":"BSDF","inputs":[{"name":"weight","value":0.8},{"name":"color","value":[0.8,0.2,0.1]}]},
+      {"name":"g","category":"dielectric_bsdf","type":"BSDF","inputs":[{"name":"weight","value":0.6},{"name":"tint","value":[0.1,0.2,0.9]},{"name":"ior","value":1.45}]},
+      {"name":"blend","category":"mix","type":"BSDF","inputs":[{"name":"bg","nodename":"d"},{"name":"fg","nodename":"g"},{"name":"mix","value":0.25}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"blend"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "nested BSDF mix", {0, 9, 10, 19, 20, 21})) {
+    return 1;
+  }
 
   const char* volumeXml =
       "<materialx version=\"1.39\">"
