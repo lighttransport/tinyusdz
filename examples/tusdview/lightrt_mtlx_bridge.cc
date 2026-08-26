@@ -1263,7 +1263,44 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       emitLeaf("thin_film_ior", "thinfilm_ior", 1.5, "float");
     } else if (cat == "conductor_bsdf") {
       emitLeaf("base_weight", "weight", 1.0, "float");
-      emitLeaf("base_color", "ior", nlohmann::json::array({0.183,0.421,1.373}), "color3");
+      const nlohmann::json eta = nodeInput(
+          node, "ior", nlohmann::json::array({0.183, 0.421, 1.373}));
+      const nlohmann::json k = nodeInput(
+          node, "extinction", nlohmann::json::array({3.424, 2.346, 1.770}));
+      auto closureBinary = [&](const std::string& suffix,
+                               const char* category,
+                               nlohmann::json in1, nlohmann::json in2) {
+        const std::string result = name + "__closure_conductor_" + suffix;
+        runtimeNodes.push_back({
+            {"name", result}, {"category", category}, {"type", "color3"},
+            {"inputs", nlohmann::json::array({
+                renamedInput(std::move(in1), "in1"),
+                renamedInput(std::move(in2), "in2")})}});
+        return result;
+      };
+      const std::string etaMinus = closureBinary(
+          "eta_minus", "subtract", eta, nlohmann::json{{"value", 1.0}});
+      const std::string etaPlus = closureBinary(
+          "eta_plus", "add", eta, nlohmann::json{{"value", 1.0}});
+      const std::string etaMinus2 = closureBinary(
+          "eta_minus2", "multiply", nlohmann::json{{"nodename", etaMinus}},
+          nlohmann::json{{"nodename", etaMinus}});
+      const std::string etaPlus2 = closureBinary(
+          "eta_plus2", "multiply", nlohmann::json{{"nodename", etaPlus}},
+          nlohmann::json{{"nodename", etaPlus}});
+      const std::string k2 = closureBinary(
+          "k2", "multiply", k, k);
+      const std::string numerator = closureBinary(
+          "numerator", "add", nlohmann::json{{"nodename", etaMinus2}},
+          nlohmann::json{{"nodename", k2}});
+      const std::string denominator = closureBinary(
+          "denominator", "add", nlohmann::json{{"nodename", etaPlus2}},
+          nlohmann::json{{"nodename", k2}});
+      const std::string f0 = closureBinary(
+          "f0", "divide", nlohmann::json{{"nodename", numerator}},
+          nlohmann::json{{"nodename", denominator}});
+      emitClosureLane(name, "base_color",
+                      nlohmann::json{{"nodename", f0}}, "color3");
       emitClosureLane(name, "base_metalness", nlohmann::json{{"value",1.0}}, "float");
       emitLeaf("specular_roughness", "roughness", 0.05, "float");
     } else if (cat == "generalized_schlick_bsdf") {
