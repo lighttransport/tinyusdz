@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `7f01474c1` (`Preserve subsurface BSDF scale`)
+- HEAD: `1b33e08ce` (`Preserve volume anisotropy in next graphs`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
