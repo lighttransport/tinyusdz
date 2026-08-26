@@ -16,6 +16,7 @@ struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]
 struct Inst { float w2o[12]; float o2w[12]; float tint[4]; int blasRoot; int instId;
               unsigned int directLightMask; unsigned int shadowLightMask; };
 struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim; int isPtex; int ptexCols; int ptexRows; int ptexTileEdge; int ptexRectTexelOffset; int ptexFaceCount; int mipCount; int firstMip; int imageSlot; int udimLayer[100]; };
+struct GeomPropDesc { unsigned int hash; unsigned int components; unsigned int valueOffset; };
 
 typedef struct { float x, y, z; } F3;
 typedef struct { float x, y, z, w; } F4;
@@ -150,7 +151,10 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
                                  F3 normal=F3{0.f,0.f,1.f},
                                  F3 position=F3{0.f,0.f,0.f},
                                  F3 viewDirection=F3{0.f,0.f,1.f},
-                                 float sceneTime=0.f,float sceneFrame=0.f) {
+                                 float sceneTime=0.f,float sceneFrame=0.f,
+                                 const GeomPropDesc* geomProps=0,
+                                 const float* geomPropValues=0,
+                                 int geomPropCount=0, int geomPropTri=-1) {
   const int stride = TUSD_GPU_GRAPH_FLOATS;
   const int base = mid * stride;
   if (!graph || mid < 0 || route < 0 || base + 7 >= 0x3fffffff) return mk4(0.f,0.f,0.f,0.f);
@@ -173,6 +177,27 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
       const F4 fallback=a;
       const int tex=(int)floorf(graph[p+16]+0.5f);
       if (op==0) values[i]=fallback;
+      else if (op==123) {
+        values[i]=fallback;
+        if (geomProps && geomPropValues && geomPropTri >= 0) {
+          unsigned int wanted=__float_as_uint(graph[p+17]);
+          int components=(int)floorf(graph[p+18]+.5f);
+          components=components<1?1:(components>4?4:components);
+          float w0=1.f-u-v;
+          for (int j=0; j<geomPropCount; ++j) {
+            const GeomPropDesc d=geomProps[j];
+            if (d.hash != wanted || (int)d.components != components) continue;
+            const unsigned int baseValue=d.valueOffset +
+                (unsigned int)geomPropTri * (unsigned int)(3 * components);
+            for (int lane=0; lane<components; ++lane)
+              (&values[i].x)[lane] = w0 * geomPropValues[baseValue + lane] +
+                u * geomPropValues[baseValue + components + lane] +
+                v * geomPropValues[baseValue + 2 * components + lane];
+            if (components < 4) values[i].w=1.f;
+            break;
+          }
+        }
+      }
       else if (op==1 || op==2)
       {
         float gu=u, gv=v;
@@ -964,9 +989,11 @@ __device__ PtMat ptResolveMaterial(
     const unsigned char* texels,const TexDesc* textures,int numTextures,
     const float* uvs,const float* uvs1,const Inst* insts,
     F3 graphNormal,F3 graphPosition,F3 graphViewDirection,
-    float graphSceneTime,float graphSceneFrame){
+    float graphSceneTime,float graphSceneFrame,
+    const GeomPropDesc* geomProps,const float* geomPropValues,
+    int geomPropCount){
 #define evalMaterialXGraphUv(graph_,mid_,route_,u_,v_,u1_,v1_,face_,texels_,textures_,numTextures_) \
-  evalMaterialXGraphUv(graph_,mid_,route_,u_,v_,u1_,v1_,face_,texels_,textures_,numTextures_,graphNormal,graphPosition,graphViewDirection,graphSceneTime,graphSceneFrame)
+  evalMaterialXGraphUv(graph_,mid_,route_,u_,v_,u1_,v1_,face_,texels_,textures_,numTextures_,graphNormal,graphPosition,graphViewDirection,graphSceneTime,graphSceneFrame,geomProps,geomPropValues,geomPropCount,tri)
   PtMat m; m.base=mk(.6f,.6f,.6f);m.emission=mk(0.f,0.f,0.f);
   m.transmissionColor=mk(1.f,1.f,1.f);m.subsurfaceColor=mk(.8f,.8f,.8f);
   m.specularColor=mk(1.f,1.f,1.f);m.coatColor=mk(1.f,1.f,1.f);
@@ -1118,7 +1145,7 @@ __device__ F3 productionPath(
     F3 p0=xfPt(insts[ii].o2w,mk(tv[0],tv[1],tv[2]));F3 p1=xfPt(insts[ii].o2w,mk(tv[3],tv[4],tv[5]));F3 p2=xfPt(insts[ii].o2w,mk(tv[6],tv[7],tv[8]));
     F3 gn=norm3(cross3(sub(p1,p0),sub(p2,p0)));bool front=dot3(gn,rd)<0.f;
     F3 n=front?gn:scale(gn,-1.f);
-    PtMat m=ptResolveMaterial(tri,bu,bv,ii,front,cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,uvs,uvs1,insts,n,p,scale(rd,-1.f),graphSceneTime,graphSceneFrame);
+    PtMat m=ptResolveMaterial(tri,bu,bv,ii,front,cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,uvs,uvs1,insts,n,p,scale(rd,-1.f),graphSceneTime,graphSceneFrame,geomProps,geomPropValues,geomPropCount);
     if(m.alphaMode>1.5f&&m.opacity<1.f&&transparentEvents<16&&rndf(seed)>=m.opacity){
       ro=add(ro,scale(rd,t+1e-4f));++transparentEvents;--bounce;continue;
     }
@@ -1522,7 +1549,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const PointBvhChunk* pointChunks,
                                  int pointChunkCount,
                                  float* accum, int sampleIdx, int numSamples,
-                                 float* hitDepth){
+                                 float* hitDepth,
+                                 const GeomPropDesc* geomProps,
+                                 const float* geomPropValues,
+                                 int geomPropCount){
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
   if (px>=W||py>=H) return;

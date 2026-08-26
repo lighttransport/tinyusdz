@@ -279,7 +279,7 @@ void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
   F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dBackMat_);
   F(dMatPbr_); F(dMatBase_);
-  F(dMatLightRt_); F(dMatGraph_); F(dMatTex_);
+  F(dMatLightRt_); F(dMatGraph_); F(dGeomPropDesc_); F(dGeomPropValues_); F(dMatTex_);
   F(dMatTexParam_); F(dLightParams_);
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_); F(dAccum_);
@@ -695,6 +695,25 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
           &dMatLightRt_)) return false;
   if (!up(hs.matGraph.data(), hs.matGraph.size() * sizeof(float),
           &dMatGraph_)) return false;
+  {
+    std::vector<HostGeomPropDesc> desc;
+    std::vector<float> values;
+    for (const HostGeomProp& prop : hs.geomProps) {
+      if (prop.components < 1 || prop.components > 4 ||
+          prop.values.size() != hs.triCount * 3u * prop.components) continue;
+      HostGeomPropDesc d;
+      d.hash = MaterialXGeomPropHash(prop.name);
+      d.components = prop.components;
+      d.valueOffset = static_cast<uint32_t>(values.size());
+      desc.push_back(d);
+      values.insert(values.end(), prop.values.begin(), prop.values.end());
+    }
+    geomPropCount_ = static_cast<int>(desc.size());
+    if (geomPropCount_ > 0) {
+      if (!up(desc.data(), desc.size() * sizeof(HostGeomPropDesc), &dGeomPropDesc_) ||
+          !up(values.data(), values.size() * sizeof(float), &dGeomPropValues_)) return false;
+    }
+  }
   if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
           &dLightParams_)) return false;
   if (cuMemGetInfo) {
@@ -835,7 +854,8 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                   &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
                   &dVD, &dVP, &numVols, &dEm, &dPC, &dPA, &dPN, &dPR, &dPCol,
                   &dPO, &dPB, &pointCount_, &dPChunks, &pointChunkCount_,
-                  &dAcc, &sampleIdx, &numSamples, &dDepth};
+                  &dAcc, &sampleIdx, &numSamples, &dDepth,
+                  &dGeomPropDesc_, &dGeomPropValues_, &geomPropCount_};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   rgba->resize(bytes);
   if (pointPaging_ && pointHost_ && !pointHost_->pointChunks.empty()) {
