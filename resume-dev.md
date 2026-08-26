@@ -181,9 +181,9 @@ Passed:
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
   scalar-multiply fix: 12/12 passed
-- Isolated `TestMaterialXUtilities` validation for nodegraph-backed wrapper
-  conversion passed. The aggregate `test_tydra_next` executable still crashes
-  in an earlier unrelated `TestChunkedArrayShareCowBudgetFailure` test.
+- Stable `test_tydra_next` Release executable now completes all tests; its
+  side-effecting `assert` setup in the COW-budget and external-MaterialX tests
+  was made explicit for `NDEBUG` builds.
 - `tusdview_lightrt_bridge_test` after latlong default-view fix: passed
 - Generalized-Schlick EDF bridge lowering now preserves inherited closure
   lanes and applies the runtime angle-dependent emission tint; bridge,
