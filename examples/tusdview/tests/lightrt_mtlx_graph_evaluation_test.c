@@ -103,6 +103,12 @@ int main(void) {
       " <cloverleaf name=\"clover_outside\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.95,0.95\"/><input name=\"center\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"radius\" type=\"float\" value=\"0.4\"/></cloverleaf>"
       " <hexagon name=\"hex_inside\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"center\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"radius\" type=\"float\" value=\"0.4\"/></hexagon>"
       " <hexagon name=\"hex_outside\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.95,0.95\"/><input name=\"center\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"radius\" type=\"float\" value=\"0.4\"/></hexagon>"
+      " <grid name=\"grid_line\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.01,0.5\"/><input name=\"thickness\" type=\"float\" value=\"0.1\"/></grid>"
+      " <grid name=\"grid_fill\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"thickness\" type=\"float\" value=\"0.1\"/></grid>"
+      " <crosshatch name=\"cross_center\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"thickness\" type=\"float\" value=\"0.1\"/></crosshatch>"
+      " <tiledcircles name=\"tile_circle\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"size\" type=\"float\" value=\"0.4\"/></tiledcircles>"
+      " <tiledcloverleafs name=\"tile_clover\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"size\" type=\"float\" value=\"0.4\"/></tiledcloverleafs>"
+      " <tiledhexagons name=\"tile_hex\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"size\" type=\"float\" value=\"0.4\"/></tiledhexagons>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -208,6 +214,12 @@ int main(void) {
   ok = check1("cloverleaf-outside", eval_named(&ctx, "clover_outside"), 0.0f) && ok;
   ok = check1("hexagon-inside", eval_named(&ctx, "hex_inside"), 1.0f) && ok;
   ok = check1("hexagon-outside", eval_named(&ctx, "hex_outside"), 0.0f) && ok;
+  ok = check3("grid-line",eval_named(&ctx,"grid_line"),1,1,1)&&ok;
+  ok = check3("grid-fill",eval_named(&ctx,"grid_fill"),0,0,0)&&ok;
+  ok = check3("crosshatch-center",eval_named(&ctx,"cross_center"),1,1,1)&&ok;
+  ok = check3("tiled-circle",eval_named(&ctx,"tile_circle"),1,1,1)&&ok;
+  ok = check3("tiled-clover",eval_named(&ctx,"tile_clover"),1,1,1)&&ok;
+  ok = check3("tiled-hex",eval_named(&ctx,"tile_hex"),1,1,1)&&ok;
   /* mtlx_eval_node_test must clear memoization between shade points. */
   ctx.uv[0] = 0.8f;
   ctx.uv[1] = 0.9f;

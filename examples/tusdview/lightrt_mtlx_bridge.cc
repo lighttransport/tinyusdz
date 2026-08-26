@@ -1329,6 +1329,17 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       if(JsonString(tc,"nodename")==st)runtimeNodes.push_back({{"name",st},{"category","texcoord"},{"type","vector2"},{"inputs",nlohmann::json::array()}});
       nlohmann::json lowered=node;lowered["inputs"]=nlohmann::json::array({renamedInput(tc,"texcoord"),renamedInput(inputNamed(node,"center",{{"value",nlohmann::json::array({0.5,0.5})}}),"center"),renamedInput(inputNamed(node,"radius",{{"value",0.5}}),"radius")});runtimeNodes.push_back(std::move(lowered));continue;
     }
+    if ((cat=="grid"||cat=="crosshatch"||cat=="tiledcircles"||
+         cat=="tiledcloverleafs"||cat=="tiledhexagons")&&!name.empty()){
+      const std::string st=name+"__st",regular=name+"__regular",staggered=name+"__staggered";
+      nlohmann::json tc=inputNamed(node,"texcoord",{{"name","texcoord"},{"nodename",st}});
+      if(JsonString(tc,"nodename")==st)runtimeNodes.push_back({{"name",st},{"category","texcoord"},{"type","vector2"},{"inputs",nlohmann::json::array()}});
+      const char* parameter=(cat=="grid"||cat=="crosshatch")?"thickness":"size";
+      const double parameterDefault=(cat=="grid"||cat=="crosshatch")?0.05:0.5;
+      auto emitCore=[&](const std::string& core,bool stagger){runtimeNodes.push_back({{"name",core},{"category",cat+(stagger?"staggeredcore":"core")},{"type","color3"},{"inputs",nlohmann::json::array({renamedInput(tc,"texcoord"),renamedInput(inputNamed(node,"uvtiling",{{"value",nlohmann::json::array({1,1})}}),"uvtiling"),renamedInput(inputNamed(node,"uvoffset",{{"value",nlohmann::json::array({0,0})}}),"uvoffset"),renamedInput(inputNamed(node,parameter,{{"value",parameterDefault}}),parameter)})}});};
+      emitCore(regular,false);emitCore(staggered,true);
+      runtimeNodes.push_back({{"name",name},{"category","ifequal"},{"type","color3"},{"inputs",nlohmann::json::array({renamedInput(inputNamed(node,"staggered",{{"value",false}}),"value1"),nlohmann::json{{"name","value2"},{"value",true}},nlohmann::json{{"name","in1"},{"nodename",staggered}},nlohmann::json{{"name","in2"},{"nodename",regular}}})}});continue;
+    }
     if (cat == "randomfloat" && !name.empty()) {
       const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
       emitRandomFloat(name, input, inputNamed(node,"seed",{{"value",0}}),
@@ -1542,6 +1553,11 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "fractal3dcore") out.op = MaterialXGraphOpCPU::Fractal3D;
     else if (cat == "cloverleaf") out.op = MaterialXGraphOpCPU::Cloverleaf;
     else if (cat == "hexagon") out.op = MaterialXGraphOpCPU::Hexagon;
+    else if (cat=="gridcore"||cat=="gridstaggeredcore") out.op=MaterialXGraphOpCPU::Grid;
+    else if (cat=="crosshatchcore"||cat=="crosshatchstaggeredcore") out.op=MaterialXGraphOpCPU::Crosshatch;
+    else if (cat=="tiledcirclescore"||cat=="tiledcirclesstaggeredcore") out.op=MaterialXGraphOpCPU::TiledCircles;
+    else if (cat=="tiledcloverleafscore"||cat=="tiledcloverleafsstaggeredcore") out.op=MaterialXGraphOpCPU::TiledCloverleafs;
+    else if (cat=="tiledhexagonscore"||cat=="tiledhexagonsstaggeredcore") out.op=MaterialXGraphOpCPU::TiledHexagons;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1609,7 +1625,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
              inputName == "texcoord") ||
             (conditional && inputName == "in2") ||
             ((cat == "fractal2dcore" || cat == "fractal3dcore") &&
-             inputName == "diminish")) {
+             inputName == "diminish") ||
+            ((cat.find("core")!=std::string::npos) &&
+             (inputName=="thickness"||inputName=="size"))) {
           const std::string source = JsonString(input, "nodename");
           const auto found = nodeIds.find(source);
           if (found != nodeIds.end()) out.auxInput = found->second;
@@ -1716,6 +1734,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         else if ((cat == "cloverleaf" || cat == "hexagon") && inputName == "texcoord") inputSlot = 0;
         else if ((cat == "cloverleaf" || cat == "hexagon") && inputName == "center") inputSlot = 1;
         else if ((cat == "cloverleaf" || cat == "hexagon") && inputName == "radius") inputSlot = 2;
+        else if (cat.find("core")!=std::string::npos && inputName=="texcoord") inputSlot=0;
+        else if (cat.find("core")!=std::string::npos && inputName=="uvtiling") inputSlot=1;
+        else if (cat.find("core")!=std::string::npos && inputName=="uvoffset") inputSlot=2;
         else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
                  (inputName == "texcoord" || inputName == "position")) inputSlot = 0;
         else if ((cat == "worleynoise2d" || cat == "worleynoise3d") &&
@@ -1831,6 +1852,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                         (type.find('3') != std::string::npos) ? 3.0f :
                         (type.find('2') != std::string::npos) ? 2.0f : 1.0f;
     }
+    if(cat=="gridstaggeredcore"||cat=="crosshatchstaggeredcore"||
+       cat=="tiledcirclesstaggeredcore"||cat=="tiledcloverleafsstaggeredcore"||
+       cat=="tiledhexagonsstaggeredcore")out.auxValue[1]=1.0f;
     if (uvInput >= 0) out.value[2][3] = static_cast<float>(uvInput);
     graph.nodes.push_back(std::move(out));
   }
@@ -2570,7 +2594,12 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
                               node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
                               node.op == MaterialXGraphOpCPU::IfEqual ||
                               node.op == MaterialXGraphOpCPU::Fractal2D ||
-                              node.op == MaterialXGraphOpCPU::Fractal3D;
+                              node.op == MaterialXGraphOpCPU::Fractal3D ||
+                              node.op == MaterialXGraphOpCPU::Grid ||
+                              node.op == MaterialXGraphOpCPU::Crosshatch ||
+                              node.op == MaterialXGraphOpCPU::TiledCircles ||
+                              node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
+                              node.op == MaterialXGraphOpCPU::TiledHexagons;
     int textureId = usesAuxInput ? node.auxInput : node.textureId;
     if (!usesAuxInput && sourceToTable && textureId >= 0 &&
         static_cast<size_t>(textureId) < sourceToTable->size()) {
@@ -2581,7 +2610,10 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
         node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
         node.op == MaterialXGraphOpCPU::IfEqual ||
         node.op == MaterialXGraphOpCPU::Fractal2D ||
-        node.op == MaterialXGraphOpCPU::Fractal3D) {
+        node.op == MaterialXGraphOpCPU::Fractal3D ||
+        node.op == MaterialXGraphOpCPU::Grid || node.op == MaterialXGraphOpCPU::Crosshatch ||
+        node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
+        node.op == MaterialXGraphOpCPU::TiledHexagons) {
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 17 + lane] = node.auxValue[lane];
       continue;
@@ -2639,13 +2671,19 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
         node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
         node.op == MaterialXGraphOpCPU::IfEqual ||
         node.op == MaterialXGraphOpCPU::Fractal2D ||
-        node.op == MaterialXGraphOpCPU::Fractal3D) {
+        node.op == MaterialXGraphOpCPU::Fractal3D ||
+        node.op == MaterialXGraphOpCPU::Grid || node.op == MaterialXGraphOpCPU::Crosshatch ||
+        node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
+        node.op == MaterialXGraphOpCPU::TiledHexagons) {
       dst[base + 16] = static_cast<float>(node.auxInput);
       if (node.op == MaterialXGraphOpCPU::IfGreater ||
           node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
           node.op == MaterialXGraphOpCPU::IfEqual ||
           node.op == MaterialXGraphOpCPU::Fractal2D ||
-          node.op == MaterialXGraphOpCPU::Fractal3D)
+          node.op == MaterialXGraphOpCPU::Fractal3D ||
+          node.op == MaterialXGraphOpCPU::Grid || node.op == MaterialXGraphOpCPU::Crosshatch ||
+          node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
+          node.op == MaterialXGraphOpCPU::TiledHexagons)
         for (int lane = 0; lane < 4; ++lane)
           dst[base + 17 + lane] = node.auxValue[lane];
       continue;

@@ -1149,6 +1149,22 @@ int main() {
       shapeMat.materialXGraph.nodes[1].op!=tusdview::MaterialXGraphOpCPU::Hexagon) {
     std::fprintf(stderr,"MaterialX shape lowering failed: %s\n",shapeError.c_str());return 1;
   }
+  tusdview::DrawMaterialCPU tiledPatternMat;
+  tiledPatternMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[
+    {"name":"grid","category":"grid","type":"color3","inputs":[{"name":"texcoord","value":[0.1,0.2]},{"name":"thickness","value":0.1},{"name":"staggered","value":true}]},
+    {"name":"cross","category":"crosshatch","type":"color3","inputs":[{"name":"texcoord","value":[0.1,0.2]}]},
+    {"name":"circles","category":"tiledcircles","type":"color3","inputs":[{"name":"texcoord","value":[0.1,0.2]}]},
+    {"name":"clovers","category":"tiledcloverleafs","type":"color3","inputs":[{"name":"texcoord","value":[0.1,0.2]}]},
+    {"name":"hexagons","category":"tiledhexagons","type":"color3","inputs":[{"name":"texcoord","value":[0.1,0.2]}]}
+  ],"outputs":[]},"connections":[]})json";
+  std::string tiledPatternError;
+  if(!tusdview::CompileMaterialXGraphRuntime(&tiledPatternMat,&tiledPatternError)||
+     tiledPatternMat.materialXGraph.nodes.size()!=15||
+     tiledPatternMat.materialXGraph.nodes[0].op!=tusdview::MaterialXGraphOpCPU::Grid||
+     tiledPatternMat.materialXGraph.nodes[3].op!=tusdview::MaterialXGraphOpCPU::Crosshatch||
+     tiledPatternMat.materialXGraph.nodes[6].op!=tusdview::MaterialXGraphOpCPU::TiledCircles||
+     tiledPatternMat.materialXGraph.nodes[9].op!=tusdview::MaterialXGraphOpCPU::TiledCloverleafs||
+     tiledPatternMat.materialXGraph.nodes[12].op!=tusdview::MaterialXGraphOpCPU::TiledHexagons){std::fprintf(stderr,"MaterialX tiled-pattern lowering failed: %s\n",tiledPatternError.c_str());return 1;}
   tusdview::DrawMaterialCPU compositeMat;
   compositeMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"difference","category":"difference","type":"color3","inputs":[{"name":"fg","value":[0.8,0.1,0.4]},{"name":"bg","value":[0.2,0.5,0.1]}]},

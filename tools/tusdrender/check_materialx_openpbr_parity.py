@@ -561,7 +561,7 @@ def Xform "World" {
       token outputs:surface
     }
     def NodeGraph "NG" {
-      color3f outputs:base.connect = </World/M/NG/Checker.outputs:out>
+      color3f outputs:base.connect = </World/M/NG/BaseModulated.outputs:out>
       float outputs:weight.connect = </World/M/NG/Modulated.outputs:out>
       def Shader "ST" {
         uniform token info:id = "ND_texcoord_vector2"
@@ -713,6 +713,33 @@ def Xform "World" {
         float2 inputs:uvtiling = (2,2)
         float2 inputs:uvoffset = (0,0)
         float2 inputs:texcoord.connect = </World/M/NG/ST.outputs:out>
+        color3f outputs:out
+      }
+      def Shader "Grid" {
+        uniform token info:id = "ND_grid_color3"
+        float2 inputs:texcoord.connect = </World/M/NG/ST.outputs:out>
+        float2 inputs:uvtiling = (8,8)
+        float2 inputs:uvoffset = (0,0)
+        float inputs:thickness = 0.15
+        bool inputs:staggered = 1
+        color3f outputs:out
+      }
+      def Shader "GridHalf" {
+        uniform token info:id = "ND_multiply_color3FA"
+        color3f inputs:in1.connect = </World/M/NG/Grid.outputs:out>
+        float inputs:in2 = 0.5
+        color3f outputs:out
+      }
+      def Shader "GridBias" {
+        uniform token info:id = "ND_add_color3FA"
+        color3f inputs:in1.connect = </World/M/NG/GridHalf.outputs:out>
+        float inputs:in2 = 0.5
+        color3f outputs:out
+      }
+      def Shader "BaseModulated" {
+        uniform token info:id = "ND_multiply_color3"
+        color3f inputs:in1.connect = </World/M/NG/Checker.outputs:out>
+        color3f inputs:in2.connect = </World/M/NG/GridBias.outputs:out>
         color3f outputs:out
       }
     }

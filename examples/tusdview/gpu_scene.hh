@@ -507,6 +507,11 @@ enum class MaterialXGraphOpCPU : uint32_t {
   Fractal3D,
   Cloverleaf,
   Hexagon,
+  Grid,
+  Crosshatch,
+  TiledCircles,
+  TiledCloverleafs,
+  TiledHexagons,
   Unknown,
 };
 
