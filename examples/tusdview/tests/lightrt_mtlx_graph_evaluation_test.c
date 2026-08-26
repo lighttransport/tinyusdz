@@ -67,6 +67,9 @@ int main(void) {
       " <ramp name=\"full_ramp\" type=\"color4\"><input name=\"texcoord\" type=\"vector2\" value=\"0.25,0.5\"/><input name=\"interpolation\" type=\"integer\" value=\"0\"/><input name=\"num_intervals\" type=\"integer\" value=\"3\"/><input name=\"interval1\" type=\"float\" value=\"0\"/><input name=\"color1\" type=\"color4\" value=\"0,0,0,1\"/><input name=\"interval2\" type=\"float\" value=\"0.5\"/><input name=\"color2\" type=\"color4\" value=\"1,0,0,1\"/><input name=\"interval3\" type=\"float\" value=\"1\"/><input name=\"color3\" type=\"color4\" value=\"1,1,1,1\"/></ramp>"
       " <ramp_gradient name=\"gradient\" type=\"color4\"><input name=\"x\" type=\"float\" value=\"0.25\"/><input name=\"interval1\" type=\"float\" value=\"0\"/><input name=\"interval2\" type=\"float\" value=\"1\"/><input name=\"color1\" type=\"color4\" value=\"0,0,0,1\"/><input name=\"color2\" type=\"color4\" value=\"1,0.5,0,1\"/><input name=\"interpolation\" type=\"integer\" value=\"1\"/><input name=\"prev_color\" type=\"color4\" value=\"0,0,1,1\"/><input name=\"interval_num\" type=\"integer\" value=\"1\"/><input name=\"num_intervals\" type=\"integer\" value=\"2\"/></ramp_gradient>"
       " <blur name=\"blur\" type=\"color3\"><input name=\"in\" type=\"color3\" nodename=\"src\"/><input name=\"size\" type=\"float\" value=\"0.5\"/><input name=\"filtertype\" type=\"string\" value=\"gaussian\"/></blur>"
+      " <flake2d name=\"flakes\" type=\"multioutput\"><input name=\"size\" type=\"float\" value=\"0.2\"/><input name=\"roughness\" type=\"float\" value=\"0.25\"/><input name=\"coverage\" type=\"float\" value=\"1\"/><input name=\"texcoord\" type=\"vector2\" value=\"0.37,0.61\"/><input name=\"normal\" type=\"vector3\" value=\"0,0,1\"/><input name=\"tangent\" type=\"vector3\" value=\"1,0,0\"/><input name=\"bitangent\" type=\"vector3\" value=\"0,1,0\"/></flake2d>"
+      " <multiply name=\"flake_presence\" type=\"float\"><input name=\"in1\" type=\"float\" nodename=\"flakes\" output=\"presence\"/><input name=\"in2\" type=\"float\" value=\"1\"/></multiply>"
+      " <multiply name=\"flake_rand\" type=\"float\"><input name=\"in1\" type=\"float\" nodename=\"flakes\" output=\"rand\"/><input name=\"in2\" type=\"float\" value=\"1\"/></multiply>"
       " <switch name=\"pick\" type=\"color3\"><input name=\"which\" type=\"integer\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" nodename=\"quad\"/><input name=\"in3\" type=\"color3\" value=\"0,0,1\"/></switch>"
       " <distance name=\"distance\" type=\"float\"><input name=\"in1\" type=\"vector3\" value=\"1,2,3\"/><input name=\"in2\" type=\"vector3\" value=\"1,5,7\"/></distance>"
       " <reflect name=\"reflect\" type=\"vector3\"><input name=\"in\" type=\"vector3\" value=\"1,-1,0\"/><input name=\"normal\" type=\"vector3\" value=\"0,1,0\"/></reflect>"
@@ -161,6 +164,14 @@ int main(void) {
               0.078125f, 0.0f, 1.0f) && ok;
   ok = check3("blur-pass-through", eval_named(&ctx, "blur"), 0.2f, 0.4f,
               0.8f) && ok;
+  {
+    MtlxValue fn=eval_named(&ctx,"flakes"),fp=eval_named(&ctx,"flake_presence"),
+              fr=eval_named(&ctx,"flake_rand");
+    float length=sqrtf(fn.v[0]*fn.v[0]+fn.v[1]*fn.v[1]+fn.v[2]*fn.v[2]);
+    if(!nearf_eps(length,1.0f)||fp.v[0]<0||fp.v[0]>1||fr.v[0]<0||fr.v[0]>1){
+      fprintf(stderr,"flake multi-output evaluation invalid\n");ok=0;
+    }
+  }
   ok = nearf_eps(eval_named(&ctx, "distance").v[0], 5.0f) &&
        check3("reflect", eval_named(&ctx, "reflect"), 1.0f, 1.0f, 0.0f) &&
        check3("unpremult", eval_named(&ctx, "unpremult"), 0.8f, 0.4f, 0.2f) &&

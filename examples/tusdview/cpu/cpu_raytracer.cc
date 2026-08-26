@@ -362,6 +362,11 @@ uint32_t MtlxBjFinal(uint32_t a, uint32_t b, uint32_t c) {
   a ^= c; a -= MtlxRotl32(c,4); b ^= a; b -= MtlxRotl32(a,14);
   c ^= b; c -= MtlxRotl32(b,24); return c;
 }
+void MtlxBjMix(uint32_t& a,uint32_t& b,uint32_t& c){
+  a-=c;a^=MtlxRotl32(c,4);c+=b;b-=a;b^=MtlxRotl32(a,6);a+=c;
+  c-=b;c^=MtlxRotl32(b,8);b+=a;a-=c;a^=MtlxRotl32(c,16);c+=b;
+  b-=a;b^=MtlxRotl32(a,19);a+=c;c-=b;c^=MtlxRotl32(b,4);b+=a;
+}
 float MtlxCellNoise(int x, int y, int z, bool is3d) {
   const uint32_t seed = 0xdeadbeefu + ((is3d ? 3u : 2u) << 2u) + 13u;
   const uint32_t hash = MtlxBjFinal(seed + static_cast<uint32_t>(x),
@@ -377,6 +382,56 @@ float MtlxCellNoiseChannel(int x, int y, int z, bool is3d, int channel) {
   if (channel >= 0) hash = (hash >> (channel * 8)) & 0xffu;
   return static_cast<float>(hash) /
       static_cast<float>(channel >= 0 ? 0xffu : 0xffffffffu);
+}
+std::array<float,3> MtlxCellNoiseVec3(int x,int y,int z,int w,bool hasW){
+  uint32_t a=0xdeadbeefu+((hasW?5u:4u)<<2u)+13u,b=a,c=a;
+  a+=static_cast<uint32_t>(x);b+=static_cast<uint32_t>(y);
+  c+=static_cast<uint32_t>(z);MtlxBjMix(a,b,c);
+  if(hasW)a+=static_cast<uint32_t>(w);
+  const float scale=1.0f/static_cast<float>(0xffffffffu);
+  return hasW?std::array<float,3>{MtlxBjFinal(a,b,c)*scale,
+      MtlxBjFinal(a,b+1u,c)*scale,MtlxBjFinal(a,b+2u,c)*scale}:
+      std::array<float,3>{MtlxBjFinal(a,b,c)*scale,
+      MtlxBjFinal(a+1u,b,c)*scale,MtlxBjFinal(a+2u,b,c)*scale};
+}
+std::array<float,4> MtlxFlake(const std::array<float,4>* values,int start,int count,
+                              int output){
+  const float size=std::max(std::fabs(values[start][0]),1.0e-8f);
+  const float roughness=values[std::min(start+1,count-1)][0];
+  const float coverage=std::clamp(values[std::min(start+2,count-1)][0],0.0f,1.0f);
+  const auto position=values[std::min(start+3,count-1)];
+  const auto normal=values[std::min(start+4,count-1)];
+  const auto tangent=values[std::min(start+5,count-1)];
+  const auto bitangent=values[std::min(start+6,count-1)];
+  const float xx=coverage*coverage;
+  const float probability=(-26.19771808f*xx+26.39663835f*coverage)/
+      (85.53857017f*xx*coverage-102.35069432f*xx-101.42634862f*coverage+118.45082288f);
+  const float px=position[0]/size,py=position[1]/size,pz=position[2]/size;
+  const int bx=static_cast<int>(std::floor(px)),by=static_cast<int>(std::floor(py)),bz=static_cast<int>(std::floor(pz));
+  float priority=0;int cx=0,cy=0,cz=0;const float diameter=.86602540378f;
+  for(int i=-1;i<=1;i++)for(int j=-1;j<=1;j++)for(int k=-1;k<=1;k++){
+    const int x=bx+i,y=by+j,z=bz+k;float qx=px-x-.5f,qy=py-y-.5f,qz=pz-z-.5f;
+    if(qx*qx+qy*qy+qz*qz>=diameter*diameter*3)continue;
+    if(MtlxCellNoise(x,y,z,true)>probability)continue;
+    const float candidate=MtlxCellNoiseVec3(x,y,z,3,true)[0];if(candidate<priority)continue;
+    const auto rot=MtlxCellNoiseVec3(x,y,z,0,false);const float theta=6.28318530718f*rot[0],phi=6.28318530718f*rot[1],zz=2*rot[2];
+    const float rr=std::sqrt(zz),vx=std::sin(phi)*rr,vy=std::cos(phi)*rr,vz=std::sqrt(2-zz),s=std::sin(theta),c=std::cos(theta),sx=vx*c-vy*s,sy=vx*s+vy*c;
+    const float rx=(vx*sx-c)*qx+(vy*sx+s)*qy+vz*sx*qz;
+    const float ry=(vx*sy-s)*qx+(vy*sy-c)*qy+vz*sy*qz;
+    const float rz=vx*vz*qx+vy*vz*qy+(1-zz)*qz;
+    if(std::fabs(rx)<=diameter&&std::fabs(ry)<=diameter&&std::fabs(rz)<=diameter){priority=candidate;cx=x;cy=y;cz=z;}
+  }
+  if(priority<=0)return output==3?normal:std::array<float,4>{0,0,0,0};
+  const auto noise=MtlxCellNoiseVec3(cx,cy,cz,2,true);const float random=noise[2];
+  if(output==0)return {std::floor(random*16777215.0f),0,0,0};
+  if(output==1)return {random,random,random,random};
+  if(output==2)return {priority,priority,priority,priority};
+  const float phi=6.28318530718f*noise[0],tanTheta=roughness*roughness*std::sqrt(noise[1])/std::sqrt(std::max(1-noise[1],1.0e-8f));
+  const float sinTheta=tanTheta/std::sqrt(1+tanTheta*tanTheta),cosTheta=std::sqrt(std::max(1-sinTheta*sinTheta,0.0f));
+  std::array<float,4> out{tangent[0]*std::cos(phi)*sinTheta+bitangent[0]*std::sin(phi)*sinTheta+normal[0]*cosTheta,
+      tangent[1]*std::cos(phi)*sinTheta+bitangent[1]*std::sin(phi)*sinTheta+normal[1]*cosTheta,
+      tangent[2]*std::cos(phi)*sinTheta+bitangent[2]*std::sin(phi)*sinTheta+normal[2]*cosTheta,0};
+  const float len=std::sqrt(out[0]*out[0]+out[1]*out[1]+out[2]*out[2]);if(len>1.0e-8f){out[0]/=len;out[1]/=len;out[2]/=len;}return out;
 }
 std::array<float,4> MtlxWorley(const std::array<float,4>& p, bool is3d,
                                float jitter, int style, int channels) {
@@ -889,6 +944,10 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         auto blend=[&](float lo,float hi,const std::array<float,4>& c0,const std::array<float,4>& c1){float t=std::fabs(hi-lo)>1e-8f?std::clamp((std::clamp(x,lo,hi)-lo)/(hi-lo),0.0f,1.0f):0;if(interpolation==1)t=t*t*(3-2*t);if(interpolation==2)t=x>=hi?1.0f:0.0f;std::array<float,4> q;for(int lane=0;lane<4;lane++)q[lane]=c0[lane]+t*(c1[lane]-c0[lane]);return q;};
         if(op==static_cast<int>(MaterialXGraphOpCPU::Ramp)){dst=values[std::min(start+1,count-1)];for(int interval=1;interval<=9;interval++){if(interval>=num)continue;const int base=start+(interval-1)*2;const float lo=values[std::min(base,count-1)][0],hi=values[std::min(base+2,count-1)][0];const auto q=blend(lo,hi,values[std::min(base+1,count-1)],values[std::min(base+3,count-1)]);if(x>lo)dst=q;}}
         else{const float lo=values[start][0],hi=values[std::min(start+1,count-1)][0];const int intervalNum=static_cast<int>(values[std::min(start+5,count-1)][0]);dst=values[std::min(start+4,count-1)];if(intervalNum<num&&x>lo)dst=blend(lo,hi,values[std::min(start+2,count-1)],values[std::min(start+3,count-1)]);}
+      } else if(op==static_cast<int>(MaterialXGraphOpCPU::Flake)){
+        const int start=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+17]+.5f)),0,count-1);
+        const int output=std::clamp(static_cast<int>(std::floor(scene.matGraph[p+18]+.5f)),0,3);
+        dst=MtlxFlake(values.data(),start,count,output);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);

@@ -1367,6 +1367,39 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
               inputNamed(node,"in",{{"value",0}}),"in")})}});
       continue;
     }
+    if((cat=="flake2d"||cat=="flake3d")&&!name.empty()){
+      const bool is3d=cat=="flake3d";
+      const char* fields[7]={"size","roughness","coverage",is3d?"position":"texcoord",
+                             "normal","tangent","bitangent"};
+      const char* types[7]={"float","float","float",is3d?"vector3":"vector2",
+                            "vector3","vector3","vector3"};
+      const nlohmann::json defaults[7]={0.01,0.1,0.5,nlohmann::json(),
+          nlohmann::json(),nlohmann::json(),nlohmann::json()};
+      const char* geomCats[7]={nullptr,nullptr,nullptr,is3d?"position":"texcoord",
+                               "normal","tangent","bitangent"};
+      for(int i=0;i<7;i++){
+        nlohmann::json source;
+        if(geomCats[i]){
+          const std::string geom=name+"__geom_"+fields[i];
+          source=inputNamed(node,fields[i],{{"name",fields[i]},{"nodename",geom}});
+          if(JsonString(source,"nodename")==geom)
+            runtimeNodes.push_back({{"name",geom},{"category",geomCats[i]},
+                {"type",types[i]},{"inputs",nlohmann::json::array()}});
+        }else source=inputNamed(node,fields[i],{{"name",fields[i]},{"value",defaults[i]}});
+        runtimeNodes.push_back({{"name",name+"__"+fields[i]},{"category","convert"},
+            {"type",types[i]},{"inputs",nlohmann::json::array({renamedInput(source,"in")})}});
+      }
+      const char* outputs[4]={"id","rand","presence","flakenormal"};
+      const char* outputTypes[4]={"integer","float","float","vector3"};
+      for(int i=0;i<4;i++)runtimeNodes.push_back({
+          {"name",name+"__"+outputs[i]},{"category","flakecore"},
+          {"type",outputTypes[i]},{"inputs",nlohmann::json::array()},
+          {"flake_output",i},{"flake_3d",is3d}});
+      runtimeNodes.push_back({{"name",name},{"category","convert"},{"type","vector3"},
+          {"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},
+              {"nodename",name+"__flakenormal"}}})}});
+      continue;
+    }
     if (cat == "randomfloat" && !name.empty()) {
       const nlohmann::json input=inputNamed(node,"in",{{"value",0}});
       emitRandomFloat(name, input, inputNamed(node,"seed",{{"value",0}}),
@@ -1588,6 +1621,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if(cat=="rampcoord")out.op=MaterialXGraphOpCPU::RampCoordinate;
     else if(cat=="rampcore")out.op=MaterialXGraphOpCPU::Ramp;
     else if(cat=="rampgradientcore")out.op=MaterialXGraphOpCPU::RampGradient;
+    else if(cat=="flakecore")out.op=MaterialXGraphOpCPU::Flake;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1849,7 +1883,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
              cat == "hextiledimage")) {
           uvInput = inputSlot;
         }
-        const std::string source = JsonString(input, "nodename");
+        std::string source = JsonString(input, "nodename");
+        const std::string sourceOutput = JsonString(input, "output");
+        if(!source.empty()&&!sourceOutput.empty()&&sourceOutput!="out")
+          source += "__" + sourceOutput;
         if (!source.empty()) {
           const auto found = nodeIds.find(source);
           if (found != nodeIds.end()) out.input[inputSlot] = found->second;
@@ -1894,6 +1931,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       const auto first=nodeIds.find(name+(cat=="rampcore"?"__interval1":"__interval1"));
       if(first!=nodeIds.end())out.auxValue[0]=static_cast<float>(first->second);
     }
+    if(cat=="flakecore"){
+      const size_t marker=name.rfind("__");
+      const std::string base=marker==std::string::npos?name:name.substr(0,marker);
+      const auto first=nodeIds.find(base+"__size");
+      if(first!=nodeIds.end())out.auxValue[0]=static_cast<float>(first->second);
+      out.auxValue[1]=node.value("flake_output",0);
+      out.auxValue[2]=node.value("flake_3d",false)?1.0f:0.0f;
+    }
     if (uvInput >= 0) out.value[2][3] = static_cast<float>(uvInput);
     graph.nodes.push_back(std::move(out));
   }
@@ -1906,7 +1951,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
   if (outputsIt != ng.end() && outputsIt->is_array()) {
     for (const nlohmann::json& output : *outputsIt) {
       const std::string name = JsonString(output, "name");
-      const std::string node = JsonString(output, "nodename");
+      std::string node = JsonString(output, "nodename");
+      const std::string selectedOutput=JsonString(output,"output");
+      if(!node.empty()&&!selectedOutput.empty()&&selectedOutput!="out")
+        node += "__"+selectedOutput;
       if (!name.empty() && !node.empty()) outputs[name] = node;
     }
   }
@@ -2640,7 +2688,8 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
                               node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
                               node.op == MaterialXGraphOpCPU::TiledHexagons;
     const bool usesRampTable=node.op==MaterialXGraphOpCPU::Ramp||
-                             node.op==MaterialXGraphOpCPU::RampGradient;
+                             node.op==MaterialXGraphOpCPU::RampGradient||
+                             node.op==MaterialXGraphOpCPU::Flake;
     int textureId = (usesAuxInput||usesRampTable) ? node.auxInput : node.textureId;
     if (!usesAuxInput && sourceToTable && textureId >= 0 &&
         static_cast<size_t>(textureId) < sourceToTable->size()) {
@@ -2716,7 +2765,8 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
         node.op == MaterialXGraphOpCPU::Grid || node.op == MaterialXGraphOpCPU::Crosshatch ||
         node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
         node.op == MaterialXGraphOpCPU::TiledHexagons ||
-        node.op == MaterialXGraphOpCPU::Ramp || node.op == MaterialXGraphOpCPU::RampGradient) {
+        node.op == MaterialXGraphOpCPU::Ramp || node.op == MaterialXGraphOpCPU::RampGradient ||
+        node.op == MaterialXGraphOpCPU::Flake) {
       dst[base + 16] = static_cast<float>(node.auxInput);
       if (node.op == MaterialXGraphOpCPU::IfGreater ||
           node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
@@ -2726,7 +2776,8 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
           node.op == MaterialXGraphOpCPU::Grid || node.op == MaterialXGraphOpCPU::Crosshatch ||
           node.op == MaterialXGraphOpCPU::TiledCircles || node.op == MaterialXGraphOpCPU::TiledCloverleafs ||
           node.op == MaterialXGraphOpCPU::TiledHexagons ||
-          node.op == MaterialXGraphOpCPU::Ramp || node.op == MaterialXGraphOpCPU::RampGradient)
+          node.op == MaterialXGraphOpCPU::Ramp || node.op == MaterialXGraphOpCPU::RampGradient ||
+          node.op == MaterialXGraphOpCPU::Flake)
         for (int lane = 0; lane < 4; ++lane)
           dst[base + 17 + lane] = node.auxValue[lane];
       continue;

@@ -108,6 +108,22 @@ static uint32_t mx_bjfinal(uint32_t a, uint32_t b, uint32_t c) {
     c ^= b; c -= mx_rotl32(b, 24);
     return c;
 }
+static void mx_bjmix(uint32_t *a,uint32_t *b,uint32_t *c){
+    *a-=*c;*a^=mx_rotl32(*c,4);*c+=*b;*b-=*a;*b^=mx_rotl32(*a,6);*a+=*c;
+    *c-=*b;*c^=mx_rotl32(*b,8);*b+=*a;*a-=*c;*a^=mx_rotl32(*c,16);*c+=*b;
+    *b-=*a;*b^=mx_rotl32(*a,19);*a+=*c;*c-=*b;*c^=mx_rotl32(*b,4);*b+=*a;
+}
+static v3 mx_cell_vec3(int x,int y,int z,int w,int has_w){
+    uint32_t a=0xdeadbeefu+((has_w?5u:4u)<<2u)+13u,b=a,c=a;
+    a+=(uint32_t)x;b+=(uint32_t)y;c+=(uint32_t)z;mx_bjmix(&a,&b,&c);
+    if(has_w)a+=(uint32_t)w;
+    if(has_w)return v3_make((float)mx_bjfinal(a,b,c)/(float)0xffffffffu,
+        (float)mx_bjfinal(a,b+1u,c)/(float)0xffffffffu,
+        (float)mx_bjfinal(a,b+2u,c)/(float)0xffffffffu);
+    return v3_make((float)mx_bjfinal(a,b,c)/(float)0xffffffffu,
+        (float)mx_bjfinal(a+1u,b,c)/(float)0xffffffffu,
+        (float)mx_bjfinal(a+2u,b,c)/(float)0xffffffffu);
+}
 static uint32_t mx_hash_int3(int x, int y, int z) {
     uint32_t a, b, c;
     a = b = c = 0xdeadbeefu + (3u << 2u) + 13u;
@@ -234,7 +250,7 @@ typedef enum {
     OP_CHECKERBOARD, OP_DIFFERENCE, OP_IN, OP_MASK, OP_MATTE, OP_OUT, OP_OVER,
     OP_DISJOINTOVER, OP_CIRCLE, OP_LINE, OP_CLOVERLEAF, OP_HEXAGON,
     OP_GRID, OP_CROSSHATCH, OP_TILEDCIRCLES, OP_TILEDCLOVERLEAFS, OP_TILEDHEXAGONS,
-    OP_COLORCORRECT, OP_BLUR, OP_RANDOMFLOAT,
+    OP_COLORCORRECT, OP_BLUR, OP_FLAKE2D, OP_FLAKE3D, OP_RANDOMFLOAT,
     OP_RANDOMCOLOR
 } NodeOp;
 
@@ -370,12 +386,16 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "tiledhexagons")) return OP_TILEDHEXAGONS;
     if (!strcmp(c, "colorcorrect")) return OP_COLORCORRECT;
     if (!strcmp(c, "blur")) return OP_BLUR;
+    if (!strcmp(c, "flake2d")) return OP_FLAKE2D;
+    if (!strcmp(c, "flake3d")) return OP_FLAKE3D;
     if (!strcmp(c, "randomfloat")) return OP_RANDOMFLOAT;
     if (!strcmp(c, "randomcolor")) return OP_RANDOMCOLOR;
     return OP_UNKNOWN;
 }
 
 static MtlxValue eval_node(ShadeContext *ctx, int node_id);
+static MtlxValue eval_flake_output(ShadeContext *ctx,const MtlxNode *n,
+                                   const char *output);
 
 static const MtlxInput *find_input(const MtlxNode *n, const char *name) {
     for (int i = 0; i < n->ninput; i++)
@@ -430,7 +450,13 @@ static MtlxValue swizzle_channels(MtlxValue v, const char *channels, MtlxType ty
 static MtlxValue eval_input(ShadeContext *ctx, const MtlxInput *in) {
     MtlxValue r;
     if (!in) return mv_zero(MV_NONE);
-    if (in->src_node >= 0) r = swizzle_out(eval_node(ctx, in->src_node), in->src_output);
+    if (in->src_node >= 0) {
+        const MtlxNode *src=&ctx->doc->nodes[in->src_node];
+        if ((!strcmp(src->category,"flake2d")||!strcmp(src->category,"flake3d")) &&
+            in->src_output)
+            r=eval_flake_output(ctx,src,in->src_output);
+        else r=swizzle_out(eval_node(ctx,in->src_node),in->src_output);
+    }
     else if (in->has_value) r = in->value;
     else r = mv_zero(in->type);
     return swizzle_channels(r, in->channels, in->type);
@@ -438,6 +464,29 @@ static MtlxValue eval_input(ShadeContext *ctx, const MtlxInput *in) {
 static MtlxValue in_or(ShadeContext *ctx, const MtlxNode *n, const char *name, MtlxValue dflt) {
     const MtlxInput *in = find_input(n, name);
     return in ? eval_input(ctx, in) : dflt;
+}
+
+static MtlxValue eval_flake_output(ShadeContext *ctx,const MtlxNode *n,
+                                   const char *output){
+    MtlxValue sv=in_or(ctx,n,"size",mv_float(.01f)),rv=in_or(ctx,n,"roughness",mv_float(.1f)),cv=in_or(ctx,n,"coverage",mv_float(.5f));
+    int d3=!strcmp(n->category,"flake3d");MtlxValue pv=in_or(ctx,n,d3?"position":"texcoord",d3?mv_vec3(ctx->P):mv_vec2(ctx->uv[0],ctx->uv[1]));
+    v3 pos=v3_make(pv.v[0],pv.v[1],d3?pv.v[2]:0),normal;
+    MtlxValue nv=in_or(ctx,n,"normal",mv_vec3(ctx->Ns)),tv=in_or(ctx,n,"tangent",mv_vec3(v3_normalize(ctx->dpdu))),bv=in_or(ctx,n,"bitangent",mv_vec3(v3_normalize(ctx->dpdv)));
+    normal=mv_as_v3(&nv);v3 tangent=mv_as_v3(&tv),bitangent=mv_as_v3(&bv);
+    float size=fmaxf(fabsf(sv.v[0]),1e-8f),coverage=clampf(cv.v[0],0,1),xx=coverage*coverage;
+    float probability=(-26.19771808f*xx+26.39663835f*coverage)/(85.53857017f*xx*coverage-102.35069432f*xx-101.42634862f*coverage+118.45082288f);
+    v3 p=v3_scale(pos,1/size);int bx=(int)floorf(p.x),by=(int)floorf(p.y),bz=(int)floorf(p.z),cx=0,cy=0,cz=0;float priority=0,diameter=.86602540378f;
+    for(int i=-1;i<=1;i++)for(int j=-1;j<=1;j++)for(int k=-1;k<=1;k++){
+        int x=bx+i,y=by+j,z=bz+k;v3 q=v3_make(p.x-x-.5f,p.y-y-.5f,p.z-z-.5f);if(v3_dot(q,q)>=diameter*diameter*3)continue;
+        if((float)mx_hash_int3(x,y,z)/(float)0xffffffffu>probability)continue;float candidate=mx_cell_vec3(x,y,z,3,1).x;if(candidate<priority)continue;
+        v3 rot=mx_cell_vec3(x,y,z,0,0);float theta=2*(float)MTLX_PI*rot.x,phi=2*(float)MTLX_PI*rot.y,zz=2*rot.z,rr=sqrtf(zz),vx=sinf(phi)*rr,vy=cosf(phi)*rr,vz=sqrtf(2-zz),s=sinf(theta),c=cosf(theta),sx=vx*c-vy*s,sy=vx*s+vy*c;
+        v3 qr=v3_make((vx*sx-c)*q.x+(vy*sx+s)*q.y+vz*sx*q.z,(vx*sy-s)*q.x+(vy*sy-c)*q.y+vz*sy*q.z,vx*vz*q.x+vy*vz*q.y+(1-zz)*q.z);
+        if(fabsf(qr.x)<=diameter&&fabsf(qr.y)<=diameter&&fabsf(qr.z)<=diameter){priority=candidate;cx=x;cy=y;cz=z;}
+    }
+    if(priority<=0){if(!strcmp(output,"flakenormal"))return mv_vec3(normal);return mv_float(0);}
+    v3 noise=mx_cell_vec3(cx,cy,cz,2,1);if(!strcmp(output,"id")){MtlxValue q=mv_zero(MV_INT);q.v[0]=floorf(noise.z*16777215);return q;}if(!strcmp(output,"rand"))return mv_float(noise.z);if(!strcmp(output,"presence"))return mv_float(priority);
+    float phi=2*(float)MTLX_PI*noise.x,tan_theta=rv.v[0]*rv.v[0]*sqrtf(noise.y)/sqrtf(fmaxf(1-noise.y,1e-8f)),sin_theta=tan_theta/sqrtf(1+tan_theta*tan_theta),cos_theta=sqrtf(fmaxf(1-sin_theta*sin_theta,0));
+    return mv_vec3(v3_normalize(v3_add(v3_add(v3_scale(tangent,cosf(phi)*sin_theta),v3_scale(bitangent,sinf(phi)*sin_theta)),v3_scale(normal,cos_theta))));
 }
 
 static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
@@ -699,6 +748,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_GRID: case OP_CROSSHATCH: case OP_TILEDCIRCLES: case OP_TILEDCLOVERLEAFS: case OP_TILEDHEXAGONS: { NodeOp po=classify(n->category);int kind=po-OP_GRID;MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),tiling=in_or(ctx,n,"uvtiling",mv_vec2(1,1)),offset=in_or(ctx,n,"uvoffset",mv_vec2(0,0)),parameter=in_or(ctx,n,kind<=1?"thickness":"size",mv_float(kind<=1?.05f:.5f)),staggered=in_or(ctx,n,"staggered",mv_float(0));float q=pattern_value(tc.v[0]*tiling.v[0]-offset.v[0],tc.v[1]*tiling.v[1]-offset.v[1],parameter.v[0],staggered.v[0]!=0,kind);r=mv_color3(v3_make(q,q,q));break; }
         case OP_COLORCORRECT: { a=in_or(ctx,n,"in",mv_zero(n->type));MtlxValue hue=in_or(ctx,n,"hue",mv_float(0)),sat=in_or(ctx,n,"saturation",mv_float(1)),gamma=in_or(ctx,n,"gamma",mv_float(1)),lift=in_or(ctx,n,"lift",mv_float(0)),gain=in_or(ctx,n,"gain",mv_float(1)),contrast=in_or(ctx,n,"contrast",mv_float(1)),pivot=in_or(ctx,n,"contrastpivot",mv_float(0.5f)),exposure=in_or(ctx,n,"exposure",mv_float(0));v3 hsv=rgb_to_hsv(mv_as_v3(&a));hsv.x=hsv.x+hue.v[0]-floorf(hsv.x+hue.v[0]);v3 rgb=hsv_to_rgb(hsv);float lum=luminance(rgb),scale=powf(2.0f,exposure.v[0]),recip=fabsf(gamma.v[0])>1e-6f?1.0f/gamma.v[0]:0.0f;r=a;for(int i=0;i<3;i++){float x=lum+sat.v[0]*((i==0?rgb.x:(i==1?rgb.y:rgb.z))-lum);x=(x<0?-1.0f:1.0f)*powf(fabsf(x),recip);x=(x*(1-lift.v[0])+lift.v[0])*gain.v[0];r.v[i]=((x-pivot.v[0])*contrast.v[0]+pivot.v[0])*scale;}break; }
         case OP_BLUR: r=in_or(ctx,n,"in",mv_zero(n->type));break;
+        case OP_FLAKE2D: case OP_FLAKE3D:r=eval_flake_output(ctx,n,"flakenormal");break;
         case OP_RANDOMFLOAT: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),lo=in_or(ctx,n,"min",mv_float(0)),hi=in_or(ctx,n,"max",mv_float(1));int x=(int)floorf(a.v[0]*(a.type==MV_INT?1.0f:4096.0f)),y=(int)floorf(seed.v[0]);float q=(float)mx_hash_int2(x,y)/(float)0xffffffffu;r=mv_float(lo.v[0]+q*(hi.v[0]-lo.v[0]));break; }
         case OP_RANDOMCOLOR: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),hl=in_or(ctx,n,"huelow",mv_float(0)),hh=in_or(ctx,n,"huehigh",mv_float(1)),sl=in_or(ctx,n,"saturationlow",mv_float(0.825f)),sh=in_or(ctx,n,"saturationhigh",mv_float(1)),bl=in_or(ctx,n,"brightnesslow",mv_float(1)),bh=in_or(ctx,n,"brightnesshigh",mv_float(1));int s=(int)floorf(seed.v[0]);float h=randomfloat_value(a.v[0],(int)ceilf((float)s+413.3f),hl.v[0],hh.v[0]),ss=randomfloat_value(a.v[0],(int)ceilf((float)s+1522.4f),sl.v[0],sh.v[0]),v=randomfloat_value(a.v[0],(int)ceilf((float)s+1813.8f),bl.v[0],bh.v[0]);r=mv_color3(hsv_to_rgb(v3_make(h,ss,v)));break; }
         case OP_IFGREATER: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
