@@ -1175,6 +1175,13 @@ static void blend_lobe(float *total, v3 *dst, v3 color, float weight) {
     *total = sum;
 }
 
+static float blend_scalar(float old_weight, float old_value, float value,
+                          float weight) {
+    const float sum = old_weight + weight;
+    return sum > 0.0f ? (old_value * old_weight + value * weight) / sum
+                      : value;
+}
+
 static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
                        OpenPBRParams *out, int depth) {
     if (!n || depth > 32 || scale <= 0.0f) return;
@@ -1225,16 +1232,20 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
                    in_color(ctx, n, "color", v3_splat(1.0f)), weight);
     } else if (!strcmp(cat, "dielectric_bsdf")) {
         const char *mode = in_string(n, "scatter_mode", "R");
+        const float roughness = in_component0(ctx, n, "roughness", 0.05f);
         if (scatter_mode_has(mode, 'R')) {
+            const float old_weight = out->specular_weight;
+            const float old_roughness = out->specular_roughness;
             blend_lobe(&out->specular_weight, &out->specular_color,
                        in_color(ctx, n, "tint", v3_splat(1.0f)), weight);
+            out->specular_roughness = blend_scalar(
+                old_weight, old_roughness, roughness, weight);
         }
         if (scatter_mode_has(mode, 'T')) {
             blend_lobe(&out->transmission, &out->transmission_color,
                        in_color(ctx, n, "tint", v3_splat(1.0f)), weight);
         }
         out->specular_ior = in_float(ctx, n, "ior", 1.5f);
-        out->specular_roughness = in_component0(ctx, n, "roughness", 0.05f);
         out->thin_film_thickness = in_float(ctx, n, "thinfilm_thickness", 0.0f);
         out->thin_film_ior = in_float(ctx, n, "thinfilm_ior", 1.5f);
         out->thin_film_weight = out->thin_film_thickness > 0.0f ? weight : 0.0f;
@@ -1249,34 +1260,49 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
         const v3 f0 = v3_make(num.x / fmaxf(den.x, 1.0e-6f),
                               num.y / fmaxf(den.y, 1.0e-6f),
                               num.z / fmaxf(den.z, 1.0e-6f));
+        const float old_base_weight = out->base_weight;
+        const float old_roughness = out->specular_roughness;
         blend_lobe(&out->base_weight, &out->base_color, f0, weight);
         out->metalness = 1.0f;
-        out->specular_roughness = in_component0(ctx, n, "roughness", 0.05f);
+        out->specular_roughness = blend_scalar(
+            old_base_weight, old_roughness,
+            in_component0(ctx, n, "roughness", 0.05f), weight);
     } else if (!strcmp(cat, "generalized_schlick_bsdf")) {
         const char *mode = in_string(n, "scatter_mode", "R");
         const v3 c0 = in_color(ctx, n, "color0", v3_splat(1.0f));
-        if (scatter_mode_has(mode, 'R'))
+        if (scatter_mode_has(mode, 'R')) {
+            const float old_weight = out->specular_weight;
+            const float old_roughness = out->specular_roughness;
             blend_lobe(&out->specular_weight, &out->specular_color, c0, weight);
+            out->specular_roughness = blend_scalar(
+                old_weight, old_roughness,
+                in_component0(ctx, n, "roughness", 0.05f), weight);
+        }
         if (scatter_mode_has(mode, 'T'))
             blend_lobe(&out->transmission, &out->transmission_color,
                        v3_splat(1.0f), weight);
-        out->specular_roughness = in_component0(ctx, n, "roughness", 0.05f);
     } else if (!strcmp(cat, "subsurface_bsdf")) {
         blend_lobe(&out->subsurface, &out->subsurface_color,
                    in_color(ctx, n, "color", v3_splat(0.18f)), weight);
         out->subsurface_radius = in_color(ctx, n, "radius", v3_splat(1.0f));
     } else if (!strcmp(cat, "sheen_bsdf")) {
+        const float old_weight = out->sheen_weight;
         blend_lobe(&out->sheen_weight, &out->sheen_color,
                    in_color(ctx, n, "color", v3_splat(1.0f)), weight);
-        out->sheen_roughness = in_float(ctx, n, "roughness", 0.3f);
+        out->sheen_roughness = blend_scalar(
+            old_weight, out->sheen_roughness,
+            in_float(ctx, n, "roughness", 0.3f), weight);
     } else if (!strcmp(cat, "chiang_hair_bsdf")) {
         const v3 r = in_color(ctx, n, "tint_R", v3_splat(1.0f));
         const v3 tt = in_color(ctx, n, "tint_TT", v3_splat(1.0f));
+        const float old_sheen_weight = out->sheen_weight;
         blend_lobe(&out->sheen_weight, &out->sheen_color, r, 0.5f * weight);
         blend_lobe(&out->transmission, &out->transmission_color, tt,
                    0.5f * weight);
         out->specular_ior = in_float(ctx, n, "ior", 1.55f);
-        out->sheen_roughness = in_component0(ctx, n, "roughness_R", 0.1f);
+        out->sheen_roughness = blend_scalar(
+            old_sheen_weight, out->sheen_roughness,
+            in_component0(ctx, n, "roughness_R", 0.1f), 0.5f * weight);
     }
     apply_normal_input(ctx, n, "normal", out);
 }
