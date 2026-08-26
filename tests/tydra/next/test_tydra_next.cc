@@ -273,7 +273,7 @@ void TestChunkedArrayShareCowBudgetFailure() {
   std::cout << "Testing ChunkedArray copy-on-write budget failure...\n";
 
   ChunkedArray<uint32_t> source;
-  assert(source.push_back(7u) == 0);
+  if (source.push_back(7u) != 0) std::abort();
   ChunkedArray<uint32_t> copy;
   copy.share_from(source);
   assert(source.is_shared() && copy.is_shared());
@@ -283,7 +283,8 @@ void TestChunkedArrayShareCowBudgetFailure() {
   MemBudget::InstallChunkedArrayTracking();
 
   const uint32_t appended = 9u;
-  assert(!copy.append(&appended, 1));
+  const bool append_ok = copy.append(&appended, 1);
+  if (append_ok) std::abort();
   assert(copy.alloc_failed());
   assert(copy.size() == 1);
   {
@@ -2552,8 +2553,9 @@ def Xform "Scene"
   AssetResolver resolver;
   std::string warn;
   std::string err;
-  assert(pcp::ComposeStageFromFile((fixture / "root.usda").string(), resolver,
-                                   &stage, {}, &warn, &err));
+  const bool composed = pcp::ComposeStageFromFile(
+      (fixture / "root.usda").string(), resolver, &stage, {}, &warn, &err);
+  if (!composed) std::abort();
 
   const UsdPrim material = stage.GetPrimAtPath("/Scene/Mat");
   assert(material.IsValid());
