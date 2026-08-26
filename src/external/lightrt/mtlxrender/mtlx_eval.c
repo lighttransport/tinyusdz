@@ -1056,13 +1056,21 @@ static v3 eval_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
         normal = v3_normalize(normal);
         const float inner = in_float(ctx, n, "inner_angle", 60.0f);
         const float outer = in_float(ctx, n, "outer_angle", 0.0f);
-        const float angle = acosf(fmaxf(-1.0f, fminf(1.0f,
-                                                   v3_dot(normal, ctx->V)))) *
-                            (180.0f / 3.14159265358979323846f);
-        const float lo = fminf(inner, outer), hi = fmaxf(inner, outer);
-        const float falloff = angle <= lo ? 1.0f :
-                              angle >= hi ? 0.0f :
-                              (hi - angle) / fmaxf(hi - lo, 1.0e-6f);
+        const float cosine = fmaxf(0.0f, fminf(1.0f,
+                                                v3_dot(normal, ctx->V)));
+        // MaterialX specifies full cone angles, so convert their half angles
+        // to cosine boundaries. Reversed/equal bounds use a hard cutoff;
+        // strictly wider outer cones use Hermite smoothstep in cosine space.
+        const float inner_cos = cosf(inner * (3.14159265358979323846f / 360.0f));
+        const float outer_cos = cosf(outer * (3.14159265358979323846f / 360.0f));
+        float falloff;
+        if (outer <= inner) {
+            falloff = cosine >= inner_cos ? 1.0f : 0.0f;
+        } else {
+            const float t = fmaxf(0.0f, fminf(1.0f,
+                (cosine - outer_cos) / fmaxf(inner_cos - outer_cos, 1.0e-6f)));
+            falloff = t * t * (3.0f - 2.0f * t);
+        }
         return v3_scale(color, falloff);
     }
     if (!strcmp(cat, "generalized_schlick_edf")) {

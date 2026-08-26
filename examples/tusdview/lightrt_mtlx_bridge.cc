@@ -1505,18 +1505,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         emitClosureLane(name, "emission_color", nlohmann::json{{"nodename", result}}, "color3");
       }
     } else if (cat == "conical_edf") {
-      // MaterialX's conical EDF uses a linear angular falloff in degrees.
-      // Keep that view-dependent behavior in the bounded graph instead of
-      // collapsing the closure to a uniform emission color.
+      // MaterialX's conical EDF uses full cone angles, converted to half-angle
+      // cosine boundaries. Keep its hard-cutoff and smoothstep behavior in the
+      // bounded graph instead of collapsing the closure to uniform emission.
       const std::string normal = name + "__conical_normal";
       const std::string view = name + "__conical_view";
+      const std::string cosineRaw = name + "__conical_cosine_raw";
       const std::string cosine = name + "__conical_cosine";
-      const std::string angle = name + "__conical_angle";
-      const std::string angleDegrees = name + "__conical_angle_degrees";
-      const std::string lo = name + "__conical_lo";
-      const std::string hi = name + "__conical_hi";
-      const std::string numerator = name + "__conical_numerator";
-      const std::string denominator = name + "__conical_denominator";
+      const std::string innerRadians = name + "__conical_inner_radians";
+      const std::string outerRadians = name + "__conical_outer_radians";
+      const std::string innerCosine = name + "__conical_inner_cosine";
+      const std::string outerCosine = name + "__conical_outer_cosine";
+      const std::string hardFalloff = name + "__conical_hard_falloff";
+      const std::string smoothFalloff = name + "__conical_smooth_falloff";
       const std::string falloff = name + "__conical_falloff";
       const std::string color = name + "__conical_color";
       const std::string result = name + "__conical_result";
@@ -1540,49 +1541,55 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       runtimeNodes.push_back({{"name", view}, {"category", "viewdirection"},
                               {"type", "vector3"},
                               {"inputs", nlohmann::json::array()}});
-      runtimeNodes.push_back({{"name", cosine}, {"category", "dotproduct"},
+      runtimeNodes.push_back({{"name", cosineRaw}, {"category", "dotproduct"},
                               {"type", "float"}, {"inputs", nlohmann::json::array({
                                   nlohmann::json{{"name", "in1"}, {"nodename", normal}},
                                   nlohmann::json{{"name", "in2"}, {"nodename", view}}})}});
-      runtimeNodes.push_back({{"name", angle}, {"category", "acos"},
+      runtimeNodes.push_back({{"name", cosine}, {"category", "clamp"},
                               {"type", "float"}, {"inputs", nlohmann::json::array({
-                                  nlohmann::json{{"name", "in"}, {"nodename", cosine}}})}});
-      runtimeNodes.push_back({{"name", angleDegrees}, {"category", "multiply"},
-                              {"type", "float"}, {"inputs", nlohmann::json::array({
-                                  nlohmann::json{{"name", "in1"}, {"nodename", angle}},
-                                  nlohmann::json{{"name", "in2"}, {"value", 57.29577951308232}}})}});
-      const nlohmann::json inner = nodeInput(node, "inner_angle", 60.0);
-      const nlohmann::json outer = nodeInput(node, "outer_angle", 0.0);
-      runtimeNodes.push_back({{"name", lo}, {"category", "min"}, {"type", "float"},
-                              {"inputs", nlohmann::json::array({
-                                  renamedInput(inner, "in1"), renamedInput(outer, "in2")})}});
-      runtimeNodes.push_back({{"name", hi}, {"category", "max"}, {"type", "float"},
-                              {"inputs", nlohmann::json::array({
-                                  renamedInput(inner, "in1"), renamedInput(outer, "in2")})}});
-      runtimeNodes.push_back({{"name", numerator}, {"category", "subtract"},
-                              {"type", "float"}, {"inputs", nlohmann::json::array({
-                                  nlohmann::json{{"name", "in1"}, {"nodename", hi}},
-                                  nlohmann::json{{"name", "in2"}, {"nodename", angleDegrees}}})}});
-      runtimeNodes.push_back({{"name", denominator}, {"category", "subtract"},
-                              {"type", "float"}, {"inputs", nlohmann::json::array({
-                                  nlohmann::json{{"name", "in1"}, {"nodename", hi}},
-                                  nlohmann::json{{"name", "in2"}, {"nodename", lo}}})}});
-      runtimeNodes.push_back({{"name", falloff}, {"category", "divide"},
-                              {"type", "float"}, {"inputs", nlohmann::json::array({
-                                  nlohmann::json{{"name", "in1"}, {"nodename", numerator}},
-                                  nlohmann::json{{"name", "in2"}, {"nodename", denominator}}})}});
-      runtimeNodes.push_back({{"name", falloff + "__clamped"}, {"category", "clamp"},
-                              {"type", "float"}, {"inputs", nlohmann::json::array({
-                                  nlohmann::json{{"name", "in"}, {"nodename", falloff}},
+                                  nlohmann::json{{"name", "in"}, {"nodename", cosineRaw}},
                                   nlohmann::json{{"name", "low"}, {"value", 0.0}},
                                   nlohmann::json{{"name", "high"}, {"value", 1.0}}})}});
+      const nlohmann::json inner = nodeInput(node, "inner_angle", 60.0);
+      const nlohmann::json outer = nodeInput(node, "outer_angle", 0.0);
+      const nlohmann::json degreesToRadians = nlohmann::json{{"name", "in2"},
+                                                               {"value", 0.008726646259971648}};
+      runtimeNodes.push_back({{"name", innerRadians}, {"category", "multiply"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  renamedInput(inner, "in1"), degreesToRadians})}});
+      runtimeNodes.push_back({{"name", outerRadians}, {"category", "multiply"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  renamedInput(outer, "in1"), degreesToRadians})}});
+      runtimeNodes.push_back({{"name", innerCosine}, {"category", "cos"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in"}, {"nodename", innerRadians}}})}});
+      runtimeNodes.push_back({{"name", outerCosine}, {"category", "cos"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in"}, {"nodename", outerRadians}}})}});
+      runtimeNodes.push_back({{"name", hardFalloff}, {"category", "ifgreatereq"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "value1"}, {"nodename", cosine}},
+                                  nlohmann::json{{"name", "value2"}, {"nodename", innerCosine}},
+                                  nlohmann::json{{"name", "in1"}, {"value", 1.0}},
+                                  nlohmann::json{{"name", "in2"}, {"value", 0.0}}})}});
+      runtimeNodes.push_back({{"name", smoothFalloff}, {"category", "smoothstep"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in"}, {"nodename", cosine}},
+                                  nlohmann::json{{"name", "low"}, {"nodename", outerCosine}},
+                                  nlohmann::json{{"name", "high"}, {"nodename", innerCosine}}})}});
+      runtimeNodes.push_back({{"name", falloff}, {"category", "ifgreater"},
+                              {"type", "float"}, {"inputs", nlohmann::json::array({
+                                  renamedInput(outer, "value1"),
+                                  renamedInput(inner, "value2"),
+                                  nlohmann::json{{"name", "in1"}, {"nodename", smoothFalloff}},
+                                  nlohmann::json{{"name", "in2"}, {"nodename", hardFalloff}}})}});
       runtimeNodes.push_back({{"name", color}, {"category", "constant"},
                               {"type", "color3"}, {"inputs", nlohmann::json::array({
                                   renamedInput(nodeInput(node, "color", nlohmann::json::array({1, 1, 1})), "value")})}});
       runtimeNodes.push_back({{"name", result}, {"category", "multiply"},
                               {"type", "color3"}, {"inputs", nlohmann::json::array({
                                   nlohmann::json{{"name", "in1"}, {"nodename", color}},
-                                  nlohmann::json{{"name", "in2"}, {"nodename", falloff + "__clamped"}}})}});
+                                  nlohmann::json{{"name", "in2"}, {"nodename", falloff}}})}});
       emitClosureLane(name, "emission_color", nlohmann::json{{"nodename", result}}, "color3");
       emitClosureLane(name, "emission_luminance", nlohmann::json{{"value", 1.0}}, "float");
       emitClosureLane(name, "volume_emission_color", nlohmann::json{{"nodename", result}}, "color3");

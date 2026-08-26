@@ -2070,15 +2070,30 @@ int main() {
       std::fprintf(stderr, "conical EDF graph failed: %s\n", error.c_str());
       return false;
     }
-    const bool hasAcos = std::any_of(
+    const bool hasCos = std::any_of(
         material.materialXGraph.nodes.begin(), material.materialXGraph.nodes.end(),
         [](const tusdview::MaterialXGraphNodeCPU& node) {
-          return node.op == tusdview::MaterialXGraphOpCPU::Arccosine;
+          return node.op == tusdview::MaterialXGraphOpCPU::Cosine;
         });
     const bool hasClamp = std::any_of(
         material.materialXGraph.nodes.begin(), material.materialXGraph.nodes.end(),
         [](const tusdview::MaterialXGraphNodeCPU& node) {
           return node.op == tusdview::MaterialXGraphOpCPU::Clamp;
+        });
+    const bool hasSmoothstep = std::any_of(
+        material.materialXGraph.nodes.begin(), material.materialXGraph.nodes.end(),
+        [](const tusdview::MaterialXGraphNodeCPU& node) {
+          return node.op == tusdview::MaterialXGraphOpCPU::Smoothstep;
+        });
+    const bool hasHardCutoffBranch = std::any_of(
+        material.materialXGraph.nodes.begin(), material.materialXGraph.nodes.end(),
+        [](const tusdview::MaterialXGraphNodeCPU& node) {
+          return node.op == tusdview::MaterialXGraphOpCPU::IfGreaterEqual;
+        });
+    const bool hasFalloffBranch = std::any_of(
+        material.materialXGraph.nodes.begin(), material.materialXGraph.nodes.end(),
+        [](const tusdview::MaterialXGraphNodeCPU& node) {
+          return node.op == tusdview::MaterialXGraphOpCPU::IfGreater;
         });
     const bool hasAuthoredNormal = std::any_of(
         material.materialXGraph.nodes.begin(), material.materialXGraph.nodes.end(),
@@ -2086,7 +2101,8 @@ int main() {
           return node.name == "cone__conical_normal" &&
                  node.op == tusdview::MaterialXGraphOpCPU::Convert;
         });
-    if (!hasAcos || !hasClamp || !hasAuthoredNormal) {
+    if (!hasCos || !hasClamp || !hasSmoothstep || !hasHardCutoffBranch ||
+        !hasFalloffBranch || !hasAuthoredNormal) {
       std::fprintf(stderr, "conical EDF angular falloff was flattened\n");
       return false;
     }
