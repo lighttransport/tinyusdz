@@ -275,6 +275,10 @@ Passed:
 - Final current-HEAD optimized native/viewer/tusdrender regression after the
   conical angle-semantics fix: 298/298 passed in 1105.89 seconds; the same
   documented unavailable profiles were skipped.
+- MaterialX `scatter_mode` handling now accepts only the schema-defined `R`,
+  `T`, and `RT` values in both the standalone evaluator and runtime bridge;
+  transmission-only, invalid-mode, and vector2-roughness extraction tests
+  pass (`56a86af56`).
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
