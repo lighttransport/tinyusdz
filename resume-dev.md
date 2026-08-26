@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `7b89dbdd8` (`Refresh VDF resume marker`)
+- HEAD: `d1f825121` (`Record headless parity completion`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -415,6 +415,16 @@ Passed:
   color correction, ramps, splits, patterns, lobe golden (RMSE 0), texture/
   UDIM cases, and displacement all pass. CUDA/HIP are unavailable for this
   `tusdrender` binary and are skipped by the checker.
+- A complete configured native CTest run excluding only the dedicated Vulkan
+  RT semantic sweep reached the displacement-UDIM test and exposed one
+  remaining loader-parity failure: `tusdview-displacement-udim` reported
+  loader MAD 28.4950 (package MAD 22.3343). Reproduction on the current
+  software-Vulkan environment shows the next loader creates two materials
+  and three textures for the standard-surface fixture while legacy creates
+  one material and one texture; PreviewSurface parity is unchanged. A direct
+  NVIDIA-selector rerun cannot reproduce here because only llvmpipe is
+  visible, so hardware Vulkan validation remains pending after fixing the
+  standard-surface loader mismatch.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -460,8 +470,9 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    NVIDIA validation run and AMD hardware remains unavailable.
 8. Complete a clean full native/viewer/tusdrender regression after the RT
    semantic harness can finish on a hardware Vulkan environment; the latest
-   non-RT focused matrix and CUDA/HIP semantic checks are green, while the
-   historical 298/298 result remains useful baseline evidence only.
+   run excluding that sweep has one remaining displacement-UDIM loader
+   parity failure (MAD 28.4950), while the focused matrix and CUDA/HIP
+   semantic checks are green.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
