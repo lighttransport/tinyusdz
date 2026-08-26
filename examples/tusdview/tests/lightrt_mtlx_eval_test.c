@@ -329,6 +329,43 @@ int main(void) {
     return 1;
   }
 
+  const char *scatter_mode_xml =
+      "<materialx version=\"1.39\">"
+      " <dielectric_bsdf name=\"Glass\" type=\"BSDF\">"
+      "  <input name=\"weight\" type=\"float\" value=\"0.6\"/>"
+      "  <input name=\"tint\" type=\"color3\" value=\"0.8,0.9,1\"/>"
+      "  <input name=\"scatter_mode\" type=\"string\" value=\"T\"/>"
+      " </dielectric_bsdf>"
+      " <surface name=\"Surface\" type=\"surfaceshader\">"
+      "  <input name=\"bsdf\" type=\"BSDF\" nodename=\"Glass\"/>"
+      " </surface>"
+      " <surfacematerial name=\"GlassMat\"><input name=\"surfaceshader\""
+      " type=\"surfaceshader\" nodename=\"Surface\"/></surfacematerial>"
+      "</materialx>";
+  if (!eval_xml(scatter_mode_xml, &p) || !nearf(p.specular_weight, 0.0f) ||
+      !nearf(p.transmission, 0.6f)) {
+    fprintf(stderr, "MaterialX transmission-only scatter mode failed\n");
+    return 1;
+  }
+
+  const char *invalid_scatter_mode_xml =
+      "<materialx version=\"1.39\">"
+      " <dielectric_bsdf name=\"Glass\" type=\"BSDF\">"
+      "  <input name=\"weight\" type=\"float\" value=\"0.6\"/>"
+      "  <input name=\"scatter_mode\" type=\"string\" value=\"TR\"/>"
+      " </dielectric_bsdf>"
+      " <surface name=\"Surface\" type=\"surfaceshader\">"
+      "  <input name=\"bsdf\" type=\"BSDF\" nodename=\"Glass\"/>"
+      " </surface>"
+      " <surfacematerial name=\"GlassMat\"><input name=\"surfaceshader\""
+      " type=\"surfaceshader\" nodename=\"Surface\"/></surfacematerial>"
+      "</materialx>";
+  if (!eval_xml(invalid_scatter_mode_xml, &p) ||
+      !nearf(p.specular_weight, 0.0f) || !nearf(p.transmission, 0.0f)) {
+    fprintf(stderr, "invalid MaterialX scatter mode was accepted\n");
+    return 1;
+  }
+
   const char *volume_xml =
       "<materialx version=\"1.39\">"
       " <anisotropic_vdf name=\"Fog\" type=\"VDF\">"

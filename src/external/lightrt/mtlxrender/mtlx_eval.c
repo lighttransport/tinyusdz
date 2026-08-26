@@ -1092,6 +1092,14 @@ static const char *in_string(const MtlxNode *n, const char *name,
     return (in && in->has_value && in->value.s) ? in->value.s : fb;
 }
 
+static int scatter_mode_has(const char *mode, char component) {
+    if (!mode) return 0;
+    if (!strcmp(mode, "R")) return component == 'R';
+    if (!strcmp(mode, "T")) return component == 'T';
+    if (!strcmp(mode, "RT")) return component == 'R' || component == 'T';
+    return 0;
+}
+
 static float in_component0(ShadeContext *ctx, const MtlxNode *n,
                            const char *name, float fb) {
     const MtlxInput *in = find_input(n, name);
@@ -1205,11 +1213,11 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
                    in_color(ctx, n, "color", v3_splat(1.0f)), weight);
     } else if (!strcmp(cat, "dielectric_bsdf")) {
         const char *mode = in_string(n, "scatter_mode", "R");
-        if (strchr(mode, 'R')) {
+        if (scatter_mode_has(mode, 'R')) {
             blend_lobe(&out->specular_weight, &out->specular_color,
                        in_color(ctx, n, "tint", v3_splat(1.0f)), weight);
         }
-        if (strchr(mode, 'T')) {
+        if (scatter_mode_has(mode, 'T')) {
             blend_lobe(&out->transmission, &out->transmission_color,
                        in_color(ctx, n, "tint", v3_splat(1.0f)), weight);
         }
@@ -1235,9 +1243,9 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
     } else if (!strcmp(cat, "generalized_schlick_bsdf")) {
         const char *mode = in_string(n, "scatter_mode", "R");
         const v3 c0 = in_color(ctx, n, "color0", v3_splat(1.0f));
-        if (strchr(mode, 'R'))
+        if (scatter_mode_has(mode, 'R'))
             blend_lobe(&out->specular_weight, &out->specular_color, c0, weight);
-        if (strchr(mode, 'T'))
+        if (scatter_mode_has(mode, 'T'))
             blend_lobe(&out->transmission, &out->transmission_color,
                        in_color(ctx, n, "color90", v3_splat(1.0f)), weight);
         out->specular_roughness = in_component0(ctx, n, "roughness", 0.05f);
