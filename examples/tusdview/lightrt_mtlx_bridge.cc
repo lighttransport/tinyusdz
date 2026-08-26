@@ -2320,8 +2320,44 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       continue;
     }
     if(cat=="chiang_hair_roughness"&&!name.empty()){
+      const auto longitudinal = inputNamed(node,"longitudinal",{{"value",.1}});
+      const auto azimuthal = inputNamed(node,"azimuthal",{{"value",.2}});
+      const auto scaleTT = inputNamed(node,"scale_TT",{{"value",.5}});
+      const auto scaleTRT = inputNamed(node,"scale_TRT",{{"value",2.0}});
+      auto scalarOp = [&](const std::string& suffix, const char* category,
+                          nlohmann::json in1, nlohmann::json in2) {
+        const std::string result = name + "__" + suffix;
+        runtimeNodes.push_back({{"name",result},{"category",category},
+          {"type","float"},{"inputs",nlohmann::json::array({
+            renamedInput(std::move(in1),"in1"),
+            renamedInput(std::move(in2),"in2")})}});
+        return result;
+      };
+      const std::string l2 = scalarOp("l2","power",longitudinal,{{"value",2.0}});
+      const std::string l20 = scalarOp("l20","power",longitudinal,{{"value",20.0}});
+      const std::string lt1 = scalarOp("lt1","multiply",longitudinal,{{"value",.726}});
+      const std::string lt2 = scalarOp("lt2","multiply",{{"nodename",l2}},{{"value",.812}});
+      const std::string lt3 = scalarOp("lt3","multiply",{{"nodename",l20}},{{"value",3.7}});
+      const std::string lsum = scalarOp("lsum","add",{{"nodename",lt1}},{{"nodename",lt2}});
+      const std::string lsum2 = scalarOp("lsum2","add",{{"nodename",lsum}},{{"nodename",lt3}});
+      const std::string variance = scalarOp("variance","power",{{"nodename",lsum2}},{{"value",2.0}});
+      const std::string a2 = scalarOp("a2","power",azimuthal,{{"value",2.0}});
+      const std::string a22 = scalarOp("a22","power",azimuthal,{{"value",22.0}});
+      const std::string at1 = scalarOp("at1","multiply",azimuthal,{{"value",.265}});
+      const std::string at2 = scalarOp("at2","multiply",{{"nodename",a2}},{{"value",1.194}});
+      const std::string at3 = scalarOp("at3","multiply",{{"nodename",a22}},{{"value",5.372}});
+      const std::string asum = scalarOp("asum","add",{{"nodename",at1}},{{"nodename",at2}});
+      const std::string asum2 = scalarOp("asum2","add",{{"nodename",asum}},{{"nodename",at3}});
       const char* outputs[3]={"roughness_R","roughness_TT","roughness_TRT"};
-      for(const char* output:outputs)runtimeNodes.push_back({{"name",name+"__"+output},{"category","constant"},{"type","vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","value"},{"value",nlohmann::json::array({0,0})}}})}});
+      const std::string ttScale = scalarOp("tt_scale2","multiply",{{"nodename",scaleTT}},{{"nodename",scaleTT}});
+      const std::string trtScale = scalarOp("trt_scale2","multiply",{{"nodename",scaleTRT}},{{"nodename",scaleTRT}});
+      const std::string ttVariance = scalarOp("tt_variance_scaled","multiply",{{"nodename",variance}},{{"nodename",ttScale}});
+      const std::string trtVariance = scalarOp("trt_variance_scaled","multiply",{{"nodename",variance}},{{"nodename",trtScale}});
+      const std::string values[3]={variance,ttVariance,trtVariance};
+      for(int i=0;i<3;i++)runtimeNodes.push_back({{"name",name+"__"+outputs[i]},
+        {"category","combine2"},{"type","vector2"},{"inputs",nlohmann::json::array({
+          nlohmann::json{{"name","in1"},{"nodename",values[i]}},
+          nlohmann::json{{"name","in2"},{"nodename",asum2}}})}});
       runtimeNodes.push_back({{"name",name},{"category","convert"},{"type","vector2"},{"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",name+"__roughness_R"}}})}});
       continue;
     }

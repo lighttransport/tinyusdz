@@ -435,6 +435,8 @@ static MtlxValue eval_flake_output(ShadeContext *ctx,const MtlxNode *n,
                                    const char *output);
 static MtlxValue eval_artistic_ior(ShadeContext *ctx,const MtlxNode *n,
                                    int extinction);
+static float in_float(ShadeContext *ctx, const MtlxNode *n, const char *name,
+                      float fb);
 
 static const MtlxInput *find_input(const MtlxNode *n, const char *name) {
     for (int i = 0; i < n->ninput; i++)
@@ -496,6 +498,19 @@ static MtlxValue eval_input(ShadeContext *ctx, const MtlxInput *in) {
             r=eval_flake_output(ctx,src,in->src_output);
         else if(!strcmp(src->category,"artistic_ior")&&in->src_output)
             r=eval_artistic_ior(ctx,src,!strcmp(in->src_output,"extinction"));
+        else if(!strcmp(src->category,"chiang_hair_roughness")&&in->src_output){
+            r=eval_node(ctx,in->src_node);
+            const char *scale_name =
+                !strcmp(in->src_output,"roughness_TT") ? "scale_TT" :
+                !strcmp(in->src_output,"roughness_TRT") ? "scale_TRT" : NULL;
+            if(scale_name){
+                const MtlxInput *scale_input=find_input(src,scale_name);
+                float scale = !strcmp(scale_name,"scale_TT") ? 0.5f : 2.0f;
+                if(scale_input){MtlxValue sv=eval_input(ctx,scale_input);
+                    scale=mv_as_float(&sv);}
+                r.v[0]*=scale*scale;
+            }
+        }
         else r=swizzle_out(eval_node(ctx,in->src_node),in->src_output);
     }
     else if (in->has_value) r = in->value;
@@ -862,9 +877,26 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_GLOSSINESS_ANISOTROPY: {a=in_or(ctx,n,"glossiness",mv_float(1));b=in_or(ctx,n,"anisotropy",mv_float(0));float rough=1-a.v[0],q=fminf(fmaxf(rough*rough,1e-8f),1),aspect=b.v[0]>0?sqrtf(1-fminf(fmaxf(b.v[0],0),.98f)):1;r=mv_vec2(fminf(q/aspect,1),q*aspect);break;}
         case OP_DEON_HAIR_ABSORPTION: {MtlxValue concentration=in_or(ctx,n,"melanin_concentration",mv_float(.25f)),redness=in_or(ctx,n,"melanin_redness",mv_float(.5f)),eu=in_or(ctx,n,"eumelanin_color",mv_color3(v3_make(.657704f,.498077f,.254107f))),ph=in_or(ctx,n,"pheomelanin_color",mv_color3(v3_make(.829444f,.67032f,.349938f)));r=mv_zero(MV_VEC3);for(int lane=0;lane<3;lane++)r.v[lane]=concentration.v[0]*((1-redness.v[0])*-logf(fmaxf(eu.v[lane],1e-6f))+redness.v[0]*-logf(fmaxf(ph.v[lane],1e-6f)));break;}
         case OP_CHIANG_HAIR_ABSORPTION: {a=in_or(ctx,n,"color",mv_color3(v3_make(1,1,1)));b=in_or(ctx,n,"azimuthal_roughness",mv_float(.2f));float beta=b.v[0],b2=beta*beta,b3=b2*beta,b4=b3*beta,b5=b4*beta,den=5.969f-.215f*beta+2.532f*b2-10.73f*b3+5.574f*b4+.245f*b5;r=mv_zero(MV_VEC3);for(int lane=0;lane<3;lane++){float q=logf(fmaxf(a.v[lane],1e-6f))/fmaxf(fabsf(den),1e-6f);r.v[lane]=q*q;}break;}
-        /* MaterialX 1.39's reference OSL implementation is explicitly a TODO
-         * and returns zero for all three outputs. Preserve that behavior. */
-        case OP_CHIANG_HAIR_ROUGHNESS: r=mv_vec2(0,0);break;
+        case OP_CHIANG_HAIR_ROUGHNESS: {
+            const float longitudinal = clampf(
+                in_float(ctx, n, "longitudinal", 0.1f), 0.0f, 1.0f);
+            const float azimuthal = clampf(
+                in_float(ctx, n, "azimuthal", 0.2f), 0.0f, 1.0f);
+            const float scale_tt = in_float(ctx, n, "scale_TT", 0.5f);
+            const float scale_trt = in_float(ctx, n, "scale_TRT", 2.0f);
+            const float l2 = longitudinal * longitudinal;
+            const float l20 = powf(longitudinal, 20.0f);
+            const float a2 = azimuthal * azimuthal;
+            const float a22 = powf(azimuthal, 22.0f);
+            const float variance = powf(0.726f * longitudinal +
+                                            0.812f * l2 + 3.7f * l20, 2.0f);
+            const float logistic = 0.265f * azimuthal +
+                                   1.194f * a2 + 5.372f * a22;
+            /* The test API exposes roughness_R; graph connections select the
+             * TT/TRT outputs through the same multi-output convention. */
+            r = mv_vec2(variance, logistic);
+            break;
+        }
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
         case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;
