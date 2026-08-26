@@ -738,11 +738,17 @@ std::vector<std::string> ReadTokens(const tnext::UsdPrim& p, const char* name,
 // whatever interpolation it was authored with.
 struct NextAttr {
   const tydn::FloatChunked* data{nullptr};
+  const tydn::Int32Chunked* int_data{nullptr};
+  const tydn::UInt32Chunked* uint_data{nullptr};
   const tydn::UInt32Chunked* indices{nullptr};  // indexed primvars; may be null
   tydn::Interpolation interp{tydn::Interpolation::Vertex};
   uint32_t comps{0};
 
-  explicit operator bool() const { return data && comps > 0 && !data->empty(); }
+  explicit operator bool() const {
+    return comps > 0 &&
+           ((data && !data->empty()) || (int_data && !int_data->empty()) ||
+            (uint_data && !uint_data->empty()));
+  }
 
   // Element index for a corner, given its point id, its authored face-vertex
   // (corner) index, and its face id. SIZE_MAX when out of range.
@@ -760,7 +766,9 @@ struct NextAttr {
       if (e >= indices->size()) return SIZE_MAX;
       e = (*indices)[e];
     }
-    if ((e + 1) * comps > data->size()) return SIZE_MAX;
+    const size_t size = data ? data->size()
+                             : int_data ? int_data->size() : uint_data->size();
+    if ((e + 1) * comps > size) return SIZE_MAX;
     return e;
   }
 
@@ -772,7 +780,10 @@ struct NextAttr {
     const size_t e = element(pointId, cornerId, faceId);
     if (e == SIZE_MAX) return;
     for (uint32_t c = 0; c < std::min(n, comps); ++c) {
-      out[c] = (*data)[e * comps + c];
+      const size_t offset = e * comps + c;
+      out[c] = data       ? (*data)[offset]
+               : int_data ? static_cast<float>((*int_data)[offset])
+                          : static_cast<float>((*uint_data)[offset]);
     }
   }
 };
@@ -792,11 +803,33 @@ NextAttr MakeNextAttr(const tydn::FloatChunked& data, tydn::Interpolation interp
 NextAttr FindNextPrimvar(const tydn::RenderMesh& m, const char* name,
                          uint32_t comps) {
   for (const tydn::VertexAttribute& pv : m.primvars) {
-    if (pv.name != name || pv.float_data.empty()) continue;
+    if (pv.name != name) continue;
     NextAttr a;
-    a.data = &pv.float_data;
     a.indices = pv.has_indices() ? &pv.indices : nullptr;
     a.interp = pv.interpolation;
+    switch (pv.format) {
+      case tydn::VertexFormat::Float:
+      case tydn::VertexFormat::Vec2:
+      case tydn::VertexFormat::Vec3:
+      case tydn::VertexFormat::Vec4:
+        if (pv.float_data.empty()) continue;
+        a.data = &pv.float_data;
+        break;
+      case tydn::VertexFormat::Int:
+      case tydn::VertexFormat::IVec2:
+      case tydn::VertexFormat::IVec3:
+      case tydn::VertexFormat::IVec4:
+        if (pv.int_data.empty()) continue;
+        a.int_data = &pv.int_data;
+        break;
+      case tydn::VertexFormat::UInt:
+      case tydn::VertexFormat::UVec2:
+      case tydn::VertexFormat::UVec3:
+      case tydn::VertexFormat::UVec4:
+        if (pv.uint_data.empty()) continue;
+        a.uint_data = &pv.uint_data;
+        break;
+    }
     a.comps = comps;
     return a;
   }
@@ -880,9 +913,27 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
       case tydn::VertexFormat::Vec2: components = 2; break;
       case tydn::VertexFormat::Vec3: components = 3; break;
       case tydn::VertexFormat::Vec4: components = 4; break;
-      default: break;  // integer and matrix primvars need a typed ABI first
+      case tydn::VertexFormat::Int:
+      case tydn::VertexFormat::UInt:
+        components = 1;
+        break;
+      case tydn::VertexFormat::IVec2:
+      case tydn::VertexFormat::UVec2:
+        components = 2;
+        break;
+      case tydn::VertexFormat::IVec3:
+      case tydn::VertexFormat::UVec3:
+        components = 3;
+        break;
+      case tydn::VertexFormat::IVec4:
+      case tydn::VertexFormat::UVec4:
+        components = 4;
+        break;
+      default: break;  // matrix primvars do not fit the packed vec4 ABI
     }
-    if (components == 0 || pv.float_data.empty() ||
+    const bool hasData = !pv.float_data.empty() || !pv.int_data.empty() ||
+                         !pv.uint_data.empty();
+    if (components == 0 || !hasData ||
         pv.name == "displayColor" || pv.name == "displayOpacity" ||
         pv.name == "normals" || pv.name == "tangents" ||
         pv.name == "binormals") {
@@ -891,10 +942,29 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     GenericGeomProp prop;
     prop.name = pv.name;
     prop.components = components;
-    prop.attr.data = &pv.float_data;
     prop.attr.indices = pv.has_indices() ? &pv.indices : nullptr;
     prop.attr.interp = pv.interpolation;
     prop.attr.comps = components;
+    switch (pv.format) {
+      case tydn::VertexFormat::Float:
+      case tydn::VertexFormat::Vec2:
+      case tydn::VertexFormat::Vec3:
+      case tydn::VertexFormat::Vec4:
+        prop.attr.data = &pv.float_data;
+        break;
+      case tydn::VertexFormat::Int:
+      case tydn::VertexFormat::IVec2:
+      case tydn::VertexFormat::IVec3:
+      case tydn::VertexFormat::IVec4:
+        prop.attr.int_data = &pv.int_data;
+        break;
+      case tydn::VertexFormat::UInt:
+      case tydn::VertexFormat::UVec2:
+      case tydn::VertexFormat::UVec3:
+      case tydn::VertexFormat::UVec4:
+        prop.attr.uint_data = &pv.uint_data;
+        break;
+    }
     genericProps.push_back(std::move(prop));
   }
 
