@@ -36,7 +36,7 @@ not hand-edit generated headers.
   - `7e9af3aee` Add compute BVH geomprop transport
   - `05b1c970b` Record SWBVH geomprop regression
   - `f6d9a7af0` Support integer geomprops in next viewer
-  - `da8b1ac62` Honor MaterialX texture address modes
+- `da8b1ac62` Honor MaterialX texture address modes
 
 ## Completed coverage
 
@@ -109,6 +109,9 @@ evaluate the supported streams. Matrix-valued transport remains open.
 The CPU LightRT texture sampler now honors MaterialX periodic, clamp, and
 mirror address modes (and returns a neutral missing-texture value for constant
 outside samples); the legacy periodic entry point remains unchanged.
+CUDA/HIP path-tracing live reload now forwards the geomprop descriptor/value
+buffers through `productionPath`; this keeps the shared kernel source's new
+geomprop call signature valid under NVRTC and hipRTC.
 
 ## Verified tests after HEAD
 
@@ -143,6 +146,8 @@ Passed:
   SWBVH profile environment-skipped
 - `tusdview` rebuild plus texture pipeline, LightRT evaluator, and graph
   evaluation tests after address-mode sampling update: 3/3 passed
+- `tusdview` rebuild plus NVIDIA GL warmup and CUDA/HIP MCP live-reload tests
+  after geomprop path-tracer plumbing fix: 3/3 passed
 - Full configured native CTest rerun after conductor and generalized-Schlick
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure
@@ -161,9 +166,13 @@ The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
 timeout is 180 seconds so a healthy cold device is not incorrectly skipped.
 
-The configured full native regression is now green. Dedicated AMD Vulkan,
-real-texture/validation profiles, and external-asset profiles remain
-capability-skipped in this environment.
+The previous configured full native regression was green before the latest
+CUDA/HIP kernel plumbing change. A fresh full run reached test 122 cleanly;
+the pre-fix CUDA/HIP live-reload tests then exposed the missing `productionPath`
+arguments and were interrupted after recording that failure. A fresh full run
+is required after the fix. Dedicated AMD Vulkan, real-texture/validation
+profiles, and external-asset profiles remain capability-skipped in this
+environment.
 
 ## Remaining work, in priority order
 
