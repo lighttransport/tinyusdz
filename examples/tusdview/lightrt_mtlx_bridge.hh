@@ -118,6 +118,13 @@ bool EvaluateMaterialXStringToLightRtOpenPBR(const char* xml,
                                              tydra::LightRtOpenPBRParams* out,
                                              std::string* err);
 
+// Evaluate a volumematerial into the density/albedo/emission representation
+// shared by tusdview and headless tusdrender.
+bool EvaluateMaterialXStringToLightRtVolume(const char* xml,
+                                            const char* materialName,
+                                            DrawMaterialCPU* out,
+                                            std::string* err);
+
 // Pack DrawLightRtOpenPBRCPU into the vec4-friendly SSBO/kernel layout consumed
 // by the Vulkan, CUDA and HIP RT preview paths. `dst` must hold
 // kLightRtOpenPBRFloats floats.

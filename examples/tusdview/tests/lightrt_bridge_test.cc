@@ -1933,5 +1933,35 @@ int main() {
     return 1;
   }
 
+  const char* volumeXml =
+      "<materialx version=\"1.39\">"
+      "<anisotropic_vdf name=\"Fog\" type=\"VDF\">"
+      "<input name=\"absorption\" type=\"vector3\" value=\"0.1,0.2,0.3\"/>"
+      "<input name=\"scattering\" type=\"vector3\" value=\"0.4,0.3,0.2\"/>"
+      "</anisotropic_vdf>"
+      "<uniform_edf name=\"Glow\" type=\"EDF\"><input name=\"color\" "
+      "type=\"color3\" value=\"0.2,0.4,0.8\"/></uniform_edf>"
+      "<volume name=\"Volume\" type=\"volumeshader\">"
+      "<input name=\"vdf\" type=\"VDF\" nodename=\"Fog\"/>"
+      "<input name=\"edf\" type=\"EDF\" nodename=\"Glow\"/></volume>"
+      "<volumematerial name=\"FogMat\" type=\"material\"><input "
+      "name=\"volumeshader\" type=\"volumeshader\" nodename=\"Volume\"/>"
+      "</volumematerial></materialx>";
+  tusdview::DrawMaterialCPU volumeMaterial;
+  std::string volumeError;
+  if (!tusdview::EvaluateMaterialXStringToLightRtVolume(
+          volumeXml, "FogMat", &volumeMaterial, &volumeError) ||
+      !volumeMaterial.hasVolumeOutput ||
+      !Near(volumeMaterial.volumeDensity, 0.5f) ||
+      !Near(volumeMaterial.volumeAlbedo[0], 0.8f) ||
+      !Near(volumeMaterial.volumeAlbedo[1], 0.6f) ||
+      !Near(volumeMaterial.volumeAlbedo[2], 0.4f) ||
+      !Near(volumeMaterial.volumeEmission[2], 0.8f) ||
+      !Near(volumeMaterial.volumeEmissionScale, 1.0f)) {
+    std::fprintf(stderr, "MaterialX volume transport evaluation failed: %s\n",
+                 volumeError.c_str());
+    return 1;
+  }
+
   return 0;
 }

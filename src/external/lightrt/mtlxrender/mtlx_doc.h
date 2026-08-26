@@ -42,8 +42,9 @@ typedef struct {
 } MtlxNode;
 
 typedef struct {
-    char *name;          /* surfacematerial name, e.g. "M_Bishop_B" */
+    char *name;          /* surface/volume material name */
     int   surface_node;  /* resolved surface shader node id, or -1 */
+    int   volume_node;   /* resolved volume shader node id, or -1 */
 } MtlxMaterial;
 
 typedef struct {

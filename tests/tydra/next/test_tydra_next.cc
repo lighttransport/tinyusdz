@@ -6890,6 +6890,61 @@ void TestPtexMaterialInterfaceAsset() {
   std::cout << "  Ptex material-interface asset forwarding: PASSED\n";
 }
 
+void TestSurfaceUnlitMaterialXConversion() {
+  std::cout << "Testing MaterialX surface_unlit conversion...\n";
+  const char* usda = R"(#usda 1.0
+def Scope "World" {
+  def Material "Unlit" {
+    token outputs:mtlx:surface.connect = </World/Unlit/Surface.outputs:out>
+    def Shader "Surface" {
+      uniform token info:id = "ND_surface_unlit_surfaceshader"
+      float inputs:emission = 2.25
+      color3f inputs:emission_color.connect = </World/Unlit/Color.outputs:out>
+      float inputs:transmission = 0.35
+      color3f inputs:transmission_color = (0.2, 0.4, 0.8)
+      color3f inputs:opacity = (0.6, 0.7, 0.8)
+      token outputs:out
+    }
+    def Shader "Color" {
+      uniform token info:id = "ND_multiply_color3"
+      color3f inputs:in1 = (0.5, 0.25, 0.125)
+      color3f inputs:in2 = (0.8, 0.8, 0.8)
+      color3f outputs:out
+    }
+  }
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(loaded.stage);
+  assert(result.success);
+  const int32_t material_id = result.scene.material_by_path.at("/World/Unlit");
+  const RenderMaterial& material =
+      result.scene.materials.at(static_cast<size_t>(material_id));
+  assert(material.shader_type == RenderMaterial::ShaderType::OpenPBR);
+  assert(material.openpbr);
+  assert(!material.default_fallback);
+  assert(std::fabs(material.openpbr->base_weight.value.x) < 1.0e-6f);
+  assert(std::fabs(material.openpbr->specular_weight.value.x) < 1.0e-6f);
+  assert(std::fabs(material.openpbr->emission_luminance.value.x - 2.25f) <
+         1.0e-6f);
+  assert(std::fabs(material.openpbr->transmission_weight.value.x - 0.35f) <
+         1.0e-6f);
+  assert(std::fabs(material.openpbr->transmission_color.value.z - 0.8f) <
+         1.0e-6f);
+  assert(std::fabs(material.openpbr->opacity.value.x - 0.6f) < 1.0e-6f);
+  assert(material.alpha_mode == RenderMaterial::AlphaMode::Blend);
+  assert(material.openpbr->nodegraph_json.find("ND_multiply_color3") !=
+         std::string::npos);
+  assert(material.openpbr->nodegraph_json.find("emission_color") !=
+         std::string::npos);
+  std::cout << "  MaterialX surface_unlit conversion: PASSED\n";
+}
+
 void TestParallelMaterialTextureRemapAndCallbackPolicy() {
   std::cout << "Testing parallel material texture remap/callback policy...\n";
   const char* usda = R"(#usda 1.0
@@ -7079,6 +7134,7 @@ int main() {
   TestRenderColorManagement();
   TestIncrementalRenderSession();
   TestPtexMaterialInterfaceAsset();
+  TestSurfaceUnlitMaterialXConversion();
   TestParallelMaterialTextureRemapAndCallbackPolicy();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

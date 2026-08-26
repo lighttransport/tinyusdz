@@ -2574,6 +2574,12 @@ bool IsOpenPBRShaderId(const std::string& id) {
          id == "MtlxOpenPBRSurface";
 }
 
+bool IsSurfaceUnlitShaderId(const std::string& id) {
+  return id == "ND_surface_unlit_surfaceshader" ||
+         id == "surface_unlit" || id == "SurfaceUnlit" ||
+         id == "MtlxSurfaceUnlit";
+}
+
 bool IsPhysicsExtensionPropertyName(const std::string& name) {
   return name.rfind("mjc:", 0) == 0 ||
          name.rfind("newton:", 0) == 0 ||
@@ -8596,6 +8602,36 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
             out->openpbr->transmission_weight.value.x > kAlphaEpsilon) {
           // Transmissive OpenPBR (glass) needs the blend path even at
           // opacity 1 (legacy marks these Translucent).
+          out->alpha_mode = RenderMaterial::AlphaMode::Blend;
+        }
+        found_shader = true;
+      } else if (IsSurfaceUnlitShaderId(shader_id)) {
+        // surface_unlit is a first-class MaterialX surface shader. Reuse the
+        // renderer's OpenPBR transport, but disable its reflective lobes and
+        // retain the executable graph for emission/transmission/opacity.
+        out->shader_type = RenderMaterial::ShaderType::OpenPBR;
+        out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
+        SetParamFloat(&out->openpbr->base_weight, 0.0f);
+        SetParamFloat(&out->openpbr->specular_weight, 0.0f);
+        SetParamFloat(&out->openpbr->emission_luminance, 1.0f);
+        ExtractShaderParam(stage, child, "emission",
+                           &out->openpbr->emission_luminance, scene);
+        ExtractShaderParam(stage, child, "emission_color",
+                           &out->openpbr->emission_color, scene);
+        ExtractShaderParam(stage, child, "transmission",
+                           &out->openpbr->transmission_weight, scene);
+        ExtractShaderParam(stage, child, "transmission_color",
+                           &out->openpbr->transmission_color, scene);
+        if (!ExtractShaderParam(stage, child, "opacity",
+                                &out->openpbr->opacity, scene)) {
+          ExtractShaderParam(stage, child, "geometry_opacity",
+                             &out->openpbr->opacity, scene);
+        }
+        out->openpbr->nodegraph_json =
+            BuildNextMaterialXGraphJson(stage, child);
+        if (out->openpbr->opacity.is_texture() ||
+            out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon ||
+            out->openpbr->transmission_weight.value.x > kAlphaEpsilon) {
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;
         }
         found_shader = true;
