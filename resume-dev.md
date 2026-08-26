@@ -81,8 +81,8 @@ name hash through the fixed graph record; the CPU RT reference evaluates
 float/vector streams from triangle-corner data with authored defaults for
 missing streams (`abc287650`). The Vulkan hardware ray-query path now uploads
 per-mesh descriptor/value streams and evaluates the opcode with barycentric
-interpolation; compute-BVH, CUDA, and HIP consumers still need equivalent
-per-hit transport.
+interpolation. The shared CUDA/HIP kernel source and host upload path now have
+the matching lookup; compute-BVH and arbitrary typed variants remain open.
 
 ## Current implementation status
 
@@ -94,9 +94,9 @@ fidelity review for weighted composition and wrapper nesting; the direct
 closure slice is committed and validated.
 The next MaterialX converter resolves both direct surface bindings and
 nodegraph-backed `surfacematerial` outputs. Host-side generic float/vector
-geomprops are retained by the next scene loader; CPU RT and Vulkan hardware
-ray-query now evaluate the supported streams, while compute-BVH/CUDA/HIP
-transport and arbitrary typed variants remain open.
+geomprops are retained by the next scene loader; CPU RT, Vulkan hardware
+ray-query, and the shared CUDA/HIP kernel now evaluate the supported streams,
+while compute-BVH transport and arbitrary typed variants remain open.
 
 ## Verified tests after HEAD
 
@@ -118,6 +118,8 @@ Passed:
   CPU/bridge/safety checks: 3/3 passed
 - Texture/material regression batch after CPU sRGB parity change: 45/45
   passed, including 15 documented unavailable-hardware/asset skips
+- Reconfigured native build including the shared CUDA/HIP RT host target and
+  `tusdview`: passed
 - Full configured native CTest rerun after conductor and generalized-Schlick
   lowering changes: 298/298 passed, with 24 documented skips
 - Focused bridge/evaluator/graph/ABI and CPU/GPU parity run after closure

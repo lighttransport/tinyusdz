@@ -116,6 +116,15 @@ struct HostGeomProp {
   std::vector<float> values;
 };
 
+// Device-neutral lookup table for the CUDA/HIP graph interpreter. Values are
+// stored as triangle-corner triples, so valueOffset is a float offset into the
+// packed value stream and each triangle consumes 3 * components entries.
+struct HostGeomPropDesc {
+  uint32_t hash{0};
+  uint32_t components{0};
+  uint32_t valueOffset{0};
+};
+
 // A bounded analytic-Gaussian BVH range. Point attributes remain in one
 // compact global stream; each range owns a local BVH root and order span so
 // backends can build/traverse large fields incrementally without one monolithic
