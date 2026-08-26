@@ -246,6 +246,38 @@ int main(void) {
     return 1;
   }
 
+  /* Verify the cache's color/alpha contract independently of the projection
+   * evaluator: RGB is linearized only for an sRGB logical use, while alpha is
+   * preserved. Use a minimal uncompressed 32-bit TGA to carry an alpha byte. */
+  const char *rgba_file = "lightrt_rgba_regression.tga";
+  FILE *rgba_stream = fopen(rgba_file, "wb");
+  if (!rgba_stream) return 1;
+  unsigned char tga_header[18] = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                  1, 0, 1, 0, 32, 8};
+  unsigned char rgba_pixel[4] = {0, 0, 128, 64}; /* B, G, R, A */
+  fwrite(tga_header, 1, sizeof(tga_header), rgba_stream);
+  fwrite(rgba_pixel, 1, sizeof(rgba_pixel), rgba_stream);
+  fclose(rgba_stream);
+  TextureCache *rgba_cache = texcache_create(".");
+  int rgba_ok = rgba_cache != NULL;
+  float rgba_sample[4] = {0, 0, 0, 1};
+  if (rgba_ok) {
+    int rgba_id = texcache_get(rgba_cache, rgba_file, 1);
+    rgba_ok = rgba_id >= 0;
+    if (rgba_ok) {
+      texcache_sample(rgba_cache, rgba_id, 0.5f, 0.5f, rgba_sample);
+      rgba_ok = rgba_sample[0] > 0.21f && rgba_sample[0] < 0.22f &&
+          rgba_sample[1] < 0.01f && rgba_sample[2] < 0.01f &&
+          rgba_sample[3] > 0.24f && rgba_sample[3] < 0.26f;
+    }
+  }
+  texcache_free(rgba_cache);
+  remove(rgba_file);
+  if (!rgba_ok) {
+    fprintf(stderr, "sRGB RGB or alpha texture handling failed\n");
+    return 1;
+  }
+
   const char *nearest_file = "lightrt_nearest_regression.ppm";
   FILE *nearest_stream = fopen(nearest_file, "wb");
   if (!nearest_stream) return 1;
