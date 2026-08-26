@@ -12,11 +12,9 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `bab865016` (`Extract vector roughness in MaterialX closures`)
+- HEAD: `15f62e98e` (`Document Schlick mode validation`)
 - Upstream: `origin/dev`
-- Worktree: one in-progress tracked change in
-  `examples/tusdview/lightrt_mtlx_bridge.cc`, plus the two unrelated untracked
-  paths above.
+- Worktree: clean tracked state, plus the two unrelated untracked paths above.
 - Recent completed commits:
   - `4c7e80c07` Complete MaterialX Vulkan RT graph evaluation
   - `63c5b9a29` Transport MaterialX time context to GPU RT
@@ -61,16 +59,14 @@ F0 arithmetic used by the standalone evaluator (`97d1cd317`).
 Generalized-Schlick R/T scatter mode now emits matching specular/transmission
 lanes (`1ffade301`).
 
-## Uncommitted work in progress
+## Current implementation status
 
-`examples/tusdview/lightrt_mtlx_bridge.cc` contains a recursive closure-lowering
-pass. It discovers direct `bsdf`/`edf`/`vdf` terminal connections and lowers
-closure leaves plus typed closure composition into ordinary bounded graph nodes
-and OpenPBR lanes. It still needs compile/test validation and fidelity review,
-especially weighted lobe blending and vector roughness extraction.
-
-The remaining closure work is fidelity review for weighted composition and
-wrapper nesting; the direct closure slice is committed and validated.
+`examples/tusdview/lightrt_mtlx_bridge.cc` contains the validated recursive
+closure-lowering pass. It discovers direct `bsdf`/`edf`/`vdf` terminal
+connections and lowers closure leaves plus typed closure composition into
+ordinary bounded graph nodes and OpenPBR lanes. The remaining closure work is
+fidelity review for weighted composition and wrapper nesting; the direct
+closure slice is committed and validated.
 
 ## Verified tests after HEAD
 
@@ -88,6 +84,8 @@ Passed:
 - both interactive Vulkan shader variants compile via
   `examples/tusdview/vk/shaders/build-shaders.sh`
 - `tusdview` rebuild after Vulkan shader/context changes
+- Full configured native CTest rerun after conductor and generalized-Schlick
+  lowering changes: 298/298 passed, with 24 documented skips
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
