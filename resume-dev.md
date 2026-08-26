@@ -219,6 +219,13 @@ Passed:
   passed after generic geomprop stream preservation (`3228d85cd`)
 - Focused CPU RT, bridge, and safety checks after live arbitrary geomprop
   evaluation: 6/6 passed (`abc287650`)
+- Measured-EDF bridge and standalone evaluator regressions: 2/2 passed;
+  authored color fallback is covered for a profile filename that cannot be
+  decoded by the standalone backend.
+- Broader post-change validation: 14/14 passed, including MaterialX CPU,
+  flake/projection/OpenPBR parity, opacity texture alpha, NVIDIA GL warmup,
+  next nonmesh extraction, displacement UDIM, texture pipeline, bridge,
+  evaluator, graph connection/evaluation, and `unit-test-next`.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
