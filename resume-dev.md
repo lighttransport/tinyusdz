@@ -360,6 +360,9 @@ Passed:
   historical evidence only.
 - The graph evaluator regression now includes a cyclic two-node graph and
   verifies that the memo sentinel terminates it safely; the focused test passes.
+- Standalone `latlongimage` evaluation now defaults to the normalized shading
+  view direction, matching the bridge lowering, with a +Z fallback for empty
+  contexts; the projection evaluator test covers the runtime direction.
 - The registered NVIDIA RT semantic test was rerun with the documented
   offload environment. Device selection and hardware ray-query initialization
   succeeded on an NVIDIA GeForce RTX 5060 Ti, but cold SPIR-V validation
@@ -395,7 +398,7 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
    matrix-valued transport and object/world/view evaluator transforms are
    covered, while Vulkan instance-transform fidelity remains.
-5. Close texture/projection gaps: camera-aware latlong defaults, derivatives,
+5. Close texture/projection gaps: derivatives,
    and any true measured-EDF
    profile backend beyond the documented color fallback. Nearest filtering is
    now covered for regular, latlong, triplanar, and UDIM-capable image paths;
