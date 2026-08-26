@@ -8,6 +8,15 @@
 
 static int nearf_eps(float a, float b) { return fabsf(a - b) <= 1.0e-5f; }
 
+static int check1(const char *name, MtlxValue value, float expected) {
+  if (!nearf_eps(value.v[0], expected)) {
+    fprintf(stderr, "%s: got %.9f, expected %.9f\n", name, value.v[0],
+            expected);
+    return 0;
+  }
+  return 1;
+}
+
 static int check3(const char *name, MtlxValue value, float x, float y, float z) {
   if (!nearf_eps(value.v[0], x) || !nearf_eps(value.v[1], y) ||
       !nearf_eps(value.v[2], z)) {
@@ -72,6 +81,12 @@ int main(void) {
       " <matte name=\"matte\" type=\"color4\"><input name=\"fg\" type=\"color4\" value=\"0.4,0.1,0.2,0.5\"/><input name=\"bg\" type=\"color4\" value=\"0.2,0.4,0.6,0.25\"/></matte>"
       " <disjointover name=\"disjoint\" type=\"color4\"><input name=\"fg\" type=\"color4\" value=\"0.4,0.1,0.2,0.8\"/><input name=\"bg\" type=\"color4\" value=\"0.2,0.4,0.6,0.6\"/></disjointover>"
       " <colorcorrect name=\"colorcorrect\" type=\"color4\"><input name=\"in\" type=\"color4\" value=\"0.5,0.25,0.75,0.3\"/><input name=\"gamma\" type=\"float\" value=\"2\"/><input name=\"lift\" type=\"float\" value=\"0.1\"/><input name=\"gain\" type=\"float\" value=\"0.8\"/><input name=\"exposure\" type=\"float\" value=\"1\"/></colorcorrect>"
+      " <cellnoise2d name=\"cell2a\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"1.2,2.8\"/></cellnoise2d>"
+      " <cellnoise2d name=\"cell2b\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"1.9,2.1\"/></cellnoise2d>"
+      " <cellnoise2d name=\"cell2next\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.9,2.1\"/></cellnoise2d>"
+      " <cellnoise3d name=\"cell3\" type=\"float\"><input name=\"position\" type=\"vector3\" value=\"1.2,2.8,3.4\"/></cellnoise3d>"
+      " <randomfloat name=\"random\" type=\"float\"><input name=\"in\" type=\"float\" value=\"0.25\"/><input name=\"min\" type=\"float\" value=\"2\"/><input name=\"max\" type=\"float\" value=\"4\"/><input name=\"seed\" type=\"integer\" value=\"7\"/></randomfloat>"
+      " <randomcolor name=\"random_color\" type=\"color3\"><input name=\"in\" type=\"float\" value=\"0.25\"/><input name=\"seed\" type=\"integer\" value=\"7\"/><input name=\"huelow\" type=\"float\" value=\"0.1\"/><input name=\"huehigh\" type=\"float\" value=\"0.2\"/><input name=\"saturationlow\" type=\"float\" value=\"0.5\"/><input name=\"saturationhigh\" type=\"float\" value=\"0.6\"/><input name=\"brightnesslow\" type=\"float\" value=\"0.7\"/><input name=\"brightnesshigh\" type=\"float\" value=\"0.8\"/></randomcolor>"
       " <ifgreater name=\"choose\" type=\"color3\"><input name=\"value1\" value=\"2\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" nodename=\"ramp\"/><input name=\"in2\" nodename=\"split\"/></ifgreater>"
       " <ifgreatereq name=\"choose_eq\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"1\"/><input name=\"in1\" type=\"color3\" value=\"0.1,0.2,0.3\"/><input name=\"in2\" type=\"color3\" value=\"0.8,0.7,0.6\"/></ifgreatereq>"
       " <ifequal name=\"choose_ne\" type=\"color3\"><input name=\"value1\" value=\"1\"/><input name=\"value2\" value=\"2\"/><input name=\"in1\" type=\"color3\" value=\"1,0,0\"/><input name=\"in2\" type=\"color3\" value=\"0,0,1\"/></ifequal>"
@@ -135,6 +150,15 @@ int main(void) {
               0.46666667f, 0.23333333f, 0.4f, 1.0f) && ok;
   ok = check4("colorcorrect", eval_named(&ctx, "colorcorrect"), 1.178234f,
               0.88f, 1.407077f, 0.3f) && ok;
+  ok = check1("cellnoise2d-a", eval_named(&ctx, "cell2a"), 0.06335137f) &&
+       check1("cellnoise2d-same-cell", eval_named(&ctx, "cell2b"),
+              0.06335137f) &&
+       check1("cellnoise2d-next-cell", eval_named(&ctx, "cell2next"),
+              0.97482122f) &&
+       check1("cellnoise3d", eval_named(&ctx, "cell3"), 0.72194636f) && ok;
+  ok = check1("randomfloat", eval_named(&ctx, "random"), 2.31866973f) && ok;
+  ok = check3("randomcolor", eval_named(&ctx, "random_color"), 0.72096912f,
+              0.68491890f, 0.32840088f) && ok;
   /* mtlx_eval_node_test must clear memoization between shade points. */
   ctx.uv[0] = 0.8f;
   ctx.uv[1] = 0.9f;

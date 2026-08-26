@@ -114,6 +114,12 @@ static uint32_t mx_hash_int3(int x, int y, int z) {
     a += (uint32_t)x; b += (uint32_t)y; c += (uint32_t)z;
     return mx_bjfinal(a, b, c);
 }
+static uint32_t mx_hash_int2(int x, int y) {
+    uint32_t a, b, c;
+    a = b = c = 0xdeadbeefu + (2u << 2u) + 13u;
+    a += (uint32_t)x; b += (uint32_t)y;
+    return mx_bjfinal(a, b, c);
+}
 /* dot product of (x,y,z) with one of 16 edge-of-cube gradient vectors */
 static float mx_gradient(uint32_t hash, float x, float y, float z) {
     uint32_t h = hash & 15u;
@@ -158,6 +164,11 @@ static float cellnoise(v3 p) {
     uint32_t h = mx_hash_int3((int)floorf(p.x), (int)floorf(p.y), (int)floorf(p.z));
     return (float)h / (float)0xffffffffu;
 }
+static float randomfloat_value(float input, int seed, float lo, float hi) {
+    uint32_t h = mx_hash_int2((int)floorf(input * 4096.0f), seed);
+    float q = (float)h / (float)0xffffffffu;
+    return lo + q * (hi - lo);
+}
 
 /* ---- node dispatch ---------------------------------------------------- */
 typedef enum {
@@ -174,14 +185,15 @@ typedef enum {
     OP_CLAMP, OP_SMOOTHSTEP, OP_REMAP, OP_LUMINANCE, OP_RGBTOHSV,
     OP_HSVTORGB, OP_HSVADJUST, OP_SATURATE, OP_CONTRAST, OP_RANGE,
     OP_SEPARATE, OP_COMBINE2, OP_COMBINE3, OP_COMBINE4, OP_EXTRACT, OP_CONVERT,
-    OP_SWIZZLE, OP_NOISE3D, OP_FRACTAL3D, OP_CELLNOISE3D,
+    OP_SWIZZLE, OP_NOISE3D, OP_FRACTAL3D, OP_CELLNOISE2D, OP_CELLNOISE3D,
     OP_RAMPLR, OP_RAMPTB, OP_SPLITLR, OP_SPLITTB,
     OP_IFGREATER, OP_IFGREATEREQ, OP_IFEQUAL, OP_SWITCH, OP_DOT, OP_RAMP4,
     OP_ROTATE2D, OP_ONEMINUS, OP_DISTANCE, OP_REFLECT, OP_REFRACT,
     OP_PREMULT, OP_UNPREMULT, OP_MINCOMPONENT, OP_MAXCOMPONENT,
     OP_AND, OP_OR, OP_XOR, OP_NOT, OP_INSIDE, OP_OUTSIDE, OP_TRIANGLEWAVE,
     OP_CHECKERBOARD, OP_DIFFERENCE, OP_IN, OP_MASK, OP_MATTE, OP_OUT, OP_OVER,
-    OP_DISJOINTOVER, OP_CIRCLE, OP_LINE, OP_COLORCORRECT
+    OP_DISJOINTOVER, OP_CIRCLE, OP_LINE, OP_COLORCORRECT, OP_RANDOMFLOAT,
+    OP_RANDOMCOLOR
 } NodeOp;
 
 static NodeOp classify(const char *c) {
@@ -267,6 +279,7 @@ static NodeOp classify(const char *c) {
     /* procedural */
     if (!strcmp(c, "noise3d")) return OP_NOISE3D;
     if (!strcmp(c, "fractal3d")) return OP_FRACTAL3D;
+    if (!strcmp(c, "cellnoise2d")) return OP_CELLNOISE2D;
     if (!strcmp(c, "cellnoise3d")) return OP_CELLNOISE3D;
     if (!strcmp(c, "ramplr")) return OP_RAMPLR;
     if (!strcmp(c, "ramptb")) return OP_RAMPTB;
@@ -299,6 +312,8 @@ static NodeOp classify(const char *c) {
     if (!strcmp(c, "circle")) return OP_CIRCLE;
     if (!strcmp(c, "line")) return OP_LINE;
     if (!strcmp(c, "colorcorrect")) return OP_COLORCORRECT;
+    if (!strcmp(c, "randomfloat")) return OP_RANDOMFLOAT;
+    if (!strcmp(c, "randomcolor")) return OP_RANDOMCOLOR;
     return OP_UNKNOWN;
 }
 
@@ -604,6 +619,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_SWIZZLE: { const MtlxInput *ch=find_input(n,"channels"); const char *s=(ch && ch->has_value && ch->value.s)?ch->value.s:NULL; a=in_or(ctx,n,"in",mv_zero(n->type)); r=swizzle_channels(a,s,n->type); break; }
         case OP_NOISE3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)); MtlxValue amp=in_or(ctx,n,"amplitude",mv_float(1)),piv=in_or(ctx,n,"pivot",mv_float(0)); float val=piv.v[0]+vnoise(mv_as_v3(&pos))*amp.v[0]; r=(n->type==MV_FLOAT)?mv_float(val):mv_color3(v3_splat(val)); break; }
         case OP_FRACTAL3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)); MtlxValue amp=in_or(ctx,n,"amplitude",mv_float(1)),oc=in_or(ctx,n,"octaves",mv_float(3)),lac=in_or(ctx,n,"lacunarity",mv_float(2)),dim=in_or(ctx,n,"diminish",mv_float(0.5f)); float f=fractal(mv_as_v3(&pos),(int)oc.v[0],lac.v[0],dim.v[0])*amp.v[0]; r=(n->type==MV_FLOAT)?mv_float(f):mv_color3(v3_splat(f)); break; }
+        case OP_CELLNOISE2D: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1]));uint32_t h=mx_hash_int2((int)floorf(tc.v[0]),(int)floorf(tc.v[1]));r=mv_float((float)h/(float)0xffffffffu);break; }
         case OP_CELLNOISE3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)); float c=cellnoise(mv_as_v3(&pos)); r=(n->type==MV_FLOAT)?mv_float(c):mv_color3(v3_splat(c)); break; }
         case OP_RAMPLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float t=clampf(tc.v[0],0,1); int nc=ncomp_of(&l); r=l; for(int i=0;i<nc;i++) r.v[i]=l.v[i]*(1-t)+rr.v[i]*t; break; }
         case OP_RAMPTB: { MtlxValue tval=in_or(ctx,n,"valuet",mv_zero(n->type)),bval=in_or(ctx,n,"valueb",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float t=clampf(tc.v[1],0,1); int nc=ncomp_of(&tval); r=tval; for(int i=0;i<nc;i++) r.v[i]=tval.v[i]*(1-t)+bval.v[i]*t; break; }
@@ -613,6 +629,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_CIRCLE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.5f));float x=tc.v[0]-center.v[0],y=tc.v[1]-center.v[1];r=mv_float(x*x+y*y>radius.v[0]*radius.v[0]?0.0f:1.0f);break; }
         case OP_LINE: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),center=in_or(ctx,n,"center",mv_vec2(0,0)),radius=in_or(ctx,n,"radius",mv_float(0.1f)),p1=in_or(ctx,n,"point1",mv_vec2(0.25f,0.25f)),p2=in_or(ctx,n,"point2",mv_vec2(0.75f,0.75f));float px=tc.v[0]-center.v[0]-p1.v[0],py=tc.v[1]-center.v[1]-p1.v[1],bx=p2.v[0]-p1.v[0],by=p2.v[1]-p1.v[1],bb=bx*bx+by*by,t=clampf(bb>1e-12f?(px*bx+py*by)/bb:0,0,1),dx=px-bx*t,dy=py-by*t;r=mv_float(sqrtf(dx*dx+dy*dy)>radius.v[0]?0.0f:1.0f);break; }
         case OP_COLORCORRECT: { a=in_or(ctx,n,"in",mv_zero(n->type));MtlxValue hue=in_or(ctx,n,"hue",mv_float(0)),sat=in_or(ctx,n,"saturation",mv_float(1)),gamma=in_or(ctx,n,"gamma",mv_float(1)),lift=in_or(ctx,n,"lift",mv_float(0)),gain=in_or(ctx,n,"gain",mv_float(1)),contrast=in_or(ctx,n,"contrast",mv_float(1)),pivot=in_or(ctx,n,"contrastpivot",mv_float(0.5f)),exposure=in_or(ctx,n,"exposure",mv_float(0));v3 hsv=rgb_to_hsv(mv_as_v3(&a));hsv.x=hsv.x+hue.v[0]-floorf(hsv.x+hue.v[0]);v3 rgb=hsv_to_rgb(hsv);float lum=luminance(rgb),scale=powf(2.0f,exposure.v[0]),recip=fabsf(gamma.v[0])>1e-6f?1.0f/gamma.v[0]:0.0f;r=a;for(int i=0;i<3;i++){float x=lum+sat.v[0]*((i==0?rgb.x:(i==1?rgb.y:rgb.z))-lum);x=(x<0?-1.0f:1.0f)*powf(fabsf(x),recip);x=(x*(1-lift.v[0])+lift.v[0])*gain.v[0];r.v[i]=((x-pivot.v[0])*contrast.v[0]+pivot.v[0])*scale;}break; }
+        case OP_RANDOMFLOAT: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),lo=in_or(ctx,n,"min",mv_float(0)),hi=in_or(ctx,n,"max",mv_float(1));int x=(int)floorf(a.v[0]*(a.type==MV_INT?1.0f:4096.0f)),y=(int)floorf(seed.v[0]);float q=(float)mx_hash_int2(x,y)/(float)0xffffffffu;r=mv_float(lo.v[0]+q*(hi.v[0]-lo.v[0]));break; }
+        case OP_RANDOMCOLOR: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),hl=in_or(ctx,n,"huelow",mv_float(0)),hh=in_or(ctx,n,"huehigh",mv_float(1)),sl=in_or(ctx,n,"saturationlow",mv_float(0.825f)),sh=in_or(ctx,n,"saturationhigh",mv_float(1)),bl=in_or(ctx,n,"brightnesslow",mv_float(1)),bh=in_or(ctx,n,"brightnesshigh",mv_float(1));int s=(int)floorf(seed.v[0]);float h=randomfloat_value(a.v[0],(int)ceilf((float)s+413.3f),hl.v[0],hh.v[0]),ss=randomfloat_value(a.v[0],(int)ceilf((float)s+1522.4f),sl.v[0],sh.v[0]),v=randomfloat_value(a.v[0],(int)ceilf((float)s+1813.8f),bl.v[0],bh.v[0]);r=mv_color3(hsv_to_rgb(v3_make(h,ss,v)));break; }
         case OP_IFGREATER: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
         case OP_IFGREATEREQ: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>=mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
         case OP_IFEQUAL: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)==mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }

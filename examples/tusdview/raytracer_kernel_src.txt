@@ -21,6 +21,9 @@ typedef struct { float x, y, z; } F3;
 typedef struct { float x, y, z, w; } F4;
 __device__ F3 mk(float x, float y, float z){ F3 r; r.x=x; r.y=y; r.z=z; return r; }
 __device__ F4 mk4(float x, float y, float z, float w){ F4 r; r.x=x; r.y=y; r.z=z; r.w=w; return r; }
+__device__ unsigned int mtlxRotl32(unsigned int x,int k){return (x<<k)|(x>>(32-k));}
+__device__ unsigned int mtlxBjFinal(unsigned int a,unsigned int b,unsigned int c){c^=b;c-=mtlxRotl32(b,14);a^=c;a-=mtlxRotl32(c,11);b^=a;b-=mtlxRotl32(a,25);c^=b;c-=mtlxRotl32(b,16);a^=c;a-=mtlxRotl32(c,4);b^=a;b-=mtlxRotl32(a,14);c^=b;c-=mtlxRotl32(b,24);return c;}
+__device__ float mtlxCellNoise(int x,int y,int z,int is3d){unsigned int s=0xdeadbeefu+((is3d?3u:2u)<<2u)+13u,h=mtlxBjFinal(s+(unsigned int)x,s+(unsigned int)y,s+(is3d?(unsigned int)z:0u));return (float)h/4294967295.f;}
 __device__ F3 sub(F3 a, F3 b){ return mk(a.x-b.x, a.y-b.y, a.z-b.z); }
 __device__ F3 add(F3 a, F3 b){ return mk(a.x+b.x, a.y+b.y, a.z+b.z); }
 __device__ F3 scale(F3 a, float s){ return mk(a.x*s, a.y*s, a.z*s); }
@@ -265,6 +268,7 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
         else { float x=1.f-a.w;q=mk4((op==88?a.x*a.w:a.x)+b.x*x,(op==88?a.y*a.w:a.y)+b.y*x,(op==88?a.z*a.w:a.z)+b.z*x,a.w+b.w*x); }
         values[i]=mk4(b.x+c.x*(q.x-b.x),b.y+c.y*(q.y-b.y),b.z+c.z*(q.z-b.z),b.w+c.w*(q.w-b.w)); }
       else if (op==92) values[i]=mk4(a.x,a.y,a.z,b.x);
+      else if (op==93 || op==94) { float q=mtlxCellNoise((int)floorf(a.x),(int)floorf(a.y),(int)floorf(a.z),op==94);values[i]=mk4(q,q,q,q); }
       else values[i]=fallback;
   }
   (void)face;
