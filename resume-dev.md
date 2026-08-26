@@ -325,6 +325,10 @@ Passed:
   wrapper regression passes and matches the bridge lowering.
 - Transform evaluation now has non-identity view→world point, vector, and
   normal coverage in addition to the existing non-uniform object→world case.
+- The texture semantic harness now preflights Vulkan device selection before
+  its RT sweep, using `vulkaninfo` when available and a bounded viewer probe as
+  fallback; this skips llvmpipe RT before expensive shader initialization while
+  retaining raster probing.
 - GL/Vulkan image parity now limits itself to the bounded fixtures supported by
   both raster lanes; the advanced OpenPBR-lobe fixture remains covered by its
   dedicated next/legacy loader and material test. Both targeted checks pass.
@@ -345,7 +349,9 @@ Passed:
   smoke, renderer, parity, deformation, MCP, and raster semantic groups. Test
   133 (`tusdview-texture-semantic-aov-vk-rt`) then stalled in its RT/JIT sweep
   without output for several minutes and the aggregate run was terminated;
-  therefore no clean 298-test result is claimed for this HEAD.
+  therefore no clean 298-test result is claimed for this HEAD. The subsequent
+  preflight fix (`eed469668`) avoids this specific RT entry path on CPU-only
+  Vulkan hosts; hardware Vulkan validation remains required.
 - The rebuilt focused MaterialX/bridge matrix at this HEAD passes 9/9,
   including GL/Vulkan parity and the unsupported-real-time-lobes standalone
   coverage. The full configured run remains incomplete because the Vulkan RT
