@@ -538,7 +538,7 @@ def Xform "World" {
 
 
 def write_pattern_fixture(path: pathlib.Path) -> None:
-    """Exercise lowered checkerboard and triangle-wave nodes at hit UVs."""
+    """Exercise lowered checkerboard, triangle-wave, cell, and fractal nodes."""
     path.write_text('''#usda 1.0
 (defaultPrim = "World" upAxis = "Y")
 def Xform "World" {
@@ -607,10 +607,42 @@ def Xform "World" {
         float inputs:in2 = 0.5
         float outputs:out
       }
+      def Shader "Fractal" {
+        uniform token info:id = "ND_fractal2d_float"
+        float2 inputs:texcoord.connect = </World/M/NG/CellST.outputs:out>
+        float inputs:amplitude = 1
+        int inputs:octaves = 3
+        float inputs:lacunarity = 2
+        float inputs:diminish = 0.5
+        float outputs:out
+      }
+      def Shader "FractalAbs" {
+        uniform token info:id = "ND_absval_float"
+        float inputs:in.connect = </World/M/NG/Fractal.outputs:out>
+        float outputs:out
+      }
+      def Shader "FractalQuarter" {
+        uniform token info:id = "ND_multiply_float"
+        float inputs:in1.connect = </World/M/NG/FractalAbs.outputs:out>
+        float inputs:in2 = 0.25
+        float outputs:out
+      }
+      def Shader "FractalBias" {
+        uniform token info:id = "ND_add_float"
+        float inputs:in1.connect = </World/M/NG/FractalQuarter.outputs:out>
+        float inputs:in2 = 0.75
+        float outputs:out
+      }
+      def Shader "NoiseModulation" {
+        uniform token info:id = "ND_multiply_float"
+        float inputs:in1.connect = </World/M/NG/CellBias.outputs:out>
+        float inputs:in2.connect = </World/M/NG/FractalBias.outputs:out>
+        float outputs:out
+      }
       def Shader "Modulated" {
         uniform token info:id = "ND_multiply_float"
         float inputs:in1.connect = </World/M/NG/Wave.outputs:out>
-        float inputs:in2.connect = </World/M/NG/CellBias.outputs:out>
+        float inputs:in2.connect = </World/M/NG/NoiseModulation.outputs:out>
         float outputs:out
       }
       def Shader "Checker" {

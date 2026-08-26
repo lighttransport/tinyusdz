@@ -7,12 +7,12 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
 
 - Branch: `dev`
 - Public remote: `https://github.com/lighttransport/tinyusdz.git`
-- Local `HEAD`: `f1406bb22` (`Add full MaterialX color correction`)
+- Local `HEAD`: `0375387f1` (`Add MaterialX cell noise and random nodes`)
 - `origin/dev`: `d8068d7fc` (`Expand headless MaterialX GPU parity`)
 - Local `dev` is two commits ahead. The triangle-wave/checkerboard,
   compositing, circle, and line enhancements described in items 27-29 are
   and color-correction enhancements through item 30 are committed locally.
-  The cell-noise/random work in item 31 is uncommitted.
+  The `fractal2d` work in item 32 is uncommitted.
 
 ## Implemented in the worktree
 
@@ -149,6 +149,12 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
     float-input scaling, seeded channel offsets, authored ranges, and HSV output.
     Numerical tests lock same-cell stability and boundary changes, while the
     rendered pattern fixture executes connected cell noise at hit UVs.
+32. Added upstream-compatible `fractal2d` evaluation across CPU, CUDA/HIP,
+    Vulkan, and the standalone evaluator. The lowering preserves connected or
+    vector amplitude outside the bounded four-input core and carries output
+    channel count through the packed ABI. Scalar and color numerical tests
+    cover the exact Perlin/hash octave result, and the rendered pattern fixture
+    now executes the fractal at interpolated hit UVs.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.

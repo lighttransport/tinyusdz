@@ -501,6 +501,7 @@ enum class MaterialXGraphOpCPU : uint32_t {
   SetAlpha,
   CellNoise2D,
   CellNoise3D,
+  Fractal2D,
   Unknown,
 };
 

@@ -369,6 +369,31 @@ float MtlxCellNoise(int x, int y, int z, bool is3d) {
       seed + (is3d ? static_cast<uint32_t>(z) : 0u));
   return static_cast<float>(hash) / static_cast<float>(0xffffffffu);
 }
+float MtlxGradient2(uint32_t hash, float x, float y) {
+  const uint32_t h = hash & 7u;
+  const float u = h < 4u ? x : y;
+  const float v = 2.0f * (h < 4u ? y : x);
+  return ((h & 1u) ? -u : u) + ((h & 2u) ? -v : v);
+}
+float MtlxPerlin2(float x, float y, int channel) {
+  const int ix = static_cast<int>(std::floor(x));
+  const int iy = static_cast<int>(std::floor(y));
+  const float fx = x - static_cast<float>(ix), fy = y - static_cast<float>(iy);
+  const float u = fx*fx*fx*(fx*(fx*6.0f-15.0f)+10.0f);
+  const float v = fy*fy*fy*(fy*(fy*6.0f-15.0f)+10.0f);
+  const auto hash = [channel](int px, int py) {
+    const uint32_t seed = 0xdeadbeefu + (2u << 2u) + 13u;
+    uint32_t h = MtlxBjFinal(seed + static_cast<uint32_t>(px),
+                            seed + static_cast<uint32_t>(py), seed);
+    if (channel >= 0) h = (h >> (channel * 8)) & 0xffu;
+    return h;
+  };
+  const float a=MtlxGradient2(hash(ix,iy),fx,fy);
+  const float b=MtlxGradient2(hash(ix+1,iy),fx-1.0f,fy);
+  const float c=MtlxGradient2(hash(ix,iy+1),fx,fy-1.0f);
+  const float d=MtlxGradient2(hash(ix+1,iy+1),fx-1.0f,fy-1.0f);
+  return 0.6616f*((1.0f-v)*(a+(b-a)*u)+v*(c+(d-c)*u));
+}
 
 std::array<float, 4> EvalCpuMaterialXGraph(
     const HostScene& scene, int materialId, int route, float u, float v,
@@ -731,6 +756,20 @@ std::array<float, 4> EvalCpuMaterialXGraph(
             static_cast<int>(std::floor(a[1])),
             static_cast<int>(std::floor(a[2])), is3d);
         dst = {q, q, q, q};
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::Fractal2D)) {
+        const auto diminishValue = textureId >= 0 && textureId < count
+            ? values[textureId][0] : scene.matGraph[p + 17];
+        const int channels = std::clamp(
+            static_cast<int>(std::floor(scene.matGraph[p + 20] + 0.5f)), 1, 4);
+        const int octaves = std::clamp(static_cast<int>(std::floor(b[0]+0.5f)),0,16);
+        float px=a[0], py=a[1], weight=1.0f;
+        dst={0,0,0,0};
+        for(int octave=0;octave<octaves;++octave){
+          if(channels==1) dst[0]+=weight*MtlxPerlin2(px,py,-1);
+          else if(channels==2){dst[0]+=weight*MtlxPerlin2(px,py,-1);dst[1]+=weight*MtlxPerlin2(px+19,py+193,-1);}
+          else {for(int lane=0;lane<3;++lane)dst[lane]+=weight*MtlxPerlin2(px,py,lane);if(channels==4)dst[3]+=weight*MtlxPerlin2(px+19,py+193,-1);}
+          px*=c[0];py*=c[0];weight*=diminishValue;
+        }
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Difference)) {
         for (int lane = 0; lane < 4; ++lane) {
           const float q = std::fabs(a[lane] - b[lane]);
