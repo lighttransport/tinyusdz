@@ -232,8 +232,8 @@ inline void TransformNormal(const float m[12], const float p[3], float out[3]) {
 // tracers: same wrap-mode encoding (0 and 3 = clamp, 2 = mirror, everything
 // else = repeat), same [0,1] -> [0, size-1] mapping with clamp-to-edge on the
 // upper neighbour, and NO V flip -- HostScene::uv already carries the
-// convention the kernel samples with. No sRGB decode: texels are used as-is,
-// consistent with this tracer's un-color-managed flat shading.
+// convention the kernel samples with. RGB texels honor HostTextureDesc::srgb;
+// alpha remains an unmodified coverage/value channel.
 inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
                                   const std::vector<uint8_t>& texels, int texId,
                                   float u, float v, float out[3]) {
@@ -261,6 +261,10 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
     return;
   }
   const HostTextureDesc& d = *desc;
+  auto srgbToLinear = [](float x) {
+    return x <= 0.04045f ? x / 12.92f
+                         : std::pow((x + 0.055f) / 1.055f, 2.4f);
+  };
   auto wrapCoord = [](float x, int mode) -> float {
     if (mode == 0 || mode == 3) return std::clamp(x, 0.0f, 1.0f);  // clamp
     if (mode == 2) {                                               // mirror
@@ -287,6 +291,11 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
     rgb[0] = texels[idx + 0] / 255.0f;
     rgb[1] = texels[idx + 1] / 255.0f;
     rgb[2] = texels[idx + 2] / 255.0f;
+    if (d.srgb) {
+      rgb[0] = srgbToLinear(rgb[0]);
+      rgb[1] = srgbToLinear(rgb[1]);
+      rgb[2] = srgbToLinear(rgb[2]);
+    }
   };
   float c00[3], c10[3], c01[3], c11[3];
   texel(x0, y0, c00); texel(x1, y0, c10);
@@ -326,6 +335,10 @@ inline float SampleTextureBilinearChannel(
   if (desc->isPtex || desc->width <= 0 || desc->height <= 0) return 1.0f;
   const HostTextureDesc& d = *desc;
   channel = std::clamp(channel, 0, 3);
+  auto srgbToLinear = [](float x) {
+    return x <= 0.04045f ? x / 12.92f
+                         : std::pow((x + 0.055f) / 1.055f, 2.4f);
+  };
   auto wrapCoord = [](float x, int mode) -> float {
     if (mode == 0 || mode == 3) return std::clamp(x, 0.0f, 1.0f);
     if (mode == 2) {
@@ -349,7 +362,9 @@ inline float SampleTextureBilinearChannel(
     const size_t idx = static_cast<size_t>(d.offset) +
                        (static_cast<size_t>(y) * d.width + x) * 4u +
                        static_cast<size_t>(channel);
-    return idx < texels.size() ? texels[idx] / 255.0f : 1.0f;
+    if (idx >= texels.size()) return 1.0f;
+    const float value = texels[idx] / 255.0f;
+    return d.srgb && channel < 3 ? srgbToLinear(value) : value;
   };
   const float top = texel(x0, y0) * (1.0f - tx) + texel(x1, y0) * tx;
   const float bot = texel(x0, y1) * (1.0f - tx) + texel(x1, y1) * tx;

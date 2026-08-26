@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -1159,6 +1160,20 @@ int main() {
      contextMat.materialXGraph.nodes[22].op!=tusdview::MaterialXGraphOpCPU::Constant||
      contextMat.materialXGraph.nodes[25].op!=tusdview::MaterialXGraphOpCPU::Convert){
     std::fprintf(stderr,"MaterialX runtime context lowering failed: %s (nodes=%zu)\n",contextError.c_str(),contextMat.materialXGraph.nodes.size());return 1;
+  }
+  std::vector<float> contextPack(tusdview::kRtMaterialGraphFloats, 0.0f);
+  tusdview::PackMaterialXGraphRuntime(contextMat, contextPack.data());
+  const size_t contextCustom = tusdview::kRtMaterialGraphHeaderFloats +
+                               4 * tusdview::kRtMaterialGraphNodeFloats;
+  uint32_t contextHash = 0;
+  std::memcpy(&contextHash, &contextPack[contextCustom + 17],
+              sizeof(contextHash));
+  if (contextPack[contextCustom] !=
+          static_cast<float>(tusdview::MaterialXGraphOpCPU::GeomProp) ||
+      contextHash != tusdview::MaterialXGeomPropHash("temperature") ||
+      contextPack[contextCustom + 18] != 1.0f) {
+    std::fprintf(stderr, "MaterialX geomprop graph packing failed\n");
+    return 1;
   }
   tusdview::DrawMaterialCPU latlongMat;
   latlongMat.materialXNodeGraphJson=R"json({"nodegraph":{"nodes":[

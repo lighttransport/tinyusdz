@@ -496,8 +496,20 @@ struct MeshDescGPU {
   float nrm0[4];             // normal matrix columns (xyz used)
   float nrm1[4];
   float nrm2[4];
+  uint64_t geomPropDescAddr;
+  uint64_t geomPropValueAddr;
+  uint32_t geomPropCount;
+  uint32_t geomPropPad;
 };
-static_assert(sizeof(MeshDescGPU) == 144, "MeshDescGPU must match the scalar shader layout");
+static_assert(sizeof(MeshDescGPU) == 168, "MeshDescGPU must match the scalar shader layout");
+
+struct RtGeomPropDescGPU {
+  uint32_t hash;
+  uint32_t components;
+  uint32_t valueOffset;
+  uint32_t pad;
+};
+static_assert(sizeof(RtGeomPropDescGPU) == 16, "RT geomprop descriptor must be tightly packed");
 
 struct RtSubmeshRangeGPU {
   uint32_t firstPrim;
@@ -5614,6 +5626,10 @@ void VulkanRenderer::destroyScene() {
     if (m.triMatMem) vkFreeMemory(device_, m.triMatMem, nullptr);
     if (m.rtSubmeshBuf) vkDestroyBuffer(device_, m.rtSubmeshBuf, nullptr);
     if (m.rtSubmeshMem) vkFreeMemory(device_, m.rtSubmeshMem, nullptr);
+    if (m.geomPropDescBuf) vkDestroyBuffer(device_, m.geomPropDescBuf, nullptr);
+    if (m.geomPropDescMem) vkFreeMemory(device_, m.geomPropDescMem, nullptr);
+    if (m.geomPropValueBuf) vkDestroyBuffer(device_, m.geomPropValueBuf, nullptr);
+    if (m.geomPropValueMem) vkFreeMemory(device_, m.geomPropValueMem, nullptr);
     if (m.jointVbo) vkDestroyBuffer(device_, m.jointVbo, nullptr);
     if (m.jointVboMem) vkFreeMemory(device_, m.jointVboMem, nullptr);
     if (m.weightVbo) vkDestroyBuffer(device_, m.weightVbo, nullptr);
@@ -7492,6 +7508,34 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
 
   if (rtSupported_) {
+    if (!sm.geomProps.empty()) {
+      std::vector<RtGeomPropDescGPU> props;
+      std::vector<float> values;
+      for (const DrawGeomPropCPU& prop : sm.geomProps) {
+        if (prop.components < 1 || prop.components > 4 ||
+            prop.values.size() != sm.vertices.size() * prop.components)
+          continue;
+        RtGeomPropDescGPU desc{};
+        desc.hash = MaterialXGeomPropHash(prop.name);
+        desc.components = prop.components;
+        desc.valueOffset = static_cast<uint32_t>(values.size());
+        props.push_back(desc);
+        values.insert(values.end(), prop.values.begin(), prop.values.end());
+      }
+      if (!props.empty() && !values.empty() &&
+          createHostBuffer(props.size() * sizeof(RtGeomPropDescGPU),
+                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, props.data(),
+                           &gm.geomPropDescBuf, &gm.geomPropDescMem,
+                           /*deviceAddress=*/true, poolStatic) &&
+          createHostBuffer(values.size() * sizeof(float),
+                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, values.data(),
+                           &gm.geomPropValueBuf, &gm.geomPropValueMem,
+                           /*deviceAddress=*/true, poolStatic)) {
+        gm.geomPropDescAddr = bufferDeviceAddress(gm.geomPropDescBuf);
+        gm.geomPropValueAddr = bufferDeviceAddress(gm.geomPropValueBuf);
+        gm.geomPropCount = static_cast<uint32_t>(props.size());
+      }
+    }
     gm.vertexCount = static_cast<uint32_t>(sm.vertices.size());
     gm.indexCount = static_cast<uint32_t>(sm.indices.size());
     // RT-only geometry buffer. Displaced meshes trace baked vertices; dynamic
@@ -9089,6 +9133,9 @@ void VulkanRenderer::rebuildTlas() {
     d.submeshAddr = m.rtSubmeshAddr;
     d.jointAddr = m.jointAddr;
     d.weightAddr = m.weightAddr;
+    d.geomPropDescAddr = m.geomPropDescAddr;
+    d.geomPropValueAddr = m.geomPropValueAddr;
+    d.geomPropCount = m.geomPropCount;
     d.matId = (m.matId < 0) ? 0xffffffffu : static_cast<uint32_t>(m.matId);
     d.geometricNormal = (m.geometricNormal ? 1u : 0u) |
                         ((static_cast<uint32_t>(m.purposeId) & 3u) << 1) |  // bits1-2 purpose

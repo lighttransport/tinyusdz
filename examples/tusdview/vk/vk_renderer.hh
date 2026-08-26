@@ -257,6 +257,13 @@ class VulkanRenderer final : public Renderer {
     VkDeviceAddress triMatAddr{0};
     VkDeviceAddress jointAddr{0};            // RT skin-weights AOV (joint ids)
     VkDeviceAddress weightAddr{0};           // RT skin-weights AOV (weights)
+    VkBuffer geomPropDescBuf{VK_NULL_HANDLE};
+    VkDeviceMemory geomPropDescMem{VK_NULL_HANDLE};
+    VkDeviceAddress geomPropDescAddr{0};
+    VkBuffer geomPropValueBuf{VK_NULL_HANDLE};
+    VkDeviceMemory geomPropValueMem{VK_NULL_HANDLE};
+    VkDeviceAddress geomPropValueAddr{0};
+    uint32_t geomPropCount{0};
     // Optional compact primitive-range table for RT material lookup. Allocated
     // only for multi-material or distinct-back-material meshes.
     VkBuffer rtSubmeshBuf{VK_NULL_HANDLE};
