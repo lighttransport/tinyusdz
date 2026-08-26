@@ -1240,7 +1240,8 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
     }
 
     const float weight = scale * fmaxf(0.0f, in_float(ctx, n, "weight", 1.0f));
-    if (!strcmp(cat, "oren_nayar_diffuse_bsdf") ||
+    if (!strcmp(cat, "diffuse_bsdf") ||
+        !strcmp(cat, "oren_nayar_diffuse_bsdf") ||
         !strcmp(cat, "burley_diffuse_bsdf")) {
         const float old = out->base_weight;
         blend_lobe(&out->base_weight, &out->base_color,

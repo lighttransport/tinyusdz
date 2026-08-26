@@ -486,11 +486,11 @@ int main(void) {
 
   const char *closure_xml =
       "<materialx version=\"1.39\">"
-      " <oren_nayar_diffuse_bsdf name=\"Diffuse\" type=\"BSDF\">"
+      " <diffuse_bsdf name=\"Diffuse\" type=\"BSDF\">"
       "  <input name=\"weight\" type=\"float\" value=\"0.4\"/>"
       "  <input name=\"color\" type=\"color3\" value=\"0.2,0.3,0.4\"/>"
       "  <input name=\"roughness\" type=\"float\" value=\"0.25\"/>"
-      " </oren_nayar_diffuse_bsdf>"
+      " </diffuse_bsdf>"
       " <dielectric_bsdf name=\"Glass\" type=\"BSDF\">"
       "  <input name=\"weight\" type=\"float\" value=\"0.6\"/>"
       "  <input name=\"tint\" type=\"color3\" value=\"0.8,0.9,1\"/>"
