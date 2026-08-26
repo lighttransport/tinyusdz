@@ -2017,6 +2017,15 @@ int main() {
       "direct EDF", {4, 44}) ||
       !CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
+      {"name":"base","category":"uniform_edf","type":"EDF","inputs":[{"name":"color","value":[0.2,0.4,0.8]}]},
+      {"name":"schlick","category":"generalized_schlick_edf","type":"EDF","inputs":[
+        {"name":"base","nodename":"base"},{"name":"color0","value":[0.5,0.5,0.5]},
+        {"name":"color90","value":[1,0.5,0.25]},{"name":"exponent","value":5}]}
+    ],"outputs":[{"name":"shader","type":"EDF","nodename":"schlick"}]},
+    "connections":[{"input":"edf","output":"shader"}]})json",
+      "generalized Schlick EDF", {4, 44}) ||
+      !CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
       {"name":"a","category":"constant","type":"color3","inputs":[{"name":"value","value":[0.2,0.1,0.0]}]},
       {"name":"s","category":"constant","type":"color3","inputs":[{"name":"value","value":[0.3,0.4,0.5]}]},
       {"name":"fog","category":"absorption_vdf","type":"VDF","inputs":[{"name":"absorption","nodename":"a"},{"name":"scattering","nodename":"s"}]}
