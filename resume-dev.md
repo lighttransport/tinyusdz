@@ -109,6 +109,23 @@ history. Do not touch or add the unrelated untracked `run.sh` or `usd-assets`.
     It now interpolates each RGB channel from luminance using the authored
     `amount`, matching MaterialX and the standalone evaluator, instead of being
     miscompiled as a clamp. The hardware blend-chain fixture now executes it.
+23. Corrected four-input `ifgreater`, `ifgreatereq`/`ifgreaterequal`, and
+    `ifequal` runtime graphs. The fourth branch uses the non-image auxiliary
+    lane as either a connected node or a packed literal. Cycles and graphs over
+    the fixed 64-node execution bound are now rejected explicitly.
+24. Added renderer parity for `rgbtohsv`, `hsvtorgb`, `rotate2d`, and the
+    `oneminus` alias, plus evaluator parity for common category aliases,
+    `fract`/`fraction`, and `step`. Graph tests now cover graph-local duplicate
+    names, unresolved producers, conditional boundaries, HSV round trips, and
+    memoized UV reevaluation.
+25. Lowered high-arity `ramp4` and ten-input `switch` nodes into bounded graph
+    primitives, retaining connected values and texcoords without changing the
+    21-float node ABI. Added vector geometry, premultiply, component reduction,
+    mask, logical, geomcolor, and bitangent operations across CPU, CUDA/HIP,
+    Vulkan, and the standalone evaluator.
+26. Raised default CPU tusdrender's guarded MaterialX graph evaluation depth
+    from 10 to the renderer's 64-node bound. A new headless CTest renders the
+    authored deep-16 ChainTest and rejects the former fallback warnings.
 
 The Vulkan compute shader was recompiled into
 `trace_materialx_path.spv.h`. Do not edit the generated header by hand.
@@ -146,11 +163,19 @@ The Vulkan compute shader was recompiled into
   80.39 s across Vulkan RT on NVIDIA and AMD, CUDA on NVIDIA, and HIP on AMD.
 - Strict hardware parity after the MaterialX saturation fix passed in 161.76 s
   across the same four hardware paths; the shared CUDA/HIP kernel rebuilt cold.
+- Strict hardware parity with RGB/HSV round-trip and a connected four-input
+  conditional passed in 158.29 s across Vulkan RT on NVIDIA/AMD, CUDA, and HIP.
+- Strict hardware parity with connected `ramp4` lowering and a conditional-
+  driven lowered `switch` passed in 156.46 s across the same four paths.
 
 ## Remaining work
 
 1. Continue incremental MaterialX coverage using the bounded graph ABI and the
    non-image auxiliary-input convention where a standard node needs a fourth
    dependency.
-2. Keep `run.sh` and `usd-assets` untracked. If a later push is requested, run
+2. Continue the upstream stdlib inventory with procedural pattern, matrix, and
+   remaining compositing nodes.
+3. Extend spatial MaterialX evaluation into volume shader inputs; current next
+   volume resolution handles connected constants but not texture/noise graphs.
+4. Keep `run.sh` and `usd-assets` untracked. If a later push is requested, run
    the mandatory exact-range pre-push audit and request fresh authorization.

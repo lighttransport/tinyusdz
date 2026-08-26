@@ -1055,14 +1055,91 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     if (err) *err = "MaterialX graph has no nodes";
     return false;
   }
-  std::map<std::string, int> nodeIds;
+  // Lower high-arity standard nodes into the bounded primitive runtime ABI.
+  // The original node name is retained by the final primitive, so graph
+  // outputs and downstream connections require no rewriting.
+  nlohmann::json runtimeNodes = nlohmann::json::array();
+  auto inputNamed = [](const nlohmann::json& node, const char* name,
+                       const nlohmann::json& fallback) {
+    const auto it = node.find("inputs");
+    if (it != node.end() && it->is_array())
+      for (const auto& input : *it)
+        if (JsonString(input, "name") == name) return input;
+    return fallback;
+  };
+  auto renamedInput = [](nlohmann::json input, const char* name) {
+    input["name"] = name;
+    return input;
+  };
   for (const nlohmann::json& node : *nodesIt) {
+    const std::string name = JsonString(node, "name");
+    const std::string type = JsonString(node, "type");
+    const std::string cat = NormalizeMtlxCategory(JsonString(node, "category"), type);
+    if (cat == "ramp4" && !name.empty()) {
+      const std::string st = name + "__st";
+      const std::string u = name + "__u";
+      const std::string v = name + "__v";
+      const std::string top = name + "__top";
+      const std::string bottom = name + "__bottom";
+      nlohmann::json tc = inputNamed(node, "texcoord",
+          {{"name", "texcoord"}, {"nodename", st}});
+      if (JsonString(tc, "nodename").empty() && tc.find("value") == tc.end())
+        tc["nodename"] = st;
+      if (JsonString(tc, "nodename") == st)
+        runtimeNodes.push_back({{"name", st}, {"category", "texcoord"},
+                                {"type", "vector2"}, {"inputs", nlohmann::json::array()}});
+      runtimeNodes.push_back({{"name", u}, {"category", "extract"}, {"type", "float"},
+          {"inputs", nlohmann::json::array({renamedInput(tc, "in"),
+              nlohmann::json{{"name", "index"}, {"value", 0}}})}});
+      runtimeNodes.push_back({{"name", v}, {"category", "extract"}, {"type", "float"},
+          {"inputs", nlohmann::json::array({renamedInput(tc, "in"),
+              nlohmann::json{{"name", "index"}, {"value", 1}}})}});
+      runtimeNodes.push_back({{"name", top}, {"category", "mix"}, {"type", type},
+          {"inputs", nlohmann::json::array({
+              renamedInput(inputNamed(node, "valuetl", {{"value", 0.0}}), "bg"),
+              renamedInput(inputNamed(node, "valuetr", {{"value", 0.0}}), "fg"),
+              nlohmann::json{{"name", "mix"}, {"nodename", u}}})}});
+      runtimeNodes.push_back({{"name", bottom}, {"category", "mix"}, {"type", type},
+          {"inputs", nlohmann::json::array({
+              renamedInput(inputNamed(node, "valuebl", {{"value", 0.0}}), "bg"),
+              renamedInput(inputNamed(node, "valuebr", {{"value", 0.0}}), "fg"),
+              nlohmann::json{{"name", "mix"}, {"nodename", u}}})}});
+      runtimeNodes.push_back({{"name", name}, {"category", "mix"}, {"type", type},
+          {"inputs", nlohmann::json::array({
+              nlohmann::json{{"name", "bg"}, {"nodename", top}},
+              nlohmann::json{{"name", "fg"}, {"nodename", bottom}},
+              nlohmann::json{{"name", "mix"}, {"nodename", v}}})}});
+      continue;
+    }
+    if (cat == "switch" && !name.empty()) {
+      const nlohmann::json which = inputNamed(node, "which", {{"value", 0.0}});
+      nlohmann::json fallback = inputNamed(node, "in10", {{"value", 0.0}});
+      for (int choice = 8; choice >= 0; --choice) {
+        const std::string lowered = choice == 0 ? name :
+            name + "__choice" + std::to_string(choice);
+        const std::string previous = choice == 8 ? std::string() :
+            name + "__choice" + std::to_string(choice + 1);
+        nlohmann::json other = choice == 8 ? renamedInput(fallback, "in2") :
+            nlohmann::json{{"name", "in2"}, {"nodename", previous}};
+        runtimeNodes.push_back({{"name", lowered}, {"category", "ifequal"},
+            {"type", type}, {"inputs", nlohmann::json::array({
+                renamedInput(which, "value1"),
+                nlohmann::json{{"name", "value2"}, {"value", choice}},
+                renamedInput(inputNamed(node, ("in" + std::to_string(choice + 1)).c_str(),
+                                        {{"value", 0.0}}), "in1"), other})}});
+      }
+      continue;
+    }
+    runtimeNodes.push_back(node);
+  }
+  std::map<std::string, int> nodeIds;
+  for (const nlohmann::json& node : runtimeNodes) {
     const std::string name = JsonString(node, "name");
     if (!name.empty() && !nodeIds.count(name))
       nodeIds[name] = static_cast<int>(nodeIds.size());
   }
   std::set<std::string> emittedNodes;
-  for (const nlohmann::json& node : *nodesIt) {
+  for (const nlohmann::json& node : runtimeNodes) {
     const std::string name = JsonString(node, "name");
     if (name.empty() || !emittedNodes.insert(name).second) continue;
     MaterialXGraphNodeCPU out;
@@ -1076,11 +1153,12 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     } else if (cat == "tiledimage" || cat == "hextiledimage") {
       out.op = MaterialXGraphOpCPU::TiledImage;
       graph.hasImages = true;
-    } else if (cat == "normalmap" || cat == "gltf_normalmap") {
+    } else if (cat == "normalmap" || cat == "gltf_normalmap" ||
+               cat == "hextilednormalmap") {
       out.op = MaterialXGraphOpCPU::NormalMap;
       graph.hasImages = true;
-    } else if (cat == "add") out.op = MaterialXGraphOpCPU::Add;
-    else if (cat == "subtract") out.op = MaterialXGraphOpCPU::Subtract;
+    } else if (cat == "add" || cat == "plus") out.op = MaterialXGraphOpCPU::Add;
+    else if (cat == "subtract" || cat == "minus") out.op = MaterialXGraphOpCPU::Subtract;
     else if (cat == "multiply") out.op = MaterialXGraphOpCPU::Multiply;
     else if (cat == "divide") out.op = MaterialXGraphOpCPU::Divide;
     else if (cat == "mix") out.op = MaterialXGraphOpCPU::Mix;
@@ -1092,19 +1170,22 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     }
     else if (cat == "dot" || cat == "dotproduct") out.op = MaterialXGraphOpCPU::Dot;
     else if (cat == "normalize") out.op = MaterialXGraphOpCPU::Normalized;
-    else if (cat == "power" || cat == "pow")
+    else if (cat == "power" || cat == "pow" || cat == "safepower")
       out.op = MaterialXGraphOpCPU::Power;
     else if (cat == "min" || cat == "minimum")
       out.op = MaterialXGraphOpCPU::Minimum;
     else if (cat == "max" || cat == "maximum")
       out.op = MaterialXGraphOpCPU::Maximum;
-    else if (cat == "abs") out.op = MaterialXGraphOpCPU::Absolute;
+    else if (cat == "abs" || cat == "absval") out.op = MaterialXGraphOpCPU::Absolute;
     else if (cat == "sqrt") out.op = MaterialXGraphOpCPU::SquareRoot;
     else if (cat == "sin") out.op = MaterialXGraphOpCPU::Sine;
     else if (cat == "cos") out.op = MaterialXGraphOpCPU::Cosine;
     else if (cat == "luminance") out.op = MaterialXGraphOpCPU::Luminance;
-    else if (cat == "ifgreaterequal" || cat == "ifequal" ||
-             cat == "select") out.op = MaterialXGraphOpCPU::Select;
+    else if (cat == "select") out.op = MaterialXGraphOpCPU::Select;
+    else if (cat == "ifgreater") out.op = MaterialXGraphOpCPU::IfGreater;
+    else if (cat == "ifgreatereq" || cat == "ifgreaterequal")
+      out.op = MaterialXGraphOpCPU::IfGreaterEqual;
+    else if (cat == "ifequal") out.op = MaterialXGraphOpCPU::IfEqual;
     else if (cat == "texcoord" || cat == "texcoord0" || cat == "texcoord1") {
       out.op = MaterialXGraphOpCPU::Texcoord;
       // Preserve the explicit second-set form in the graph IR.  The z lane
@@ -1117,8 +1198,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
     else if (cat == "fract" || cat == "fraction") out.op = MaterialXGraphOpCPU::Fract;
     else if (cat == "step") out.op = MaterialXGraphOpCPU::Step;
     else if (cat == "smoothstep") out.op = MaterialXGraphOpCPU::Smoothstep;
-    else if (cat == "cross") out.op = MaterialXGraphOpCPU::Cross;
-    else if (cat == "length") out.op = MaterialXGraphOpCPU::Length;
+    else if (cat == "cross" || cat == "crossproduct") out.op = MaterialXGraphOpCPU::Cross;
+    else if (cat == "length" || cat == "magnitude") out.op = MaterialXGraphOpCPU::Length;
     else if (cat == "noise3d") out.op = MaterialXGraphOpCPU::Noise3D;
     else if (cat == "noise2d" || cat == "noise")
       out.op = MaterialXGraphOpCPU::Noise2D;
@@ -1132,17 +1213,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.op = MaterialXGraphOpCPU::Transform2D;
     else if (cat == "exp" || cat == "exponential")
       out.op = MaterialXGraphOpCPU::Exponential;
-    else if (cat == "log" || cat == "logarithm")
+    else if (cat == "log" || cat == "ln" || cat == "logarithm")
       out.op = MaterialXGraphOpCPU::Logarithm;
     else if (cat == "modulo" || cat == "mod") out.op = MaterialXGraphOpCPU::Modulo;
     else if (cat == "invert") out.op = MaterialXGraphOpCPU::Invert;
+    else if (cat == "oneminus") out.op = MaterialXGraphOpCPU::Invert;
     else if (cat == "remap" || cat == "range") out.op = MaterialXGraphOpCPU::Remap;
     else if (cat == "atan2" || cat == "arctan2") out.op = MaterialXGraphOpCPU::Atan2;
     else if (cat == "sign" || cat == "signum") out.op = MaterialXGraphOpCPU::Sign;
     else if (cat == "round") out.op = MaterialXGraphOpCPU::Round;
     else if (cat == "combine2" || cat == "combine3" || cat == "combine4")
       out.op = MaterialXGraphOpCPU::Combine;
-    else if (cat == "extract" || cat == "separate")
+    else if (cat == "extract" || cat == "separate" || cat == "separate2" ||
+             cat == "separate3" || cat == "separate4")
       out.op = MaterialXGraphOpCPU::Extract;
     else if (cat.rfind("convert", 0) == 0)
       out.op = MaterialXGraphOpCPU::Convert;
@@ -1151,6 +1234,26 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       out.op = MaterialXGraphOpCPU::HsvAdjust;
       out.value[1][1] = out.value[1][2] = 1.0f;
     }
+    else if (cat == "rgbtohsv") out.op = MaterialXGraphOpCPU::RgbToHsv;
+    else if (cat == "hsvtorgb") out.op = MaterialXGraphOpCPU::HsvToRgb;
+    else if (cat == "rotate2d") out.op = MaterialXGraphOpCPU::Rotate2D;
+    else if (cat == "distance") out.op = MaterialXGraphOpCPU::Distance;
+    else if (cat == "reflect") out.op = MaterialXGraphOpCPU::Reflect;
+    else if (cat == "refract") out.op = MaterialXGraphOpCPU::Refract;
+    else if (cat == "premult") out.op = MaterialXGraphOpCPU::Premult;
+    else if (cat == "unpremult") out.op = MaterialXGraphOpCPU::Unpremult;
+    else if (cat == "mincomponent") out.op = MaterialXGraphOpCPU::MinComponent;
+    else if (cat == "maxcomponent") out.op = MaterialXGraphOpCPU::MaxComponent;
+    else if (cat == "and") out.op = MaterialXGraphOpCPU::LogicalAnd;
+    else if (cat == "or") out.op = MaterialXGraphOpCPU::LogicalOr;
+    else if (cat == "xor") out.op = MaterialXGraphOpCPU::LogicalXor;
+    else if (cat == "not") out.op = MaterialXGraphOpCPU::LogicalNot;
+    else if (cat == "inside") out.op = MaterialXGraphOpCPU::Inside;
+    else if (cat == "outside") out.op = MaterialXGraphOpCPU::Outside;
+    else if (cat == "geomcolor") {
+      out.op = MaterialXGraphOpCPU::GeomColor;
+    }
+    else if (cat == "bitangent") out.op = MaterialXGraphOpCPU::Bitangent;
     else if (cat == "heighttonormal")
       out.op = MaterialXGraphOpCPU::HeightToNormal;
     else if (cat == "asin" || cat == "arcsin")
@@ -1214,11 +1317,24 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         const std::string inputName = JsonString(input, "name");
         const auto valueIt = input.find("value");
         const std::string inputType = NormalizeMtlxType(JsonString(input, "type"));
-        if ((cat == "splitlr" || cat == "splittb") &&
-            inputName == "texcoord") {
+        const bool conditional = cat == "ifgreater" || cat == "ifgreatereq" ||
+                                 cat == "ifgreaterequal" || cat == "ifequal";
+        if (((cat == "splitlr" || cat == "splittb") &&
+             inputName == "texcoord") ||
+            (conditional && inputName == "in2")) {
           const std::string source = JsonString(input, "nodename");
           const auto found = nodeIds.find(source);
           if (found != nodeIds.end()) out.auxInput = found->second;
+          if (valueIt != input.end()) {
+            if (valueIt->is_number()) {
+              const float v = valueIt->get<float>();
+              for (float& lane : out.auxValue) lane = v;
+            } else if (valueIt->is_array()) {
+              for (size_t c = 0; c < valueIt->size() && c < 4; ++c)
+                if ((*valueIt)[c].is_number())
+                  out.auxValue[c] = (*valueIt)[c].get<float>();
+            }
+          }
           continue;
         }
         if ((cat == "swizzle" || cat.rfind("swizzle_", 0) == 0) &&
@@ -1278,6 +1394,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           inputSlot = 1;
         else if ((cat == "rotate3d" || cat == "rotate") && inputName == "in")
           inputSlot = 2;
+        else if (cat == "rotate2d" && inputName == "in") inputSlot = 0;
+        else if (cat == "rotate2d" && inputName == "amount") inputSlot = 1;
         else if (cat == "clamp" && inputName == "low") inputSlot = 1;
         else if (cat == "clamp" && inputName == "high") inputSlot = 2;
         else if (cat == "mix" && (inputName == "bg" || inputName == "in1"))
@@ -1290,6 +1408,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           inputSlot = 0;
         else if (cat == "saturate" && inputName == "amount")
           inputSlot = 1;
+        else if (conditional && inputName == "value1") inputSlot = 0;
+        else if (conditional && inputName == "value2") inputSlot = 1;
+        else if (conditional && inputName == "in1") inputSlot = 2;
         else if ((cat == "screen" || cat == "overlay" || cat == "burn" ||
                   cat == "dodge") && inputName == "fg")
           inputSlot = 0;
@@ -1456,6 +1577,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
   // graph into dependency-first order here so runtime evaluation never needs
   // the old 64x64 fixed-point fallback (a severe NVRTC/Vulkan driver-JIT cost).
   // Cyclic MaterialX graphs are malformed and keep the caller's bake fallback.
+  if (graph.nodes.size() > kRtMaterialGraphMaxNodes) {
+    if (err) *err = "MaterialX graph exceeds the 64-node runtime limit";
+    return false;
+  }
   std::vector<unsigned char> visit(graph.nodes.size(), 0);
   std::vector<int> order;
   order.reserve(graph.nodes.size());
@@ -2093,13 +2218,23 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 4 + input * 4 + lane] = node.value[input][lane];
     const bool usesAuxInput = node.op == MaterialXGraphOpCPU::SplitLR ||
-                              node.op == MaterialXGraphOpCPU::SplitTB;
+                              node.op == MaterialXGraphOpCPU::SplitTB ||
+                              node.op == MaterialXGraphOpCPU::IfGreater ||
+                              node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
+                              node.op == MaterialXGraphOpCPU::IfEqual;
     int textureId = usesAuxInput ? node.auxInput : node.textureId;
     if (!usesAuxInput && sourceToTable && textureId >= 0 &&
         static_cast<size_t>(textureId) < sourceToTable->size()) {
       textureId = (*sourceToTable)[static_cast<size_t>(textureId)];
     }
     dst[base + 16] = static_cast<float>(textureId);
+    if (node.op == MaterialXGraphOpCPU::IfGreater ||
+        node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
+        node.op == MaterialXGraphOpCPU::IfEqual) {
+      for (int lane = 0; lane < 4; ++lane)
+        dst[base + 17 + lane] = node.auxValue[lane];
+      continue;
+    }
     dst[base + 17] = node.uvScale[0];
     dst[base + 18] = node.uvScale[1];
     dst[base + 19] = node.uvOffset[0];
@@ -2148,8 +2283,16 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 4 + input * 4 + lane] = node.value[input][lane];
     if (node.op == MaterialXGraphOpCPU::SplitLR ||
-        node.op == MaterialXGraphOpCPU::SplitTB) {
+        node.op == MaterialXGraphOpCPU::SplitTB ||
+        node.op == MaterialXGraphOpCPU::IfGreater ||
+        node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
+        node.op == MaterialXGraphOpCPU::IfEqual) {
       dst[base + 16] = static_cast<float>(node.auxInput);
+      if (node.op == MaterialXGraphOpCPU::IfGreater ||
+          node.op == MaterialXGraphOpCPU::IfGreaterEqual ||
+          node.op == MaterialXGraphOpCPU::IfEqual)
+        for (int lane = 0; lane < 4; ++lane)
+          dst[base + 17 + lane] = node.auxValue[lane];
       continue;
     }
     if (node.textureId < 0) {

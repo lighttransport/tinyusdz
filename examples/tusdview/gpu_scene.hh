@@ -470,6 +470,27 @@ enum class MaterialXGraphOpCPU : uint32_t {
   SplitLR,
   SplitTB,
   Saturate,
+  IfGreater,
+  IfGreaterEqual,
+  IfEqual,
+  RgbToHsv,
+  HsvToRgb,
+  Rotate2D,
+  Distance,
+  Reflect,
+  Refract,
+  Premult,
+  Unpremult,
+  MinComponent,
+  MaxComponent,
+  LogicalAnd,
+  LogicalOr,
+  LogicalXor,
+  LogicalNot,
+  Inside,
+  Outside,
+  GeomColor,
+  Bitangent,
   Unknown,
 };
 
@@ -490,6 +511,7 @@ struct MaterialXGraphNodeCPU {
   // Fourth graph dependency for operators such as splitlr/splittb. Packed in
   // the texture-id lane, which those non-image operators otherwise never use.
   int auxInput{-1};
+  float auxValue[4]{0.0f, 0.0f, 0.0f, 1.0f};
   bool isUdim{false}; // textureId names a UDIM atlas, not a plain 2D image
   float uvScale[2]{1.0f, 1.0f};
   float uvOffset[2]{0.0f, 0.0f};
