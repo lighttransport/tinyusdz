@@ -1113,7 +1113,9 @@ __device__ F3 productionPath(
     const TexDesc* textures,int numTextures,const float* uvs,const float* uvs1,
     const Node* blas,const Node* tlas,const Inst* insts,F3 ro,F3 rd,F3 clear,
     unsigned seed,int maxDepth,int rrDepth,int maxSubsurfaceEvents,
-    float graphSceneTime,float graphSceneFrame){
+    float graphSceneTime,float graphSceneFrame,
+    const GeomPropDesc* geomProps,const float* geomPropValues,
+    int geomPropCount){
   F3 L=mk(0.f,0.f,0.f),beta=mk(1.f,1.f,1.f);
   int subsurfaceEvents=0,transparentEvents=0;bool inSubsurface=false;
   float subsurfaceSigma=1.f;F3 subsurfaceAlbedo=mk(1.f,1.f,1.f);
@@ -1593,7 +1595,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
         textures,numTextures,uvs,uvs1,blas,tlas,insts,o,d,
         mk(cam.clear[0],cam.clear[1],cam.clear[2]),pathSeed,
         maxDepth>0?maxDepth:1,rrDepth,(int)fmaxf(cam.pathLimits[0],1.f),
-        cam.context[0],cam.context[1]);
+        cam.context[0],cam.context[1],geomProps,geomPropValues,geomPropCount);
     for(int vi=0;vi<numVols;++vi)
       path=compositeVolume(volDens,&volParams[vi],o,d,path);
     int idx=(py*W+px)*4;
