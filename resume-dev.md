@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `a3e390249` (`Guard Vulkan MaterialX opcode parity`)
+- HEAD: `bab865016` (`Extract vector roughness in MaterialX closures`)
 - Upstream: `origin/dev`
 - Worktree: one in-progress tracked change in
   `examples/tusdview/lightrt_mtlx_bridge.cc`, plus the two unrelated untracked
@@ -23,6 +23,8 @@ not hand-edit generated headers.
   - `60d4b638c` Preserve direct MaterialX GPU graph context
   - `9643985f8` Add MaterialX surface and volume closures
   - `4c5b073b0` Add MaterialX hair helper evaluation
+  - `cab4b6aec` Add direct MaterialX closure bridge tests
+  - `bab865016` Extract vector roughness in MaterialX closures
 
 ## Completed coverage
 
@@ -44,6 +46,13 @@ not hand-edit generated headers.
   normal maps, mip selection, colorspace handling, and centered height
   derivatives; edge cases remain incomplete.
 
+## Recent completed slice
+
+The closure bridge now explicitly extracts component zero when a scalar
+OpenPBR lane receives a MaterialX vector2 input (notably vector roughness).
+Direct Shader-to-Shader BSDF, EDF, and VDF graphs assert route indices and
+packed graph-header parity. The change is committed in `bab865016`.
+
 ## Uncommitted work in progress
 
 `examples/tusdview/lightrt_mtlx_bridge.cc` contains a recursive closure-lowering
@@ -52,13 +61,19 @@ closure leaves plus typed closure composition into ordinary bounded graph nodes
 and OpenPBR lanes. It still needs compile/test validation and fidelity review,
 especially weighted lobe blending and vector roughness extraction.
 
-Do not commit this change until bridge tests cover direct closure graphs and the
-generated graph is confirmed on CPU, CUDA/HIP, Vulkan RT, and tusdrender.
+The remaining closure work is fidelity review for weighted composition and
+wrapper nesting; the direct closure slice is committed and validated.
 
 ## Verified tests after HEAD
 
 Passed:
 
+- Complete configured native CTest suite: 298/298 passed (24 documented
+  capability/asset skips)
+- `tusdview_lightrt_bridge_test`, OpenPBR, evaluator, and graph tests after
+  vector2 roughness extraction
+- `tusdview-vk-render`, CUDA/HIP semantic RT parity, and headless
+  `tusdrender` OpenPBR parity after vector2 roughness extraction
 - `tusdview-gpu-material-abi`
 - `tusdview-vk-render` on NVIDIA GeForce RTX 5060 Ti with Vulkan RT
 - `tusdview-texture-semantic-rt-loader-parity-vk-rt` on NVIDIA Vulkan RT
@@ -70,8 +85,9 @@ The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
 timeout is 180 seconds so a healthy cold device is not incorrectly skipped.
 
-The full native regression, CUDA/NVRTC hardware run, HIP/AMD run, and complete
-NVIDIA+AMD Vulkan matrix have not yet been rerun after the latest changes.
+The configured full native regression is now green. Dedicated AMD Vulkan,
+real-texture/validation profiles, and external-asset profiles remain
+capability-skipped in this environment.
 
 ## Remaining work, in priority order
 
