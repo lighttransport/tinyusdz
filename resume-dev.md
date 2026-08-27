@@ -46,8 +46,9 @@ not hand-edit generated headers.
   - `e882ce7c1` Preserve lanes in generalized EDF bridge
   - `0d29de89e` Transport matrix geomprops through RT graphs
   - `14cd07dd5` Preserve OpenPBR subsurface anisotropy
-- `6d58899ef` Handle reversed closure multiply operands
-- `ebcb8ca61` Record closure parity validation
+  - `6d58899ef` Handle reversed closure multiply operands
+  - `ebcb8ca61` Record closure parity validation
+  - `cfe8da671` Preserve surface unlit normals
 
 ## Completed coverage
 
@@ -499,6 +500,9 @@ Passed:
   120 seconds after tests 1–74 passed or skipped. No aggregate pass is claimed
   from this partial run; focused MaterialX and CUDA/HIP results remain green.
 - The current `build-next` stable suite passes 40/40 after these changes.
+- The next MaterialX `surface_unlit` converter now transports its authored
+  normal into the renderer-neutral OpenPBR block (`cfe8da671`); the focused
+  `next_test_tydra` conversion regression and native `tusdview` rebuild pass.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
