@@ -1716,8 +1716,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       }
       emitLeaf("specular_ior", "ior", 1.5, "float");
       emitLeaf("specular_roughness", "roughness", 0.05, "float");
-      emitLeaf("thin_film_thickness", "thinfilm_thickness", 0.0, "float");
-      emitLeaf("thin_film_ior", "thinfilm_ior", 1.5, "float");
+      const char* thinFilmThicknessName =
+          inputNamed(node, "thin_film_thickness", nlohmann::json()).is_null()
+              ? "thinfilm_thickness" : "thin_film_thickness";
+      const char* thinFilmIorName =
+          inputNamed(node, "thin_film_ior", nlohmann::json()).is_null()
+              ? "thinfilm_ior" : "thin_film_ior";
+      emitLeaf("thin_film_thickness", thinFilmThicknessName, 0.0, "float");
+      emitLeaf("thin_film_ior", thinFilmIorName, 1.5, "float");
     } else if (cat == "conductor_bsdf") {
       emitLeaf("base_weight", "weight", 1.0, "float");
       const nlohmann::json eta = nodeInput(
@@ -1997,6 +2003,25 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       lanes["volume_albedo"] = albedo;
       emitClosureLane(name, "transmission_scatter_anisotropy",
                       nodeInput(node, "anisotropy", 0.0), "float");
+    }
+    // MaterialX closure nodes may carry a normal input themselves (for
+    // example a diffuse or dielectric closure fed by a normalmap).  The
+    // evaluator applies that input while traversing the closure; preserve it
+    // in the fixed runtime geometry-normal lane as well.  Schema wrappers
+    // already emit their terminal normal explicitly above.
+    const bool schemaWrapper =
+        cat == "standard_surface" || cat == "open_pbr_surface" ||
+        cat == "surface_unlit";
+    if (closureTyped && !schemaWrapper) {
+      const nlohmann::json normal =
+          inputNamed(node, "normal", nlohmann::json());
+      if (normal.is_object() &&
+          (normal.find("value") != normal.end() ||
+           normal.find("nodename") != normal.end() ||
+           normal.find("nodegraph") != normal.end())) {
+        emitLeaf("geometry_normal", "normal",
+                 nlohmann::json::array({0, 0, 1}), "color3");
+      }
     }
     closureVisiting.erase(name);
     return lanes;

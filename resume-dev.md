@@ -644,11 +644,18 @@ Closure `mix` factors are now explicitly clamped to `[0,1]` before computing
 background/foreground effective weights, matching evaluator semantics.
 Conductor closure Fresnel normalization now guards its RGB denominator with the
 same epsilon-safe `max` pattern before division.
+Closure-level `normal` inputs on diffuse, dielectric, and other BSDF/EDF/VDF
+nodes now propagate into the fixed `geometry_normal` runtime lane, matching
+the evaluator's per-closure normal application; the bridge/evaluator/graph
+focused group passes 4/4. Dielectric closures also accept canonical
+`thin_film_thickness` / `thin_film_ior` inputs while retaining the legacy
+`thinfilm_*` spellings.
 
 ## Remaining work, in priority order
 
 1. Finish and validate remaining bridge closure fidelity, especially any
-   schema-specific closure parameter mappings; standard diffuse, Chiang,
+   schema-specific closure parameter mappings; closure-level normal transport,
+   standard diffuse, Chiang,
    generalized-Schlick, direct standard/OpenPBR surface lowering, and
    measured-EDF fallback behavior are now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation
