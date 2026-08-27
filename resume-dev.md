@@ -603,6 +603,9 @@ passes 4/4.
 Direct OpenPBR lowering now accepts the evaluator-compatible `fuzz_*` aliases
 for sheen weight, color, and roughness in addition to canonical `sheen_*`
 fields; the focused graph group remains 4/4.
+Generalized-Schlick BSDF lowering now preserves `color90` and exponent through
+generated view-angle power/mix nodes instead of retaining only `color0`; the
+bridge regression passes with the RT scatter-mode case.
 
 ## Remaining work, in priority order
 
