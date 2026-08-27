@@ -139,6 +139,9 @@ class VulkanRenderer final : public Renderer {
   bool reloadRayTracingShader(const uint32_t* words, size_t wordCount,
                               std::string* err) override;
   bool rayTracingUsesFullShader() const override { return rtUsesFullShader_; }
+  bool rayTracingUsesProceduralMaterialX() const {
+    return rtUsesProceduralMaterialX_;
+  }
   void setMaterialXVulkanShaderLimits(size_t maxSourceBytes,
                                       int compileTimeoutSec) override {
     materialXShaderMaxSourceBytes_ = maxSourceBytes;
@@ -1228,6 +1231,7 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline rtPipeline_{VK_NULL_HANDLE};
   bool rtUsesFullShader_{true};
+  bool rtUsesProceduralMaterialX_{false};
   size_t materialXShaderMaxSourceBytes_{129u * 1024u};
   int materialXShaderCompileTimeoutSec_{30};
 
@@ -1276,6 +1280,9 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout swRtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline swRtPipeline_{VK_NULL_HANDLE};
   VkPipeline swRtPathPipeline_{VK_NULL_HANDLE};
+  // VK_EXT_pipeline_creation_cache_control lets large optional pipelines
+  // report VK_PIPELINE_COMPILE_REQUIRED instead of blocking in the driver.
+  bool pipelineCompileRequiredSupported_{false};
   // Pipelines replaced by live reload are retired after the next frame fence.
   // This avoids waiting on a fence that newFrame() has reset but not submitted.
   std::vector<VkPipeline> retiredRtPipelines_;

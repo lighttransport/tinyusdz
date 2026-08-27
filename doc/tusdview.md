@@ -90,6 +90,37 @@ backend (`examples/tusdview/vk/`); the separate LightRT GPU trace used by
 `tusdrender -vk/-vkr` also renders correctly on this GPU after its geometry/setup
 fixes — see [`doc/tusdrender.md`](tusdrender.md).
 
+### GPU device passthrough and elevated execution
+
+The coding-agent sandbox may not expose `/dev/kfd` or `/dev/dri`, even when the
+host's `vulkaninfo` lists the GPUs. Run GPU-backed validation in the elevated
+execution context with host/container device passthrough enabled. Confirm the
+devices visible to the test process:
+
+```sh
+vulkaninfo --summary | grep -E '^(GPU[0-9]:|.*deviceName|.*driverName)'
+```
+
+For AMD/RADV, select the device with `TUSDVIEW_VK_DEVICE=amd` (or `radeon`).
+For NVIDIA PRIME/offload, use:
+
+```sh
+env __NV_PRIME_RENDER_OFFLOAD=1 \
+    __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+    TUSDVIEW_NVIDIA_OFFLOAD=1 \
+    TUSDVIEW_VK_DEVICE=nvidia \
+    ctest --test-dir build_ninja -R '^tusdview-vk-authored-materials$' \
+    --output-on-failure
+```
+
+For AMD, omit the NVIDIA-specific variables and set
+`TUSDVIEW_VK_DEVICE=amd`. The authored MaterialX closure/volume smoke is
+`tusdview-vk-authored-materials`; it skips when no selected hardware device is
+available. A missing `/dev/kfd` or `/dev/dri/renderD*` requires device
+passthrough at container/VM launch and cannot be fixed by creating repository
+files.
+
 ## Production path tracing
 
 `--path-trace` is the production multi-bounce mode; the existing `--rt` remains
@@ -821,6 +852,16 @@ MaterialX Vulkan generation is bounded by a 129 KiB source-size guard and a
 
 An oversized full shader keeps the ABI-compatible compact pipeline active;
 a timed-out live compile is terminated and retains the last-good pipeline.
+For full graphs that do not contain procedural MaterialX opcodes, live shader
+generation also uses a reduced full-interpreter variant with the unreachable
+noise, pattern, ramp, flake, HSV, and blackbody helpers removed. Graphs that
+use those features retain the complete interpreter.
+On devices exposing `VK_EXT_pipeline_creation_cache_control`, a cold full
+pipeline also requests `VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT`;
+the driver then returns `VK_PIPELINE_COMPILE_REQUIRED` immediately and tusdview
+continues with the compact pipeline. Full promotion is retried after the
+driver cache has been warmed, while live promotion never replaces the active
+pipeline until creation succeeds.
 Keep
 `TUSDVIEW_RT_TIMING=1` enabled when diagnosing startup. A measured cold compile
 can take minutes on some NVIDIA driver/shader combinations, while the same

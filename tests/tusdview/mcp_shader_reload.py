@@ -51,6 +51,7 @@ def main():
     parser.add_argument("source", type=Path)
     parser.add_argument("scene", type=Path)
     parser.add_argument("--vk-device")
+    parser.add_argument("--materialx-vk-shader-max-kib", type=int)
     args = parser.parse_args()
 
     viewer = args.viewer.resolve()
@@ -62,6 +63,9 @@ def main():
         command += ["--backend", "vk", "--rt"]
         if args.vk_device:
             command += ["--vk-device", args.vk_device]
+        if args.materialx_vk_shader_max_kib:
+            command += ["--materialx-vk-shader-max-kib",
+                        str(args.materialx_vk_shader_max_kib)]
     else:
         command += [f"--{args.backend}", "--path-trace", "--pt-samples", "1"]
     command.append(str(scene))

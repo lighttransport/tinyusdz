@@ -21,6 +21,9 @@
 #ifndef TUSDVIEW_RT_FAST_MATERIAL
 #define TUSDVIEW_RT_FAST_MATERIAL 0
 #endif
+#ifndef TUSDVIEW_RT_DISABLE_MTLX_PROCEDURAL
+#define TUSDVIEW_RT_DISABLE_MTLX_PROCEDURAL 0
+#endif
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -356,6 +359,7 @@ vec3 srgbToLinear(vec3 c) {
 }
 
 #if !TUSDVIEW_RT_DISABLE_MTLX
+#if !TUSDVIEW_RT_DISABLE_MTLX_PROCEDURAL
 vec3 mtlxRgbToHsv(vec3 c) {
   vec4 k = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
   vec4 p = mix(vec4(c.bg, k.wz), vec4(c.gb, k.xy), step(c.b, c.g));
@@ -571,6 +575,27 @@ vec4 mtlxFlake(vec4 sizev, vec4 roughv, vec4 coveragev, vec4 position,
   return vec4(normalize(tangentv.xyz * cos(phi) * sinTheta +
                         bitangentv.xyz * sin(phi) * sinTheta +
                         normalv.xyz * cosTheta), 0.0);
+}
+#endif
+#endif
+
+#if TUSDVIEW_RT_DISABLE_MTLX_PROCEDURAL
+// The non-procedural full variant keeps the same interpreter ABI and opcode
+// dispatch, but replaces feature helpers that its graph capability scan has
+// proven unreachable. This lets arithmetic/image graphs avoid compiling the
+// large procedural helper family while preserving a defensive fallback for a
+// malformed or concurrently changed graph buffer.
+vec3 mtlxRgbToHsv(vec3 c) { return c; }
+vec3 mtlxHsvToRgb(vec3 c) { return c; }
+vec3 mtlxBlackbody(float) { return vec3(1.0); }
+float mtlxPerlin2(vec2, int) { return 0.0; }
+float mtlxPerlin3(vec3, int) { return 0.0; }
+float mtlxCellNoise(ivec3, bool) { return 0.0; }
+vec4 mtlxWorley(vec3, bool, float, int, int) { return vec4(0.0); }
+float mtlxPattern(vec2, float, bool, int) { return 0.0; }
+vec4 mtlxRampBlend(float, float, float, vec4 c0, vec4, int) { return c0; }
+vec4 mtlxFlake(vec4, vec4, vec4, vec4, vec4, vec4, vec4, int) {
+  return vec4(0.0);
 }
 #endif
 

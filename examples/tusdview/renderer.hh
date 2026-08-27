@@ -639,6 +639,7 @@ class Renderer {
   // Live compilation mirrors that selection to avoid paying the full MaterialX
   // driver-JIT cost when its ABI-compatible interpreter is not in use.
   virtual bool rayTracingUsesFullShader() const { return true; }
+  virtual bool rayTracingUsesProceduralMaterialX() const { return true; }
   virtual void setMaterialXVulkanShaderLimits(size_t /*maxSourceBytes*/,
                                                int /*compileTimeoutSec*/) {}
   // Switch the active technique between rasterization (false) and ray tracing

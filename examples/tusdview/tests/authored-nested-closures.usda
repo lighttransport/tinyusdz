@@ -1,0 +1,84 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Mesh "ClosureCard" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Looks/NestedClosures>
+        point3f[] points = [(-1.5, -1, 0), (1.5, -1, 0), (1.5, 1, 0), (-1.5, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Scope "Looks"
+    {
+        def Material "NestedClosures" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            token outputs:surface.connect = </World/Looks/NestedClosures/SurfaceMaterial.outputs:out>
+            token outputs:mtlx:surface.connect = </World/Looks/NestedClosures/SurfaceMaterial.outputs:out>
+
+            def Shader "Diffuse"
+            {
+                uniform token info:id = "ND_diffuse_bsdf_bsdf"
+                color3f inputs:color = (0.16, 0.32, 0.72)
+                float inputs:weight = 0.65
+                token outputs:out
+            }
+            def Shader "Glass"
+            {
+                uniform token info:id = "ND_dielectric_bsdf_bsdf"
+                color3f inputs:tint = (0.9, 0.95, 1.0)
+                float inputs:weight = 0.35
+                float inputs:ior = 1.45
+                float inputs:roughness = 0.12
+                token inputs:scatter_mode = "RT"
+                token outputs:out
+            }
+            def Shader "CombinedBSDF"
+            {
+                uniform token info:id = "ND_add_bsdf_bsdf"
+                token inputs:in1.connect = </World/Looks/NestedClosures/Diffuse.outputs:out>
+                token inputs:in2.connect = </World/Looks/NestedClosures/Glass.outputs:out>
+                token outputs:out
+            }
+            def Shader "Emission"
+            {
+                uniform token info:id = "ND_uniform_edf_edf"
+                color3f inputs:color = (0.03, 0.01, 0.005)
+                token outputs:out
+            }
+            def Shader "Surface"
+            {
+                uniform token info:id = "ND_surface_surfaceshader"
+                token inputs:bsdf.connect = </World/Looks/NestedClosures/CombinedBSDF.outputs:out>
+                token inputs:edf.connect = </World/Looks/NestedClosures/Emission.outputs:out>
+                float inputs:opacity = 1.0
+                token outputs:out
+            }
+            def Shader "SurfaceMaterial"
+            {
+                uniform token info:id = "ND_surfacematerial_material"
+                token inputs:surfaceshader.connect = </World/Looks/NestedClosures/Surface.outputs:out>
+                token outputs:out
+            }
+        }
+    }
+
+    def DistantLight "Key"
+    {
+        float intensity = 2.0
+        color3f color = (1.0, 0.95, 0.9)
+        double3 xformOp:rotateXYZ = (-45, -35, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+}

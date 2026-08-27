@@ -2393,6 +2393,62 @@ def Material "Mat"
   assert(std::abs(usd_mat.openpbr->base_color.value.x - 0.1f) < 0.001f);
   assert(std::abs(usd_mat.openpbr->base_metalness.value.x - 0.4f) < 0.001f);
 
+  // Directly authored OpenPBR values belong to the typed material block. They
+  // must not also be lowered into executable graph constants: doing so makes
+  // the graph evaluator compete with the authoritative typed values at hit
+  // time and needlessly promotes the Vulkan material path.
+  const char* direct_constants_usda = R"(#usda 1.0
+
+def Material "DirectConstants"
+{
+    token outputs:surface.connect = </DirectConstants/OpenPBR.outputs:out>
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color = (0.12, 0.34, 0.56)
+        float inputs:base_metalness = 0.42
+        float inputs:specular_ior = 1.72
+        float inputs:specular_f0 = 0.17
+        float inputs:coat_weight = 0.31
+        color3f inputs:coat_color = (0.7, 0.8, 0.9)
+        token outputs:out
+    }
+}
+)";
+  LoadResult direct_lr = LoadUSDAFromString(
+      direct_constants_usda, std::strlen(direct_constants_usda));
+  assert(direct_lr.success);
+  RenderSceneConverter direct_converter;
+  RenderMaterial direct_material;
+  if (!direct_converter.ConvertMaterial(
+          direct_lr.stage,
+          direct_lr.stage.GetPrimAtPath("/DirectConstants"),
+          &direct_material)) {
+    std::cout << "  direct OpenPBR constant conversion failed: "
+              << direct_converter.GetLastError() << "\n";
+    assert(false);
+  }
+  assert(direct_material.shader_type == RenderMaterial::ShaderType::OpenPBR);
+  assert(direct_material.openpbr);
+  assert(std::abs(direct_material.openpbr->base_color.value.x - 0.12f) <
+         0.001f);
+  assert(std::abs(direct_material.openpbr->base_color.value.y - 0.34f) <
+         0.001f);
+  assert(std::abs(direct_material.openpbr->base_color.value.z - 0.56f) <
+         0.001f);
+  assert(std::abs(direct_material.openpbr->base_metalness.value.x - 0.42f) <
+         0.001f);
+  assert(std::abs(direct_material.openpbr->specular_ior.value.x - 1.72f) <
+         0.001f);
+  assert(std::abs(direct_material.openpbr->specular_f0.value.x - 0.17f) <
+         0.001f);
+  assert(std::abs(direct_material.openpbr->coat_weight.value.x - 0.31f) <
+         0.001f);
+  assert(std::abs(direct_material.openpbr->coat_color.value.z - 0.9f) <
+         0.001f);
+  assert(direct_material.nodegraph_json.empty());
+
   // Blender authors a textured MaterialX terminal alongside an untextured
   // PreviewSurface fallback. The MaterialX terminal must win, otherwise web
   // renderers receive a white material and no texture records.

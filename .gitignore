@@ -404,6 +404,9 @@ CMakeUserPresets.json
 !tests/usda/validation/valid/*.usda
 !models/concave_ngon.usda
 !examples/tusdview/tests/deform-skin-animation.usda
+# Small authored MaterialX closure/volume fixtures used by the Vulkan RT smoke.
+!examples/tusdview/tests/authored-nested-closures.usda
+!examples/tusdview/tests/authored-volume-material.usda
 !tests/usdc/aousd-unknown-property-metadata.usdc
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).
