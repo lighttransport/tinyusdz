@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `c4b3083f6` (`Lower MaterialX surface closure wrappers`)
+- HEAD: current branch tip (`Lower JSON surface unlit wrappers`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -459,6 +459,11 @@ Passed:
 - MaterialX `surface` closure wrappers now forward nested BSDF and EDF lanes
   into the bounded runtime graph, with direct diffuse-plus-emission wrapper
   coverage in the rebuilt bridge regression (`c4b3083f6`).
+- JSON `surface_unlit` terminal outputs now lower emission, transmission,
+  opacity, and normal inputs into bounded OpenPBR lanes instead of reaching
+  the unsupported-category fallback. Direct output mapping is covered by the
+  rebuilt bridge regression; the corrected surface-wrapper route test now
+  expects the actual diffuse/EDF lanes.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -479,9 +484,10 @@ capability-skipped in this environment.
    permits it; vector2 roughness extraction, exact scatter-mode handling,
    composed roughness weighting, and weighted color lowering are covered by
    focused tests. Wrapper/layer combinations remain to be audited.
-3. Complete remaining shader constructors/wrappers: `surface`,
-   displacement, and unlit behavior in legacy and next converters; public
-   `surfacematerial`/`surface_unlit` resolution is now covered,
+3. Complete remaining shader constructors/wrappers: displacement and any
+   remaining unlit behavior in legacy and next converters; public
+   `surfacematerial`/`surface_unlit` resolution and JSON runtime
+   `surface_unlit` lowering are now covered,
    and the `light` EDF wrapper is now covered in both evaluator and bridge,
    volume/volumematerial graph transport and texture-fed absorption validation
    are now covered; schema-specific volume validation remains. Separate

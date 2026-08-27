@@ -1514,6 +1514,41 @@ int main() {
     return 1;
   }
 
+  // A surface_unlit shader may be the nodegraph output itself rather than a
+  // closure connected through a bsdf/edf terminal.  Lower its direct schema
+  // inputs into the same OpenPBR lanes and keep the graph output mapping.
+  tusdview::DrawMaterialCPU unlitRuntimeMat;
+  unlitRuntimeMat.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"unlit","category":"surface_unlit","type":"surfaceshader",
+       "inputs":[{"name":"emission","type":"float","value":2.5},
+                 {"name":"emission_color","type":"color3","value":[0.2,0.4,0.8]},
+                 {"name":"transmission","type":"float","value":0.35},
+                 {"name":"transmission_color","type":"color3","value":[0.8,0.6,0.4]},
+                 {"name":"opacity","type":"float","value":0.65}]}
+    ],"outputs":[
+      {"name":"e","nodename":"unlit"},{"name":"ec","nodename":"unlit"},
+      {"name":"t","nodename":"unlit"},{"name":"tc","nodename":"unlit"},
+      {"name":"o","nodename":"unlit"}]},
+    "connections":[{"input":"emission","output":"e"},
+      {"input":"emission_color","output":"ec"},
+      {"input":"transmission","output":"t"},
+      {"input":"transmission_color","output":"tc"},
+      {"input":"opacity","output":"o"}]
+  })json";
+  std::string unlitRuntimeError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&unlitRuntimeMat,
+                                               &unlitRuntimeError) ||
+      unlitRuntimeMat.materialXGraph.output[44] < 0 ||
+      unlitRuntimeMat.materialXGraph.output[4] < 0 ||
+      unlitRuntimeMat.materialXGraph.output[11] < 0 ||
+      unlitRuntimeMat.materialXGraph.output[12] < 0 ||
+      unlitRuntimeMat.materialXGraph.output[3] < 0) {
+    std::fprintf(stderr, "surface_unlit runtime lowering failed: %s\n",
+                 unlitRuntimeError.c_str());
+    return 1;
+  }
+
   // Four-input MaterialX conditionals use the auxiliary graph lane for in2.
   // Keep both a forward-connected branch and a literal fallback covered.
   tusdview::DrawMaterialCPU conditionalMat;
@@ -2308,7 +2343,7 @@ int main() {
        "inputs":[{"name":"bsdf","nodename":"diff"},{"name":"edf","nodename":"emit"}]}
     ],"outputs":[{"name":"shader","type":"surfaceshader","nodename":"surface"}]},
     "connections":[{"input":"bsdf","output":"shader"}]})json",
-      "surface closure wrapper", {0, 1, 2, 4, 44})) {
+      "surface closure wrapper", {0, 4, 20, 21, 44})) {
     return 1;
   }
   if (!CheckDirectClosure(R"json({
