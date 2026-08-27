@@ -46,7 +46,8 @@ not hand-edit generated headers.
   - `e882ce7c1` Preserve lanes in generalized EDF bridge
   - `0d29de89e` Transport matrix geomprops through RT graphs
   - `14cd07dd5` Preserve OpenPBR subsurface anisotropy
-  - `6d58899ef` Handle reversed closure multiply operands
+- `6d58899ef` Handle reversed closure multiply operands
+- `ebcb8ca61` Record closure parity validation
 
 ## Completed coverage
 
@@ -493,6 +494,10 @@ Passed:
   projection parity, OpenPBR parity, CPU swizzle, bridge, evaluator, graph
   connection, and graph evaluation. CUDA and HIP semantic-AOV shards also
   pass (26.16 s and 16.97 s).
+- A broad CTest run excluding the known Vulkan RT semantic-AOV sweep reached
+  test 75/296 and reproduced the existing `tusdview-gl-vk-parity` timeout at
+  120 seconds after tests 1–74 passed or skipped. No aggregate pass is claimed
+  from this partial run; focused MaterialX and CUDA/HIP results remain green.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
