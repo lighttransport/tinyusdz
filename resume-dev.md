@@ -716,6 +716,10 @@ BSDF/EDF routing is covered by the bridge regression.
    external `usd-assets` suite's complete curated profile also passes through
    `tusdr-cpu` (9/9 rendered or rendered-with-warnings); hardware-backed
    external profiles remain pending.
+   After relinking `tusdview` with the latest bridge changes, the focused
+   MaterialX/OpenPBR/render group passes 17/17 runnable tests; the two
+   registered Vulkan-RT semantic cases are capability skips because the
+   selected loader exposes only llvmpipe in this invocation.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
