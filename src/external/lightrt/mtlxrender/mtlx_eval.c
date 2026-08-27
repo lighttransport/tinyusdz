@@ -567,6 +567,11 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
                 texcache_sample_nearest_address(ctx->tex, id, u, v,
                     us ? us->value.s : "periodic",
                     vs ? vs->value.s : "periodic", s);
+            } else if (ctx->has_uv_derivatives) {
+                texcache_sample_address_grad(ctx->tex, id, u, v,
+                    ctx->uv_dx[0], ctx->uv_dx[1], ctx->uv_dy[0], ctx->uv_dy[1],
+                    us ? us->value.s : "periodic",
+                    vs ? vs->value.s : "periodic", s);
             } else {
                 texcache_sample_address(ctx->tex, id, u, v,
                     us ? us->value.s : "periodic",

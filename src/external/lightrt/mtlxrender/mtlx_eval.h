@@ -68,6 +68,9 @@ typedef struct {
     TextureCache  *tex;
     /* shade point */
     float uv[2];
+    /* UV footprint in screen-space. Zero/false preserves point evaluation. */
+    float uv_dx[2], uv_dy[2];
+    int has_uv_derivatives;
     v3    P;       /* world position (for position/noise nodes) */
     v3    Ns;      /* shading normal (world) */
     v3    Ng;      /* geometric normal (world) */

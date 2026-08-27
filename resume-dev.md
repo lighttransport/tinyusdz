@@ -608,6 +608,10 @@ passes 4/4.
 Runtime VDF albedo lowering now clamps the absorption-plus-scattering
 extinction denominator to epsilon before division, matching the evaluator's
 finite zero-extinction behavior; the bridge regression covers this guard.
+Regular MaterialX image evaluation now accepts explicit UV screen-space
+gradients and integrates footprints wider than one texel with a bounded 4x4
+box filter; the graph bake path supplies its known 16x16 footprint and the
+standalone evaluator regression covers point-versus-footprint behavior.
 Vulkan RT instance records now preserve separate material and instancing bits;
 instanced meshes with bound materials use the full object-to-world
 inverse-transpose for authored normals, including non-uniform instance scale.
@@ -660,7 +664,9 @@ BSDF/EDF routing is covered by the bridge regression.
    matrix-valued transport and object/world/view evaluator transforms are
    covered, while Vulkan instance-transform fidelity remains. The registered
    geometry-primvar plus texture-pipeline/GPU format/mip slice passes 10/10.
-5. Close texture/projection gaps: derivatives,
+5. Close texture/projection gaps: derivatives are now supported for regular
+   image nodes and the fixed-size graph bake footprint, while UDIM seam-aware,
+   latlong, triplanar, and hextiled derivative propagation remain;
    and any true measured-EDF
    profile backend beyond the documented color fallback. Nearest filtering is
    now covered for regular, latlong, triplanar, hextiled, and UDIM-capable image paths;

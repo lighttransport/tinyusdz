@@ -35,6 +35,14 @@ void texcache_sample_address(TextureCache *tc, int id, float u, float v,
                              const char *wrap_s, const char *wrap_t,
                              float out[4]);
 
+/* Box-filter a regular image over the UV footprint described by the two
+ * screen-space gradients. Small footprints use the ordinary bilinear path;
+ * larger footprints are integrated with a bounded 4x4 tap grid. */
+void texcache_sample_address_grad(TextureCache *tc, int id, float u, float v,
+                                  float dudx, float dvdx, float dudy, float dvdy,
+                                  const char *wrap_s, const char *wrap_t,
+                                  float out[4]);
+
 /* Nearest-neighbor counterpart used by MaterialX image nodes that request
  * filtertype="nearest". */
 void texcache_sample_nearest_address(TextureCache *tc, int id, float u, float v,
