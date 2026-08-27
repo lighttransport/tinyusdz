@@ -2432,7 +2432,8 @@ int main() {
         {"name":"base","value":0.7},
         {"name":"base_color","value":[0.2,0.4,0.8]},
         {"name":"metalness","value":0.35},
-        {"name":"specular_IOR","value":1.6},
+        {"name":"roughness","value":0.27},
+        {"name":"specular_ior","value":1.6},
         {"name":"emission","value":2.0},
         {"name":"thinfilm_thickness","value":120.0},
         {"name":"thinfilm_IOR","value":1.4},
@@ -2446,6 +2447,7 @@ int main() {
                                                &standardSurfaceError) ||
       standardSurfaceGraph.materialXGraph.output[0] < 0 ||
       standardSurfaceGraph.materialXGraph.output[1] < 0 ||
+      standardSurfaceGraph.materialXGraph.output[2] < 0 ||
       standardSurfaceGraph.materialXGraph.output[19] < 0 ||
       standardSurfaceGraph.materialXGraph.output[20] < 0 ||
       standardSurfaceGraph.materialXGraph.output[28] < 0 ||
@@ -2463,7 +2465,8 @@ int main() {
                : -1.0f;
   };
   if (!Near(laneValue(0, 0), 0.2f) || !Near(laneValue(1, 0), 0.35f) ||
-      !Near(laneValue(19, 0), 1.6f) || !Near(laneValue(20, 0), 0.7f) ||
+      !Near(laneValue(2, 0), 0.27f) || !Near(laneValue(19, 0), 1.6f) ||
+      !Near(laneValue(20, 0), 0.7f) ||
       !Near(laneValue(44, 0), 2.0f) || !Near(laneValue(3, 0), 0.75f)) {
     std::fprintf(stderr, "direct standard_surface values were not routed\n");
     return 1;
@@ -2475,6 +2478,7 @@ int main() {
        "type":"surfaceshader","inputs":[
         {"name":"base_weight","value":0.6},
         {"name":"base_metalness","value":0.25},
+        {"name":"base_roughness","value":0.31},
         {"name":"transmission_weight","value":0.4},
         {"name":"coat_weight","value":0.15},
         {"name":"coat_affect_color","value":[0.7,0.8,0.9]},
@@ -2492,6 +2496,7 @@ int main() {
   if (!tusdview::CompileMaterialXGraphRuntime(&openPbrSurfaceGraph,
                                                &openPbrSurfaceError) ||
       openPbrSurfaceGraph.materialXGraph.output[1] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[2] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[11] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[13] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[29] < 0 ||

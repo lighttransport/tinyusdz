@@ -594,6 +594,9 @@ the OpenPBR-specific lane names, coat-affect/darkening fields, and thin-film
 fields are covered as well, and the complete focused graph group passes 4/4.
 Standard Surface thin-film presence is also derived from positive thickness
 into the runtime weight lane, matching the evaluator's schema behavior.
+Standard Surface roughness/IOR and OpenPBR base-roughness fallback aliases
+are now normalized during direct graph lowering; the focused graph group
+passes 4/4 after this coverage.
 
 ## Remaining work, in priority order
 
