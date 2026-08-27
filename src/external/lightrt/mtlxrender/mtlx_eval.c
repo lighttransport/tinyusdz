@@ -625,6 +625,20 @@ static MtlxValue eval_latlongimage(ShadeContext *ctx, const MtlxNode *n) {
     if (id >= 0) {
         if (nearest) texcache_sample_nearest_address(
             ctx->tex, id, u, v, "periodic", "mirror", s);
+        else if (ctx->has_view_derivatives) {
+            const float x = vd.v[0], y = vd.v[1], z = vd.v[2];
+            const float xz2 = fmaxf(x * x + z * z, 1.0e-8f);
+            const float yden = fmaxf(sqrtf(fmaxf(1.0f - y * y, 1.0e-8f)),
+                                     1.0e-4f);
+            const float dudx = -(z * ctx->dVdx.x - x * ctx->dVdx.z) /
+                               (2.0f * (float)MTLX_PI * xz2);
+            const float dudy = -(z * ctx->dVdy.x - x * ctx->dVdy.z) /
+                               (2.0f * (float)MTLX_PI * xz2);
+            const float dvdx = ctx->dVdx.y / ((float)MTLX_PI * yden);
+            const float dvdy = ctx->dVdy.y / ((float)MTLX_PI * yden);
+            texcache_sample_address_grad(ctx->tex, id, u, v, dudx, dvdx,
+                                          dudy, dvdy, "periodic", "mirror", s);
+        }
         else texcache_sample_address(ctx->tex, id, u, v, "periodic", "mirror", s);
     }
     else {
