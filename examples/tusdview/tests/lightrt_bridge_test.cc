@@ -2311,6 +2311,21 @@ int main() {
   }
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
+      {"name":"base","category":"diffuse_bsdf","type":"BSDF",
+       "inputs":[{"name":"weight","value":0.7},
+                 {"name":"color","value":[0.4,0.5,0.6]}]},
+      {"name":"top","category":"uniform_edf","type":"EDF",
+       "inputs":[{"name":"color","value":[0.1,0.2,0.3]}]},
+      {"name":"layer","category":"layer","type":"BSDF",
+       "inputs":[{"name":"base","nodename":"base"},
+                 {"name":"top","nodename":"top"}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"layer"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "layered BSDF/EDF closure", {0, 4, 20, 21, 44})) {
+    return 1;
+  }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
       {"name":"metal","category":"conductor_bsdf","type":"BSDF","inputs":[
         {"name":"ior","value":[0.2,0.8,1.4]},
         {"name":"extinction","value":[3.0,2.0,1.0]},
