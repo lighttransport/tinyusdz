@@ -609,6 +609,9 @@ bridge regression passes with the RT scatter-mode case.
 Direct `standard_surface` lowering now accepts both canonical `thin_film_*` and
 legacy `thinfilm_*` thickness/IOR spellings, preferring canonical inputs; the
 updated bridge regression and complete focused graph group pass 4/4.
+Closure `mix` weighted color and roughness lanes now include the authored mix
+factor in both numerator and denominator, preserving the expected background /
+foreground contribution rather than averaging raw child weights.
 
 ## Remaining work, in priority order
 

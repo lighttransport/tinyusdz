@@ -1364,6 +1364,15 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       const nlohmann::json factor = cat == "mix"
           ? nodeInput(node, scalarInput, 0.5)
           : nodeInput(node, scalarInput ? scalarInput : "in2", 1.0);
+      std::string inverseFactor;
+      if (cat == "mix") {
+        inverseFactor = name + "__closure_mix_inverse";
+        runtimeNodes.push_back({
+            {"name", inverseFactor}, {"category", "subtract"},
+            {"type", "float"}, {"inputs", nlohmann::json::array({
+                nlohmann::json{{"name", "in1"}, {"value", 1.0}},
+                renamedInput(factor, "in2")})}});
+      }
       auto roughnessWeightLane = [](const std::string& lane) -> const char* {
         if (lane == "base_diffuse_roughness") return "base_weight";
         if (lane == "specular_roughness") return "specular_weight";
@@ -1402,6 +1411,22 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           if (!weightLane) weightLane = colorWeightLane(lane);
           const auto aw = a.find(weightLane), bw = b.find(weightLane);
           if (aw != a.end() && bw != b.end()) {
+            std::string effectiveA = aw->second;
+            std::string effectiveB = bw->second;
+            if (cat == "mix") {
+              effectiveA = output + "__mix_weight_a";
+              effectiveB = output + "__mix_weight_b";
+              runtimeNodes.push_back({
+                  {"name", effectiveA}, {"category", "multiply"},
+                  {"type", "float"}, {"inputs", nlohmann::json::array({
+                      nlohmann::json{{"name", "in1"}, {"nodename", aw->second}},
+                      nlohmann::json{{"name", "in2"}, {"nodename", inverseFactor}}})}});
+              runtimeNodes.push_back({
+                  {"name", effectiveB}, {"category", "multiply"},
+                  {"type", "float"}, {"inputs", nlohmann::json::array({
+                      nlohmann::json{{"name", "in1"}, {"nodename", bw->second}},
+                      renamedInput(factor, "in2")})}});
+            }
             const std::string weightedA = output + "__weighted_a";
             const std::string weightedB = output + "__weighted_b";
             const std::string numerator = output + "__weighted_sum";
@@ -1410,12 +1435,12 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                 {"name", weightedA}, {"category", "multiply"},
                 {"type", laneType}, {"inputs", nlohmann::json::array({
                     nlohmann::json{{"name", "in1"}, {"nodename", ai->second}},
-                    nlohmann::json{{"name", "in2"}, {"nodename", aw->second}}})}});
+                    nlohmann::json{{"name", "in2"}, {"nodename", effectiveA}}})}});
             runtimeNodes.push_back({
                 {"name", weightedB}, {"category", "multiply"},
                 {"type", laneType}, {"inputs", nlohmann::json::array({
                     nlohmann::json{{"name", "in1"}, {"nodename", bi->second}},
-                    nlohmann::json{{"name", "in2"}, {"nodename", bw->second}}})}});
+                    nlohmann::json{{"name", "in2"}, {"nodename", effectiveB}}})}});
             runtimeNodes.push_back({
                 {"name", numerator}, {"category", "add"},
                 {"type", laneType}, {"inputs", nlohmann::json::array({
@@ -1424,8 +1449,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
             runtimeNodes.push_back({
                 {"name", denominator}, {"category", "add"},
                 {"type", "float"}, {"inputs", nlohmann::json::array({
-                    nlohmann::json{{"name", "in1"}, {"nodename", aw->second}},
-                    nlohmann::json{{"name", "in2"}, {"nodename", bw->second}}})}});
+                    nlohmann::json{{"name", "in1"}, {"nodename", effectiveA}},
+                    nlohmann::json{{"name", "in2"}, {"nodename", effectiveB}}})}});
             runtimeNodes.push_back({
                 {"name", output}, {"category", "divide"},
                 {"type", laneType}, {"inputs", nlohmann::json::array({
