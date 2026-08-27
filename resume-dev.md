@@ -615,6 +615,8 @@ foreground contribution rather than averaging raw child weights.
 Weighted closure normalization now also emits an epsilon fallback denominator,
 so all-zero child weights remain finite across graph backends; the focused
 bridge/evaluator/graph suite passes 4/4.
+Closure `mix` factors are now explicitly clamped to `[0,1]` before computing
+background/foreground effective weights, matching evaluator semantics.
 Conductor closure Fresnel normalization now guards its RGB denominator with the
 same epsilon-safe `max` pattern before division.
 

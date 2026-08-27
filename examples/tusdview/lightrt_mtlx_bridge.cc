@@ -1361,11 +1361,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
         // into the scalar multiply when the operands are reversed.
         scalarInput = aName.empty() ? "in1" : "in2";
       }
-      const nlohmann::json factor = cat == "mix"
+      nlohmann::json factor = cat == "mix"
           ? nodeInput(node, scalarInput, 0.5)
           : nodeInput(node, scalarInput ? scalarInput : "in2", 1.0);
       std::string inverseFactor;
       if (cat == "mix") {
+        const std::string clampedFactor = name + "__closure_mix_factor";
+        runtimeNodes.push_back({
+            {"name", clampedFactor}, {"category", "clamp"},
+            {"type", "float"}, {"inputs", nlohmann::json::array({
+                renamedInput(factor, "in"),
+                nlohmann::json{{"name", "low"}, {"value", 0.0}},
+                nlohmann::json{{"name", "high"}, {"value", 1.0}}})}});
+        factor = nlohmann::json{{"nodename", clampedFactor}};
         inverseFactor = name + "__closure_mix_inverse";
         runtimeNodes.push_back({
             {"name", inverseFactor}, {"category", "subtract"},
