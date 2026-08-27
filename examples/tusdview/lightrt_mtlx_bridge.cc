@@ -1519,6 +1519,20 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                standard ? "emission" : "emission_luminance", 0.0, "float");
       emitLeaf("emission_color", "emission_color",
                nlohmann::json::array({1, 1, 1}), "color3");
+      if (standard) {
+        const std::string thickness = name + "__closure_thin_film_thickness";
+        const std::string weight = name + "__closure_thin_film_weight";
+        runtimeNodes.push_back({
+            {"name", weight}, {"category", "ifgreater"}, {"type", "float"},
+            {"inputs", nlohmann::json::array({
+                nlohmann::json{{"name", "value1"}, {"nodename", thickness}},
+                nlohmann::json{{"name", "value2"}, {"value", 0.0}},
+                nlohmann::json{{"name", "in1"}, {"value", 1.0}},
+                nlohmann::json{{"name", "in2"}, {"value", 0.0}}})}});
+        lanes["thin_film_weight"] = weight;
+      } else {
+        emitLeaf("thin_film_weight", "thin_film_weight", 0.0, "float");
+      }
       emitLeaf("thin_film_thickness",
                standard ? "thinfilm_thickness" : "thin_film_thickness", 0.0,
                "float");
