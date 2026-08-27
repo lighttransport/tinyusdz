@@ -139,6 +139,11 @@ class VulkanRenderer final : public Renderer {
   bool reloadRayTracingShader(const uint32_t* words, size_t wordCount,
                               std::string* err) override;
   bool rayTracingUsesFullShader() const override { return rtUsesFullShader_; }
+  void setMaterialXVulkanShaderLimits(size_t maxSourceBytes,
+                                      int compileTimeoutSec) override {
+    materialXShaderMaxSourceBytes_ = maxSourceBytes;
+    materialXShaderCompileTimeoutSec_ = compileTimeoutSec;
+  }
   uint32_t rayTracingAccumulatedSamples() const override {
     if (!rtActive_) return 0u;
     const bool ready = rtTechnique_ == RtTechnique::kHardware
@@ -1223,6 +1228,8 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline rtPipeline_{VK_NULL_HANDLE};
   bool rtUsesFullShader_{true};
+  size_t materialXShaderMaxSourceBytes_{129u * 1024u};
+  int materialXShaderCompileTimeoutSec_{30};
 
   // --- Compute-BVH fallback (rt_scene_build.cc HostScene, uploaded as SSBOs) ---
   // Separate pipeline/descriptor-set-layout from the hardware-RT ones above:

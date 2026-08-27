@@ -10226,6 +10226,21 @@ void VulkanRenderer::selectFullRtShaderIfNeeded(
       rtTechnique_ != RtTechnique::kHardware) {
     return;
   }
+#if defined(TUSDVIEW_DEFAULT_VK_SHADER_SOURCE)
+  if (materialXShaderMaxSourceBytes_ > 0) {
+    std::error_code sizeError;
+    const uintmax_t sourceBytes = std::filesystem::file_size(
+        TUSDVIEW_DEFAULT_VK_SHADER_SOURCE, sizeError);
+    if (!sizeError && sourceBytes > materialXShaderMaxSourceBytes_) {
+      LOGW("Vulkan RT full MaterialX shader skipped: source is %llu bytes, "
+           "limit is %zu bytes (override with "
+           "--materialx-vk-shader-max-kib)",
+           static_cast<unsigned long long>(sourceBytes),
+           materialXShaderMaxSourceBytes_);
+      return;
+    }
+  }
+#endif
   const size_t bytes = sizeof(raytrace_comp_spv);
   if ((bytes & 3u) != 0u) {
     LOGW("cannot select full Vulkan RT shader: embedded SPIR-V size is invalid");

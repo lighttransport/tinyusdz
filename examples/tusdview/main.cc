@@ -346,6 +346,10 @@ int main(int argc, char** argv) {
   bool mcpStdio = false;      // MCP server: stdio transport
   int mcpHttpPort = 0;        // MCP server: HTTP transport port (0 = off)
   bool liveShaderWatch = false;  // poll active GPU shader/kernel source
+  size_t materialXVulkanShaderMaxKiB = 129;
+  bool materialXVulkanShaderMaxExplicit = false;
+  int materialXVulkanCompileTimeoutSec = 30;
+  bool materialXVulkanCompileTimeoutExplicit = false;
   int streamHttpPort = 0;     // WebSocket stream server port (0 = off)
   std::string streamCodec = "png";   // idle-refinement codec: png|qoi
   int streamMotionRes = 1280;        // motion-frame long-edge cap (px)
@@ -1044,6 +1048,24 @@ int main(int argc, char** argv) {
       if (mcpHttpPort == 0) mcpHttpPort = 8080;
     } if (std::strcmp(argv[i], "--live-shader-reload") == 0) {
       liveShaderWatch = true;
+    } if (std::strcmp(argv[i], "--materialx-vk-shader-max-kib") == 0 &&
+             (i + 1) < argc) {
+      unsigned value = 0;
+      if (!ParseUnsigned(argv[++i], &value) || value == 0) {
+        LOGE("--materialx-vk-shader-max-kib must be a positive integer");
+        return 1;
+      }
+      materialXVulkanShaderMaxKiB = value;
+      materialXVulkanShaderMaxExplicit = true;
+    } if (std::strcmp(argv[i], "--materialx-vk-compile-timeout") == 0 &&
+             (i + 1) < argc) {
+      unsigned value = 0;
+      if (!ParseUnsigned(argv[++i], &value) || value == 0 || value > 3600) {
+        LOGE("--materialx-vk-compile-timeout must be in [1, 3600] seconds");
+        return 1;
+      }
+      materialXVulkanCompileTimeoutSec = static_cast<int>(value);
+      materialXVulkanCompileTimeoutExplicit = true;
     } if (std::strncmp(argv[i], "--stream-http", 13) == 0) {
       // Optional value: `--stream-http=PORT`, `--stream-http PORT`, or bare
       // `--stream-http` (defaults to 8090). The space form consumes the next
@@ -1279,6 +1301,10 @@ int main(int argc, char** argv) {
           "  --mcp         Both transports.\n"
           "  --live-shader-reload  Watch the active Vulkan/CUDA/HIP RT source and\n"
           "                        transactionally recompile it after file saves.\n"
+          "  --materialx-vk-shader-max-kib N  Reject larger Vulkan shader sources\n"
+          "                        before compilation (default 129 KiB).\n"
+          "  --materialx-vk-compile-timeout N  Kill glslc after N seconds\n"
+          "                        (default 30).\n"
           "  --stream-http[=PORT]  WebSocket browser viewer streaming the window "
           "(incl. ImGui); default port 8090. Navigate/click from the browser.\n"
           "  --stream-codec png|qoi  Idle-refinement codec sent when the view is "
@@ -1636,6 +1662,16 @@ int main(int argc, char** argv) {
       targetRenderFps = *config.config.targetRenderFps;
     if (config.config.minRenderScale && !minRenderScaleExplicit)
       minRenderScale = *config.config.minRenderScale;
+    if (config.config.materialXVulkanShaderMaxKiB &&
+        !materialXVulkanShaderMaxExplicit) {
+      materialXVulkanShaderMaxKiB = static_cast<size_t>(
+          *config.config.materialXVulkanShaderMaxKiB);
+    }
+    if (config.config.materialXVulkanCompileTimeoutSec &&
+        !materialXVulkanCompileTimeoutExplicit) {
+      materialXVulkanCompileTimeoutSec =
+          *config.config.materialXVulkanCompileTimeoutSec;
+    }
     if (config.config.fontSizePx) app.setFontSize(*config.config.fontSizePx);
     if (config.config.windowScale) app.setWindowScale(*config.config.windowScale);
     if (!windowSizeExplicit && config.config.windowWidth &&
@@ -1867,6 +1903,9 @@ int main(int argc, char** argv) {
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);
   app.setLiveShaderWatch(liveShaderWatch);
+  app.setMaterialXVulkanShaderLimits(
+      materialXVulkanShaderMaxKiB * 1024u,
+      materialXVulkanCompileTimeoutSec);
   app.setStreamHttp(streamHttpPort);
   app.setStreamCodec(streamCodec);
   app.setStreamMotionRes(streamMotionRes);

@@ -23,7 +23,9 @@
 #include <utility>
 
 #ifndef _WIN32
+#include <csignal>
 #include <sys/resource.h>
+#include <sys/wait.h>
 #include <unistd.h>  // sysconf (RSS page size for the post-RT-build free log)
 #endif
 
@@ -1009,15 +1011,73 @@ std::string ShellQuote(const std::string& value) {
 #endif
 }
 
+int RunCommandWithTimeout(const std::string& command, int timeoutSec,
+                          bool* timedOut) {
+  if (timedOut) *timedOut = false;
+#if defined(_WIN32)
+  (void)timeoutSec;
+  return std::system(command.c_str());
+#else
+  const pid_t child = fork();
+  if (child < 0) return -1;
+  if (child == 0) {
+    setpgid(0, 0);
+    execl("/bin/sh", "sh", "-c", command.c_str(),
+          static_cast<char*>(nullptr));
+    _exit(127);
+  }
+  setpgid(child, child);
+  int status = 0;
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(std::max(1, timeoutSec));
+  for (;;) {
+    const pid_t done = waitpid(child, &status, WNOHANG);
+    if (done == child) break;
+    if (done < 0) return -1;
+    if (std::chrono::steady_clock::now() >= deadline) {
+      if (timedOut) *timedOut = true;
+      kill(-child, SIGTERM);
+      const auto grace = std::chrono::steady_clock::now() +
+                         std::chrono::seconds(1);
+      while (std::chrono::steady_clock::now() < grace) {
+        if (waitpid(child, &status, WNOHANG) == child) return 124;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+      kill(-child, SIGKILL);
+      waitpid(child, &status, 0);
+      return 124;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return WIFEXITED(status) ? WEXITSTATUS(status) : 128;
+#endif
+}
+
 bool CompileLiveVulkanShader(const std::string& source,
                              bool fullMaterialShader,
                              bool softwareBvh,
                              bool productionPath,
+                             size_t maxSourceBytes,
+                             int compileTimeoutSec,
                              std::vector<uint32_t>* spirv,
                              std::string* err) {
   std::error_code ec;
   if (!std::filesystem::is_regular_file(source, ec) || ec) {
     if (err) *err = "Vulkan shader source does not exist: " + source;
+    return false;
+  }
+  const uintmax_t sourceBytes = std::filesystem::file_size(source, ec);
+  if (ec) {
+    if (err) *err = "cannot determine Vulkan shader source size: " + source;
+    return false;
+  }
+  if (maxSourceBytes > 0 && sourceBytes > maxSourceBytes) {
+    if (err) {
+      *err = "MaterialX Vulkan shader source is " +
+             std::to_string(sourceBytes) + " bytes; limit is " +
+             std::to_string(maxSourceBytes) +
+             " bytes (override with --materialx-vk-shader-max-kib)";
+    }
     return false;
   }
   const char* compilerEnv = std::getenv("TUSDVIEW_GLSLC");
@@ -1046,13 +1106,15 @@ bool CompileLiveVulkanShader(const std::string& source,
                      " -DTUSDVIEW_RT_DISABLE_MTLX=1"
                      " -DTUSDVIEW_RT_DISABLE_DEBUG_RAYS=1";
   }
-  const std::string command =
+  const std::string compilerCommand =
       ShellQuote(compiler) + " --target-env=vulkan1.2 "
       "-fshader-stage=compute" + variantDefines + " -I" +
       ShellQuote(include) + " " +
       ShellQuote(source) + " -o " + ShellQuote(output) + " >" +
       ShellQuote(logPath) + " 2>&1";
-  const int result = std::system(command.c_str());
+  bool timedOut = false;
+  const int result = RunCommandWithTimeout(
+      compilerCommand, compileTimeoutSec, &timedOut);
   std::string compilerLog;
   {
     std::ifstream log(logPath, std::ios::binary);
@@ -1070,7 +1132,10 @@ bool CompileLiveVulkanShader(const std::string& source,
   if (result != 0) {
     std::filesystem::remove(output, ec);
     if (err) {
-      *err = "glslc live compile failed";
+      *err = timedOut
+                 ? "MaterialX Vulkan shader compile exceeded " +
+                       std::to_string(compileTimeoutSec) + " seconds"
+                 : "glslc live compile failed";
       if (!compilerLog.empty()) *err += ":\n" + compilerLog;
     }
     return false;
@@ -4727,6 +4792,9 @@ bool App::createAndInitRenderer(Backend backend, std::string* err) {
   }
   ++rendererGeneration_;
   renderer_->setDevicePreference(devicePreference_);
+  renderer_->setMaterialXVulkanShaderLimits(
+      materialXVulkanShaderMaxSourceBytes_,
+      materialXVulkanCompileTimeoutSec_);
   const size_t rtTextureBudget =
       loadOpts_.textureOptions.textureBudgetMB > 0
           ? static_cast<size_t>(loadOpts_.textureOptions.textureBudgetMB) *
@@ -5621,6 +5689,8 @@ bool App::reloadLiveShader(const std::string& requestedBackend,
                                   renderer_->rayTracingUsesFullShader(),
                                   softwareBvh,
                                   softwareBvh && pathTrace_.enabled,
+                                  materialXVulkanShaderMaxSourceBytes_,
+                                  materialXVulkanCompileTimeoutSec_,
                                   &spirv, &localError)) {
         if (renderThreadActive_) {
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
@@ -5945,6 +6015,9 @@ int App::run(const std::string& initialFile, int maxFrames,
     }
     ++rendererGeneration_;
     renderer_->setDevicePreference(devicePreference_);
+    renderer_->setMaterialXVulkanShaderLimits(
+        materialXVulkanShaderMaxSourceBytes_,
+        materialXVulkanCompileTimeoutSec_);
     // draw_ is a stable App member (same address for the app's lifetime); the
     // Vulkan compute-BVH RT fallback reads it lazily via BuildHostScene() when
     // it needs to rebuild its software BVH, same data the CUDA/HIP tracers'

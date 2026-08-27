@@ -272,6 +272,11 @@ class App
   void setMcpStdio(bool on) { mcpStdio_ = on; }
   void setMcpHttp(int port) { mcpHttpPort_ = port; }  // 0 = off
   void setLiveShaderWatch(bool on) { liveShaderWatchRequested_ = on; }
+  void setMaterialXVulkanShaderLimits(size_t maxSourceBytes,
+                                      int compileTimeoutSec) {
+    materialXVulkanShaderMaxSourceBytes_ = maxSourceBytes;
+    materialXVulkanCompileTimeoutSec_ = compileTimeoutSec;
+  }
   void setStreamHttp(int port) { streamHttpPort_ = port; }  // 0 = off
   // Idle-refinement codec for the stream: "png" (default) or "qoi". While the
   // view is moving, frames are sent as small low-quality JPEG; once the view is
@@ -912,6 +917,8 @@ class App
   std::uint64_t rendererGeneration_{0};
   bool liveShaderWatchRequested_{false};
   std::chrono::steady_clock::time_point liveShaderNextPoll_{};
+  size_t materialXVulkanShaderMaxSourceBytes_{129u * 1024u};
+  int materialXVulkanCompileTimeoutSec_{30};
   LiveShaderState liveVulkanShader_;
   LiveShaderState liveCudaKernel_;
   LiveShaderState liveHipKernel_;
