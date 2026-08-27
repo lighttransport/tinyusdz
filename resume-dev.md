@@ -712,7 +712,10 @@ BSDF/EDF routing is covered by the bridge regression.
    native parser/unit/roundtrip/feature gate passes 29/29, and the stable
    `next` suite passes 40/40. After relinking the main viewer with the current
    bridge/evaluator objects, the registered `tusdview` family passes 146/146
-   with 24 documented capability skips and no failures.
+   with 24 documented capability skips and no failures. The locally available
+   external `usd-assets` suite's complete curated profile also passes through
+   `tusdr-cpu` (9/9 rendered or rendered-with-warnings); hardware-backed
+   external profiles remain pending.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
