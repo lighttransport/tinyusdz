@@ -1433,6 +1433,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       const ClosureLaneMap& edf = lowerClosure(connectedClosure("edf"));
       for (const auto& lane : bsdf) lanes[lane.first] = lane.second;
       for (const auto& lane : edf) lanes[lane.first] = lane.second;
+    } else if (cat == "surface_unlit") {
+      // surface_unlit is a terminal shader, not a closure node.  Its direct
+      // schema inputs still need to become bounded OpenPBR lanes when a JSON
+      // nodegraph exposes the shader itself as an output.
+      emitLeaf("emission_luminance", "emission", 0.0, "float");
+      emitLeaf("emission_color", "emission_color",
+               nlohmann::json::array({1, 1, 1}), "color3");
+      emitLeaf("transmission_weight", "transmission", 0.0, "float");
+      emitLeaf("transmission_color", "transmission_color",
+               nlohmann::json::array({1, 1, 1}), "color3");
+      emitLeaf("geometry_opacity", "opacity", 1.0, "float");
+      emitLeaf("geometry_normal", "normal",
+               nlohmann::json::array({0, 0, 1}), "color3");
     } else if (cat == "light") {
       // A MaterialX light is a wrapper around an EDF. Preserve the closure
       // lanes and apply the light's color intensity plus EV exposure in the
@@ -1733,10 +1746,17 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
   if (sourceConnectionsIt != j.end() && sourceConnectionsIt->is_array()) {
     for (const nlohmann::json& connection : *sourceConnectionsIt) {
       const std::string terminalInput = JsonString(connection, "input");
-      if (terminalInput != "bsdf" && terminalInput != "edf" &&
-          terminalInput != "vdf") continue;
       const auto output = sourceOutputs.find(JsonString(connection, "output"));
-      if (output != sourceOutputs.end()) lowerClosure(output->second);
+      if (output == sourceOutputs.end()) continue;
+      const auto sourceNode = sourceNodes.find(output->second);
+      if (terminalInput == "bsdf" || terminalInput == "edf" ||
+          terminalInput == "vdf" ||
+          (sourceNode != sourceNodes.end() &&
+           (NormalizeMtlxCategory(JsonString(sourceNode->second, "category"),
+                                  JsonString(sourceNode->second, "type")) ==
+                "surface_unlit"))) {
+        lowerClosure(output->second);
+      }
     }
   }
   auto emitMatrixInput = [&](const nlohmann::json& node,const char* inputName,
@@ -3031,6 +3051,18 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
             graph.output[static_cast<size_t>(route->second)] = node->second;
         }
         continue;
+      }
+      const auto closure = closureLanes.find(outputIt->second);
+      if (closure != closureLanes.end()) {
+        const auto lane = closure->second.find(input);
+        const auto node = lane == closure->second.end()
+                              ? nodeIds.end() : nodeIds.find(lane->second);
+        const auto route = closureLaneOutput.find(input);
+        if (lane != closure->second.end() && node != nodeIds.end() &&
+            route != closureLaneOutput.end()) {
+          graph.output[static_cast<size_t>(route->second)] = node->second;
+          continue;
+        }
       }
       const auto nodeIt = nodeIds.find(outputIt->second);
       if (nodeIt == nodeIds.end()) continue;
