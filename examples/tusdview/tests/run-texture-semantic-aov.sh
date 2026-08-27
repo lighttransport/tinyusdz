@@ -9,6 +9,10 @@ BIN="${TUSDVIEW:-$ROOT/build_ninja/tusdview}"
 [ -x "$BIN" ] || { echo "SKIP: tusdview not found"; exit "$SKIP"; }
 command -v python3 >/dev/null || { echo "SKIP: python3 missing"; exit "$SKIP"; }
 command -v zip >/dev/null || { echo "SKIP: zip missing"; exit "$SKIP"; }
+VK_DEVICE_ARGS=()
+if [ -n "${TUSDVIEW_VK_DEVICE:-}" ]; then
+  VK_DEVICE_ARGS=(--vk-device "$TUSDVIEW_VK_DEVICE")
+fi
 OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"; mkdir -p "$OUT"
 [ -n "${TUSDVIEW_TEST_OUT:-}" ] || trap 'rm -rf "$OUT"' EXIT
 printf '%s\n' '{"window_size":{"width":256,"height":256}}' > "$OUT/config.json"
@@ -747,7 +751,7 @@ elif command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" 
   # Minimal fallback for hosts without vulkaninfo. The viewer reports the
   # selected device before entering its headless loop; timeout is expected on
   # builds that keep the window loop alive after the first frame.
-  timeout 10s "$BIN" --headless --backend vk --frames 1 --mode shaded \
+  timeout 10s "$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" --frames 1 --mode shaded \
     --screenshot "$OUT/vulkan-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
     >"$OUT/vulkan-preflight.log" 2>&1 || :
   if grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer|device=cpu|rt=off|rt_available=0|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
@@ -762,7 +766,7 @@ fi
 # that selection itself even if the global summary contains a discrete GPU.
 if [ "$vk_software" = 0 ] && [ -n "${TUSDVIEW_VK_DEVICE:-}" ] &&
    command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
-  timeout 10s "$BIN" --headless --backend vk --frames 1 --mode shaded \
+  timeout 10s "$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" --frames 1 --mode shaded \
     --screenshot "$OUT/vulkan-device-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
     >"$OUT/vulkan-device-preflight.log" 2>&1 || :
   if grep -Eqi 'rt=off|rt_available=0|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
@@ -780,7 +784,7 @@ case " ${TUSDVIEW_SEMANTIC_BACKENDS:-} " in
   *" vk-rt "*)
     if [ "${backend_unavailable[vk-rt]:-0}" = 0 ] &&
        command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
-      timeout 10s "$BIN" --headless --backend vk --frames 1 --mode shaded \
+      timeout 10s "$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" --frames 1 --mode shaded \
         --screenshot "$OUT/vulkan-rt-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
         >"$OUT/vulkan-rt-preflight.log" 2>&1 || :
       if grep -Eqi 'rt=off|rt_available=0|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
@@ -982,8 +986,8 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
   for backend in ${TUSDVIEW_SEMANTIC_BACKENDS:-gl vk-raster vk-rt cuda hip}; do
     case "$backend" in
       gl) args=("$BIN" --backend gl --texture-compress off --texture-mips off "${loader_args[@]}"); tag=gl$loader_suffix; marker='render stats';;
-      vk-raster) args=("$BIN" --headless --backend vk --texture-compress off --texture-mips off "${loader_args[@]}"); tag=vk-raster$loader_suffix; marker='render stats';;
-      vk-rt) [ "$vk_software" = 0 ] || { echo 'SKIP: Vulkan RT on software Vulkan'; continue; }; args=("$BIN" --headless --backend vk --rt --texture-compress off --texture-mips off "${loader_args[@]}"); tag=vk-rt$loader_suffix; marker='caps: v1 .*rt=hardware';;
+      vk-raster) args=("$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" --texture-compress off --texture-mips off "${loader_args[@]}"); tag=vk-raster$loader_suffix; marker='render stats';;
+      vk-rt) [ "$vk_software" = 0 ] || { echo 'SKIP: Vulkan RT on software Vulkan'; continue; }; args=("$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" --rt --texture-compress off --texture-mips off "${loader_args[@]}"); tag=vk-rt$loader_suffix; marker='caps: v1 .*rt=hardware';;
       cuda) args=("$BIN" --headless --cuda --texture-compress off --texture-mips off "${loader_args[@]}"); tag=cuda$loader_suffix; marker='CUDA RT wrote';;
       hip) args=("$BIN" --headless --hip --texture-compress off --texture-mips off "${loader_args[@]}"); tag=hip$loader_suffix; marker='HIP RT wrote';;
       *) echo "unknown backend: $backend" >&2; exit 2;;
