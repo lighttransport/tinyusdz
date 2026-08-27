@@ -545,6 +545,10 @@ Passed:
   and external-asset profiles are capability-skipped; Vulkan RT test 133 is
   the remaining hardware-only CTest boundary, while its direct preflight
   reports a clean skip.
+- The final registered interval 166–296 passes 131/131 executed tests,
+  including bridge, checker, texture synthetic, CUDA/HIP format, and diff
+  coverage. Corpus and real-asset cases are capability-skipped where their
+  external inputs are absent.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -589,10 +593,10 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    machines; CUDA and HIP semantic-AOV checks now pass here, while the
    registered hardware Vulkan RT semantic sweep still requires a clean cold
    NVIDIA validation run and AMD hardware remains unavailable.
-8. Complete a clean full native/viewer/tusdrender regression after the RT
-   semantic harness can finish on a hardware Vulkan environment; the focused
-   displacement-UDIM matrix is now green, while the full aggregate and clean
-   hardware Vulkan RT semantic sweep remain pending.
+8. Complete a single uninterrupted full native/viewer/tusdrender regression
+   after the RT semantic harness can finish on a hardware Vulkan environment;
+   all registered intervals are now green when isolated, while the aggregate
+   still crosses display/hardware preflight boundaries.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
