@@ -1554,11 +1554,22 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       } else {
         emitLeaf("thin_film_weight", "thin_film_weight", 0.0, "float");
       }
-      emitLeaf("thin_film_thickness",
-               standard ? "thinfilm_thickness" : "thin_film_thickness", 0.0,
-               "float");
-      emitLeaf("thin_film_ior",
-               standard ? "thinfilm_IOR" : "thin_film_ior", 1.5, "float");
+      const char* thinFilmThicknessName = "thin_film_thickness";
+      const char* thinFilmIorName = "thin_film_ior";
+      if (standard) {
+        // MaterialX standard_surface documents commonly use thinfilm_*;
+        // evaluator-generated graphs use the schema's thin_film_* spelling.
+        // Accept both, preferring the canonical schema spelling when both
+        // are authored.
+        thinFilmThicknessName =
+            inputNamed(node, "thin_film_thickness", nlohmann::json()).is_null()
+                ? "thinfilm_thickness" : "thin_film_thickness";
+        thinFilmIorName =
+            inputNamed(node, "thin_film_IOR", nlohmann::json()).is_null()
+                ? "thinfilm_IOR" : "thin_film_IOR";
+      }
+      emitLeaf("thin_film_thickness", thinFilmThicknessName, 0.0, "float");
+      emitLeaf("thin_film_ior", thinFilmIorName, 1.5, "float");
       emitLeaf("geometry_opacity", standard ? "opacity" : "geometry_opacity",
                1.0, "float");
       emitLeaf("geometry_normal", "normal",

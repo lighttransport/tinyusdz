@@ -2453,8 +2453,8 @@ int main() {
         {"name":"roughness","value":0.27},
         {"name":"specular_ior","value":1.6},
         {"name":"emission","value":2.0},
-        {"name":"thinfilm_thickness","value":120.0},
-        {"name":"thinfilm_IOR","value":1.4},
+        {"name":"thin_film_thickness","value":120.0},
+        {"name":"thin_film_IOR","value":1.4},
         {"name":"opacity","value":0.75}]}
     ],"outputs":[{"name":"shader","type":"surfaceshader",
       "nodename":"standard"}]},
