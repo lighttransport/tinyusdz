@@ -556,6 +556,9 @@ Passed:
 - The semantic-AOV preflight now recognizes the viewer's explicit `rt=off` /
   `rt_available=0` capability line and skips only Vulkan RT cases, preventing
   false `coat-normal` failures on raster-only Vulkan devices.
+- After the preflight fix, registered Vulkan RT semantic-AOV test 133 skips
+  cleanly in 1.88s. The GL semantic-AOV wrapper still cannot complete under
+  this restricted X11 setup and remains an environment-only boundary.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
