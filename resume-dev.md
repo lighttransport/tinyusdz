@@ -524,6 +524,9 @@ Passed:
   The bridge regression and complete four-test focused group pass again.
 - The native parser, roundtrip, unit, and feature regression subset passes
   29/29 on the committed tree.
+- Post-commit renderer coverage passes 8/8: CUDA and HIP semantic-AOV,
+  CPU-RT headless/OpenPBR/MaterialX, Vulkan render/software-BVH, and Vulkan
+  raster semantic-AOV tests.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
