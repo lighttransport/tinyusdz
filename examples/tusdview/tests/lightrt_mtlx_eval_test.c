@@ -290,7 +290,18 @@ int main(void) {
       "<materialx><image name=\"nearest\" type=\"color3\">"
       "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
       "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
-      "</image></materialx>");
+      "</image><hextiledimage name=\"hex_nearest\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "<input name=\"rotationrange\" type=\"vector2\" value=\"0,0\"/>"
+      "<input name=\"scalerange\" type=\"vector2\" value=\"1,1\"/>"
+      "<input name=\"offsetrange\" type=\"vector2\" value=\"0,0\"/>"
+      "</hextiledimage><hextiledimage name=\"hex_linear\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"rotationrange\" type=\"vector2\" value=\"0,0\"/>"
+      "<input name=\"scalerange\" type=\"vector2\" value=\"1,1\"/>"
+      "<input name=\"offsetrange\" type=\"vector2\" value=\"0,0\"/>"
+      "</hextiledimage></materialx>");
   TextureCache *nearest_cache = texcache_create(".");
   int nearest_ok = nearest_doc && nearest_cache;
   MtlxValue nearest_value;
@@ -302,16 +313,29 @@ int main(void) {
     nearest_ctx.doc = nearest_doc;
     nearest_ctx.tex = nearest_cache;
     nearest_ctx.uv[0] = 0.5f;
-    nearest_ctx.uv[1] = 0.5f;
+    nearest_ctx.uv[1] = 0.37f;
     nearest_ctx.memo = (MtlxValue *)calloc((size_t)nearest_doc->nnode,
                                             sizeof(MtlxValue));
     nearest_ctx.memo_done = (char *)calloc((size_t)nearest_doc->nnode, 1);
     int nearest_node = mtlx_find_node(nearest_doc, -1, "nearest");
-    if (!nearest_ctx.memo || !nearest_ctx.memo_done || nearest_node < 0) {
+    int hex_nearest_node = mtlx_find_node(nearest_doc, -1, "hex_nearest");
+    int hex_linear_node = mtlx_find_node(nearest_doc, -1, "hex_linear");
+    if (!nearest_ctx.memo || !nearest_ctx.memo_done || nearest_node < 0 ||
+        hex_nearest_node < 0 || hex_linear_node < 0) {
       nearest_ok = 0;
     } else {
       nearest_value = mtlx_eval_node_test(&nearest_ctx, nearest_node);
       nearest_ok = nearest_value.v[2] > 0.99f && nearest_value.v[0] < 0.01f;
+      memset(nearest_ctx.memo_done, 0, (size_t)nearest_doc->nnode);
+      MtlxValue hex_nearest_value =
+          mtlx_eval_node_test(&nearest_ctx, hex_nearest_node);
+      memset(nearest_ctx.memo_done, 0, (size_t)nearest_doc->nnode);
+      MtlxValue hex_linear_value =
+          mtlx_eval_node_test(&nearest_ctx, hex_linear_node);
+      nearest_ok = nearest_ok &&
+          (fabsf(hex_nearest_value.v[0] - hex_linear_value.v[0]) > 0.001f ||
+           fabsf(hex_nearest_value.v[1] - hex_linear_value.v[1]) > 0.001f ||
+           fabsf(hex_nearest_value.v[2] - hex_linear_value.v[2]) > 0.001f);
     }
     free(nearest_ctx.memo);
     free(nearest_ctx.memo_done);

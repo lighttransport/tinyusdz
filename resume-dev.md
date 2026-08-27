@@ -638,7 +638,7 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
 5. Close texture/projection gaps: derivatives,
    and any true measured-EDF
    profile backend beyond the documented color fallback. Nearest filtering is
-   now covered for regular, latlong, triplanar, and UDIM-capable image paths;
+   now covered for regular, latlong, triplanar, hextiled, and UDIM-capable image paths;
    sRGB RGB conversion and RGBA alpha preservation are covered as well.
 6. The focused graph connection/evaluation/bridge suites now cover closure
    composition, wrapper nesting, multi-output selectors, missing inputs, type
