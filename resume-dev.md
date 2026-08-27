@@ -26,6 +26,7 @@ not hand-edit generated headers.
   - latest slice adds UDIM and hextiled UV-footprint propagation
   - current slice adds triplanar world-position footprint propagation
   - current slice adds latlong view-direction footprint propagation
+  - current slice adds seam-aware UDIM footprint filtering
   - `4af9c581a` Honor Vulkan device selection in semantic AOV tests
   - `f51148570` Forward surfacematerial graph wrappers
   - `ead052954` Fix Vulkan instanced normal transforms
@@ -675,7 +676,7 @@ BSDF/EDF routing is covered by the bridge regression.
    image nodes, UDIM footprints within a selected tile, the fixed-size graph
    bake footprint, hextiled affine lookups, triplanar world-position
    projections, and latlong view-direction projections; UDIM seam crossing
-   remains.
+   is now integrated with per-tap tile resolution.
    and any true measured-EDF
    profile backend beyond the documented color fallback. Nearest filtering is
    now covered for regular, latlong, triplanar, hextiled, and UDIM-capable image paths;

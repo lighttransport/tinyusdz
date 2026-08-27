@@ -128,6 +128,36 @@ int texcache_sample_file_grad(TextureCache *tc, const char *path, int srgb,
                               float u, float v, float dudx, float dvdx,
                               float dudy, float dvdy, float out[4]) {
     if (!tc || !path || !path[0] || !out) return 0;
+    const char *udim = strstr(path, "<UDIM>");
+    if (udim) {
+        /* A footprint crossing a tile boundary must resolve each tap against
+         * its own tile. Sampling one preselected tile would wrap the seam and
+         * duplicate the wrong texels. */
+        const float half_u = 0.5f * (fabsf(dudx) + fabsf(dudy));
+        const float half_v = 0.5f * (fabsf(dvdx) + fabsf(dvdy));
+        const int crosses_u = (int)floorf(u - half_u) !=
+                              (int)floorf(u + half_u);
+        const int crosses_v = (int)floorf(v - half_v) !=
+                              (int)floorf(v + half_v);
+        if (crosses_u || crosses_v) {
+            float sum[4] = {0, 0, 0, 0};
+            for (int y = 0; y < 4; ++y) for (int x = 0; x < 4; ++x) {
+                const float ax = ((float)x + 0.5f) * 0.25f - 0.5f;
+                const float ay = ((float)y + 0.5f) * 0.25f - 0.5f;
+                float sample[4];
+                if (!texcache_sample_file(tc, path, srgb,
+                                          u + ax * dudx + ay * dudy,
+                                          v + ax * dvdx + ay * dvdy,
+                                          sample)) {
+                    out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f;
+                    return 0;
+                }
+                for (int c = 0; c < 4; ++c) sum[c] += sample[c] * 0.0625f;
+            }
+            for (int c = 0; c < 4; ++c) out[c] = sum[c];
+            return 1;
+        }
+    }
     char resolved[1024];
     if (udim_path(path, u, v, resolved, sizeof(resolved)) < 0) return 0;
     int id = texcache_get(tc, resolved, srgb);
