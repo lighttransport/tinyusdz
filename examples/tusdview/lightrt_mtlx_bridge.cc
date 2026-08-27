@@ -942,10 +942,18 @@ bool BuildMaterialXXmlFromJsonGraph(const DrawMaterialCPU& mat,
       ss << "    <input name=\"edf\" type=\"EDF\" nodename=\"tusdview_edf\"/>\n";
     ss << "  </volume>\n";
   } else for (const auto& conn : connections) {
+    // The realtime bridge exposes subsurface_radius_scale as a separate
+    // vector input, while the OpenPBR MaterialX node represents the same
+    // authored vector through its radius lane. Keep the evaluator in sync
+    // with the runtime graph ABI; otherwise it silently evaluates the alias
+    // as an unrecognized input and returns the default radius.
+    const std::string evalInput =
+        conn.first == "subsurface_radius_scale" ? "subsurface_radius"
+                                                 : conn.first;
     const std::string type = outputTypes.count(conn.second.output)
                                  ? outputTypes[conn.second.output]
                                  : "float";
-    ss << "    <input name=\"" << XmlEscape(conn.first)
+    ss << "    <input name=\"" << XmlEscape(evalInput)
        << "\" type=\"" << XmlEscape(type)
        << "\" nodegraph=\"" << XmlEscape(conn.second.graph)
        << "\" output=\"" << XmlEscape(conn.second.output) << "\"";
@@ -3796,6 +3804,21 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
           !graphDrives("geometry_normal")) {
         std::copy(std::begin(directParams.normal), std::end(directParams.normal),
                   std::begin(p.normal));
+      }
+      const bool graphHasRadiusScale =
+          graphConnections.find("subsurface_radius_scale") !=
+          graphConnections.end();
+      const bool graphHasRadius =
+          graphConnections.find("subsurface_radius") != graphConnections.end();
+      if (graphHasRadiusScale && !graphHasRadius) {
+        // A graph radius-scale output is represented by the vector radius lane.
+        // When the radius itself is authored directly on the material, combine
+        // the two values instead of allowing the evaluator's default radius to
+        // replace the authored scalar.
+        for (int i = 0; i < 3; ++i) {
+          p.subsurfaceRadius[i] = directParams.subsurfaceRadius[i] *
+                                  graphParams.subsurfaceRadius[i];
+        }
       }
       // A graph evaluator starts from OpenPBR defaults (500 nm film), while a
       // converted Standard Surface with no authored film is explicitly 0 nm.

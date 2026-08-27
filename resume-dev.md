@@ -518,6 +518,10 @@ Passed:
   independent (`c32152edb`). The focused bridge regression passes.
 - The complete bridge/evaluator/graph focused group passes 4/4 after the
   radius-scale change.
+- Mixed authored scalar radius plus graph-driven vector radius scale is now
+  restored as a component-wise product during the bake; the JSON-to-MaterialX
+  fallback maps the runtime alias onto the evaluator's vector radius lane.
+  The bridge regression and complete four-test focused group pass again.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
