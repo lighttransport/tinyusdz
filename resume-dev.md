@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `48d14e834` (`Fix Vulkan instance normal transforms`)
+- HEAD: `c4b3083f6` (`Lower MaterialX surface closure wrappers`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -456,6 +456,9 @@ Passed:
   the point-surface path. The ray-query and fast-path shaders were regenerated
   from source and compile successfully; the GPU material ABI check passes
   (`48d14e834`). Hardware pixel validation remains pending.
+- MaterialX `surface` closure wrappers now forward nested BSDF and EDF lanes
+  into the bounded runtime graph, with direct diffuse-plus-emission wrapper
+  coverage in the rebuilt bridge regression (`c4b3083f6`).
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
