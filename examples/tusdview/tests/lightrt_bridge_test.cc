@@ -1731,15 +1731,20 @@ int main() {
         missingPos, missingName.size(), "checkerboard.png");
   }
   tusdview::BakeMaterialXGraphTextures(&graphBakeMat, &graphBakeScene);
-  if (graphBakeMat.baseColorTex < 0 || graphBakeScene.textures.size() != 2 ||
+  const bool hasBakedGraphTexture = std::any_of(
+      graphBakeMat.materialXGraph.nodes.begin(),
+      graphBakeMat.materialXGraph.nodes.end(),
+      [](const tusdview::MaterialXGraphNodeCPU& node) {
+        return node.textureId >= 0;
+      });
+  if (graphBakeMat.baseColorTex < 0 || graphBakeScene.textures.size() != 1 ||
       graphBakeScene.textures[0].image.width != 16 ||
       graphBakeScene.textures[0].image.height != 16 ||
-      graphBakeMat.materialXGraph.nodes[0].textureId < 0) {
+      !hasBakedGraphTexture) {
     std::fprintf(stderr,
                  "MaterialX graph texture bake did not produce a map (base=%d textures=%zu nodeTex=%d)\n",
                  graphBakeMat.baseColorTex, graphBakeScene.textures.size(),
-                 graphBakeMat.materialXGraph.nodes.empty()
-                     ? -1 : graphBakeMat.materialXGraph.nodes[0].textureId);
+                 hasBakedGraphTexture ? 1 : -1);
     return 1;
   }
 

@@ -3647,32 +3647,75 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
       // replace a correctly extracted typed value. Texture-driven lanes are
       // preserved by MergeGraphParamsPreservingTextureDeps above, and the
       // corresponding non-textured typed lanes are restored here.
+      std::set<std::string> graphConnections;
+      const nlohmann::json connectionJson = nlohmann::json::parse(
+          mat->materialXNodeGraphJson.begin(),
+          mat->materialXNodeGraphJson.end(), nullptr, false);
+      const auto connectionIt = connectionJson.is_discarded()
+                                    ? connectionJson.end()
+                                    : connectionJson.find("connections");
+      if (!connectionJson.is_discarded() &&
+          connectionIt != connectionJson.end() && connectionIt->is_array()) {
+        for (const nlohmann::json& connection : *connectionIt) {
+          const std::string input = OpenPBREvalInputName(
+              JsonString(connection, "input"));
+          if (!input.empty()) graphConnections.insert(input);
+        }
+      }
       auto graphDrives = [&](const char* name) {
-        return graphDeps.textureInputs.find(name) !=
-               graphDeps.textureInputs.end();
+        static const std::map<std::string, size_t> graphLanes = {
+            {"base_color", 0}, {"base_metalness", 1},
+            {"specular_roughness", 2}, {"geometry_opacity", 3},
+            {"emission_color", 4}, {"geometry_normal", 5}};
+        const auto lane = graphLanes.find(name);
+        if (lane != graphLanes.end() && mat->materialXGraph.valid)
+          return mat->materialXGraph.output[lane->second] >= 0;
+        return graphConnections.find(name) != graphConnections.end();
       };
-      if (mat->baseColorTex < 0 && !graphDrives("base_color")) {
+      // Graph routes take precedence over direct fallback values; direct
+      // parameters are restored only for lanes without an authored route.
+      const bool hasDirectBaseColor =
+          FindParam(*mat, "OpenPBRSurface", "base_color") != nullptr;
+      const bool hasDirectMetalness =
+          FindParam(*mat, "OpenPBRSurface", "base_metalness") != nullptr;
+      const bool hasDirectRoughness =
+          FindParam(*mat, "OpenPBRSurface", "specular_roughness") != nullptr ||
+          FindParam(*mat, "OpenPBRSurface", "base_roughness") != nullptr;
+      const bool hasDirectOpacity =
+          FindParam(*mat, "OpenPBRSurface", "geometry_opacity") != nullptr;
+      const bool hasDirectEmissionColor =
+          FindParam(*mat, "OpenPBRSurface", "emission_color") != nullptr;
+      const bool hasDirectEmission =
+          FindParam(*mat, "OpenPBRSurface", "emission_luminance") != nullptr;
+      const bool hasDirectNormal =
+          FindParam(*mat, "OpenPBRSurface", "geometry_normal") != nullptr;
+      if (hasDirectBaseColor && mat->baseColorTex < 0 &&
+          !graphDrives("base_color")) {
         std::copy(std::begin(directParams.baseColor),
                   std::end(directParams.baseColor), std::begin(p.baseColor));
       }
-      if (mat->metallicTex < 0 && !graphDrives("base_metalness"))
+      if (hasDirectMetalness && mat->metallicTex < 0 &&
+          !graphDrives("base_metalness"))
         p.metalness = directParams.metalness;
-      if (mat->roughnessTex < 0 &&
+      if (hasDirectRoughness && mat->roughnessTex < 0 &&
           !graphDrives("base_diffuse_roughness") &&
           !graphDrives("specular_roughness")) {
         p.diffuseRoughness = directParams.diffuseRoughness;
         p.specularRoughness = directParams.specularRoughness;
       }
-      if (mat->opacityTex < 0 && !graphDrives("geometry_opacity"))
+      if (hasDirectOpacity && mat->opacityTex < 0 &&
+          !graphDrives("geometry_opacity"))
         p.opacity = directParams.opacity;
-      if (mat->emissiveTex < 0 && !graphDrives("emission_color")) {
+      if (hasDirectEmissionColor && mat->emissiveTex < 0 &&
+          !graphDrives("emission_color")) {
         std::copy(std::begin(directParams.emissionColor),
                   std::end(directParams.emissionColor),
                   std::begin(p.emissionColor));
-        if (!graphDrives("emission_luminance"))
+        if (hasDirectEmission && !graphDrives("emission_luminance"))
           p.emission = directParams.emission;
       }
-      if (mat->normalTex < 0 && !graphDrives("geometry_normal")) {
+      if (hasDirectNormal && mat->normalTex < 0 &&
+          !graphDrives("geometry_normal")) {
         std::copy(std::begin(directParams.normal), std::end(directParams.normal),
                   std::begin(p.normal));
       }
