@@ -124,6 +124,20 @@ int texcache_sample_file(TextureCache *tc, const char *path, int srgb,
     return 1;
 }
 
+int texcache_sample_file_grad(TextureCache *tc, const char *path, int srgb,
+                              float u, float v, float dudx, float dvdx,
+                              float dudy, float dvdy, float out[4]) {
+    if (!tc || !path || !path[0] || !out) return 0;
+    char resolved[1024];
+    if (udim_path(path, u, v, resolved, sizeof(resolved)) < 0) return 0;
+    int id = texcache_get(tc, resolved, srgb);
+    if (id < 0) return 0;
+    texcache_sample_address_grad(tc, id, u - floorf(u), v - floorf(v),
+                                 dudx, dvdx, dudy, dvdy,
+                                 "periodic", "periodic", out);
+    return 1;
+}
+
 void texcache_preload(TextureCache *tc, const MtlxDoc *doc) {
     for (int i = 0; i < doc->nnode; i++) {
         const MtlxNode *n = &doc->nodes[i];

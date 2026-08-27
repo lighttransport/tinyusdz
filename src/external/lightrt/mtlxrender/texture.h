@@ -54,6 +54,10 @@ void texcache_sample_nearest_address(TextureCache *tc, int id, float u, float v,
 int texcache_sample_file(TextureCache *tc, const char *path, int srgb,
                          float u, float v, float out[4]);
 
+int texcache_sample_file_grad(TextureCache *tc, const char *path, int srgb,
+                              float u, float v, float dudx, float dvdx,
+                              float dudy, float dvdy, float out[4]);
+
 int texcache_sample_file_nearest(TextureCache *tc, const char *path, int srgb,
                                  float u, float v, float out[4]);
 

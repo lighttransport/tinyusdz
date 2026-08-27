@@ -580,9 +580,15 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
             sampled = 1;
         }
     } else if (path) {
-        sampled = nearest
-            ? texcache_sample_file_nearest(ctx->tex, path, srgb, u, v, s)
-            : texcache_sample_file(ctx->tex, path, srgb, u, v, s);
+        if (nearest) {
+            sampled = texcache_sample_file_nearest(ctx->tex, path, srgb, u, v, s);
+        } else if (ctx->has_uv_derivatives) {
+            sampled = texcache_sample_file_grad(
+                ctx->tex, path, srgb, u, v, ctx->uv_dx[0], ctx->uv_dx[1],
+                ctx->uv_dy[0], ctx->uv_dy[1], s);
+        } else {
+            sampled = texcache_sample_file(ctx->tex, path, srgb, u, v, s);
+        }
     }
     if (!sampled) { MtlxValue d = in_or(ctx, n, "default", mv_zero(n->type)); v3 dc = mv_as_v3(&d); s[0]=dc.x; s[1]=dc.y; s[2]=dc.z; s[3]=1; }
     switch (n->type) {
@@ -711,7 +717,7 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
     int basex = (int)floorf(skx), basey = (int)floorf(sky), si = (int)s;
     int idx[3] = { basex + si, basex + si, basex + (1 - si) };
     int idy[3] = { basey + si, basey + (1 - si), basey + si };
-    float cx[3], cy[3];
+    float cx[3], cy[3], local_cr[3], local_srn[3], local_sc[3];
     for (int i = 0; i < 3; i++) {
         /* tile center: inv_skewed * (id / sqrt3_2) */
         float ax = idx[i] / sqrt3_2, ay = idy[i] / sqrt3_2;
@@ -724,6 +730,7 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
         float offy = orr.v[0] + (orr.v[1] - orr.v[0]) * (ry * offset);
         float dx = coord_x - ctrx, dy = coord_y - ctry;
         float cr = cosf(rot), srn = sinf(rot);
+        local_cr[i] = cr; local_srn[i] = srn; local_sc[i] = sc;
         cx[i] = (dx * cr - dy * srn) / sc + ctrx + offx;
         cy[i] = (dx * srn + dy * cr) / sc + ctry + offy;
     }
@@ -732,6 +739,20 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
         if (nearest) {
             texcache_sample_nearest_address(ctx->tex, id, cx[i], cy[i],
                                             "periodic", "periodic", c[i]);
+        } else if (ctx->has_uv_derivatives) {
+            /* The transform is affine per tap; derive its Jacobian from the
+             * same rotation and scale used to construct this lookup. */
+            float dcxdu = tile_x * local_cr[i] / local_sc[i];
+            float dcxdv = -tile_y * local_srn[i] / local_sc[i];
+            float dcydu = tile_x * local_srn[i] / local_sc[i];
+            float dcydv = tile_y * local_cr[i] / local_sc[i];
+            texcache_sample_address_grad(
+                ctx->tex, id, cx[i], cy[i],
+                dcxdu * ctx->uv_dx[0] + dcxdv * ctx->uv_dx[1],
+                dcydu * ctx->uv_dx[0] + dcydv * ctx->uv_dx[1],
+                dcxdu * ctx->uv_dy[0] + dcxdv * ctx->uv_dy[1],
+                dcydu * ctx->uv_dy[0] + dcydv * ctx->uv_dy[1],
+                "periodic", "periodic", c[i]);
         } else {
             texcache_sample(ctx->tex, id, cx[i], cy[i], c[i]);
         }
