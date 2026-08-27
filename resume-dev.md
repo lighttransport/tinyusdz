@@ -592,6 +592,8 @@ Direct schema-surface graph lowering now covers `standard_surface` and
 authored base color, metalness, IOR, emission, opacity, and weight routes;
 the OpenPBR-specific lane names, coat-affect/darkening fields, and thin-film
 fields are covered as well, and the complete focused graph group passes 4/4.
+Standard Surface thin-film presence is also derived from positive thickness
+into the runtime weight lane, matching the evaluator's schema behavior.
 
 ## Remaining work, in priority order
 
