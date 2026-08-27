@@ -29,6 +29,7 @@ ref/dist/
 ref/dist*/
 web/demo/dist/
 web/demo/assets-src/
+web/demo/public/assets/openchess/
 web/site/dist/
 web/build_ninja/
 web/cmake-build/

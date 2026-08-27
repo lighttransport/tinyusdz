@@ -74,6 +74,7 @@
     "test:loader-texture-compression": "node tests/loader-utils-texture-compression.mjs",
     "test:loader-basis-ktx2": "node tests/loader-utils-basis-ktx2.mjs",
     "test:texture-compression-wasm": "node tests/texture-compression-wasm.mjs",
+    "test:lightrt-wasm": "node tests/lightrt-wasm.mjs",
     "test:texture-compression-three-ktx2": "node tests/texture-compression-three-ktx2.mjs",
     "usd-export": "vite-node cli/usd-export-cli.js",
     "usdzconvert": "node cli/usdzconvert.js",

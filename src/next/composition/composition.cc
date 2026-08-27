@@ -2036,7 +2036,12 @@ Compositor::SubtreeArcInfo Compositor::GetSubtreeArcInfo(
       [](const ArcPrimEntry& e, const std::string& v) { return e.path < v; });
 
   SubtreeArcInfo info;
-  info.has_arcs = false;
+  // Sublayers are composition arcs too.  An external payload/reference may
+  // deliberately be an otherwise-empty layer whose target prim is supplied by
+  // its sublayers (OpenChessSet's *_payload.usd layers use this pattern).
+  // Treating such a layer as arc-free grafted the empty raw layer and made the
+  // requested prim appear to be missing.
+  info.has_arcs = idx.has_sublayers;
   info.self_contained = !idx.has_sublayers;
   for (auto e = lower; e != idx.arc_prims.end(); ++e) {
     if (!PathInSubtree(e->path, subtree_root, prefix)) {

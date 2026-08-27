@@ -1,6 +1,6 @@
 # TinyUSDZ Web Demos
 
-22 interactive browser demos for USD loading, MaterialX, skinning, animation,
+23 interactive browser demos for USD loading, MaterialX, skinning, animation,
 physics simulation, composition, export, and more.
 
 ## Quick Start
@@ -42,6 +42,34 @@ npm run dev
 npm run prepare:local-tinyusdz
 vite --mode development
 ```
+
+### OpenChessSet MaterialX showcase
+
+The full OpenChessSet asset is deliberately not committed. Prepare the pinned
+CC BY 4.0 usd-wg asset before building the demo:
+
+```bash
+# Preferred local setup: repository-root usd-assets -> usd-wg/assets checkout
+npm run prepare:openchess
+USD_ASSETS_DIR=/path/to/usd-wg/assets npm run prepare:openchess
+# Use -- --force to refresh an already prepared copy.
+```
+
+The preparation script first uses `USD_ASSETS_DIR`/`USD_WG_ASSETS_DIR`, then
+the repository-root `usd-assets` symlink when present. If none is available it
+performs a pinned sparse checkout.
+
+The showcase defaults to lightweight WebGL2 raster rendering. It also exposes
+LightRT CPU/WASM progressive path tracing and, when supported by the browser,
+WebGPU raster and compute path tracing. Raster subsurface scattering is an
+explicit approximation; the tracing modes are intended for slower reference
+comparison. WebGL2 raster includes an optional screen-space depth-of-field pass
+with orbit-target autofocus, click-to-focus USD primitive picking, manual focus,
+focal-length, f-stop, maximum-blur, and resolution controls. The bundled Goegap HDRI is the default environment and
+background. Lighting/background strength, blur, rotation, exposure, output
+transform, and tone mapping are interactive; a lightweight ACES 2.0-style
+display approximation is the default (with legacy ACES, AgX, and other curves
+available for comparison).
 
 ### How it works
 
@@ -173,25 +201,26 @@ Camera positions and clear colors are controlled by
 
 | # | Demo | Key Feature |
 |---|------|-------------|
-| 1 | MaterialX Node Graph | OpenPBR node graph inspector |
-| 2 | MaterialX MeshPhysicalMaterial | USD → Three.js material conversion |
-| 3 | USDLux Lighting | UsdLight / DomeLight rendering |
-| 4 | Skinning | Skeletal animation binding |
-| 5 | Node Xform + SkelAnimation | Combined transform + skeletal animation |
-| 6 | USD Physics | Physics scene viewer |
-| 7 | Asset Resolver Textures | HTTP texture resolution |
-| 8 | USD Composition | Sublayer/reference composition |
-| 9 | USD Export | USDA/USDC/USDZ export |
-| 10 | USD Assets Browser | 263-asset catalog browser |
-| 11 | USD Physics + MuJoCo | MuJoCo WASM physics simulation |
-| 12 | Material Editor | Live PBR parameter editing |
-| 13 | Animation Timeline | Timeline scrubber + speed control |
-| 14 | USD Inspector | Prim hierarchy + metadata tree |
-| 15 | Composition Layer Viz | Composition arc stack diagram |
-| 16 | Streaming Loading Viz | WASM heap + HTTP fetch waterfall |
-| 17 | Viewer Toolkit | Shading modes + exposure + toggles |
-| 18 | Animation Blending | Per-clip weight crossfade |
-| 19 | Procedural USD Builder | JSON → USD scene builder |
-| 20 | USDZ Packager | Export with bundle visualization |
-| 21 | USD Diff | Side-by-side comparison |
-| 22 | Backend Comparison | Legacy vs next rendering comparison |
+| 1 | MaterialX OpenChess Rendering | WebGL/WebGPU raster and LightRT/WebGPU path tracing |
+| 2 | MaterialX Node Graph | OpenPBR node graph inspector |
+| 3 | MaterialX MeshPhysicalMaterial | USD → Three.js material conversion |
+| 4 | USDLux Lighting | UsdLight / DomeLight rendering |
+| 5 | Skinning | Skeletal animation binding |
+| 6 | Node Xform + SkelAnimation | Combined transform + skeletal animation |
+| 7 | USD Physics | Physics scene viewer |
+| 8 | Asset Resolver Textures | HTTP texture resolution |
+| 9 | USD Composition | Sublayer/reference composition |
+| 10 | USD Export | USDA/USDC/USDZ export |
+| 11 | USD Assets Browser | 263-asset catalog browser |
+| 12 | USD Physics + MuJoCo | MuJoCo WASM physics simulation |
+| 13 | Material Editor | Live PBR parameter editing |
+| 14 | Animation Timeline | Timeline scrubber + speed control |
+| 15 | USD Inspector | Prim hierarchy + metadata tree |
+| 16 | Composition Layer Viz | Composition arc stack diagram |
+| 17 | Streaming Loading Viz | WASM heap + HTTP fetch waterfall |
+| 18 | Viewer Toolkit | Shading modes + exposure + toggles |
+| 19 | Animation Blending | Per-clip weight crossfade |
+| 20 | Procedural USD Builder | JSON → USD scene builder |
+| 21 | USDZ Packager | Export with bundle visualization |
+| 22 | USD Diff | Side-by-side comparison |
+| 23 | Backend Comparison | Legacy vs next rendering comparison |
