@@ -1651,6 +1651,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       const ClosureLaneMap& edf = lowerClosure(connectedClosure("edf"));
       for (const auto& lane : bsdf) lanes[lane.first] = lane.second;
       for (const auto& lane : edf) lanes[lane.first] = lane.second;
+      emitLeaf("geometry_opacity", "opacity", 1.0, "float");
     } else if (cat == "surface_unlit") {
       // surface_unlit is a terminal shader, not a closure node.  Its direct
       // schema inputs still need to become bounded OpenPBR lanes when a JSON

@@ -650,6 +650,8 @@ the evaluator's per-closure normal application; the bridge/evaluator/graph
 focused group passes 4/4. Dielectric closures also accept canonical
 `thin_film_thickness` / `thin_film_ior` inputs while retaining the legacy
 `thinfilm_*` spellings.
+The direct `surface` Shader-to-Shader wrapper now preserves authored
+`opacity` in the `geometry_opacity` lane alongside nested BSDF/EDF closures.
 
 ## Remaining work, in priority order
 
