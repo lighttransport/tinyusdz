@@ -23,7 +23,7 @@ not hand-edit generated headers.
   24 documented capability skips; the broader native/viewer/tusdrender
   aggregate passes 298/298 with documented skips.
 - Recent completed commits:
-  - `HEAD` adds UDIM and hextiled UV-footprint propagation
+  - latest slice adds UDIM and hextiled UV-footprint propagation
   - `4af9c581a` Honor Vulkan device selection in semantic AOV tests
   - `f51148570` Forward surfacematerial graph wrappers
   - `ead052954` Fix Vulkan instanced normal transforms
