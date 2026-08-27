@@ -649,6 +649,9 @@ same epsilon-safe `max` pattern before division.
    forwarding; schema-specific volume validation remains. Separate
 displacement terminals now resolve authored scalar `displacement`, `height`,
 `dispScalar`, or `value` inputs into the next loader's geometry lane.
+JSON graph lowering now also forwards a material-level `surfacematerial`
+wrapper through its nested `surfaceshader`; direct material-to-surface-to-
+BSDF/EDF routing is covered by the bridge regression.
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
    matrix-valued transport and object/world/view evaluator transforms are
    covered, while Vulkan instance-transform fidelity remains. The registered
