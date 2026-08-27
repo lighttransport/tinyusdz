@@ -26,14 +26,23 @@ OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"; mkdir -p "$OUT"
 printf '%s\n' '{"window_size":{"width":256,"height":256}}' > "$OUT/config.json"
 
 python3 - "$OUT" <<'PY'
-import os,sys
+import binascii,os,struct,sys,zlib
 def ppm(name, p):
  with open(os.path.join(sys.argv[1],name),'wb') as f: f.write(b'P6\n8 1\n255\n'+bytes(p))
+def png(name, p):
+ raw=b'\0'+bytes(p)
+ def chunk(kind,payload):
+  return (struct.pack('>I',len(payload))+kind+payload+
+          struct.pack('>I',binascii.crc32(kind+payload)&0xffffffff))
+ data=(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',8,1,8,2,0,0,0))+
+       chunk(b'IDAT',zlib.compress(raw,9))+chunk(b'IEND',b''))
+ with open(os.path.join(sys.argv[1],name),'wb') as f: f.write(data)
 ppm('normal.ppm',(255,128,192)*4+(128,128,255)*4) # +X-ish, then +Z
+png('coat_normal.png',(255,128,192)*4+(128,128,255)*4)
 ppm('normal.1001.ppm',(255,128,192)*8)
 ppm('normal.1002.ppm',(128,128,255)*8)
-ppm('coat_normal.1001.ppm',(255,128,192)*8)
-ppm('coat_normal.1002.ppm',(128,128,255)*8)
+png('coat_normal.1001.png',(255,128,192)*8)
+png('coat_normal.1002.png',(128,128,255)*8)
 ppm('occlusion.ppm',(32,32,32)*4+(224,224,224)*4)
 ppm('occlusion.1001.ppm',(32,32,32)*8)
 ppm('occlusion.1002.ppm',(224,224,224)*8)
@@ -155,8 +164,8 @@ write_normal_material standard "$OUT/normal-standard.usda"
 write_normal_material standard "$OUT/normal-standard-udim.usda" 1
 write_normal_material preview "$OUT/normal-degenerate.usda" 0 1
 write_coat_normal_material() {
-  local file="$1" udim="${2:-0}" degenerate="${3:-0}" texture=normal.ppm
-  [ "$udim" = 0 ] || texture='coat_normal.<UDIM>.ppm'
+  local file="$1" udim="${2:-0}" degenerate="${3:-0}" texture=coat_normal.png
+  [ "$udim" = 0 ] || texture='coat_normal.<UDIM>.png'
 {
   echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
   if [ "$degenerate" = 1 ]; then quad_degenerate
@@ -196,8 +205,8 @@ write_coat_normal_material "$OUT/coat-normal.usda"
 write_coat_normal_material "$OUT/coat-normal-udim.usda" 1
 write_coat_normal_material "$OUT/coat-normal-degenerate.usda" 0 1
 write_standard_coat_normal_material() {
-  local file="$1" udim="${2:-0}" texture=normal.ppm
-  [ "$udim" = 0 ] || texture='coat_normal.<UDIM>.ppm'
+  local file="$1" udim="${2:-0}" texture=coat_normal.png
+  [ "$udim" = 0 ] || texture='coat_normal.<UDIM>.png'
   {
     echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
     if [ "$udim" = 1 ]; then quad_udim; else quad; fi
@@ -659,19 +668,19 @@ mkdir -p "$OUT/pkg-occlusion"
 cp "$OUT/occlusion.usda" "$OUT/occlusion.ppm" "$OUT/pkg-occlusion/"
 (cd "$OUT/pkg-occlusion" && zip -0 -q "$OUT/occlusion.usdz" \
   occlusion.usda occlusion.ppm)
-mkdir -p "$OUT/pkg-coat"; cp "$OUT/coat-normal.usda" "$OUT/normal.ppm" "$OUT/pkg-coat/"
-(cd "$OUT/pkg-coat" && zip -0 -q "$OUT/coat-normal.usdz" coat-normal.usda normal.ppm)
+mkdir -p "$OUT/pkg-coat"; cp "$OUT/coat-normal.usda" "$OUT/coat_normal.png" "$OUT/pkg-coat/"
+(cd "$OUT/pkg-coat" && zip -0 -q "$OUT/coat-normal.usdz" coat-normal.usda coat_normal.png)
 mkdir -p "$OUT/pkg-standard-coat"
-cp "$OUT/coat-normal-standard.usda" "$OUT/normal.ppm" "$OUT/pkg-standard-coat/"
-(cd "$OUT/pkg-standard-coat" && zip -0 -q "$OUT/coat-normal-standard.usdz" coat-normal-standard.usda normal.ppm)
+cp "$OUT/coat-normal-standard.usda" "$OUT/coat_normal.png" "$OUT/pkg-standard-coat/"
+(cd "$OUT/pkg-standard-coat" && zip -0 -q "$OUT/coat-normal-standard.usdz" coat-normal-standard.usda coat_normal.png)
 # External USDA texture resolution is rooted at the stage's `/World` in the
 # viewer, whereas the packaged USDZ fixtures resolve relative to the archive.
 # Keep the archive inputs portable and make the external generated fixtures
 # point at the texture explicitly.
-sed -i "s#@\./normal.ppm@#@$OUT/normal.ppm@#g" \
+sed -i "s#@\./coat_normal.png@#@$OUT/coat_normal.png@#g" \
   "$OUT/coat-normal.usda" "$OUT/coat-normal-degenerate.usda" \
   "$OUT/coat-normal-standard.usda"
-sed -i "s#@./coat_normal.<UDIM>.ppm@#@$OUT/coat_normal.<UDIM>.ppm@#g" \
+sed -i "s#@./coat_normal.<UDIM>.png@#@$OUT/coat_normal.<UDIM>.png@#g" \
   "$OUT/coat-normal-udim.usda" "$OUT/coat-normal-standard-udim.usda"
 for family in preview openpbr standard; do
   mkdir -p "$OUT/pkg-core-$family"
