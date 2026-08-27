@@ -1078,8 +1078,11 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
             : faceId;
 
     float n[3], t0[2], t1[2], rgb[4], a = 1.0f, tg[4];
-    std::vector<std::array<float, 4>> geomValues(genericProps.size(),
-                                                  {0.0f, 0.0f, 0.0f, 0.0f});
+    std::vector<std::vector<float>> geomValues;
+    geomValues.reserve(genericProps.size());
+    for (const GenericGeomProp& prop : genericProps) {
+      geomValues.emplace_back(prop.components, 0.0f);
+    }
     nrm.read(pid, cornerId, faceId, 3, n);
     uv0.read(pid, cornerId, faceId, 2, t0);
     uv1.read(pid, cornerId, faceId, 2, t1);
