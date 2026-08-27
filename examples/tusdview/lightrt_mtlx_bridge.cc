@@ -1535,6 +1535,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       }
       emitLeaf("specular_anisotropy", "specular_anisotropy", 0.0, "float");
       emitLeaf("specular_rotation", "specular_rotation", 0.0, "float");
+      emitLeaf("specular_roughness_anisotropy",
+               "specular_roughness_anisotropy", 0.0, "float");
       emitLeaf("transmission_weight",
                standard ? "transmission" : "transmission_weight", 0.0,
                "float");
@@ -1547,6 +1549,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                "transmission_scatter_anisotropy", 0.0, "float");
       emitLeaf("transmission_dispersion", "transmission_dispersion", 0.0,
                "float");
+      emitLeaf("transmission_dispersion_abbe_number",
+               "transmission_dispersion_abbe_number", 0.0, "float");
+      emitLeaf("transmission_dispersion_scale",
+               "transmission_dispersion_scale", 1.0, "float");
       emitLeaf("coat_weight", standard ? "coat" : "coat_weight", 0.0,
                "float");
       emitLeaf("coat_color", "coat_color",
@@ -1556,6 +1562,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                "float");
       emitLeaf("coat_anisotropy", "coat_anisotropy", 0.0, "float");
       emitLeaf("coat_rotation", "coat_rotation", 0.0, "float");
+      emitLeaf("coat_roughness_anisotropy", "coat_roughness_anisotropy",
+               0.0, "float");
       emitLeaf("coat_affect_color", "coat_affect_color",
                nlohmann::json::array({1, 1, 1}), "color3");
       emitLeaf("coat_affect_roughness", "coat_affect_roughness", 0.0,

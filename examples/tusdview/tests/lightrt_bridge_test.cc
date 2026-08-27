@@ -2626,7 +2626,11 @@ int main() {
         {"name":"base_metalness","value":0.25},
         {"name":"base_roughness","value":0.31},
         {"name":"transmission_weight","value":0.4},
+        {"name":"specular_roughness_anisotropy","value":0.11},
+        {"name":"transmission_dispersion_abbe_number","value":45.0},
+        {"name":"transmission_dispersion_scale","value":0.8},
         {"name":"coat_weight","value":0.15},
+        {"name":"coat_roughness_anisotropy","value":0.12},
         {"name":"coat_affect_color","value":[0.7,0.8,0.9]},
         {"name":"coat_affect_roughness","value":0.2},
         {"name":"coat_darkening","value":0.1},
@@ -2646,10 +2650,14 @@ int main() {
                                                &openPbrSurfaceError) ||
       openPbrSurfaceGraph.materialXGraph.output[1] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[2] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[33] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[11] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[13] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[29] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[30] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[35] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[36] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[39] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[45] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[46] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[47] < 0 ||
