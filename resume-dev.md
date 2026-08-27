@@ -590,8 +590,8 @@ remain environment-bound.
 Direct schema-surface graph lowering now covers `standard_surface` and
 `open_pbr_surface` Shader-to-Shader outputs. The bridge regression verifies
 authored base color, metalness, IOR, emission, opacity, and weight routes;
-the OpenPBR-specific lane names are covered as well, and the complete focused
-graph group passes 4/4.
+the OpenPBR-specific lane names, coat-affect/darkening fields, and thin-film
+fields are covered as well, and the complete focused graph group passes 4/4.
 
 ## Remaining work, in priority order
 
