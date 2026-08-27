@@ -2388,6 +2388,8 @@ int main() {
   const auto* effectiveA = findGraphNode("mix__closure_base_color__mix_weight_a");
   const auto* effectiveB = findGraphNode("mix__closure_base_color__mix_weight_b");
   const auto* inverse = findGraphNode("mix__closure_mix_inverse");
+  const auto* safeDenominator = findGraphNode(
+      "mix__closure_base_color__safe_weight_sum");
   if (weightedColorIndex < 0 || weightedWeightIndex < 0 ||
       static_cast<size_t>(weightedColorIndex) >= weightedGraph.nodes.size() ||
       static_cast<size_t>(weightedWeightIndex) >= weightedGraph.nodes.size() ||
@@ -2395,6 +2397,8 @@ int main() {
       effectiveA == nullptr || effectiveA->op != tusdview::MaterialXGraphOpCPU::Multiply ||
       effectiveB == nullptr || effectiveB->op != tusdview::MaterialXGraphOpCPU::Multiply ||
       inverse == nullptr || inverse->op != tusdview::MaterialXGraphOpCPU::Subtract ||
+      safeDenominator == nullptr ||
+      safeDenominator->op != tusdview::MaterialXGraphOpCPU::IfGreater ||
       effectiveA->input[1] != static_cast<int>(inverse - weightedGraph.nodes.data()) ||
       !Near(effectiveB->value[1][0], 0.25f) ||
       weightedColor->input[1] < 0) {
