@@ -733,6 +733,9 @@ BSDF/EDF routing is covered by the bridge regression.
    The complete broad external profile now also passes through `tusdr-vkr`:
    29 assets rendered and 11 rendered with warnings, with no hard failures
    across all 40 selected assets.
+   The dedicated OpenChess MaterialX/standard-surface smoke also passes its
+   CPU-RT non-uniform render and Vulkan-raster legs; CUDA, Vulkan-RT, and
+   OpenGL legs report their expected unavailable-device/display skips.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
