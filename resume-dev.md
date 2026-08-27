@@ -23,6 +23,7 @@ not hand-edit generated headers.
   24 documented capability skips; the broader native/viewer/tusdrender
   aggregate passes 298/298 with documented skips.
 - Recent completed commits:
+  - `HEAD` adds UDIM and hextiled UV-footprint propagation
   - `4af9c581a` Honor Vulkan device selection in semantic AOV tests
   - `f51148570` Forward surfacematerial graph wrappers
   - `ead052954` Fix Vulkan instanced normal transforms
@@ -665,8 +666,9 @@ BSDF/EDF routing is covered by the bridge regression.
    covered, while Vulkan instance-transform fidelity remains. The registered
    geometry-primvar plus texture-pipeline/GPU format/mip slice passes 10/10.
 5. Close texture/projection gaps: derivatives are now supported for regular
-   image nodes and the fixed-size graph bake footprint, while UDIM seam-aware,
-   latlong, triplanar, and hextiled derivative propagation remain;
+   image nodes, UDIM footprints within a selected tile, the fixed-size graph
+   bake footprint, and hextiled affine lookups; UDIM seam crossing, latlong,
+   and triplanar world-space derivative propagation remain;
    and any true measured-EDF
    profile backend beyond the documented color fallback. Nearest filtering is
    now covered for regular, latlong, triplanar, hextiled, and UDIM-capable image paths;
