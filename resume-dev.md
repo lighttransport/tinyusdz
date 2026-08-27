@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: current branch tip (`Lower JSON surface unlit wrappers`)
+- HEAD: current branch tip (see `git log`; latest work records Vulkan parity)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
