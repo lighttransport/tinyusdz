@@ -438,7 +438,13 @@ void MergeGraphParamsPreservingTextureDeps(
     copy3(graph.subsurfaceRadius, dst->subsurfaceRadius);
   }
   if (safe("subsurface_radius_scale")) {
-    dst->subsurfaceScale = graph.subsurfaceScale;
+    copy3(graph.subsurfaceRadius, dst->subsurfaceRadius);
+  }
+  if (safe("subsurface_anisotropy")) {
+    dst->subsurfaceAnisotropy = graph.subsurfaceAnisotropy;
+  }
+  if (safe("subsurface_scatter_anisotropy")) {
+    dst->subsurfaceScatterAnisotropy = graph.subsurfaceScatterAnisotropy;
   }
   if (safe("coat_weight")) dst->coatWeight = graph.coatWeight;
   if (safe("coat_color")) copy3(graph.coatColor, dst->coatColor);
@@ -3046,6 +3052,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       {"volume_emission_color",42},{"volume_emission_scale",43},
       {"emission_luminance",44},{"coat_affect_color",45},
       {"coat_affect_roughness",46},{"coat_darkening",47}};
+  int subsurfaceRadiusScaleNode = -1;
   if (connIt != j.end() && connIt->is_array()) {
     for (const nlohmann::json& connection : *connIt) {
       const std::string input = OpenPBREvalInputName(
@@ -3077,6 +3084,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       }
       const auto nodeIt = nodeIds.find(outputIt->second);
       if (nodeIt == nodeIds.end()) continue;
+      if (input == "subsurface_radius_scale") {
+        // The fixed graph ABI has a vector radius lane but no separate radius
+        // scale lane. Preserve the authored vector by composing it with the
+        // radius node after all connections have been collected; routing it
+        // through the scalar subsurface_scale lane loses two components.
+        subsurfaceRadiusScaleNode = nodeIt->second;
+        continue;
+      }
       int* destination = nullptr;
       if (input == "base_color") destination = &graph.output[0];
       else if (input == "base_metalness") destination = &graph.output[1];
@@ -3108,8 +3123,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       else if (input == "transmission_depth") destination = &graph.output[23];
       else if (input == "transmission_scatter_anisotropy")
         destination = &graph.output[24];
-      else if (input == "subsurface_scale" ||
-               input == "subsurface_radius_scale") destination = &graph.output[25];
+      else if (input == "subsurface_scale") destination = &graph.output[25];
       else if (input == "subsurface_anisotropy" ||
                input == "subsurface_scatter_anisotropy")
         destination = &graph.output[26];
@@ -3139,6 +3153,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       else if (input == "coat_affect_roughness") destination = &graph.output[46];
       else if (input == "coat_darkening") destination = &graph.output[47];
       if (destination) *destination = nodeIt->second;
+    }
+  }
+  if (subsurfaceRadiusScaleNode >= 0) {
+    if (graph.output[8] >= 0) {
+      MaterialXGraphNodeCPU combined;
+      combined.op = MaterialXGraphOpCPU::Multiply;
+      combined.input[0] = graph.output[8];
+      combined.input[1] = subsurfaceRadiusScaleNode;
+      combined.name = "tusdview_subsurface_radius_scaled";
+      graph.output[8] = static_cast<int>(graph.nodes.size());
+      graph.nodes.push_back(std::move(combined));
+    } else {
+      graph.output[8] = subsurfaceRadiusScaleNode;
     }
   }
   // GPU interpreters execute a single bounded pass. Canonicalize the retained
