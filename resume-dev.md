@@ -498,6 +498,7 @@ Passed:
   test 75/296 and reproduced the existing `tusdview-gl-vk-parity` timeout at
   120 seconds after tests 1–74 passed or skipped. No aggregate pass is claimed
   from this partial run; focused MaterialX and CUDA/HIP results remain green.
+- The current `build-next` stable suite passes 40/40 after these changes.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
