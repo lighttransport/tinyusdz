@@ -2512,10 +2512,11 @@ int main() {
       {"name":"emit","category":"uniform_edf","type":"EDF",
        "inputs":[{"name":"color","value":[0.1,0.2,0.4]}]},
       {"name":"surface","category":"surface","type":"surfaceshader",
-       "inputs":[{"name":"bsdf","nodename":"diff"},{"name":"edf","nodename":"emit"}]}
+       "inputs":[{"name":"bsdf","nodename":"diff"},{"name":"edf","nodename":"emit"},
+                 {"name":"opacity","value":0.65}]}
     ],"outputs":[{"name":"shader","type":"surfaceshader","nodename":"surface"}]},
     "connections":[{"input":"bsdf","output":"shader"}]})json",
-      "surface closure wrapper", {0, 4, 20, 21, 44})) {
+      "surface closure wrapper", {0, 3, 4, 20, 21, 44})) {
     return 1;
   }
   if (!CheckDirectClosure(R"json({
