@@ -277,6 +277,10 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
     p->subsurfaceRadius[2] *= radiusScale[2];
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"subsurface_scale"}, &p->subsurfaceScale);
+  FloatParam(mat, {"OpenPBRSurface"}, {"subsurface_anisotropy"},
+             &p->subsurfaceAnisotropy);
+  FloatParam(mat, {"OpenPBRSurface"}, {"subsurface_scatter_anisotropy"},
+             &p->subsurfaceScatterAnisotropy);
   FloatParam(mat, {"OpenPBRSurface"}, {"coat_weight"}, &p->coatWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"coat_color"}, p->coatColor);
   FloatParam(mat, {"OpenPBRSurface"}, {"coat_roughness"}, &p->coatRoughness);
