@@ -6945,6 +6945,7 @@ def Scope "World" {
       color3f inputs:emission_color.connect = </World/Unlit/Color.outputs:out>
       float inputs:transmission = 0.35
       color3f inputs:transmission_color = (0.2, 0.4, 0.8)
+      color3f inputs:normal = (0.1, 0.2, 0.9)
       color3f inputs:opacity = (0.6, 0.7, 0.8)
       token outputs:out
     }
@@ -6979,6 +6980,9 @@ def Scope "World" {
          1.0e-6f);
   assert(std::fabs(material.openpbr->transmission_color.value.z - 0.8f) <
          1.0e-6f);
+  assert(std::fabs(material.openpbr->normal.value.x - 0.1f) < 1.0e-6f);
+  assert(std::fabs(material.openpbr->normal.value.y - 0.2f) < 1.0e-6f);
+  assert(std::fabs(material.openpbr->normal.value.z - 0.9f) < 1.0e-6f);
   assert(std::fabs(material.openpbr->opacity.value.x - 0.6f) < 1.0e-6f);
   assert(material.alpha_mode == RenderMaterial::AlphaMode::Blend);
   assert(material.openpbr->nodegraph_json.find("ND_multiply_color3") !=

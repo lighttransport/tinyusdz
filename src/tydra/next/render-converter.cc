@@ -8757,6 +8757,8 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
                            &out->openpbr->transmission_weight, scene);
         ExtractShaderParam(stage, child, "transmission_color",
                            &out->openpbr->transmission_color, scene);
+        ExtractShaderParam(stage, child, "normal", &out->openpbr->normal,
+                           scene);
         if (!ExtractShaderParam(stage, child, "opacity",
                                 &out->openpbr->opacity, scene)) {
           ExtractShaderParam(stage, child, "geometry_opacity",
