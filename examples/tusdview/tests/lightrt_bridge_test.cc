@@ -1578,6 +1578,24 @@ int main() {
                  radiusScaleError.c_str());
     return 1;
   }
+  tusdview::DrawMaterialCPU mixedRadiusScaleMat;
+  mixedRadiusScaleMat.hasOpenPBRSurface = true;
+  mixedRadiusScaleMat.params.push_back(FloatParam("subsurface_radius", 0.5f));
+  mixedRadiusScaleMat.params.push_back(FloatParam("subsurface_scale", 2.0f));
+  mixedRadiusScaleMat.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"scale","category":"constant","type":"color3",
+       "inputs":[{"name":"value","value":[2.0,3.0,4.0]}]}
+    ],"outputs":[{"name":"s","nodename":"scale"}]},
+    "connections":[{"input":"subsurface_radius_scale","output":"s"}]
+  })json";
+  tusdview::BakeRealtimePbrMaterial(&mixedRadiusScaleMat);
+  if (!Near(mixedRadiusScaleMat.lightRtOpenPBR.subsurfaceRadius[0], 1.0f) ||
+      !Near(mixedRadiusScaleMat.lightRtOpenPBR.subsurfaceRadius[1], 1.5f) ||
+      !Near(mixedRadiusScaleMat.lightRtOpenPBR.subsurfaceRadius[2], 2.0f) ||
+      !Near(mixedRadiusScaleMat.lightRtOpenPBR.subsurfaceScale, 2.0f)) {
+    return 1;
+  }
 
   // Four-input MaterialX conditionals use the auxiliary graph lane for in2.
   // Keep both a forward-connected branch and a literal fallback covered.
