@@ -581,6 +581,12 @@ plumbing fix: 298/298 passed in 1112.57 seconds. Dedicated AMD Vulkan,
 real-texture/validation profiles, and external-asset profiles remain
 capability-skipped in this environment.
 
+The focused GPU texture/backend slice also passes 13/13: synthetic GPU,
+mip/BC6H, Vulkan formats, HIP formats/mips, CUDA formats/mips, and CUDA/HIP
+semantic loader-parity checks. The remaining texture implementation gap is
+derivative-aware filtering; hardware Vulkan RT and external-asset profiles
+remain environment-bound.
+
 ## Remaining work, in priority order
 
 1. Finish and validate remaining bridge closure fidelity, especially any
