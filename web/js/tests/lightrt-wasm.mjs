@@ -12,7 +12,7 @@ const materials = new Float32Array([.8, .2, .1, 0, .5, 0, 0, 0, 0, 0]);
 assert.equal(tracer.build(positions, normals, colors, params, new Int32Array([0]), materials), true, tracer.error());
 assert.equal(tracer.triangleCount(), 1);
 const gpu = tracer.webGPUScene();
-assert.equal(gpu.width, 8);
+assert.equal(gpu.width, 4);
 assert.ok(gpu.blocks.length > 0);
 const pixels = tracer.trace(new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
   new Float32Array([0, 0, 2]), 16, 16, 0, 1, 2, 1);

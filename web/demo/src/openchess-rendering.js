@@ -253,23 +253,19 @@ function collectMeshInstances(root) {
   return records;
 }
 
-function packTraceScene(root, triangleBudget = 250000) {
+function packTraceScene(root) {
   const records = collectMeshInstances(root);
   let sourceTriangles = 0;
   for (const { object } of records) {
     const geometry = object.geometry;
     sourceTriangles += Math.floor((geometry.index?.count || geometry.attributes.position.count) / 3);
   }
-  // Expanded world-space triangles are intentionally simple for the WASM and
-  // WGSL consumers, but the full OpenChess subdivision meshes would require
-  // several hundred MB of duplicate attributes. Uniformly retain a bounded
-  // reference mesh so the CPU path remains usable on integrated-GPU laptops.
-  const triangleStride = Math.max(1, Math.ceil(sourceTriangles / triangleBudget));
-  let triangles = 0;
-  for (const { object } of records) {
-    const count = object.geometry.index?.count || object.geometry.attributes.position.count;
-    triangles += Math.ceil(Math.floor(count / 3) / triangleStride);
-  }
+  // Never sample a triangle soup by dropping individual triangles: doing so
+  // creates visible holes and invalidates both closest-hit and shadow rays.
+  // The tracing backends are reference modes and therefore retain all source
+  // geometry; interactive mode reduces resolution, samples, and bounces only.
+  const triangleStride = 1;
+  const triangles = sourceTriangles;
   const positions = new Float32Array(triangles * 9);
   const normals = new Float32Array(triangles * 9);
   const colors = new Float32Array(triangles * 9);
@@ -691,8 +687,7 @@ class OpenChessRendering {
     this.app.setStatus(`Packing OpenChessSet for ${MODES[this.mode]}...`);
     requestAnimationFrame(() => {
       try {
-        const triangleBudget = this.params.quality === 'Reference' ? Number.POSITIVE_INFINITY : 75000;
-        const scene = packTraceScene(this.app.world, triangleBudget);
+        const scene = packTraceScene(this.app.world);
         const transfer = Object.values(scene)
           .filter((value) => ArrayBuffer.isView(value))
           .map((array) => array.buffer);
@@ -715,7 +710,7 @@ class OpenChessRendering {
     this.worker.postMessage({ type: 'trace', generation: this.traceGeneration,
       invViewProjection: new Float32Array(inv.elements), cameraPosition: new Float32Array(this.app.camera.position.toArray()),
       width, height, sampleStart: this.completedSamples || 0,
-      sampleCount: Math.min(2, this.params.samples - (this.completedSamples || 0)),
+      sampleCount: 1,
       bounces: this.params.bounces, exposure: 1 });
   }
 
@@ -758,7 +753,7 @@ class OpenChessRendering {
     this.traceCanvas.width = width; this.traceCanvas.height = height;
     this.app.camera.updateMatrixWorld(true);
     const inv = new THREE.Matrix4().multiplyMatrices(this.app.camera.projectionMatrix, this.app.camera.matrixWorldInverse).invert();
-    const count = Math.min(2, this.params.samples - this.completedSamples);
+    const count = 1;
     const batch = await this.gpuPath.trace({ inv: inv.elements, camera: this.app.camera.position.toArray(), width, height, sampleStart: this.completedSamples, sampleCount: count, bounces: this.params.bounces });
     if (generation !== this.traceGeneration || this.mode !== 'webgpuPath') return;
     const before = this.completedSamples, after = before + count;

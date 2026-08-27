@@ -69,7 +69,9 @@ class LightRTPathTracer {
     const size_t n=positions_.size()/9;
     if (normals_.size()!=positions_.size() || colors_.size()!=positions_.size() ||
         vertex_params_.size()!=n*12 || material_ids_.size()!=n || materials_.size()%10) { error_="attribute array size mismatch"; return false; }
-    lrt_tri_build_options opts{}; opts.quality=LRT_TRI_BUILD_FAST; opts.layout=LRT_TRI_LAYOUT_BVH8; opts.num_threads=1;
+    // WebAssembly has no native AVX2-width traversal. Avoid forcing the wider
+    // scalar fallback; LightRT's conservative browser layout is BVH4.
+    lrt_tri_build_options opts{}; opts.quality=LRT_TRI_BUILD_FAST; opts.layout=LRT_TRI_LAYOUT_BVH4; opts.num_threads=1;
     lrt_result result{}; scene_=lrt_tri_scene_build(positions_.data(),n,&opts,&result);
     if (!scene_) { error_="LightRT BVH build failed"; return false; }
     triangles_=n; return true;
