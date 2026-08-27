@@ -479,6 +479,8 @@ Passed:
 - The isolated NVIDIA `vk-rt` albedo loader/package parity shard passes with
   default and legacy loaders, UDIM, and USDZ coverage: all image MAD checks
   are 0.0. Coat-normal remains blocked at full SPIR-V pipeline validation.
+- Registered CUDA and HIP semantic-AOV shards pass on the current build:
+  CUDA 26.03 s and HIP 16.97 s.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
