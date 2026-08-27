@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -80,6 +81,17 @@ int main() {
   geomPropMesh.geomProps.push_back(temperature);
   Check(tusdview::ValidateDrawMesh(geomPropMesh, 1, &err),
         "valid generic geomprop stream was rejected");
+
+  tusdview::DrawMeshCPU matrixGeomPropMesh = Triangle(0);
+  tusdview::DrawGeomPropCPU matrixGeomProp;
+  matrixGeomProp.name = "matrix_attr";
+  matrixGeomProp.components = 16;
+  matrixGeomProp.values.resize(3 * matrixGeomProp.components, 0.0f);
+  matrixGeomProp.values[0] = matrixGeomProp.values[5] =
+      matrixGeomProp.values[10] = matrixGeomProp.values[15] = 1.0f;
+  matrixGeomPropMesh.geomProps.push_back(matrixGeomProp);
+  Check(tusdview::ValidateDrawMesh(matrixGeomPropMesh, 1, &err),
+        "valid matrix generic geomprop stream was rejected");
 
   tusdview::DrawMeshCPU badGeomProp = geomPropMesh;
   badGeomProp.geomProps[0].values.pop_back();
