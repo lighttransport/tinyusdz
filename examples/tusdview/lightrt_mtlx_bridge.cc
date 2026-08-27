@@ -1607,6 +1607,12 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       const ClosureLaneMap& edf = lowerClosure(connectedClosure("edf"));
       for (const auto& lane : vdf) lanes[lane.first] = lane.second;
       for (const auto& lane : edf) lanes[lane.first] = lane.second;
+    } else if (cat == "volumematerial") {
+      // A volumematerial adds a material-level wrapper around the actual
+      // volumeshader. Preserve that terminal when the JSON graph exposes the
+      // material node directly.
+      const ClosureLaneMap& volume = lowerClosure(connectedClosure("volumeshader"));
+      for (const auto& lane : volume) lanes[lane.first] = lane.second;
     } else if (cat == "surface") {
       // A surface shader is a closure wrapper: forward both terminal
       // connections so Shader-to-Shader graphs retain their BSDF and EDF
@@ -1974,7 +1980,7 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       if (output == sourceOutputs.end()) continue;
       const auto sourceNode = sourceNodes.find(output->second);
       if (terminalInput == "bsdf" || terminalInput == "edf" ||
-          terminalInput == "vdf" ||
+          terminalInput == "vdf" || terminalInput == "volumeshader" ||
           (sourceNode != sourceNodes.end() &&
            (NormalizeMtlxCategory(JsonString(sourceNode->second, "category"),
                                   JsonString(sourceNode->second, "type")) ==
