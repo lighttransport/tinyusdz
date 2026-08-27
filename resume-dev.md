@@ -527,6 +527,8 @@ Passed:
 - Post-commit renderer coverage passes 8/8: CUDA and HIP semantic-AOV,
   CPU-RT headless/OpenPBR/MaterialX, Vulkan render/software-BVH, and Vulkan
   raster semantic-AOV tests.
+- The standalone `build-next` suite passes 40/40, including Tydra,
+  composition, writer/reader, validation, and corpus checks.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
