@@ -705,12 +705,15 @@ BSDF/EDF routing is covered by the bridge regression.
    path validation for these graph shapes, especially nested closures and
    multi-output routing on hardware backends.
 7. Run focused CUDA/NVIDIA, HIP, and hardware Vulkan RT checks on capable
-   machines; CUDA and HIP semantic-AOV checks now pass here. A direct AMD
-   hardware Vulkan RT render of the real Suzanne mesh passes and writes a
-   2560x1600 screenshot, while the registered semantic sweep still needs a
-   loader/display-compatible run and a clean cold NVIDIA validation run.
-   The strict OpenPBR hardware parity lane passes; flake CUDA/HIP lanes remain
-   unavailable because this environment has no compute device nodes.
+   machines; host GPU access is now available and a direct NVIDIA Vulkan RT
+   render of the real Suzanne mesh passes, reporting `device=discrete
+   rt=hardware` and writing a 2560x1600 screenshot. The OpenChess CUDA leg
+   also renders a non-blank frame on the RTX 5060 Ti. The strict OpenPBR
+   hardware parity lane passes. Remaining hardware blockers are the CUDA
+   flake parity test, which exits after initializing its shared RT scene, and
+   the full OpenChess Vulkan RT run, which stalls during cold SPIR-V
+   validation; the semantic-AOV harness's no-`--rt` device preflight also
+   incorrectly selects llvmpipe under this loader/display configuration.
 8. The complete registered native/viewer/tusdrender aggregate now passes
    298/298 with documented capability skips; repeat the hardware-only RT and
    external-asset profiles on capable machines when available. The current
@@ -733,6 +736,9 @@ BSDF/EDF routing is covered by the bridge regression.
    The same complete broad profile also passes through `tusdr-vk`: 29 assets
    rendered and 11 rendered with warnings, with no hard failures across all 40
    selected assets.
+   Hardware follow-up now confirms the direct NVIDIA Vulkan RT smoke and
+   CUDA OpenChess smoke, but the CUDA flake and full OpenChess Vulkan RT
+   gates above still need resolution before item 7/8 can be closed.
    A bounded `tusdr-vkr` ray-query subset also passes 3/3 (composition and
    primvar-interpolation assets included; 1 rendered and 2 with warnings).
    The complete broad external profile now also passes through `tusdr-vkr`:
