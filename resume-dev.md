@@ -728,6 +728,8 @@ BSDF/EDF routing is covered by the bridge regression.
    The same complete broad profile also passes through `tusdr-vk`: 29 assets
    rendered and 11 rendered with warnings, with no hard failures across all 40
    selected assets.
+   A bounded `tusdr-vkr` ray-query subset also passes 3/3 (composition and
+   primvar-interpolation assets included; 1 rendered and 2 with warnings).
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
