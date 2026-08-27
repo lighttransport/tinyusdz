@@ -1557,8 +1557,10 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                "float");
       emitLeaf("coat_color", "coat_color",
                nlohmann::json::array({1, 1, 1}), "color3");
-      emitLeaf("coat_roughness", "coat_roughness", 0.1, "float");
-      emitLeaf("coat_ior", standard ? "coat_IOR" : "coat_ior", 1.5,
+      emitLeaf("coat_roughness", "coat_roughness", standard ? 0.1 : 0.0,
+               "float");
+      emitLeaf("coat_ior", standard ? "coat_IOR" : "coat_ior",
+               standard ? 1.5 : 1.6,
                "float");
       emitLeaf("coat_anisotropy", "coat_anisotropy", 0.0, "float");
       emitLeaf("coat_rotation", "coat_rotation", 0.0, "float");
@@ -1624,7 +1626,8 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                 ? "thinfilm_IOR" : "thin_film_IOR";
       }
       emitLeaf("thin_film_thickness", thinFilmThicknessName, 0.0, "float");
-      emitLeaf("thin_film_ior", thinFilmIorName, 1.5, "float");
+      emitLeaf("thin_film_ior", thinFilmIorName, standard ? 1.5 : 1.4,
+               "float");
       emitLeaf("geometry_opacity", standard ? "opacity" : "geometry_opacity",
                1.0, "float");
       emitLeaf("geometry_normal", "normal",

@@ -652,9 +652,12 @@ focused group passes 4/4. Dielectric closures also accept canonical
 `thinfilm_*` spellings.
 The direct `surface` Shader-to-Shader wrapper now preserves authored
 `opacity` in the `geometry_opacity` lane alongside nested BSDF/EDF closures.
-Direct OpenPBR schema lowering now also preserves the fixed ABI's specular
-roughness anisotropy, transmission dispersion scale/Abbe number, and coat
-roughness anisotropy lanes, with regression coverage.
+   Direct OpenPBR schema lowering now also preserves the fixed ABI's specular
+   roughness anisotropy, transmission dispersion scale/Abbe number, and coat
+   roughness anisotropy lanes, with regression coverage.
+   Its omitted coat roughness/IOR and thin-film IOR defaults now match the
+   standalone evaluator (0.0, 1.6, and 1.4 respectively); direct-schema
+   default assertions pass with the focused bridge group.
 
 ## Remaining work, in priority order
 
