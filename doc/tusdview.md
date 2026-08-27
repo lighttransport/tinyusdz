@@ -804,7 +804,24 @@ xvfb-run -a env \
 The first RT launch on a new NVIDIA driver/shader-cache combination compiles
 the embedded compact ray-query variant. It includes the OpenPBR constants,
 semantic textures, and directly connected MaterialX image/tiledimage routes;
-arithmetic and procedural graphs promote to the full interpreter. Keep
+arithmetic and procedural graphs may promote to the full interpreter. Runtime
+MaterialX Vulkan generation is bounded by a 129 KiB source-size guard and a
+30-second `glslc` deadline. Override them with
+`--materialx-vk-shader-max-kib N` and
+`--materialx-vk-compile-timeout N`. The equivalent config is:
+
+```json
+{
+  "render": {
+    "materialx_vulkan_shader_max_kib": 129,
+    "materialx_vulkan_compile_timeout_sec": 30
+  }
+}
+```
+
+An oversized full shader keeps the ABI-compatible compact pipeline active;
+a timed-out live compile is terminated and retains the last-good pipeline.
+Keep
 `TUSDVIEW_RT_TIMING=1` enabled when diagnosing startup. A measured cold compile
 can take minutes on some NVIDIA driver/shader combinations, while the same
 pipeline loaded from tusdview's persistent cache is typically sub-second. The

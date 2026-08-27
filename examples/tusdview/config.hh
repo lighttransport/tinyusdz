@@ -24,6 +24,10 @@ struct StartupConfig {
   std::optional<bool> adaptiveQuality;
   std::optional<float> targetRenderFps;
   std::optional<float> minRenderScale;
+  // Limits for runtime MaterialX Vulkan shader compilation. The source-size
+  // guard is measured in KiB and the compiler deadline in seconds.
+  std::optional<int> materialXVulkanShaderMaxKiB;
+  std::optional<int> materialXVulkanCompileTimeoutSec;
   // USD composition: enable arc composition on load; payload policy
   // ("defer" = lazy load on demand, "load" = eager).
   std::optional<bool> composition;

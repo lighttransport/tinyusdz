@@ -748,6 +748,12 @@ BSDF/EDF routing is covered by the bridge regression.
    MaterialX shader, avoiding the NVIDIA cold-SPIR-V hang. The remaining
    semantic-harness failure is legacy-loader OpenPBR IOR/F0 parity; the
    default loader passes the same authored contrast.
+   Runtime MaterialX Vulkan shader generation now defaults to a 129 KiB source
+   guard and a 30-second compiler-process deadline, configurable through
+   `render.materialx_vulkan_shader_max_kib`,
+   `render.materialx_vulkan_compile_timeout_sec`, or the corresponding CLI
+   flags. Oversized full-shader promotion retains the compact pipeline; the
+   focused graph tests pass 4/4 and the NVIDIA coat-normal shard still passes.
    A bounded `tusdr-vkr` ray-query subset also passes 3/3 (composition and
    primvar-interpolation assets included; 1 rendered and 2 with warnings).
    The complete broad external profile now also passes through `tusdr-vkr`:

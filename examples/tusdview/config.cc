@@ -211,6 +211,26 @@ bool ParseConfigFile(const fs::path& path, StartupConfig* cfg,
       }
       cfg->minRenderScale = value;
     }
+    if (const json* maxShader = FindMember(
+            *render, {"materialx_vulkan_shader_max_kib",
+                      "materialx-vulkan-shader-max-kib"})) {
+      int value = 0;
+      if (!ParsePositiveInt(*maxShader,
+                            "render.materialx_vulkan_shader_max_kib",
+                            &value, err))
+        return false;
+      cfg->materialXVulkanShaderMaxKiB = value;
+    }
+    if (const json* timeout = FindMember(
+            *render, {"materialx_vulkan_compile_timeout_sec",
+                      "materialx-vulkan-compile-timeout-sec"})) {
+      int value = 0;
+      if (!ParsePositiveInt(*timeout,
+                            "render.materialx_vulkan_compile_timeout_sec",
+                            &value, err))
+        return false;
+      cfg->materialXVulkanCompileTimeoutSec = value;
+    }
   }
 
   if (const json* orbit = FindMember(*navObj, {"orbit_sensitivity", "orbit-sensitivity"})) {
