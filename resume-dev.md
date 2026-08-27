@@ -51,6 +51,7 @@ not hand-edit generated headers.
   - `cfe8da671` Preserve surface unlit normals
   - `d355e2956` Fix matrix geomprop staging
   - `1477c7f6f` Test matrix geomprop stream safety
+  - `c32152edb` Preserve vector subsurface radius scale
 
 ## Completed coverage
 
@@ -512,6 +513,9 @@ Passed:
   pass.
 - Scene-safety coverage now validates a correctly sized 16-component matrix
   stream (`1477c7f6f`); the focused safety test passes.
+- Graph `subsurface_radius_scale` is now composed into the vector radius route
+  rather than truncated through scalar `subsurface_scale`; scalar scale remains
+  independent (`c32152edb`). The focused bridge regression passes.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
