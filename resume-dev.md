@@ -658,7 +658,9 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
 7. Run focused CUDA/NVIDIA, HIP, and hardware Vulkan RT checks on capable
    machines; CUDA and HIP semantic-AOV checks now pass here, while the
    registered hardware Vulkan RT semantic sweep still requires a clean cold
-   NVIDIA validation run and AMD hardware remains unavailable.
+   NVIDIA validation run and AMD hardware remains unavailable. The latest
+   six-test hardware profile passes 1/1 available NVIDIA GL warmup and cleanly
+   skips the five unavailable Vulkan/RT hardware cases.
 8. The complete registered native/viewer/tusdrender aggregate now passes
    298/298 with documented capability skips; repeat the hardware-only RT and
    external-asset profiles on capable machines when available.
