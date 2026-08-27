@@ -562,6 +562,10 @@ Passed:
 - The same semantic-AOV harness now performs a bounded Xvfb/`xdpyinfo`
   preflight; direct GL invocation cleanly skips when the X11 socket cannot be
   opened instead of entering the render loop.
+- Preflight-only capability skips no longer mark the whole semantic shard as
+  degraded, so unrelated CUDA/HIP coverage remains executable. The focused
+  GL/Vulkan-raster/RT/CUDA/HIP registration is now 6/6 (one intentional RT
+  skip).
 - After regenerating `build_ninja` from this worktree, the complete registered
   native aggregate passes 298/298 with no failures (1085.58s). Thirty-one
   capability skips cover unavailable RT/GL semantic backends, external assets,
