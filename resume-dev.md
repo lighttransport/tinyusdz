@@ -587,11 +587,16 @@ semantic loader-parity checks. The remaining texture implementation gap is
 derivative-aware filtering; hardware Vulkan RT and external-asset profiles
 remain environment-bound.
 
+Direct schema-surface graph lowering now covers `standard_surface` and
+`open_pbr_surface` Shader-to-Shader outputs. The bridge regression verifies
+authored base color, metalness, IOR, emission, opacity, and weight routes;
+the complete focused graph group passes 4/4.
+
 ## Remaining work, in priority order
 
 1. Finish and validate remaining bridge closure fidelity, especially any
    schema-specific closure parameter mappings; standard diffuse, Chiang,
-   generalized-Schlick and
+   generalized-Schlick, direct standard/OpenPBR surface lowering, and
    measured-EDF fallback behavior are now covered.
 2. Preserve weighted colors/roughness where the OpenPBR lane representation
    permits it; vector2 roughness extraction, exact scatter-mode handling,

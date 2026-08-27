@@ -2422,6 +2422,49 @@ int main() {
       "surface closure wrapper", {0, 4, 20, 21, 44})) {
     return 1;
   }
+  // Complete schema shaders can also be exposed directly as graph outputs.
+  // They must lower to authored OpenPBR lanes just like closure wrappers.
+  tusdview::DrawMaterialCPU standardSurfaceGraph;
+  standardSurfaceGraph.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"standard","category":"standard_surface",
+       "type":"surfaceshader","inputs":[
+        {"name":"base","value":0.7},
+        {"name":"base_color","value":[0.2,0.4,0.8]},
+        {"name":"metalness","value":0.35},
+        {"name":"specular_IOR","value":1.6},
+        {"name":"emission","value":2.0},
+        {"name":"opacity","value":0.75}]}
+    ],"outputs":[{"name":"shader","type":"surfaceshader",
+      "nodename":"standard"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]
+  })json";
+  std::string standardSurfaceError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&standardSurfaceGraph,
+                                               &standardSurfaceError) ||
+      standardSurfaceGraph.materialXGraph.output[0] < 0 ||
+      standardSurfaceGraph.materialXGraph.output[1] < 0 ||
+      standardSurfaceGraph.materialXGraph.output[19] < 0 ||
+      standardSurfaceGraph.materialXGraph.output[20] < 0 ||
+      standardSurfaceGraph.materialXGraph.output[44] < 0 ||
+      standardSurfaceGraph.materialXGraph.output[3] < 0) {
+    std::fprintf(stderr, "direct standard_surface lowering failed: %s\n",
+                 standardSurfaceError.c_str());
+    return 1;
+  }
+  const auto& standardGraph = standardSurfaceGraph.materialXGraph;
+  const auto laneValue = [&](int lane, int component) {
+    const int index = standardGraph.output[static_cast<size_t>(lane)];
+    return index >= 0 && static_cast<size_t>(index) < standardGraph.nodes.size()
+               ? standardGraph.nodes[static_cast<size_t>(index)].value[0][component]
+               : -1.0f;
+  };
+  if (!Near(laneValue(0, 0), 0.2f) || !Near(laneValue(1, 0), 0.35f) ||
+      !Near(laneValue(19, 0), 1.6f) || !Near(laneValue(20, 0), 0.7f) ||
+      !Near(laneValue(44, 0), 2.0f) || !Near(laneValue(3, 0), 0.75f)) {
+    std::fprintf(stderr, "direct standard_surface values were not routed\n");
+    return 1;
+  }
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
       {"name":"subsurface","category":"subsurface_bsdf","type":"BSDF","inputs":[

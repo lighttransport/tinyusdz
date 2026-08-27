@@ -1450,6 +1450,67 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                                 {"type", laneType}, {"inputs", std::move(inputs)}});
         lanes[lane] = output;
       }
+    } else if (cat == "standard_surface" || cat == "open_pbr_surface") {
+      // Imported graphs may expose a complete surface shader directly as a
+      // Shader-to-Shader output.  Treat the schema node as a closure wrapper
+      // and preserve its authored lanes instead of leaving it as an unknown
+      // runtime operation.  Standard Surface names are normalized to the
+      // bounded OpenPBR ABI here; OpenPBR names pass through unchanged.
+      const bool standard = cat == "standard_surface";
+      emitLeaf("base_weight", standard ? "base" : "base_weight", 1.0,
+               "float");
+      emitLeaf("base_color", "base_color",
+               nlohmann::json::array({0.18, 0.18, 0.18}), "color3");
+      emitLeaf("base_diffuse_roughness",
+               standard ? "diffuse_roughness" : "base_diffuse_roughness",
+               0.0, "float");
+      emitLeaf("base_metalness", "metalness", 0.0, "float");
+      emitLeaf("specular_weight", standard ? "specular" : "specular_weight",
+               1.0, "float");
+      emitLeaf("specular_color", "specular_color",
+               nlohmann::json::array({1, 1, 1}), "color3");
+      emitLeaf("specular_roughness", "specular_roughness", 0.2, "float");
+      emitLeaf("specular_ior", standard ? "specular_IOR" : "specular_ior",
+               1.5, "float");
+      emitLeaf("specular_anisotropy", "specular_anisotropy", 0.0, "float");
+      emitLeaf("specular_rotation", "specular_rotation", 0.0, "float");
+      emitLeaf("transmission_weight", "transmission",
+               standard ? 0.0 : 0.0, "float");
+      emitLeaf("transmission_color", "transmission_color",
+               nlohmann::json::array({1, 1, 1}), "color3");
+      emitLeaf("transmission_depth", "transmission_depth", 0.0, "float");
+      emitLeaf("transmission_scatter", "transmission_scatter",
+               nlohmann::json::array({0, 0, 0}), "color3");
+      emitLeaf("transmission_scatter_anisotropy",
+               "transmission_scatter_anisotropy", 0.0, "float");
+      emitLeaf("transmission_dispersion", "transmission_dispersion", 0.0,
+               "float");
+      emitLeaf("coat_weight", "coat", 0.0, "float");
+      emitLeaf("coat_color", "coat_color",
+               nlohmann::json::array({1, 1, 1}), "color3");
+      emitLeaf("coat_roughness", "coat_roughness", 0.1, "float");
+      emitLeaf("coat_ior", standard ? "coat_IOR" : "coat_ior", 1.5,
+               "float");
+      emitLeaf("coat_anisotropy", "coat_anisotropy", 0.0, "float");
+      emitLeaf("coat_rotation", "coat_rotation", 0.0, "float");
+      emitLeaf("subsurface_weight", "subsurface", 0.0, "float");
+      emitLeaf("subsurface_color", "subsurface_color",
+               nlohmann::json::array({0.18, 0.18, 0.18}), "color3");
+      emitLeaf("subsurface_radius", "subsurface_radius",
+               nlohmann::json::array({1, 1, 1}), "color3");
+      emitLeaf("subsurface_scale", "subsurface_scale", 1.0, "float");
+      emitLeaf("subsurface_anisotropy", "subsurface_anisotropy", 0.0,
+               "float");
+      emitLeaf("sheen_weight", "sheen", 0.0, "float");
+      emitLeaf("sheen_color", "sheen_color",
+               nlohmann::json::array({1, 1, 1}), "color3");
+      emitLeaf("sheen_roughness", "sheen_roughness", 0.3, "float");
+      emitLeaf("emission_luminance", "emission", 0.0, "float");
+      emitLeaf("emission_color", "emission_color",
+               nlohmann::json::array({1, 1, 1}), "color3");
+      emitLeaf("geometry_opacity", "opacity", 1.0, "float");
+      emitLeaf("geometry_normal", "normal",
+               nlohmann::json::array({0, 0, 1}), "color3");
     } else if (cat == "surface") {
       // A surface shader is a closure wrapper: forward both terminal
       // connections so Shader-to-Shader graphs retain their BSDF and EDF
