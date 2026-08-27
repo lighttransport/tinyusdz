@@ -516,6 +516,8 @@ Passed:
 - Graph `subsurface_radius_scale` is now composed into the vector radius route
   rather than truncated through scalar `subsurface_scale`; scalar scale remains
   independent (`c32152edb`). The focused bridge regression passes.
+- The complete bridge/evaluator/graph focused group passes 4/4 after the
+  radius-scale change.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
