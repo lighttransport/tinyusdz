@@ -606,6 +606,9 @@ fields; the focused graph group remains 4/4.
 Generalized-Schlick BSDF lowering now preserves `color90` and exponent through
 generated view-angle power/mix nodes instead of retaining only `color0`; the
 bridge regression passes with the RT scatter-mode case.
+Direct `standard_surface` lowering now accepts both canonical `thin_film_*` and
+legacy `thinfilm_*` thickness/IOR spellings, preferring canonical inputs; the
+updated bridge regression and complete focused graph group pass 4/4.
 
 ## Remaining work, in priority order
 
