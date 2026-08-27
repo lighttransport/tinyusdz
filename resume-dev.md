@@ -529,6 +529,10 @@ Passed:
   raster semantic-AOV tests.
 - The standalone `build-next` suite passes 40/40, including Tydra,
   composition, writer/reader, validation, and corpus checks.
+- Current hardware probes remain environment-limited: `nvidia-smi` cannot
+  communicate with the NVIDIA driver, and `vulkaninfo --summary` cannot open
+  the configured X server/ NVIDIA ICD. Hardware Vulkan RT validation therefore
+  remains pending for a capable machine.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
