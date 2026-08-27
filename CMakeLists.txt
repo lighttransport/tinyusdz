@@ -2698,6 +2698,28 @@ if(TINYUSDZ_BUILD_TESTS)
                          LABELS "tusdview;vulkan;validation")
 
     add_test(
+      NAME tusdview-vk-mtlx-cold-fallback
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-mtlx-cold-fallback.sh"
+    )
+    set_tests_properties(tusdview-vk-mtlx-cold-fallback PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120
+                         LABELS "tusdview;vulkan;rt;materialx")
+
+    add_test(
+      NAME tusdview-vk-authored-materials
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-authored-materials.sh"
+      )
+    set_tests_properties(tusdview-vk-authored-materials PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180
+                         LABELS "tusdview;vulkan;rt;materialx;authored-assets")
+
+    add_test(
       NAME tusdview-raster-multilight
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-raster-multilight.sh"
@@ -3341,6 +3363,7 @@ if(TINYUSDZ_BUILD_TESTS)
                 "$<TARGET_FILE:tusdview>" vulkan
                 "${PROJECT_SOURCE_DIR}/examples/tusdview/vk/shaders/raytrace.comp"
                 "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/area-light-shadow.usda"
+                --materialx-vk-shader-max-kib 256
         )
       set_tests_properties(tusdview-mcp-live-reload-vulkan
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 360

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,22 @@ tusdview::DrawMaterialParamCPU Vec3Param(const char* name, float x, float y,
   p.value[2] = z;
   p.value[3] = 1.0f;
   return p;
+}
+
+std::string MaterialTextureDir() {
+  namespace fs = std::filesystem;
+  const fs::path cwd = fs::current_path();
+  const fs::path candidates[] = {
+      cwd / "models" / "textures",
+      cwd / ".." / ".." / "models" / "textures",
+      cwd / ".." / ".." / ".." / "models" / "textures"};
+  for (const fs::path& candidate : candidates) {
+    std::error_code ec;
+    if (fs::is_regular_file(candidate / "checkerboard.png", ec) && !ec) {
+      return fs::absolute(candidate, ec).lexically_normal().string();
+    }
+  }
+  return {};
 }
 
 }  // namespace
@@ -1778,8 +1795,13 @@ int main() {
       "</materialx>";
   tinyusdz::tydra::LightRtOpenPBRParams imageParams{};
   std::string imageErr;
+  const std::string materialTextureDir = MaterialTextureDir();
+  if (materialTextureDir.empty()) {
+    std::fprintf(stderr, "MaterialX image fixture directory was not found\n");
+    return 1;
+  }
   if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
-          imageXml, "material", "../../../models/textures", &imageParams,
+          imageXml, "material", materialTextureDir.c_str(), &imageParams,
           &imageErr)) {
     std::fprintf(stderr, "asset-relative MaterialX image eval failed: %s\n",
                  imageErr.c_str());
@@ -1794,7 +1816,7 @@ int main() {
   }
   tinyusdz::tydra::LightRtOpenPBRParams uvImageParams{};
   if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBRAtUv(
-          imageXml, "material", "../../../models/textures", 0.13f, 0.87f,
+          imageXml, "material", materialTextureDir.c_str(), 0.13f, 0.87f,
           &uvImageParams, &imageErr) ||
       !std::isfinite(uvImageParams.baseColor[0]) ||
       !std::isfinite(uvImageParams.baseColor[1]) ||
@@ -1806,7 +1828,8 @@ int main() {
 
   tusdview::DrawScene graphBakeScene;
   tusdview::DrawMaterialCPU graphBakeMat = imageGraphMat;
-  graphBakeMat.absPath = "../../../models/textures/material.usda";
+  graphBakeMat.absPath =
+      (std::filesystem::path(materialTextureDir) / "material.usda").string();
   const std::string missingName = "missing_base.png";
   const size_t missingPos = graphBakeMat.materialXNodeGraphJson.find(missingName);
   if (missingPos != std::string::npos) {

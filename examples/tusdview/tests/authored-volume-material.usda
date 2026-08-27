@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Mesh "VolumeProxy" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Looks/FogVolume>
+        point3f[] points = [(-1.2, -1, 0), (1.2, -1, 0), (1.2, 1, 0), (-1.2, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Scope "Looks"
+    {
+        def Material "FogVolume" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            token outputs:volume.connect = </World/Looks/FogVolume/VolumeMaterial.outputs:out>
+            token outputs:mtlx:volume.connect = </World/Looks/FogVolume/VolumeMaterial.outputs:out>
+
+            def Shader "Scatter"
+            {
+                uniform token info:id = "ND_anisotropic_vdf_vdf"
+                color3f inputs:scattering = (0.25, 0.35, 0.5)
+                color3f inputs:absorption = (0.08, 0.12, 0.18)
+                float inputs:anisotropy = 0.35
+                token outputs:out
+            }
+            def Shader "Glow"
+            {
+                uniform token info:id = "ND_uniform_edf_edf"
+                color3f inputs:color = (0.15, 0.08, 0.03)
+                token outputs:out
+            }
+            def Shader "Volume"
+            {
+                uniform token info:id = "ND_volume_volumeshader"
+                token inputs:vdf.connect = </World/Looks/FogVolume/Scatter.outputs:out>
+                token inputs:edf.connect = </World/Looks/FogVolume/Glow.outputs:out>
+                token outputs:out
+            }
+            def Shader "VolumeMaterial"
+            {
+                uniform token info:id = "ND_volumematerial_material"
+                token inputs:volumeshader.connect = </World/Looks/FogVolume/Volume.outputs:out>
+                token outputs:out
+            }
+        }
+    }
+}

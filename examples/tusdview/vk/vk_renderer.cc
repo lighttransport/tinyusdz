@@ -970,6 +970,13 @@ bool VulkanRenderer::createDevice(std::string* err) {
                       VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME) == 0) {
         dynCullSupported_ = true;
       }
+      if (!pipelineCompileRequiredSupported_ &&
+          std::strcmp(e.extensionName,
+                      VK_EXT_PIPELINE_CREATION_CACHE_CONTROL_EXTENSION_NAME) ==
+              0) {
+        devExts.push_back(VK_EXT_PIPELINE_CREATION_CACHE_CONTROL_EXTENSION_NAME);
+        pipelineCompileRequiredSupported_ = true;
+      }
     }
   }
   VkDeviceCreateInfo ci{};
@@ -1115,6 +1122,30 @@ bool VulkanRenderer::createDevice(std::string* err) {
   }
   if (rtSupported_ || bufferDeviceAddressSupported_) {
     enabledFeatures.shaderInt64 = VK_TRUE;
+  }
+
+  // Optional pipeline cache control is used to make cold full MaterialX
+  // promotion fail fast. Without it, vkCreateComputePipelines may enter a
+  // driver JIT for minutes; the compact pipeline remains the safe fallback.
+  VkPhysicalDevicePipelineCreationCacheControlFeatures pccf{};
+  pccf.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES;
+  if (pipelineCompileRequiredSupported_) {
+    VkPhysicalDevicePipelineCreationCacheControlFeatures query{};
+    query.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES;
+    VkPhysicalDeviceFeatures2 f2{};
+    f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    f2.pNext = &query;
+    vkGetPhysicalDeviceFeatures2(phys_, &f2);
+    if (query.pipelineCreationCacheControl) {
+      pccf.pipelineCreationCacheControl = VK_TRUE;
+      pccf.pNext = const_cast<void*>(ci.pNext);
+      ci.pNext = &pccf;
+      LOGI("Vulkan pipeline compile-control enabled (cold pipelines fail fast)");
+    } else {
+      pipelineCompileRequiredSupported_ = false;
+    }
   }
   ci.pEnabledFeatures = &enabledFeatures;
   VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_), "vkCreateDevice");
@@ -9896,6 +9927,42 @@ static bool MaterialsNeedFullRtShader(
   });
 }
 
+static bool MaterialsUseProceduralRtMaterialX(
+    const std::vector<DrawMaterialCPU>& materials) {
+  return std::any_of(materials.begin(), materials.end(), [](const DrawMaterialCPU& m) {
+    for (const MaterialXGraphNodeCPU& node : m.materialXGraph.nodes) {
+      switch (node.op) {
+        case MaterialXGraphOpCPU::HsvAdjust:
+        case MaterialXGraphOpCPU::RgbToHsv:
+        case MaterialXGraphOpCPU::HsvToRgb:
+        case MaterialXGraphOpCPU::Noise2D:
+        case MaterialXGraphOpCPU::Noise3D:
+        case MaterialXGraphOpCPU::CellNoise2D:
+        case MaterialXGraphOpCPU::CellNoise3D:
+        case MaterialXGraphOpCPU::Fractal2D:
+        case MaterialXGraphOpCPU::Fractal3D:
+        case MaterialXGraphOpCPU::WorleyNoise2D:
+        case MaterialXGraphOpCPU::WorleyNoise3D:
+        case MaterialXGraphOpCPU::Cloverleaf:
+        case MaterialXGraphOpCPU::Hexagon:
+        case MaterialXGraphOpCPU::Grid:
+        case MaterialXGraphOpCPU::Crosshatch:
+        case MaterialXGraphOpCPU::TiledCircles:
+        case MaterialXGraphOpCPU::TiledCloverleafs:
+        case MaterialXGraphOpCPU::TiledHexagons:
+        case MaterialXGraphOpCPU::Ramp:
+        case MaterialXGraphOpCPU::RampGradient:
+        case MaterialXGraphOpCPU::Flake:
+        case MaterialXGraphOpCPU::Blackbody:
+          return true;
+        default:
+          break;
+      }
+    }
+    return false;
+  });
+}
+
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
   constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
@@ -9986,12 +10053,14 @@ bool VulkanRenderer::createRtResources(std::string* err) {
 
   const bool hasMaterialXGraphs =
       MaterialsNeedFullRtShader(rtMaterialsCpu_);
+  rtUsesProceduralMaterialX_ =
+      MaterialsUseProceduralRtMaterialX(rtMaterialsCpu_);
   rtUsesFullShader_ = hasMaterialXGraphs;
 #if defined(TUSDVIEW_HAVE_FAST_RT_SHADER) && TUSDVIEW_HAVE_FAST_RT_SHADER
   const void* rtShaderCode = hasMaterialXGraphs
                                   ? static_cast<const void*>(raytrace_comp_spv)
                                   : static_cast<const void*>(raytrace_fast_comp_spv);
-  const size_t rtShaderBytes = hasMaterialXGraphs
+  size_t rtShaderBytes = hasMaterialXGraphs
                                    ? sizeof(raytrace_comp_spv)
                                    : sizeof(raytrace_fast_comp_spv);
 #else
@@ -10050,9 +10119,32 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   cpci.stage.module = cs;
   cpci.stage.pName = "main";
   cpci.layout = rtPipelineLayout_;
+  if (hasMaterialXGraphs && pipelineCompileRequiredSupported_) {
+    cpci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+  }
   const auto pipelineStart = std::chrono::steady_clock::now();
   VkResult r = vkCreateComputePipelines(device_, pipeCache, 1, &cpci, nullptr,
                                         &rtPipeline_);
+  // A cold full MaterialX pipeline is optional. If the driver reports that it
+  // would need compilation, immediately install the compact ABI-compatible
+  // variant and leave full promotion for a later cache-warmed attempt.
+  if (r == VK_PIPELINE_COMPILE_REQUIRED && hasMaterialXGraphs) {
+#if defined(TUSDVIEW_HAVE_FAST_RT_SHADER) && TUSDVIEW_HAVE_FAST_RT_SHADER
+    vkDestroyShaderModule(device_, cs, nullptr);
+    rtShaderCode = static_cast<const void*>(raytrace_fast_comp_spv);
+    rtShaderBytes = sizeof(raytrace_fast_comp_spv);
+    cs = createShader(rtShaderCode, rtShaderBytes);
+    if (cs) {
+      cpci.stage.module = cs;
+      cpci.flags = 0;
+      r = vkCreateComputePipelines(device_, pipeCache, 1, &cpci, nullptr,
+                                   &rtPipeline_);
+      rtUsesFullShader_ = false;
+      LOGW("Vulkan RT full MaterialX pipeline requires cold compilation; "
+           "using compact pipeline until the full variant is cache-warmed");
+    }
+#endif
+  }
   if (std::getenv("TUSDVIEW_RT_TIMING")) {
     const double seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - pipelineStart).count();
@@ -11335,6 +11427,12 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
   info.stage.module = shader;
   info.stage.pName = "main";
   info.layout = liveLayout;
+  if (pipelineCompileRequiredSupported_) {
+    // Live full-shader promotion is optional. A cache miss must not strand the
+    // viewer in the driver's pipeline compiler; the active compact pipeline
+    // remains in service when this returns VK_PIPELINE_COMPILE_REQUIRED.
+    info.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+  }
   // Reuse the same persistent driver cache as startup pipeline creation. This
   // matters both for an automatic graph-free -> full-MaterialX upgrade and for
   // repeated edits: NVIDIA can otherwise spend tens of seconds re-JITing this
@@ -11375,8 +11473,13 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
     if (pipelineCache)
       vkDestroyPipelineCache(device_, pipelineCache, nullptr);
     if (err) {
-      *err = "vkCreateComputePipelines rejected live shader (VkResult " +
-             std::to_string(static_cast<int>(result)) + ")";
+      if (result == VK_PIPELINE_COMPILE_REQUIRED) {
+        *err = "Vulkan RT full pipeline requires a cold driver compile; "
+               "active pipeline retained";
+      } else {
+        *err = "vkCreateComputePipelines rejected live shader (VkResult " +
+               std::to_string(static_cast<int>(result)) + ")";
+      }
     }
     return false;
   }

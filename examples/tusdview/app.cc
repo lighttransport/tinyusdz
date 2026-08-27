@@ -1055,6 +1055,7 @@ int RunCommandWithTimeout(const std::string& command, int timeoutSec,
 
 bool CompileLiveVulkanShader(const std::string& source,
                              bool fullMaterialShader,
+                             bool useProceduralMaterialShader,
                              bool softwareBvh,
                              bool productionPath,
                              size_t maxSourceBytes,
@@ -1105,6 +1106,8 @@ bool CompileLiveVulkanShader(const std::string& source,
     variantDefines = " -DTUSDVIEW_RT_FAST_MATERIAL=1"
                      " -DTUSDVIEW_RT_DISABLE_MTLX=1"
                      " -DTUSDVIEW_RT_DISABLE_DEBUG_RAYS=1";
+  } else if (!useProceduralMaterialShader) {
+    variantDefines = " -DTUSDVIEW_RT_DISABLE_MTLX_PROCEDURAL=1";
   }
   const std::string compilerCommand =
       ShellQuote(compiler) + " --target-env=vulkan1.2 "
@@ -5687,6 +5690,7 @@ bool App::reloadLiveShader(const std::string& requestedBackend,
       const bool softwareBvh = !renderer_->rayTracingIsHardware();
       if (CompileLiveVulkanShader(state->source,
                                   renderer_->rayTracingUsesFullShader(),
+                                  renderer_->rayTracingUsesProceduralMaterialX(),
                                   softwareBvh,
                                   softwareBvh && pathTrace_.enabled,
                                   materialXVulkanShaderMaxSourceBytes_,

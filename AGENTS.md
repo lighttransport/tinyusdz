@@ -225,6 +225,10 @@ physical device, do not force `--vk-device nvidia`; diagnose the ICD/offload
 environment or allow the test to skip. Vulkan headless, CUDA, and HIP runs do
 not require X11; Xvfb is needed for OpenGL and the full mixed viewer suite.
 
+For elevated GPU execution, AMD/RADV or NVIDIA PRIME/offload selection, and
+`/dev/kfd`/`/dev/dri` passthrough requirements, see the authoritative
+[tusdview GPU device passthrough documentation](doc/tusdview.md#gpu-device-passthrough-and-elevated-execution).
+
 ## Testing
 
 See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and use [the Regression Test Procedure](doc/testing-cpp.md#regression-test-procedure) before merging/refactoring.
