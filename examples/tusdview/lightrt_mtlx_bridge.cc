@@ -1523,11 +1523,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       emitLeaf("subsurface_scale", "subsurface_scale", 1.0, "float");
       emitLeaf("subsurface_anisotropy", "subsurface_anisotropy", 0.0,
                "float");
-      emitLeaf("sheen_weight", standard ? "sheen" : "sheen_weight", 0.0,
-               "float");
-      emitLeaf("sheen_color", "sheen_color",
+      const char* sheenWeightName = standard ? "sheen" :
+          (inputNamed(node, "fuzz_weight", nlohmann::json()).is_null()
+               ? "sheen_weight" : "fuzz_weight");
+      const char* sheenColorName = standard ? "sheen_color" :
+          (inputNamed(node, "fuzz_color", nlohmann::json()).is_null()
+               ? "sheen_color" : "fuzz_color");
+      const char* sheenRoughnessName = standard ? "sheen_roughness" :
+          (inputNamed(node, "fuzz_roughness", nlohmann::json()).is_null()
+               ? "sheen_roughness" : "fuzz_roughness");
+      emitLeaf("sheen_weight", sheenWeightName, 0.0, "float");
+      emitLeaf("sheen_color", sheenColorName,
                nlohmann::json::array({1, 1, 1}), "color3");
-      emitLeaf("sheen_roughness", "sheen_roughness", 0.3, "float");
+      emitLeaf("sheen_roughness", sheenRoughnessName, 0.3, "float");
       emitLeaf("emission_luminance",
                standard ? "emission" : "emission_luminance", 0.0, "float");
       emitLeaf("emission_color", "emission_color",
