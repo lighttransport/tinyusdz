@@ -644,15 +644,28 @@ static MtlxValue eval_triplanarprojection(ShadeContext *ctx,
     float w[3]={fabsf(nn.x),fabsf(nn.y),fabsf(nn.z)};
     float sum=w[0]+w[1]+w[2];if(sum<=1e-20f){w[0]=w[1]=0;w[2]=1;}else for(int i=0;i<3;i++)w[i]/=sum;
     float exponent=1.0f/fmaxf(bv.v[0],.03f);sum=0;for(int i=0;i<3;i++){w[i]=powf(w[i],exponent);sum+=w[i];}if(sum>1e-20f)for(int i=0;i<3;i++)w[i]/=sum;
-    float tc[3][2]={{p.y,p.z},{p.x,p.z},{p.x,p.y}};int up=(int)uv.v[0];
-    if(up!=2){tc[0][0]=p.z;tc[0][1]=p.y;}if(up==0){tc[1][0]=p.z;tc[1][1]=p.x;tc[2][0]=-p.y;tc[2][1]=p.x;}
+    float tc[3][2]={{p.y,p.z},{p.x,p.z},{p.x,p.y}};
+    float dtx[3][2]={{ctx->dPdx.y,ctx->dPdx.z},
+                     {ctx->dPdx.x,ctx->dPdx.z},
+                     {ctx->dPdx.x,ctx->dPdx.y}};
+    float dty[3][2]={{ctx->dPdy.y,ctx->dPdy.z},
+                     {ctx->dPdy.x,ctx->dPdy.z},
+                     {ctx->dPdy.x,ctx->dPdy.y}};
+    int up=(int)uv.v[0];
+    if(up!=2){tc[0][0]=p.z;tc[0][1]=p.y;dtx[0][0]=ctx->dPdx.z;dtx[0][1]=ctx->dPdx.y;dty[0][0]=ctx->dPdy.z;dty[0][1]=ctx->dPdy.y;}
+    if(up==0){tc[1][0]=p.z;tc[1][1]=p.x;tc[2][0]=-p.y;tc[2][1]=p.x;dtx[1][0]=ctx->dPdx.z;dtx[1][1]=ctx->dPdx.x;dtx[2][0]=-ctx->dPdx.y;dtx[2][1]=ctx->dPdx.x;dty[1][0]=ctx->dPdy.z;dty[1][1]=ctx->dPdy.x;dty[2][0]=-ctx->dPdy.y;dty[2][1]=ctx->dPdy.x;}
     MtlxValue sample[3];const char *files[3]={"filex","filey","filez"};
     const MtlxInput *filter=find_input(n,"filtertype");
     const int nearest=filter&&filter->has_value&&filter->value.s&&
                       !strcmp(filter->value.s,"nearest");
     for(int axis=0;axis<3;axis++){
         const MtlxInput *file=find_input(n,files[axis]);const char *path=file&&file->value.s?file->value.s:NULL;int id=path?texcache_get(ctx->tex,path,file?file->colorspace_srgb:0):-1;float s[4];
-        if(id>=0){if(nearest)texcache_sample_nearest_address(ctx->tex,id,tc[axis][0],tc[axis][1],"periodic","periodic",s);else texcache_sample(ctx->tex,id,tc[axis][0],tc[axis][1],s);}else{MtlxValue d=in_or(ctx,n,"default",mv_zero(n->type));s[0]=d.v[0];s[1]=d.v[1];s[2]=d.v[2];s[3]=n->type==MV_COLOR4||n->type==MV_VEC4?d.v[3]:1;}
+        if(id>=0){
+            if(nearest) texcache_sample_nearest_address(ctx->tex,id,tc[axis][0],tc[axis][1],"periodic","periodic",s);
+            else if(ctx->has_position_derivatives)
+                texcache_sample_address_grad(ctx->tex,id,tc[axis][0],tc[axis][1],dtx[axis][0],dtx[axis][1],dty[axis][0],dty[axis][1],"periodic","periodic",s);
+            else texcache_sample(ctx->tex,id,tc[axis][0],tc[axis][1],s);
+        }else{MtlxValue d=in_or(ctx,n,"default",mv_zero(n->type));s[0]=d.v[0];s[1]=d.v[1];s[2]=d.v[2];s[3]=n->type==MV_COLOR4||n->type==MV_VEC4?d.v[3]:1;}
         sample[axis]=mv_zero(n->type);int nc=ncomp_of(&sample[axis]);if(nc<1)nc=1;for(int c=0;c<nc;c++)sample[axis].v[c]=s[c];
     }
     MtlxValue r=sample[0];int nc=ncomp_of(&r);if(nc<1)nc=1;for(int c=0;c<nc;c++)r.v[c]=sample[0].v[c]*w[0]+sample[1].v[c]*w[1]+sample[2].v[c]*w[2];return r;
