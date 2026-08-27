@@ -2357,6 +2357,50 @@ int main() {
       "nested BSDF mix", {0, 9, 10, 19, 20, 21})) {
     return 1;
   }
+  tusdview::DrawMaterialCPU weightedMix;
+  weightedMix.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"bg","category":"diffuse_bsdf","type":"BSDF","inputs":[
+        {"name":"weight","value":0.8},{"name":"color","value":[1,0,0]}]},
+      {"name":"fg","category":"diffuse_bsdf","type":"BSDF","inputs":[
+        {"name":"weight","value":0.4},{"name":"color","value":[0,0,1]}]},
+      {"name":"mix","category":"mix","type":"BSDF","inputs":[
+        {"name":"bg","nodename":"bg"},{"name":"fg","nodename":"fg"},
+        {"name":"mix","value":0.25}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"mix"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]
+  })json";
+  std::string weightedMixError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&weightedMix, &weightedMixError)) {
+    std::fprintf(stderr, "weighted closure mix lowering failed: %s\n",
+                 weightedMixError.c_str());
+    return 1;
+  }
+  const auto& weightedGraph = weightedMix.materialXGraph;
+  const int weightedColorIndex = weightedGraph.output[0];
+  const int weightedWeightIndex = weightedGraph.output[20];
+  const auto findGraphNode = [&](const char* name) -> const tusdview::MaterialXGraphNodeCPU* {
+    for (const auto& node : weightedGraph.nodes)
+      if (node.name == name) return &node;
+    return nullptr;
+  };
+  const auto* weightedColor = findGraphNode("mix__closure_base_color");
+  const auto* effectiveA = findGraphNode("mix__closure_base_color__mix_weight_a");
+  const auto* effectiveB = findGraphNode("mix__closure_base_color__mix_weight_b");
+  const auto* inverse = findGraphNode("mix__closure_mix_inverse");
+  if (weightedColorIndex < 0 || weightedWeightIndex < 0 ||
+      static_cast<size_t>(weightedColorIndex) >= weightedGraph.nodes.size() ||
+      static_cast<size_t>(weightedWeightIndex) >= weightedGraph.nodes.size() ||
+      weightedColor == nullptr || weightedColor->op != tusdview::MaterialXGraphOpCPU::Divide ||
+      effectiveA == nullptr || effectiveA->op != tusdview::MaterialXGraphOpCPU::Multiply ||
+      effectiveB == nullptr || effectiveB->op != tusdview::MaterialXGraphOpCPU::Multiply ||
+      inverse == nullptr || inverse->op != tusdview::MaterialXGraphOpCPU::Subtract ||
+      effectiveA->input[1] != static_cast<int>(inverse - weightedGraph.nodes.data()) ||
+      !Near(effectiveB->value[1][0], 0.25f) ||
+      weightedColor->input[1] < 0) {
+    std::fprintf(stderr, "weighted closure mix did not preserve mix-factor weights\n");
+    return 1;
+  }
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
       {"name":"base","category":"diffuse_bsdf","type":"BSDF",
