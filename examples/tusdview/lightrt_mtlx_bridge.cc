@@ -1340,8 +1340,13 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       for (const auto& item : b) keys.insert(item.first);
       const char* scalarInput = nullptr;
       if (cat == "mix") scalarInput = "mix";
-      else if (cat == "multiply")
+      else if (cat == "multiply") {
+        // MaterialX permits the scalar factor on either side of a typed
+        // closure multiply. Identify the closure operand before selecting the
+        // factor; assuming in1 is the closure silently feeds a closure graph
+        // into the scalar multiply when the operands are reversed.
         scalarInput = aName.empty() ? "in1" : "in2";
+      }
       const nlohmann::json factor = cat == "mix"
           ? nodeInput(node, scalarInput, 0.5)
           : nodeInput(node, scalarInput ? scalarInput : "in2", 1.0);
@@ -1368,7 +1373,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                                    ? "color3" : "float";
         nlohmann::json inputs = nlohmann::json::array();
         if (cat == "multiply") {
-          const std::string& source = ai != a.end() ? ai->second : bi->second;
+          const bool closureA = !aName.empty();
+          const std::string& source = closureA && ai != a.end()
+              ? ai->second : bi->second;
           if (roughnessWeightLane(lane) || colorWeightLane(lane)) {
             lanes[lane] = source;
             continue;

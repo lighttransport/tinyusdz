@@ -2355,6 +2355,19 @@ int main() {
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
       {"name":"diff","category":"diffuse_bsdf","type":"BSDF",
+       "inputs":[{"name":"weight","value":0.8},
+                 {"name":"color","value":[0.7,0.4,0.2]}]},
+      {"name":"scaled","category":"multiply","type":"BSDF",
+       "inputs":[{"name":"in1","value":0.25},
+                 {"name":"in2","nodename":"diff"}]}
+    ],"outputs":[{"name":"shader","type":"BSDF","nodename":"scaled"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "scalar multiplied by closure", {0, 20, 21})) {
+    return 1;
+  }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"diff","category":"diffuse_bsdf","type":"BSDF",
        "inputs":[{"name":"weight","value":0.6},{"name":"color","value":[0.3,0.5,0.7]}]},
       {"name":"emit","category":"uniform_edf","type":"EDF",
        "inputs":[{"name":"color","value":[0.1,0.2,0.4]}]},
