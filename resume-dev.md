@@ -559,6 +559,9 @@ Passed:
 - After the preflight fix, registered Vulkan RT semantic-AOV test 133 skips
   cleanly in 1.88s. The GL semantic-AOV wrapper still cannot complete under
   this restricted X11 setup and remains an environment-only boundary.
+- The same semantic-AOV harness now performs a bounded Xvfb/`xdpyinfo`
+  preflight; direct GL invocation cleanly skips when the X11 socket cannot be
+  opened instead of entering the render loop.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
