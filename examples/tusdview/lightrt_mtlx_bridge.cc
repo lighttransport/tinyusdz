@@ -1972,8 +1972,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                               {"inputs",nlohmann::json::array({nlohmann::json{{"name","in"},{"nodename",extinction}}})}});
       lanes["volume_density"] = density;
       const std::string albedo = name + "__closure_volume_albedo";
+      const std::string safeExtinction =
+          name + "__closure_safe_extinction";
+      runtimeNodes.push_back({{"name", safeExtinction}, {"category", "max"},
+                              {"type", "color3"}, {"inputs", nlohmann::json::array({
+                                  nlohmann::json{{"name", "in1"}, {"nodename", extinction}},
+                                  nlohmann::json{{"name", "in2"}, {"value", 1.0e-8}}})}});
       runtimeNodes.push_back({{"name",albedo},{"category","divide"},{"type","color3"},
-                              {"inputs",nlohmann::json::array({renamedInput(scattering,"in1"),nlohmann::json{{"name","in2"},{"nodename",extinction}}})}});
+                              {"inputs",nlohmann::json::array({renamedInput(scattering,"in1"),nlohmann::json{{"name","in2"},{"nodename",safeExtinction}}})}});
       lanes["volume_albedo"] = albedo;
       emitClosureLane(name, "transmission_scatter_anisotropy",
                       nodeInput(node, "anisotropy", 0.0), "float");

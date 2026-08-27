@@ -2281,6 +2281,39 @@ int main() {
     }
     return true;
   };
+  auto CheckSafeVolumeAlbedo = []() {
+    tusdview::DrawMaterialCPU material;
+    material.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"fog","category":"absorption_vdf","type":"VDF",
+       "inputs":[{"name":"absorption","value":[0,0,0]},
+                 {"name":"scattering","value":[0,0,0]}]}
+    ],"outputs":[{"name":"shader","type":"VDF","nodename":"fog"}]},
+    "connections":[{"input":"vdf","output":"shader"}]})json";
+    std::string error;
+    if (!tusdview::CompileMaterialXGraphRuntime(&material, &error) ||
+        !material.materialXGraph.valid) {
+      std::fprintf(stderr, "safe volume albedo graph failed: %s\n",
+                   error.c_str());
+      return false;
+    }
+    const auto hasNode = [&](const char* name,
+                             tusdview::MaterialXGraphOpCPU op) {
+      return std::any_of(material.materialXGraph.nodes.begin(),
+                          material.materialXGraph.nodes.end(),
+                          [&](const tusdview::MaterialXGraphNodeCPU& node) {
+                            return node.name == name && node.op == op;
+                          });
+    };
+    if (!hasNode("fog__closure_safe_extinction",
+                 tusdview::MaterialXGraphOpCPU::Maximum) ||
+        !hasNode("fog__closure_volume_albedo",
+                 tusdview::MaterialXGraphOpCPU::Divide)) {
+      std::fprintf(stderr, "volume albedo denominator was not guarded\n");
+      return false;
+    }
+    return true;
+  };
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
       {"name":"w","category":"constant","type":"float","inputs":[{"name":"value","value":0.7}]},
@@ -2344,7 +2377,8 @@ int main() {
         {"name":"anisotropy","value":0.2}]}
     ],"outputs":[{"name":"shader","type":"VDF","nodename":"subsurface"}]},
     "connections":[{"input":"vdf","output":"shader"}]})json",
-      "direct subsurface VDF", {24, 40, 41})) {
+      "direct subsurface VDF", {24, 40, 41}) ||
+      !CheckSafeVolumeAlbedo()) {
     return 1;
   }
   if (!CheckDirectClosure(R"json({
