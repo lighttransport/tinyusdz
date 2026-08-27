@@ -1,5 +1,20 @@
 export const DEMOS = [
   {
+    id: 'materialx-openchess',
+    title: 'MaterialX OpenChess Rendering',
+    subtitle: 'OpenChessSet across lightweight raster and progressive reference renderers.',
+    defaultAsset: './assets/openchess/chess_set.usda',
+    externalAssetIndex: './assets/openchess/asset-index.json',
+    preferredMaterialType: 'openpbr',
+    materialModeLabel: 'MaterialX Standard Surface / OpenPBR',
+    useComposition: true,
+    useUsdLux: true,
+    requiredBackend: 'next',
+    openChessRendering: true,
+    image: './assets/previews/materialx-openchess.svg',
+    href: './materialx-openchess.html'
+  },
+  {
     id: 'materialx-node',
     title: 'MaterialX Node Graph',
     subtitle: 'OpenPBR / MaterialX material path with a compact node graph inspector.',

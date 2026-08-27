@@ -98,11 +98,13 @@ class DemoApp {
     this.currentSourceName = '';
     this.currentSourceUrl = '';
     this.envMap = null;
+    this.environmentSource = null;
     this.mixer = null;
     this.actions = [];
     this.skeletonHelpers = [];
     this.usdLights = [];
     this.nodeGraphStats = null;
+    this.sceneChangedCallbacks = new Set();
     this.params = {
       grid: true,
       defaultLights: this.config.useDefaultLights !== false,
@@ -113,7 +115,7 @@ class DemoApp {
       speed: 1.0,
       showSkeleton: !!this.config.showSkeleton
     };
-    this.params.backend = selectedBackend();
+    this.params.backend = this.config.requiredBackend || selectedBackend();
   }
 
   async start() {
@@ -332,9 +334,12 @@ class DemoApp {
     try {
       const texture = await new HDRLoader().loadAsync('./assets/textures/goegap_1k.hdr');
       texture.mapping = THREE.EquirectangularReflectionMapping;
+      this.environmentSource?.dispose?.();
+      this.envMap?.dispose?.();
+      this.environmentSource = texture;
       this.envMap = this.pmremGenerator.fromEquirectangular(texture).texture;
-      texture.dispose();
       this.scene.environment = this.envMap;
+      this.scene.background = this.environmentSource;
     } catch (error) {
       console.warn('Default HDR environment unavailable:', error);
     }
@@ -489,8 +494,8 @@ class DemoApp {
 
   async fetchDependencyLayer(key, rootUrl) {
     const candidates = [
-      new URL(String(key), document.baseURI).href,
-      new URL(String(key), new URL(rootUrl, document.baseURI)).href
+      new URL(String(key), new URL(rootUrl, document.baseURI)).href,
+      new URL(String(key), document.baseURI).href
     ];
     let lastError = null;
     for (const url of [...new Set(candidates)]) {
@@ -564,6 +569,14 @@ class DemoApp {
     }
     this.fitScene();
     this.setStatus(`Loaded ${label}`);
+    for (const callback of this.sceneChangedCallbacks) {
+      try { callback({ usd, label, root: sceneRoot }); } catch (error) { console.error(error); }
+    }
+  }
+
+  onSceneChanged(callback) {
+    this.sceneChangedCallbacks.add(callback);
+    return () => this.sceneChangedCallbacks.delete(callback);
   }
 
   async buildThreeRoot(usd) {
@@ -609,18 +622,42 @@ class DemoApp {
   async hydrateNextExternalAssets(usd) {
     if (!this.currentSourceUrl || !usd?.archiveEntries) return;
     const records = Array.isArray(usd.textures) ? usd.textures : [];
+    let indexedTextures = [];
+    let assetIndexBase = null;
+    if (this.config.externalAssetIndex) {
+      try {
+        const indexUrl = new URL(this.config.externalAssetIndex, document.baseURI);
+        const response = await fetch(indexUrl);
+        if (response.ok) {
+          const index = await response.json();
+          indexedTextures = Array.isArray(index?.textures) ? index.textures : [];
+          assetIndexBase = new URL('.', indexUrl);
+        }
+      } catch (error) {
+        console.warn('[demo] external asset index unavailable', error);
+      }
+    }
     for (const record of records) {
       const assetPath = record?.assetPath || record?.uri;
       const key = normalizedAssetKey(assetPath);
       if (!key || usd.archiveEntries.has(key)) continue;
-      const candidates = [
+      const indexedMatches = indexedTextures.filter((candidate) => {
+        const normalized = normalizedAssetKey(candidate);
+        return normalized === key || normalized.endsWith(`/${key}`);
+      });
+      const candidates = indexedMatches.map((candidate) => new URL(candidate, assetIndexBase).href);
+      candidates.push(
         new URL(assetPath, new URL(this.currentSourceUrl, document.baseURI)).href,
         new URL(assetPath, document.baseURI).href
-      ];
+      );
       for (const url of [...new Set(candidates)]) {
         try {
           const response = await fetch(url);
           if (!response.ok) continue;
+          // Vite's SPA fallback answers an unknown image URL with index.html
+          // and status 200. Never cache that document as texture bytes.
+          const contentType = response.headers.get('content-type') || '';
+          if (/text\/html|application\/json/i.test(contentType)) continue;
           usd.archiveEntries.set(key, new Uint8Array(await response.arrayBuffer()));
           break;
         } catch {
@@ -790,7 +827,7 @@ class DemoApp {
       console.warn('DomeLight load failed:', error);
     }
     this.scene.environment = this.envMap;
-    this.scene.background = new THREE.Color(0x0e0e10);
+    this.scene.background = this.environmentSource || new THREE.Color(0x0e0e10);
   }
 
   addUSDLights(usd) {
@@ -1113,6 +1150,7 @@ class DemoApp {
       this.mixer.update(delta * this.params.speed);
     }
     this.controls.update();
-    this.renderer.render(this.scene, this.camera);
+    if (typeof this.renderOverride === 'function') this.renderOverride();
+    else this.renderer.render(this.scene, this.camera);
   }
 }

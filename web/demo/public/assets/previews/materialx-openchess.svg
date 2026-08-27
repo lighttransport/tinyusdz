@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">
+  <defs><linearGradient id="b" x2="1" y2="1"><stop stop-color="#171a22"/><stop offset="1" stop-color="#090a0e"/></linearGradient></defs>
+  <rect width="640" height="360" fill="url(#b)"/>
+  <g transform="translate(92 55) skewX(-13)">
+    <rect width="456" height="240" rx="8" fill="#332a22" stroke="#bc9462" stroke-width="4"/>
+    <g fill="#d9bb8c"><path d="M65 192h58l-7-20H72zm13-24h31l-4-66H82zm7-72h17l10-22H75z"/><path d="M333 192h58l-7-20h-44zm13-24h31l-4-66h-23zm-2-73h31l-16-27z"/></g>
+    <g fill="#50382d"><path d="M145 192h58l-8-20h-42zm16-24h26l10-57-23-25-23 25z"/><path d="M253 192h58l-8-20h-42zm13-24h32l-5-73h-22z"/></g>
+    <path d="M15 205h426M15 145h426M15 85h426M122 15v210M228 15v210M334 15v210" stroke="#8b6b4c" opacity=".45"/>
+  </g>
+  <text x="26" y="333" fill="#eee" font-family="sans-serif" font-size="22">MaterialX · Raster · LightRT · WebGPU</text>
+</svg>

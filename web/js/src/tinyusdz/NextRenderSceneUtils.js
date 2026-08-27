@@ -1098,6 +1098,7 @@ export function buildNextThreeNode(adapter, {
   group.name = adapter.filename || 'next-scene';
   const textureManager = (lazyTextures && !skipTextures) ? new NextTextureLoadingManager() : null;
   const materialCache = new Map();
+  const threeMeshById = new Map();
   const sceneBox = new THREE.Box3();
   const meshes = adapter.meshes || [];
   const points = adapter.points || [];
@@ -1389,6 +1390,7 @@ export function buildNextThreeNode(adapter, {
         }))
       })) : []
     };
+    threeMeshById.set(mesh.index, threeMesh);
     if (!attachAtNode(threeMesh, mesh.primPath)) {
       applyUsdRowMajorMatrix(threeMesh, mesh.worldMatrix);
       group.add(threeMesh);
@@ -1407,6 +1409,41 @@ export function buildNextThreeNode(adapter, {
       sceneBox.union(geometry.boundingBox.clone().applyMatrix4(worldBoxMatrix));
     }
     reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
+  }
+
+  // PointInstancer prototypes are ordinary scene meshes plus a compact draw
+  // table. Render the draw table and hide the authored prototype hierarchy;
+  // otherwise only one prototype appears at its authoring location and every
+  // actual instance is missing (OpenChessSet's two rows of pawns).
+  const pointInstancers = adapter.pointInstancers || [];
+  const pointInstanceDraws = adapter.pointInstanceDraws || [];
+  for (const instancer of pointInstancers) {
+    if (!instancer || instancer.error || instancer.valid === false) continue;
+    for (const prototypePath of instancer.prototypePaths || []) {
+      const prototypeNode = nodeGroupByPath.get(prototypePath);
+      if (prototypeNode) prototypeNode.visible = false;
+    }
+    const instanceGroup = new THREE.Group();
+    instanceGroup.name = `${instancer.primPath || instancer.name || 'PointInstancer'}:instances`;
+    instanceGroup.userData.usdPointInstancer = { ...instancer };
+    const begin = Math.max(0, instancer.drawStart | 0);
+    const end = Math.min(pointInstanceDraws.length, begin + Math.max(0, instancer.drawCount | 0));
+    for (let drawIndex = begin; drawIndex < end; ++drawIndex) {
+      const draw = pointInstanceDraws[drawIndex];
+      if (!draw || draw.error) continue;
+      const source = threeMeshById.get(draw.meshId);
+      if (!source) continue;
+      const instance = new THREE.Mesh(source.geometry, source.material);
+      instance.name = `${source.name}:instance-${draw.instanceIndex}`;
+      instance.castShadow = source.castShadow;
+      instance.receiveShadow = source.receiveShadow;
+      instance.userData.usdPointInstance = { ...draw };
+      applyUsdRowMajorMatrix(instance, draw.transform);
+      instanceGroup.add(instance);
+    }
+    const instancerNode = nodeGroupByPath.get(instancer.primPath);
+    if (instancerNode) instancerNode.add(instanceGroup);
+    else group.add(instanceGroup);
   }
 
   for (const pointCloud of points) {

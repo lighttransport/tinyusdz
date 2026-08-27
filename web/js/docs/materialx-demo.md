@@ -43,6 +43,19 @@ Advanced OpenPBR demo with LiteGraph.js node graph visualization and WebGL2 Mate
 
 ### Other MaterialX Demos
 
+The `web/demo/materialx-openchess.html` showcase exercises the composed
+OpenChessSet asset through four backends: lightweight WebGL2 raster, LightRT
+CPU/WASM progressive path tracing, WebGPU raster, and WebGPU compute path
+tracing. Both tracing modes consume the LightRT BVH and packed OpenPBR material
+data; base-color, metalness, and roughness textures are baked into per-vertex
+transport attributes for the browser reference paths. WebGPU modes are hidden
+when no adapter is available, and raster SSS is labeled as approximate.
+WebGL2 additionally provides photographic screen-space DOF controls, including
+click-to-focus USD primitive picking, and uses
+the bundled Goegap HDRI by default. Its display controls include environment
+rotation/intensity, exposure, sRGB output transforms, and an ACES 2.0-style
+lightweight approximation as the default tone mapper.
+
 | Demo | Entry | Purpose |
 |------|-------|---------|
 | `materialx-webgl2.js` | `materialx-webgl2.html` | Blender MaterialX exports with WebGL2 node graph optimization |

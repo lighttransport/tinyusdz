@@ -312,6 +312,9 @@ if (TINYUSDZ_WASM_PRODUCT STREQUAL "next")
   add_executable(tinyusdz_next_wasm binding-next.cc)
   # tinysubdiv (tsd): dependency-free subdivision streaming for SubdivStreamer.
   target_sources(tinyusdz_next_wasm PRIVATE
+    ${PROJECT_SOURCE_DIR}/lightrt-wasm.cc
+    ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c.c
+    ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c_tri.c
     ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-validate.cc
     ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-topology.cc
     ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-bilinear.cc
@@ -455,6 +458,9 @@ list(
   APPEND
   SOURCES
   binding.cc
+  lightrt-wasm.cc
+  ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c.c
+  ${PROJECT_SOURCE_DIR}/../src/external/lightrt/lightrt_c_tri.c
 )
 # The legacy product deliberately excludes the next core. The combined product
 # remains available for compatibility testing, but is not the shipped default.

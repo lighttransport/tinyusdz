@@ -4,9 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "prepare:openchess": "node scripts/prepare-openchess.mjs",
+    "check:openchess": "node scripts/prepare-openchess.mjs --check",
     "prepare:local-tinyusdz": "bash scripts/prepare-local-tinyusdz.sh",
     "dev": "bash scripts/prepare-local-tinyusdz.sh && vite --mode development",
-    "build": "vite build",
+    "build": "npm run check:openchess && vite build",
     "preview": "vite preview",
     "capture-previews": "node scripts/capture-previews.mjs"
   },
