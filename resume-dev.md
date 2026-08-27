@@ -540,6 +540,11 @@ Passed:
   passing; HIP BVH refit and the GL-window MCP material case were skipped.
   The following GL semantic-AOV child became unobservable in the restricted
   session and was stopped; the hardware/display gate remains unresolved.
+- The remaining registered interval 132 and 134–165 completes with all 32
+  executed tests passing. The unavailable GL-degenerate, OpenChess path-trace,
+  and external-asset profiles are capability-skipped; Vulkan RT test 133 is
+  the remaining hardware-only CTest boundary, while its direct preflight
+  reports a clean skip.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
