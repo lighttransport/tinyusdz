@@ -4090,6 +4090,124 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
         std::copy(std::begin(directParams.normal), std::end(directParams.normal),
                   std::begin(p.normal));
       }
+      // The next loader keeps typed OpenPBR values next to a JSON graph even
+      // when only one surface input is graph-connected. Preserve every other
+      // authored typed lane; the evaluator's defaults are not authored graph
+      // routes and must not replace them. The legacy loader exposed this most
+      // visibly as an IOR/F0 mismatch, but the same rule applies to all lobes.
+      auto hasDirectParam = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+          if (FindParam(*mat, "OpenPBRSurface", name) != nullptr) return true;
+        }
+        return false;
+      };
+      auto restoreScalar = [&](std::initializer_list<const char*> names,
+                               const char* graphName, float direct,
+                               float* destination) {
+        if (destination && hasDirectParam(names) &&
+            !ParamHasTexture(*mat, {"OpenPBRSurface"}, names) &&
+            !graphDrives(graphName)) {
+          *destination = direct;
+        }
+      };
+      auto restoreColor = [&](std::initializer_list<const char*> names,
+                              const char* graphName, const float direct[3],
+                              float destination[3]) {
+        if (hasDirectParam(names) &&
+            !ParamHasTexture(*mat, {"OpenPBRSurface"}, names) &&
+            !graphDrives(graphName)) {
+          std::copy(direct, direct + 3, destination);
+        }
+      };
+      restoreScalar({"base_weight"}, "base_weight", directParams.baseWeight,
+                    &p.baseWeight);
+      restoreScalar({"specular_weight"}, "specular_weight",
+                    directParams.specularWeight, &p.specularWeight);
+      restoreColor({"specular_color"}, "specular_color",
+                   directParams.specularColor, p.specularColor);
+      restoreScalar({"specular_ior"}, "specular_ior",
+                    directParams.specularIor, &p.specularIor);
+      restoreScalar({"specular_anisotropy"}, "specular_anisotropy",
+                    directParams.specularAnisotropy, &p.specularAnisotropy);
+      restoreScalar({"specular_rotation"}, "specular_rotation",
+                    directParams.specularRotation, &p.specularRotation);
+      restoreScalar({"specular_roughness_anisotropy"},
+                    "specular_roughness_anisotropy",
+                    directParams.specularRoughnessAnisotropy,
+                    &p.specularRoughnessAnisotropy);
+      restoreScalar({"transmission_weight"}, "transmission_weight",
+                    directParams.transmission, &p.transmission);
+      restoreColor({"transmission_color"}, "transmission_color",
+                   directParams.transmissionColor, p.transmissionColor);
+      restoreScalar({"transmission_depth"}, "transmission_depth",
+                    directParams.transmissionDepth, &p.transmissionDepth);
+      restoreColor({"transmission_scatter"}, "transmission_scatter",
+                   directParams.transmissionScatter, p.transmissionScatter);
+      restoreScalar({"transmission_scatter_anisotropy"},
+                    "transmission_scatter_anisotropy",
+                    directParams.transmissionScatterAnisotropy,
+                    &p.transmissionScatterAnisotropy);
+      restoreScalar({"transmission_dispersion"}, "transmission_dispersion",
+                    directParams.transmissionDispersion,
+                    &p.transmissionDispersion);
+      restoreScalar({"transmission_dispersion_abbe_number"},
+                    "transmission_dispersion_abbe_number",
+                    directParams.transmissionDispersionAbbeNumber,
+                    &p.transmissionDispersionAbbeNumber);
+      restoreScalar({"transmission_dispersion_scale"},
+                    "transmission_dispersion_scale",
+                    directParams.transmissionDispersionScale,
+                    &p.transmissionDispersionScale);
+      restoreScalar({"subsurface_weight"}, "subsurface_weight",
+                    directParams.subsurface, &p.subsurface);
+      restoreColor({"subsurface_color"}, "subsurface_color",
+                   directParams.subsurfaceColor, p.subsurfaceColor);
+      restoreScalar({"subsurface_scale"}, "subsurface_scale",
+                    directParams.subsurfaceScale, &p.subsurfaceScale);
+      restoreScalar({"subsurface_anisotropy"}, "subsurface_anisotropy",
+                    directParams.subsurfaceAnisotropy,
+                    &p.subsurfaceAnisotropy);
+      restoreScalar({"subsurface_scatter_anisotropy"},
+                    "subsurface_scatter_anisotropy",
+                    directParams.subsurfaceScatterAnisotropy,
+                    &p.subsurfaceScatterAnisotropy);
+      restoreScalar({"coat_weight"}, "coat_weight", directParams.coatWeight,
+                    &p.coatWeight);
+      restoreColor({"coat_color"}, "coat_color", directParams.coatColor,
+                   p.coatColor);
+      restoreScalar({"coat_roughness"}, "coat_roughness",
+                    directParams.coatRoughness, &p.coatRoughness);
+      restoreScalar({"coat_ior"}, "coat_ior", directParams.coatIor,
+                    &p.coatIor);
+      restoreScalar({"coat_anisotropy"}, "coat_anisotropy",
+                    directParams.coatAnisotropy, &p.coatAnisotropy);
+      restoreScalar({"coat_rotation"}, "coat_rotation",
+                    directParams.coatRotation, &p.coatRotation);
+      restoreScalar({"coat_affect_color"}, "coat_affect_color",
+                    directParams.coatAffectColor, &p.coatAffectColor);
+      restoreScalar({"coat_affect_roughness"}, "coat_affect_roughness",
+                    directParams.coatAffectRoughness,
+                    &p.coatAffectRoughness);
+      restoreScalar({"coat_roughness_anisotropy"},
+                    "coat_roughness_anisotropy",
+                    directParams.coatRoughnessAnisotropy,
+                    &p.coatRoughnessAnisotropy);
+      restoreScalar({"coat_darkening"}, "coat_darkening",
+                    directParams.coatDarkening, &p.coatDarkening);
+      restoreScalar({"sheen_weight", "fuzz_weight"}, "sheen_weight",
+                    directParams.sheenWeight, &p.sheenWeight);
+      restoreColor({"sheen_color", "fuzz_color"}, "sheen_color",
+                   directParams.sheenColor, p.sheenColor);
+      restoreScalar({"sheen_roughness", "fuzz_roughness"},
+                    "sheen_roughness", directParams.sheenRoughness,
+                    &p.sheenRoughness);
+      restoreScalar({"thin_film_weight"}, "thin_film_weight",
+                    directParams.thinFilmWeight, &p.thinFilmWeight);
+      restoreScalar({"thin_film_thickness"}, "thin_film_thickness",
+                    directParams.thinFilmThicknessNm,
+                    &p.thinFilmThicknessNm);
+      restoreScalar({"thin_film_ior"}, "thin_film_ior",
+                    directParams.thinFilmIor, &p.thinFilmIor);
       const bool graphHasRadiusScale =
           graphConnections.find("subsurface_radius_scale") !=
           graphConnections.end();
