@@ -1070,6 +1070,7 @@ int FindSurfaceNode(const MtlxDoc* doc, const char* materialName,
 
 bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
                          TextureCache* tex, float u, float v,
+                         float dudx, float dvdy,
                          std::vector<MtlxValue>* memo,
                          std::vector<char>* memoDone,
                          DrawLightRtOpenPBRCPU* out) {
@@ -1083,6 +1084,11 @@ bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
   ctx.tex = tex;
   ctx.uv[0] = u;
   ctx.uv[1] = v;
+  ctx.uv_dx[0] = dudx;
+  ctx.uv_dx[1] = 0.0f;
+  ctx.uv_dy[0] = 0.0f;
+  ctx.uv_dy[1] = dvdy;
+  ctx.has_uv_derivatives = dudx > 0.0f || dvdy > 0.0f;
   ctx.P = v3_make(0.0f, 0.0f, 0.0f);
   ctx.Ns = v3_make(0.0f, 0.0f, 1.0f);
   ctx.Ng = v3_make(0.0f, 0.0f, 1.0f);
@@ -1133,8 +1139,8 @@ bool EvaluateMaterialXStringToLightRtOpenPBRAtUv(
   std::vector<MtlxValue> memo(static_cast<size_t>(doc->nnode));
   std::vector<char> memoDone(static_cast<size_t>(doc->nnode), 0);
   DrawLightRtOpenPBRCPU baked;
-  const bool ok = EvaluateMtlxDocAtUv(doc, surfaceNode, tex, u, v, &memo,
-                                      &memoDone, &baked);
+  const bool ok = EvaluateMtlxDocAtUv(doc, surfaceNode, tex, u, v,
+                                      0.0f, 0.0f, &memo, &memoDone, &baked);
   texcache_free(tex);
   mtlx_free(doc);
   if (!ok) {
@@ -3306,7 +3312,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           JsonString(connection, "input"));
       const auto outputIt = outputs.find(JsonString(connection, "output"));
       if (outputIt == outputs.end()) continue;
-      if (input == "bsdf" || input == "edf" || input == "vdf") {
+      if (input == "bsdf" || input == "edf" || input == "vdf" ||
+          input == "material" || input == "surfaceshader" ||
+          input == "volumeshader") {
         const auto closure = closureLanes.find(outputIt->second);
         if (closure == closureLanes.end()) continue;
         for (const auto& lane : closure->second) {
@@ -3672,7 +3680,8 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
         if (!EvaluateMtlxDocAtUv(
                 graphDoc, surfaceNode, graphTex,
                 (static_cast<float>(x) + 0.5f) / kSize,
-                (static_cast<float>(y) + 0.5f) / kSize, &graphMemo,
+                (static_cast<float>(y) + 0.5f) / kSize,
+                1.0f / kSize, 1.0f / kSize, &graphMemo,
                 &graphMemoDone, &p)) {
           ok = false;
           break;

@@ -348,6 +348,38 @@ int main(void) {
     return 1;
   }
 
+  /* A footprint wider than one texel must integrate the image instead of
+   * returning only the bilinear value at the center. */
+  const char *gradient_file = "lightrt_gradient_regression.ppm";
+  FILE *gradient_stream = fopen(gradient_file, "wb");
+  if (!gradient_stream) return 1;
+  fputs("P6\n2 1\n255\n", gradient_stream);
+  fputc(255, gradient_stream); fputc(0, gradient_stream); fputc(0, gradient_stream);
+  fputc(0, gradient_stream); fputc(0, gradient_stream); fputc(255, gradient_stream);
+  fclose(gradient_stream);
+  TextureCache *gradient_cache = texcache_create(".");
+  int gradient_ok = gradient_cache != NULL;
+  if (gradient_ok) {
+    int gradient_id = texcache_get(gradient_cache, gradient_file, 0);
+    float point[4] = {0, 0, 0, 1};
+    float footprint[4] = {0, 0, 0, 1};
+    gradient_ok = gradient_id >= 0;
+    if (gradient_ok) {
+      texcache_sample(gradient_cache, gradient_id, 0.25f, 0.5f, point);
+      texcache_sample_address_grad(gradient_cache, gradient_id, 0.25f, 0.5f,
+                                   1.0f, 0.0f, 0.0f, 0.0f,
+                                   "periodic", "periodic", footprint);
+      gradient_ok = point[0] > point[2] + 0.2f &&
+          fabsf(footprint[0] - footprint[2]) < 0.08f;
+    }
+  }
+  texcache_free(gradient_cache);
+  remove(gradient_file);
+  if (!gradient_ok) {
+    fprintf(stderr, "derivative-aware texture filtering failed\n");
+    return 1;
+  }
+
   const char *xml =
       "<materialx version=\"1.38\">"
       "  <open_pbr_surface name=\"Preview\" type=\"surfaceshader\">"

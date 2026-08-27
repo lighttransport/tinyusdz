@@ -243,6 +243,34 @@ void texcache_sample_address(TextureCache *tc, int id, float u, float v,
     }
 }
 
+void texcache_sample_address_grad(TextureCache *tc, int id, float u, float v,
+                                  float dudx, float dvdx, float dudy, float dvdy,
+                                  const char *wrap_s, const char *wrap_t,
+                                  float out[4]) {
+    float span_u = fmaxf(fabsf(dudx), fabsf(dudy));
+    float span_v = fmaxf(fabsf(dvdx), fabsf(dvdy));
+    if (span_u * (id >= 0 && id < tc->ntex ? tc->tex[id].w : 0) <= 1.0f &&
+        span_v * (id >= 0 && id < tc->ntex ? tc->tex[id].h : 0) <= 1.0f) {
+        texcache_sample_address(tc, id, u, v, wrap_s, wrap_t, out);
+        return;
+    }
+    if (id < 0 || id >= tc->ntex) {
+        out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f; return;
+    }
+    /* Integrate the parallelogram footprint with a fixed, bounded grid. */
+    float sum[4] = {0, 0, 0, 0};
+    for (int y = 0; y < 4; ++y) for (int x = 0; x < 4; ++x) {
+        float ax = ((float)x + 0.5f) * 0.25f - 0.5f;
+        float ay = ((float)y + 0.5f) * 0.25f - 0.5f;
+        float sample[4];
+        texcache_sample_address(tc, id, u + ax * dudx + ay * dudy,
+                                 v + ax * dvdx + ay * dvdy,
+                                 wrap_s, wrap_t, sample);
+        for (int c = 0; c < 4; ++c) sum[c] += sample[c] * 0.0625f;
+    }
+    for (int c = 0; c < 4; ++c) out[c] = sum[c];
+}
+
 void texcache_sample(TextureCache *tc, int id, float u, float v, float out[4]) {
     texcache_sample_address(tc, id, u, v, "periodic", "periodic", out);
 }
