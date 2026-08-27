@@ -43,8 +43,10 @@ not hand-edit generated headers.
 - `f6d9a7af0` Support integer geomprops in next viewer
 - `da8b1ac62` Honor MaterialX texture address modes
 - `43c1cb068` Fix CUDA HIP geomprop path plumbing
-- `e882ce7c1` Preserve lanes in generalized EDF bridge
-- `0d29de89e` Transport matrix geomprops through RT graphs
+  - `e882ce7c1` Preserve lanes in generalized EDF bridge
+  - `0d29de89e` Transport matrix geomprops through RT graphs
+  - `14cd07dd5` Preserve OpenPBR subsurface anisotropy
+  - `6d58899ef` Handle reversed closure multiply operands
 
 ## Completed coverage
 
@@ -481,6 +483,16 @@ Passed:
   are 0.0. Coat-normal remains blocked at full SPIR-V pipeline validation.
 - Registered CUDA and HIP semantic-AOV shards pass on the current build:
   CUDA 26.03 s and HIP 16.97 s.
+- Direct OpenPBR baking now retains authored `subsurface_anisotropy` and
+  `subsurface_scatter_anisotropy` in the canonical realtime block
+  (`14cd07dd5`); the bridge regression passes.
+- Typed closure multiplication now accepts the scalar factor on either input
+  side instead of assuming the closure is `in1` (`6d58899ef`); the reversed
+  operand bridge regression passes.
+- Post-change MaterialX validation passes 9/9: headless CPU graph, flake and
+  projection parity, OpenPBR parity, CPU swizzle, bridge, evaluator, graph
+  connection, and graph evaluation. CUDA and HIP semantic-AOV shards also
+  pass (26.16 s and 16.97 s).
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
