@@ -663,7 +663,9 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    skips the five unavailable Vulkan/RT hardware cases.
 8. The complete registered native/viewer/tusdrender aggregate now passes
    298/298 with documented capability skips; repeat the hardware-only RT and
-   external-asset profiles on capable machines when available.
+   external-asset profiles on capable machines when available. The current
+   native parser/unit/roundtrip/feature gate passes 29/29, and the stable
+   `next` suite passes 40/40.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
