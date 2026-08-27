@@ -472,6 +472,10 @@ Passed:
   RTX 5060 Ti with hardware ray query. The registered texture semantic-AOV
   Vulkan RT harness still stalls at its 180-second bound, even on a warm
   rerun, so no full semantic sweep is claimed.
+- An isolated NVIDIA `vk-rt` OpenPBR albedo semantic case passes in 4.5 s;
+  the full mode sweep remains unproven. Splitting it into fresh per-mode
+  processes was rejected because subsequent modes incur repeated long driver
+  compilation, so the existing persistent-sweep design remains unchanged.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
