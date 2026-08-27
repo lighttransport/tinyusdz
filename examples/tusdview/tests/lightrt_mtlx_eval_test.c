@@ -407,6 +407,33 @@ int main(void) {
     return 1;
   }
 
+  /* UDIM filtering must resolve taps on both sides of a tile seam. */
+  const char *udim_red = "lightrt_udim_seam.1001.ppm";
+  const char *udim_blue = "lightrt_udim_seam.1002.ppm";
+  FILE *udim_red_stream = fopen(udim_red, "wb");
+  FILE *udim_blue_stream = fopen(udim_blue, "wb");
+  if (!udim_red_stream || !udim_blue_stream) return 1;
+  fputs("P6\n1 1\n255\n", udim_red_stream);
+  fputc(255, udim_red_stream); fputc(0, udim_red_stream); fputc(0, udim_red_stream);
+  fputs("P6\n1 1\n255\n", udim_blue_stream);
+  fputc(0, udim_blue_stream); fputc(0, udim_blue_stream); fputc(255, udim_blue_stream);
+  fclose(udim_red_stream); fclose(udim_blue_stream);
+  TextureCache *udim_seam_cache = texcache_create(".");
+  int udim_ok = udim_seam_cache != NULL;
+  if (udim_ok) {
+    float seam[4] = {0, 0, 0, 1};
+    udim_ok = texcache_sample_file_grad(
+        udim_seam_cache, "lightrt_udim_seam.<UDIM>.ppm", 0, 0.99f, 0.5f,
+        0.20f, 0.0f, 0.0f, 0.0f, seam);
+    udim_ok = udim_ok && fabsf(seam[0] - seam[2]) < 0.08f;
+  }
+  texcache_free(udim_seam_cache);
+  remove(udim_red); remove(udim_blue);
+  if (!udim_ok) {
+    fprintf(stderr, "UDIM seam footprint filtering failed\n");
+    return 1;
+  }
+
   const char *xml =
       "<materialx version=\"1.38\">"
       "  <open_pbr_surface name=\"Preview\" type=\"surfaceshader\">"
