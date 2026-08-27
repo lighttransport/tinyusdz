@@ -549,6 +549,10 @@ Passed:
   including bridge, checker, texture synthetic, CUDA/HIP format, and diff
   coverage. Corpus and real-asset cases are capability-skipped where their
   external inputs are absent.
+- A direct Vulkan-RT semantic-AOV run confirms the unresolved hardware gate:
+  it reports divergent reference vectors and fails at `vk-rt coat-normal`
+  because no screenshot is produced. This is consistent with the unavailable
+  NVIDIA driver/ICD probe and is not counted as a product pass.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
