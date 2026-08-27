@@ -604,6 +604,11 @@ passes 4/4.
 Runtime VDF albedo lowering now clamps the absorption-plus-scattering
 extinction denominator to epsilon before division, matching the evaluator's
 finite zero-extinction behavior; the bridge regression covers this guard.
+Vulkan RT instance records now preserve separate material and instancing bits;
+instanced meshes with bound materials use the full object-to-world
+inverse-transpose for authored normals, including non-uniform instance scale.
+The embedded ray-query shader was regenerated from source, and the post-change
+Vulkan/compute-BVH/instance suite passes 7/7.
 Direct OpenPBR lowering now accepts the evaluator-compatible `fuzz_*` aliases
 for sheen weight, color, and roughness in addition to canonical `sheen_*`
 fields; the focused graph group remains 4/4.
