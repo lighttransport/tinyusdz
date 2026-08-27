@@ -720,6 +720,11 @@ BSDF/EDF routing is covered by the bridge regression.
    MaterialX/OpenPBR/render group passes 17/17 runnable tests; the two
    registered Vulkan-RT semantic cases are capability skips because the
    selected loader exposes only llvmpipe in this invocation.
+   The complete locally available broad external profile also passes through
+   `tusdr-cpu`: 31 assets rendered, 3 rendered with warnings, 9 were expected
+   no-renderable composition/schema leaves, and there were no hard failures.
+   This includes authored transform, interpolation, MaterialX, USDZ,
+   subdivision, and composed-asset scenes.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
