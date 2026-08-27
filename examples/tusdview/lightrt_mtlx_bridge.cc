@@ -1693,8 +1693,50 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
           nodeInput(node, "scatter_mode", "R"), "value", "R");
       if (ScatterModeHas(mode, 'R')) {
         emitLeaf("specular_weight", "weight", 1.0, "float");
-        emitLeaf("specular_color", "color0",
-                 nlohmann::json::array({1,1,1}), "color3");
+        const nlohmann::json color90 = inputNamed(
+            node, "color90", nlohmann::json());
+        if (color90.is_null()) {
+          emitLeaf("specular_color", "color0",
+                   nlohmann::json::array({1,1,1}), "color3");
+        } else {
+          const std::string normal = name + "__schlick_normal";
+          const std::string view = name + "__schlick_view";
+          const std::string cosine = name + "__schlick_cosine";
+          const std::string oneMinus = name + "__schlick_one_minus";
+          const std::string factor = name + "__schlick_factor";
+          const std::string tint = name + "__schlick_tint";
+          runtimeNodes.push_back({{"name", normal}, {"category", "normal"},
+                                  {"type", "vector3"},
+                                  {"inputs", nlohmann::json::array()}});
+          runtimeNodes.push_back({{"name", view},
+                                  {"category", "viewdirection"},
+                                  {"type", "vector3"},
+                                  {"inputs", nlohmann::json::array()}});
+          runtimeNodes.push_back({
+              {"name", cosine}, {"category", "dotproduct"}, {"type", "float"},
+              {"inputs", nlohmann::json::array({
+                  nlohmann::json{{"name", "in1"}, {"nodename", normal}},
+                  nlohmann::json{{"name", "in2"}, {"nodename", view}}})}});
+          runtimeNodes.push_back({
+              {"name", oneMinus}, {"category", "subtract"}, {"type", "float"},
+              {"inputs", nlohmann::json::array({
+                  nlohmann::json{{"name", "in1"}, {"value", 1.0}},
+                  nlohmann::json{{"name", "in2"}, {"nodename", cosine}}})}});
+          runtimeNodes.push_back({
+              {"name", factor}, {"category", "power"}, {"type", "float"},
+              {"inputs", nlohmann::json::array({
+                  nlohmann::json{{"name", "in1"}, {"nodename", oneMinus}},
+                  renamedInput(nodeInput(node, "exponent", 5.0), "in2")})}});
+          runtimeNodes.push_back({
+              {"name", tint}, {"category", "mix"}, {"type", "color3"},
+              {"inputs", nlohmann::json::array({
+                  renamedInput(nodeInput(node, "color0",
+                                         nlohmann::json::array({1,1,1})), "in1"),
+                  renamedInput(color90, "in2"),
+                  nlohmann::json{{"name", "mix"}, {"nodename", factor}}})}});
+          emitClosureLane(name, "specular_color",
+                          nlohmann::json{{"nodename", tint}}, "color3");
+        }
       }
       if (ScatterModeHas(mode, 'T')) {
         emitLeaf("transmission_weight", "weight", 1.0, "float");
