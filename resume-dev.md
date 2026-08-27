@@ -536,6 +536,10 @@ Passed:
 - The full registered native pre-parity slice passes 74/74. Three tests are
   capability-skipped (island production asset, Vulkan texture validation, and
   shadow-alpha instancing); no test in the slice fails.
+- The post-parity viewer interval reached test 130 with 55/55 completed cases
+  passing; HIP BVH refit and the GL-window MCP material case were skipped.
+  The following GL semantic-AOV child became unobservable in the restricted
+  session and was stopped; the hardware/display gate remains unresolved.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
