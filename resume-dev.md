@@ -50,6 +50,7 @@ not hand-edit generated headers.
   - `ebcb8ca61` Record closure parity validation
   - `cfe8da671` Preserve surface unlit normals
   - `d355e2956` Fix matrix geomprop staging
+  - `1477c7f6f` Test matrix geomprop stream safety
 
 ## Completed coverage
 
@@ -509,6 +510,8 @@ Passed:
   9/16-component read overflow while preserving the existing matrix streams.
   Native `tusdview` rebuild, bridge, scene-safety, and GPU-material ABI checks
   pass.
+- Scene-safety coverage now validates a correctly sized 16-component matrix
+  stream (`1477c7f6f`); the focused safety test passes.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
