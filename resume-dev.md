@@ -665,7 +665,9 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    298/298 with documented capability skips; repeat the hardware-only RT and
    external-asset profiles on capable machines when available. The current
    native parser/unit/roundtrip/feature gate passes 29/29, and the stable
-   `next` suite passes 40/40.
+   `next` suite passes 40/40. After relinking the main viewer with the current
+   bridge/evaluator objects, the registered `tusdview` family passes 146/146
+   with 24 documented capability skips and no failures.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
