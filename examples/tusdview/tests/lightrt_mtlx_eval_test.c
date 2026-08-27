@@ -197,6 +197,9 @@ int main(void) {
       "type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
       "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
       "</latlongimage>"
+      "<latlongimage name=\"latg\" type=\"color3\"><input name=\"file\" "
+      "type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
+      "</latlongimage>"
       "<triplanarprojection name=\"trif\" type=\"color3\">"
       "<input name=\"filex\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
       "<input name=\"filey\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
@@ -224,6 +227,7 @@ int main(void) {
     projection_filter_ctx.memo = (MtlxValue *)calloc((size_t)projection_filter_doc->nnode, sizeof(MtlxValue));
     projection_filter_ctx.memo_done = (char *)calloc((size_t)projection_filter_doc->nnode, 1);
     int latf = mtlx_find_node(projection_filter_doc, -1, "latf");
+    int latg = mtlx_find_node(projection_filter_doc, -1, "latg");
     int trif = mtlx_find_node(projection_filter_doc, -1, "trif");
     int trig = mtlx_find_node(projection_filter_doc, -1, "trig");
     MtlxValue latf_value;
@@ -231,7 +235,7 @@ int main(void) {
     memset(&latf_value, 0, sizeof(latf_value));
     memset(&trif_value, 0, sizeof(trif_value));
     if (projection_filter_ctx.memo && projection_filter_ctx.memo_done &&
-        latf >= 0 && trif >= 0 && trig >= 0) {
+        latf >= 0 && latg >= 0 && trif >= 0 && trig >= 0) {
       latf_value = mtlx_eval_node_test(&projection_filter_ctx, latf);
       memset(projection_filter_ctx.memo_done, 0,
              (size_t)projection_filter_doc->nnode);
@@ -239,6 +243,14 @@ int main(void) {
       projection_filter_ok = latf_value.v[0] > 0.99f &&
           latf_value.v[2] < 0.01f && trif_value.v[2] > 0.99f &&
           trif_value.v[0] < 0.01f;
+      projection_filter_ctx.V = v3_make(1.0f, 0.0f, 0.0f);
+      projection_filter_ctx.dVdx = v3_make(0.0f, 0.0f, 12.5663706f);
+      projection_filter_ctx.has_view_derivatives = 1;
+      memset(projection_filter_ctx.memo_done, 0,
+             (size_t)projection_filter_doc->nnode);
+      MtlxValue latg_value = mtlx_eval_node_test(&projection_filter_ctx, latg);
+      projection_filter_ok = projection_filter_ok &&
+          fabsf(latg_value.v[0] - latg_value.v[2]) < 0.08f;
       projection_filter_ctx.P.x = 0.25f;
       projection_filter_ctx.dPdx = v3_make(1.0f, 0.0f, 0.0f);
       projection_filter_ctx.dPdy = v3_make(0.0f, 0.0f, 0.0f);

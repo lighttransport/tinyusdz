@@ -78,6 +78,8 @@ typedef struct {
     v3    Ng;      /* geometric normal (world) */
     v3    dpdu, dpdv; /* tangent frame for normal mapping */
     v3    V;       /* normalized direction from the shade point to the camera */
+    v3    dVdx, dVdy; /* view-direction screen-space derivatives */
+    int has_view_derivatives;
     float time;    /* scene time in seconds */
     float frame;   /* authored/render frame number */
     /* Column-major affine transforms.  When has_space_transforms is zero,
