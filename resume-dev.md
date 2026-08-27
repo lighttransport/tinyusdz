@@ -739,6 +739,11 @@ BSDF/EDF routing is covered by the bridge regression.
    Hardware follow-up now confirms the direct NVIDIA Vulkan RT smoke and
    CUDA OpenChess smoke, but the CUDA flake and full OpenChess Vulkan RT
    gates above still need resolution before item 7/8 can be closed.
+   The semantic-AOV harness preflight was corrected to force `--rt` for an
+   explicitly requested Vulkan RT device and to preserve external/package
+   coat-normal texture resolution. On the RTX 5060 Ti, the corrected harness
+   reaches hardware Vulkan RT and passes the earlier vector/UDIM cases, but
+   the coat-normal case still times out during cold SPIR-V validation.
    A bounded `tusdr-vkr` ray-query subset also passes 3/3 (composition and
    primvar-interpolation assets included; 1 rendered and 2 with warnings).
    The complete broad external profile now also passes through `tusdr-vkr`:

@@ -13,6 +13,14 @@ VK_DEVICE_ARGS=()
 if [ -n "${TUSDVIEW_VK_DEVICE:-}" ]; then
   VK_DEVICE_ARGS=(--vk-device "$TUSDVIEW_VK_DEVICE")
 fi
+# A raster preflight is insufficient for a requested RT device: the viewer
+# may select a different adapter until --rt forces ray-query initialization.
+# Keep this separate from the actual backend arguments so the raster lane is
+# still tested without RT below.
+VK_PREFLIGHT_RT_ARGS=()
+case " ${TUSDVIEW_SEMANTIC_BACKENDS:-} " in
+  *" vk-rt "*) VK_PREFLIGHT_RT_ARGS=(--rt) ;;
+esac
 OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"; mkdir -p "$OUT"
 [ -n "${TUSDVIEW_TEST_OUT:-}" ] || trap 'rm -rf "$OUT"' EXIT
 printf '%s\n' '{"window_size":{"width":256,"height":256}}' > "$OUT/config.json"
@@ -656,6 +664,15 @@ mkdir -p "$OUT/pkg-coat"; cp "$OUT/coat-normal.usda" "$OUT/normal.ppm" "$OUT/pkg
 mkdir -p "$OUT/pkg-standard-coat"
 cp "$OUT/coat-normal-standard.usda" "$OUT/normal.ppm" "$OUT/pkg-standard-coat/"
 (cd "$OUT/pkg-standard-coat" && zip -0 -q "$OUT/coat-normal-standard.usdz" coat-normal-standard.usda normal.ppm)
+# External USDA texture resolution is rooted at the stage's `/World` in the
+# viewer, whereas the packaged USDZ fixtures resolve relative to the archive.
+# Keep the archive inputs portable and make the external generated fixtures
+# point at the texture explicitly.
+sed -i "s#@\./normal.ppm@#@$OUT/normal.ppm@#g" \
+  "$OUT/coat-normal.usda" "$OUT/coat-normal-degenerate.usda" \
+  "$OUT/coat-normal-standard.usda"
+sed -i "s#@./coat_normal.<UDIM>.ppm@#@$OUT/coat_normal.<UDIM>.ppm@#g" \
+  "$OUT/coat-normal-udim.usda" "$OUT/coat-normal-standard-udim.usda"
 for family in preview openpbr standard; do
   mkdir -p "$OUT/pkg-core-$family"
   cp "$OUT/core-$family.usda" "$OUT/base.ppm" "$OUT/orm.ppm" \
@@ -740,7 +757,8 @@ declare -A backend_unavailable=()
 # can inspect. Keep Vulkan raster coverage, but skip only the hardware RT lane.
 if command -v vulkaninfo >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 &&
    timeout 10s vulkaninfo --summary >"$OUT/vulkaninfo-summary.log" 2>&1; then
-  if grep -q 'PHYSICAL_DEVICE_TYPE_CPU' "$OUT/vulkaninfo-summary.log" &&
+  if [ -z "${TUSDVIEW_VK_DEVICE:-}" ] &&
+     grep -q 'PHYSICAL_DEVICE_TYPE_CPU' "$OUT/vulkaninfo-summary.log" &&
      ! grep -Eq 'PHYSICAL_DEVICE_TYPE_(DISCRETE|INTEGRATED|VIRTUAL)_GPU' \
        "$OUT/vulkaninfo-summary.log"; then
     vk_software=1
@@ -751,7 +769,7 @@ elif command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" 
   # Minimal fallback for hosts without vulkaninfo. The viewer reports the
   # selected device before entering its headless loop; timeout is expected on
   # builds that keep the window loop alive after the first frame.
-  timeout 10s "$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" --frames 1 --mode shaded \
+  timeout 10s "$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" "${VK_PREFLIGHT_RT_ARGS[@]}" --frames 1 --mode shaded \
     --screenshot "$OUT/vulkan-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
     >"$OUT/vulkan-preflight.log" 2>&1 || :
   if grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer|device=cpu|rt=off|rt_available=0|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
@@ -766,7 +784,7 @@ fi
 # that selection itself even if the global summary contains a discrete GPU.
 if [ "$vk_software" = 0 ] && [ -n "${TUSDVIEW_VK_DEVICE:-}" ] &&
    command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
-  timeout 10s "$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" --frames 1 --mode shaded \
+  timeout 10s "$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" "${VK_PREFLIGHT_RT_ARGS[@]}" --frames 1 --mode shaded \
     --screenshot "$OUT/vulkan-device-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
     >"$OUT/vulkan-device-preflight.log" 2>&1 || :
   if grep -Eqi 'rt=off|rt_available=0|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
@@ -784,7 +802,7 @@ case " ${TUSDVIEW_SEMANTIC_BACKENDS:-} " in
   *" vk-rt "*)
     if [ "${backend_unavailable[vk-rt]:-0}" = 0 ] &&
        command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
-      timeout 10s "$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" --frames 1 --mode shaded \
+      timeout 10s "$BIN" --headless --backend vk "${VK_DEVICE_ARGS[@]}" "${VK_PREFLIGHT_RT_ARGS[@]}" --frames 1 --mode shaded \
         --screenshot "$OUT/vulkan-rt-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
         >"$OUT/vulkan-rt-preflight.log" 2>&1 || :
       if grep -Eqi 'rt=off|rt_available=0|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
