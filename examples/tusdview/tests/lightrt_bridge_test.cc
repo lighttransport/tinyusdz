@@ -2465,6 +2465,34 @@ int main() {
     std::fprintf(stderr, "direct standard_surface values were not routed\n");
     return 1;
   }
+  tusdview::DrawMaterialCPU openPbrSurfaceGraph;
+  openPbrSurfaceGraph.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"openpbr","category":"open_pbr_surface",
+       "type":"surfaceshader","inputs":[
+        {"name":"base_weight","value":0.6},
+        {"name":"base_metalness","value":0.25},
+        {"name":"transmission_weight","value":0.4},
+        {"name":"coat_weight","value":0.15},
+        {"name":"emission_luminance","value":1.5},
+        {"name":"geometry_opacity","value":0.8}]}
+    ],"outputs":[{"name":"shader","type":"surfaceshader",
+      "nodename":"openpbr"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]
+  })json";
+  std::string openPbrSurfaceError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&openPbrSurfaceGraph,
+                                               &openPbrSurfaceError) ||
+      openPbrSurfaceGraph.materialXGraph.output[1] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[11] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[13] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[20] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[44] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[3] < 0) {
+    std::fprintf(stderr, "direct open_pbr_surface lowering failed: %s\n",
+                 openPbrSurfaceError.c_str());
+    return 1;
+  }
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
       {"name":"subsurface","category":"subsurface_bsdf","type":"BSDF","inputs":[
