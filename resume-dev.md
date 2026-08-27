@@ -49,6 +49,7 @@ not hand-edit generated headers.
   - `6d58899ef` Handle reversed closure multiply operands
   - `ebcb8ca61` Record closure parity validation
   - `cfe8da671` Preserve surface unlit normals
+  - `d355e2956` Fix matrix geomprop staging
 
 ## Completed coverage
 
@@ -503,6 +504,11 @@ Passed:
 - The next MaterialX `surface_unlit` converter now transports its authored
   normal into the renderer-neutral OpenPBR block (`cfe8da671`); the focused
   `next_test_tydra` conversion regression and native `tusdview` rebuild pass.
+- Matrix-valued next geomprops are now staged into component-sized temporary
+  storage before interpolation/welding (`d355e2956`); this removes the
+  9/16-component read overflow while preserving the existing matrix streams.
+  Native `tusdview` rebuild, bridge, scene-safety, and GPU-material ABI checks
+  pass.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
