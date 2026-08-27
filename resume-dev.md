@@ -725,6 +725,9 @@ BSDF/EDF routing is covered by the bridge regression.
    no-renderable composition/schema leaves, and there were no hard failures.
    This includes authored transform, interpolation, MaterialX, USDZ,
    subdivision, and composed-asset scenes.
+   The same complete broad profile also passes through `tusdr-vk`: 29 assets
+   rendered and 11 rendered with warnings, with no hard failures across all 40
+   selected assets.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
