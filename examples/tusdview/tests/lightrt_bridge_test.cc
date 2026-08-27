@@ -2509,6 +2509,22 @@ int main() {
   }
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
+      {"name":"diff","category":"diffuse_bsdf","type":"BSDF",
+       "inputs":[{"name":"color","value":[0.2,0.4,0.8]}]},
+      {"name":"emit","category":"uniform_edf","type":"EDF",
+       "inputs":[{"name":"color","value":[0.1,0.2,0.3]}]},
+      {"name":"surface","category":"surface","type":"surfaceshader",
+       "inputs":[{"name":"bsdf","nodename":"diff"},
+                 {"name":"edf","nodename":"emit"}]},
+      {"name":"material","category":"surfacematerial","type":"material",
+       "inputs":[{"name":"surfaceshader","nodename":"surface"}]}
+    ],"outputs":[{"name":"shader","type":"material","nodename":"material"}]},
+    "connections":[{"input":"material","output":"shader"}]})json",
+      "direct surfacematerial wrapper", {0, 4, 20, 21, 44})) {
+    return 1;
+  }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
       {"name":"fog","category":"anisotropic_vdf","type":"VDF",
        "inputs":[{"name":"absorption","value":[0.2,0.3,0.4]},
                  {"name":"scattering","value":[0.1,0.2,0.3]},
