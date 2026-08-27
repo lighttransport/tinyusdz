@@ -28,6 +28,10 @@ not hand-edit generated headers.
   - `f51148570` Forward surfacematerial graph wrappers
   - `ead052954` Fix Vulkan instanced normal transforms
   - `b5655f0e5` Guard zero-extinction volume albedo
+
+The latest focused real-path matrix passes 9/9: MaterialX CPU graph and
+projection parity, UDIM equivalence, instancer orientation/invisible IDs,
+Vulkan render, and instanced/deform prototype paths including RT.
   - `4c7e80c07` Complete MaterialX Vulkan RT graph evaluation
   - `63c5b9a29` Transport MaterialX time context to GPU RT
   - `60d4b638c` Preserve direct MaterialX GPU graph context
@@ -663,8 +667,8 @@ wrapper through its nested `surfaceshader`; direct material-to-surface-to-
 BSDF/EDF routing is covered by the bridge regression.
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
    matrix-valued transport and object/world/view evaluator transforms are
-   covered, while Vulkan instance-transform fidelity remains. The registered
-   geometry-primvar plus texture-pipeline/GPU format/mip slice passes 10/10.
+   covered, and the registered instancer/orientation plus geometry-primvar
+   paths now pass locally; broader authored matrix fixture coverage remains.
 5. Close texture/projection gaps: derivatives are now supported for regular
    image nodes, UDIM footprints within a selected tile, the fixed-size graph
    bake footprint, and hextiled affine lookups; UDIM seam crossing, latlong,
