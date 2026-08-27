@@ -1451,11 +1451,19 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                 {"type", "float"}, {"inputs", nlohmann::json::array({
                     nlohmann::json{{"name", "in1"}, {"nodename", effectiveA}},
                     nlohmann::json{{"name", "in2"}, {"nodename", effectiveB}}})}});
+            const std::string safeDenominator = output + "__safe_weight_sum";
+            runtimeNodes.push_back({
+                {"name", safeDenominator}, {"category", "ifgreater"},
+                {"type", "float"}, {"inputs", nlohmann::json::array({
+                    nlohmann::json{{"name", "value1"}, {"nodename", denominator}},
+                    nlohmann::json{{"name", "value2"}, {"value", 1.0e-8}},
+                    nlohmann::json{{"name", "in1"}, {"nodename", denominator}},
+                    nlohmann::json{{"name", "in2"}, {"value", 1.0}}})}});
             runtimeNodes.push_back({
                 {"name", output}, {"category", "divide"},
                 {"type", laneType}, {"inputs", nlohmann::json::array({
                     nlohmann::json{{"name", "in1"}, {"nodename", numerator}},
-                    nlohmann::json{{"name", "in2"}, {"nodename", denominator}}})}});
+                    nlohmann::json{{"name", "in2"}, {"nodename", safeDenominator}}})}});
             lanes[lane] = output;
             continue;
           }

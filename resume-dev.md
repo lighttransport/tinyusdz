@@ -612,6 +612,9 @@ updated bridge regression and complete focused graph group pass 4/4.
 Closure `mix` weighted color and roughness lanes now include the authored mix
 factor in both numerator and denominator, preserving the expected background /
 foreground contribution rather than averaging raw child weights.
+Weighted closure normalization now also emits an epsilon fallback denominator,
+so all-zero child weights remain finite across graph backends; the focused
+bridge/evaluator/graph suite passes 4/4.
 
 ## Remaining work, in priority order
 
