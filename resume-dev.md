@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `c4bc32b5d` (`Preserve typed lanes in mixed MaterialX graphs`)
+- HEAD: `3d3a85a7d` (`Honor authored MaterialX graph lane precedence`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -446,6 +446,11 @@ Passed:
   archive, the complete 16-image displacement-UDIM matrix passes on llvmpipe:
   Standard MAD 2.6539, Preview MAD 2.6539, loader parity 0.0000, and USDZ
   package parity 0.0000. Hardware Vulkan validation remains pending.
+- Authored MaterialX graph routes now take precedence over direct fallback
+  values during the compatibility bake, while direct values are restored only
+  for lanes without an active graph route. This fixes nodegraph interface
+  inputs and mixed constant/image graphs; the rebuilt bridge, evaluator, and
+  graph-connection checks pass 4/4 (`3d3a85a7d`).
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
