@@ -1731,9 +1731,12 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
       const std::string denominator = closureBinary(
           "denominator", "add", nlohmann::json{{"nodename", etaPlus2}},
           nlohmann::json{{"nodename", k2}});
+      const std::string safeDenominator = closureBinary(
+          "safe_denominator", "max", nlohmann::json{{"nodename", denominator}},
+          nlohmann::json{{"value", 1.0e-8}});
       const std::string f0 = closureBinary(
           "f0", "divide", nlohmann::json{{"nodename", numerator}},
-          nlohmann::json{{"nodename", denominator}});
+          nlohmann::json{{"nodename", safeDenominator}});
       emitClosureLane(name, "base_color",
                       nlohmann::json{{"nodename", f0}}, "color3");
       emitClosureLane(name, "base_metalness", nlohmann::json{{"value",1.0}}, "float");
