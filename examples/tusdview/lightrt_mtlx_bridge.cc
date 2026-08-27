@@ -1470,9 +1470,22 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                1.0, "float");
       emitLeaf("specular_color", "specular_color",
                nlohmann::json::array({1, 1, 1}), "color3");
-      emitLeaf("specular_roughness", "specular_roughness", 0.2, "float");
-      emitLeaf("specular_ior", standard ? "specular_IOR" : "specular_ior",
-               1.5, "float");
+      const nlohmann::json primaryRoughness = inputNamed(
+          node, "specular_roughness", nlohmann::json());
+      const char* roughnessName =
+          !primaryRoughness.is_null() ? "specular_roughness" :
+          (standard ? "roughness" : "base_roughness");
+      emitLeaf("specular_roughness", roughnessName, standard ? 0.2 : 0.3,
+               "float");
+      const nlohmann::json primaryIor = inputNamed(
+          node, standard ? "specular_IOR" : "specular_ior",
+          nlohmann::json());
+      if (!primaryIor.is_null()) {
+        emitLeaf("specular_ior", standard ? "specular_IOR" : "specular_ior",
+                 1.5, "float");
+      } else {
+        emitLeaf("specular_ior", "specular_ior", 1.5, "float");
+      }
       emitLeaf("specular_anisotropy", "specular_anisotropy", 0.0, "float");
       emitLeaf("specular_rotation", "specular_rotation", 0.0, "float");
       emitLeaf("transmission_weight",
