@@ -597,6 +597,9 @@ into the runtime weight lane, matching the evaluator's schema behavior.
 Standard Surface roughness/IOR and OpenPBR base-roughness fallback aliases
 are now normalized during direct graph lowering; the focused graph group
 passes 4/4 after this coverage.
+Direct `volume`/`volumeshader` Shader-to-Shader wrappers now forward nested
+VDF and EDF closures into runtime volume lanes; the focused graph group still
+passes 4/4.
 
 ## Remaining work, in priority order
 

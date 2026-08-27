@@ -1555,6 +1555,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                1.0, "float");
       emitLeaf("geometry_normal", "normal",
                nlohmann::json::array({0, 0, 1}), "color3");
+    } else if (cat == "volume" || cat == "volumeshader") {
+      // Volume shaders are Shader-to-Shader wrappers around VDF/EDF
+      // terminals. Preserve both closure lane sets when a graph exposes the
+      // volume node directly instead of going through the XML volume bake.
+      const ClosureLaneMap& vdf = lowerClosure(connectedClosure("vdf"));
+      const ClosureLaneMap& edf = lowerClosure(connectedClosure("edf"));
+      for (const auto& lane : vdf) lanes[lane.first] = lane.second;
+      for (const auto& lane : edf) lanes[lane.first] = lane.second;
     } else if (cat == "surface") {
       // A surface shader is a closure wrapper: forward both terminal
       // connections so Shader-to-Shader graphs retain their BSDF and EDF
