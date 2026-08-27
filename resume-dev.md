@@ -738,6 +738,9 @@ BSDF/EDF routing is covered by the bridge regression.
    The complete broad external profile now also passes through `tusdr-vkr`:
    29 assets rendered and 11 rendered with warnings, with no hard failures
    across all 40 selected assets.
+   The post-default-alignment full registered CTest aggregate was rerun and
+   again passes 298/298 with 0 failures (982.40 seconds); the skipped cases
+   are unchanged capability/asset-gated profiles.
    The dedicated OpenChess MaterialX/standard-surface smoke also passes its
    CPU-RT non-uniform render and Vulkan-raster legs; CUDA, Vulkan-RT, and
    OpenGL legs report their expected unavailable-device/display skips.
