@@ -476,6 +476,9 @@ Passed:
   the full mode sweep remains unproven. Splitting it into fresh per-mode
   processes was rejected because subsequent modes incur repeated long driver
   compilation, so the existing persistent-sweep design remains unchanged.
+- The isolated NVIDIA `vk-rt` albedo loader/package parity shard passes with
+  default and legacy loaders, UDIM, and USDZ coverage: all image MAD checks
+  are 0.0. Coat-normal remains blocked at full SPIR-V pipeline validation.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
