@@ -629,7 +629,8 @@ foreground contribution rather than averaging raw child weights.
    `surface_unlit` lowering are now covered,
    and the `light` EDF wrapper is now covered in both evaluator and bridge,
    volume/volumematerial graph transport and texture-fed absorption validation
-   are now covered; schema-specific volume validation remains. Separate
+   are now covered, including direct `volumematerial` Shader-to-Shader
+   forwarding; schema-specific volume validation remains. Separate
 displacement terminals now resolve authored scalar `displacement`, `height`,
 `dispScalar`, or `value` inputs into the next loader's geometry lane.
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;

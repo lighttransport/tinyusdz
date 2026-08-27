@@ -2484,6 +2484,21 @@ int main() {
       "volume shader wrapper", {4, 40, 41})) {
     return 1;
   }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
+      {"name":"fog","category":"absorption_vdf","type":"VDF",
+       "inputs":[{"name":"absorption","value":[0.2,0.3,0.4]}]},
+      {"name":"volume","category":"volume","type":"volumeshader",
+       "inputs":[{"name":"vdf","nodename":"fog"}]},
+      {"name":"material","category":"volumematerial","type":"material",
+       "inputs":[{"name":"volumeshader","nodename":"volume"}]}
+    ],"outputs":[{"name":"shader","type":"material",
+      "nodename":"material"}]},
+    "connections":[{"input":"vdf","output":"shader"}]
+  })json",
+      "direct volumematerial wrapper", {40, 41})) {
+    return 1;
+  }
   // Complete schema shaders can also be exposed directly as graph outputs.
   // They must lower to authored OpenPBR lanes just like closure wrappers.
   tusdview::DrawMaterialCPU standardSurfaceGraph;
