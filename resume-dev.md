@@ -12,15 +12,16 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: current branch tip (see `git log`; latest work records Vulkan parity)
+- HEAD: current branch tip (see `git log`; latest work records full viewer and
+  volume-albedo regression evidence)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
 - Deterministic native gates after the mixed-graph fix: 29/29 selected
   unit/parser/roundtrip/feature tests passed, and the stable `next` suite
-  passed 40/40 tests. The full viewer aggregate is not yet a clean pass: the
-  headless GL/Vulkan parity test timed out on llvmpipe, and a later GL semantic
-  test hung before its registered timeout.
+  passed 40/40 tests. The registered `tusdview` family passes 146/146 with
+  24 documented capability skips; the broader native/viewer/tusdrender
+  aggregate passes 298/298 with documented skips.
 - Recent completed commits:
   - `4c7e80c07` Complete MaterialX Vulkan RT graph evaluation
   - `63c5b9a29` Transport MaterialX time context to GPU RT
@@ -600,6 +601,9 @@ passes 4/4 after this coverage.
 Direct `volume`/`volumeshader` Shader-to-Shader wrappers now forward nested
 VDF and EDF closures into runtime volume lanes; the focused graph group still
 passes 4/4.
+Runtime VDF albedo lowering now clamps the absorption-plus-scattering
+extinction denominator to epsilon before division, matching the evaluator's
+finite zero-extinction behavior; the bridge regression covers this guard.
 Direct OpenPBR lowering now accepts the evaluator-compatible `fuzz_*` aliases
 for sheen weight, color, and roughness in addition to canonical `sheen_*`
 fields; the focused graph group remains 4/4.
