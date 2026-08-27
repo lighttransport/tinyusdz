@@ -464,6 +464,9 @@ Passed:
   the unsupported-category fallback. Direct output mapping is covered by the
   rebuilt bridge regression; the corrected surface-wrapper route test now
   expects the actual diffuse/EDF lanes.
+- Closure-layer regression now covers a diffuse BSDF layered with an EDF,
+  including composed lane routing when one lobe does not provide the other's
+  parameters.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
