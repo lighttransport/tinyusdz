@@ -600,6 +600,9 @@ passes 4/4 after this coverage.
 Direct `volume`/`volumeshader` Shader-to-Shader wrappers now forward nested
 VDF and EDF closures into runtime volume lanes; the focused graph group still
 passes 4/4.
+Direct OpenPBR lowering now accepts the evaluator-compatible `fuzz_*` aliases
+for sheen weight, color, and roughness in addition to canonical `sheen_*`
+fields; the focused graph group remains 4/4.
 
 ## Remaining work, in priority order
 
