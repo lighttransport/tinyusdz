@@ -2300,6 +2300,19 @@ int main() {
   }
   if (!CheckDirectClosure(R"json({
     "nodegraph":{"nodes":[
+      {"name":"diff","category":"diffuse_bsdf","type":"BSDF",
+       "inputs":[{"name":"weight","value":0.6},{"name":"color","value":[0.3,0.5,0.7]}]},
+      {"name":"emit","category":"uniform_edf","type":"EDF",
+       "inputs":[{"name":"color","value":[0.1,0.2,0.4]}]},
+      {"name":"surface","category":"surface","type":"surfaceshader",
+       "inputs":[{"name":"bsdf","nodename":"diff"},{"name":"edf","nodename":"emit"}]}
+    ],"outputs":[{"name":"shader","type":"surfaceshader","nodename":"surface"}]},
+    "connections":[{"input":"bsdf","output":"shader"}]})json",
+      "surface closure wrapper", {0, 1, 2, 4, 44})) {
+    return 1;
+  }
+  if (!CheckDirectClosure(R"json({
+    "nodegraph":{"nodes":[
       {"name":"subsurface","category":"subsurface_bsdf","type":"BSDF","inputs":[
         {"name":"weight","value":0.7},{"name":"color","value":[0.2,0.4,0.6]},
         {"name":"radius","value":[0.3,0.5,0.7]},{"name":"scale","value":2.5},

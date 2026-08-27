@@ -1425,6 +1425,14 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                                 {"type", laneType}, {"inputs", std::move(inputs)}});
         lanes[lane] = output;
       }
+    } else if (cat == "surface") {
+      // A surface shader is a closure wrapper: forward both terminal
+      // connections so Shader-to-Shader graphs retain their BSDF and EDF
+      // lanes instead of silently becoming an empty material.
+      const ClosureLaneMap& bsdf = lowerClosure(connectedClosure("bsdf"));
+      const ClosureLaneMap& edf = lowerClosure(connectedClosure("edf"));
+      for (const auto& lane : bsdf) lanes[lane.first] = lane.second;
+      for (const auto& lane : edf) lanes[lane.first] = lane.second;
     } else if (cat == "light") {
       // A MaterialX light is a wrapper around an EDF. Preserve the closure
       // lanes and apply the light's color intensity plus EV exposure in the
