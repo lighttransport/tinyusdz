@@ -23,6 +23,10 @@ not hand-edit generated headers.
   24 documented capability skips; the broader native/viewer/tusdrender
   aggregate passes 298/298 with documented skips.
 - Recent completed commits:
+  - `4af9c581a` Honor Vulkan device selection in semantic AOV tests
+  - `f51148570` Forward surfacematerial graph wrappers
+  - `ead052954` Fix Vulkan instanced normal transforms
+  - `b5655f0e5` Guard zero-extinction volume albedo
   - `4c7e80c07` Complete MaterialX Vulkan RT graph evaluation
   - `63c5b9a29` Transport MaterialX time context to GPU RT
   - `60d4b638c` Preserve direct MaterialX GPU graph context
@@ -668,11 +672,12 @@ BSDF/EDF routing is covered by the bridge regression.
    path validation for these graph shapes, especially nested closures and
    multi-output routing on hardware backends.
 7. Run focused CUDA/NVIDIA, HIP, and hardware Vulkan RT checks on capable
-   machines; CUDA and HIP semantic-AOV checks now pass here, while the
-   registered hardware Vulkan RT semantic sweep still requires a clean cold
-   NVIDIA validation run and AMD hardware remains unavailable. The latest
-   six-test hardware profile passes 1/1 available NVIDIA GL warmup and cleanly
-   skips the five unavailable Vulkan/RT hardware cases.
+   machines; CUDA and HIP semantic-AOV checks now pass here. A direct AMD
+   hardware Vulkan RT render of the real Suzanne mesh passes and writes a
+   2560x1600 screenshot, while the registered semantic sweep still needs a
+   loader/display-compatible run and a clean cold NVIDIA validation run.
+   The latest six-test hardware profile passes 1/1 available NVIDIA GL warmup
+   and cleanly skips the five unavailable Vulkan/RT hardware cases.
 8. The complete registered native/viewer/tusdrender aggregate now passes
    298/298 with documented capability skips; repeat the hardware-only RT and
    external-asset profiles on capable machines when available. The current
