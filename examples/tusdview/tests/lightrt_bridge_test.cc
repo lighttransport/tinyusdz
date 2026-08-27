@@ -2474,7 +2474,12 @@ int main() {
         {"name":"base_metalness","value":0.25},
         {"name":"transmission_weight","value":0.4},
         {"name":"coat_weight","value":0.15},
+        {"name":"coat_affect_color","value":[0.7,0.8,0.9]},
+        {"name":"coat_affect_roughness","value":0.2},
+        {"name":"coat_darkening","value":0.1},
         {"name":"emission_luminance","value":1.5},
+        {"name":"thin_film_thickness","value":120.0},
+        {"name":"thin_film_ior","value":1.3},
         {"name":"geometry_opacity","value":0.8}]}
     ],"outputs":[{"name":"shader","type":"surfaceshader",
       "nodename":"openpbr"}]},
@@ -2486,6 +2491,11 @@ int main() {
       openPbrSurfaceGraph.materialXGraph.output[1] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[11] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[13] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[29] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[30] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[45] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[46] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[47] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[20] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[44] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[3] < 0) {
