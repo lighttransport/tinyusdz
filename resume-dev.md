@@ -562,6 +562,11 @@ Passed:
 - The same semantic-AOV harness now performs a bounded Xvfb/`xdpyinfo`
   preflight; direct GL invocation cleanly skips when the X11 socket cannot be
   opened instead of entering the render loop.
+- After regenerating `build_ninja` from this worktree, the complete registered
+  native aggregate passes 298/298 with no failures (1085.58s). Thirty-one
+  capability skips cover unavailable RT/GL semantic backends, external assets,
+  corpus inputs, and hardware-only texture validation; test 75 GL/Vulkan
+  parity passes.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
@@ -606,10 +611,9 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    machines; CUDA and HIP semantic-AOV checks now pass here, while the
    registered hardware Vulkan RT semantic sweep still requires a clean cold
    NVIDIA validation run and AMD hardware remains unavailable.
-8. Complete a single uninterrupted full native/viewer/tusdrender regression
-   after the RT semantic harness can finish on a hardware Vulkan environment;
-   all registered intervals are now green when isolated, while the aggregate
-   still crosses display/hardware preflight boundaries.
+8. The complete registered native/viewer/tusdrender aggregate now passes
+   298/298 with documented capability skips; repeat the hardware-only RT and
+   external-asset profiles on capable machines when available.
 9. Keep updating this file with the new HEAD and evidence after each coherent
    slice.
 10. Before pushing, audit the exact outgoing range for credentials, personal
