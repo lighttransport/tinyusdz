@@ -12,7 +12,7 @@ not hand-edit generated headers.
 ## Current repository state
 
 - Branch: `dev`
-- HEAD: `3d3a85a7d` (`Honor authored MaterialX graph lane precedence`)
+- HEAD: `48d14e834` (`Fix Vulkan instance normal transforms`)
 - Upstream: `origin/dev`
 - Worktree: no tracked modifications; the two unrelated untracked paths above
   remain untouched.
@@ -451,6 +451,11 @@ Passed:
   for lanes without an active graph route. This fixes nodegraph interface
   inputs and mixed constant/image graphs; the rebuilt bridge, evaluator, and
   graph-connection checks pass 4/4 (`3d3a85a7d`).
+- Vulkan hardware-ray-query shading now uses the inverse-transpose of an
+  instance's object-to-world linear transform for authored normals, including
+  the point-surface path. The ray-query and fast-path shaders were regenerated
+  from source and compile successfully; the GPU material ABI check passes
+  (`48d14e834`). Hardware pixel validation remains pending.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
