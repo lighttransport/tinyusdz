@@ -803,6 +803,14 @@ if [ -n "${DISPLAY:-}" ] && command -v xdpyinfo >/dev/null 2>&1 &&
 elif command -v xvfb-run >/dev/null 2>&1; then
   GL_RUN=(xvfb-run -a)
 fi
+if [ "${#GL_RUN[@]}" -gt 0 ] && command -v timeout >/dev/null 2>&1 &&
+   command -v xdpyinfo >/dev/null 2>&1; then
+  if ! timeout 10s "${GL_RUN[@]}" xdpyinfo >/dev/null 2>&1; then
+    backend_unavailable[gl]=1
+    degraded=1
+    echo "SKIP: OpenGL display unavailable (Xvfb preflight)"
+  fi
+fi
 want_mode() {
   local needle="$1" item
   for item in ${TUSDVIEW_SEMANTIC_MODES:-albedo metallic roughness emissive opacity vector coat-normal occlusion coat-weight coat-color coat-roughness specular-f0 ior-f0}; do
