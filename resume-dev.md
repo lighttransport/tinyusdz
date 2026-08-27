@@ -652,6 +652,9 @@ focused group passes 4/4. Dielectric closures also accept canonical
 `thinfilm_*` spellings.
 The direct `surface` Shader-to-Shader wrapper now preserves authored
 `opacity` in the `geometry_opacity` lane alongside nested BSDF/EDF closures.
+Direct OpenPBR schema lowering now also preserves the fixed ABI's specular
+roughness anisotropy, transmission dispersion scale/Abbe number, and coat
+roughness anisotropy lanes, with regression coverage.
 
 ## Remaining work, in priority order
 
