@@ -533,6 +533,9 @@ Passed:
   communicate with the NVIDIA driver, and `vulkaninfo --summary` cannot open
   the configured X server/ NVIDIA ICD. Hardware Vulkan RT validation therefore
   remains pending for a capable machine.
+- The full registered native pre-parity slice passes 74/74. Three tests are
+  capability-skipped (island production asset, Vulkan texture validation, and
+  shadow-alpha instancing); no test in the slice fails.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
