@@ -522,6 +522,8 @@ Passed:
   restored as a component-wise product during the bake; the JSON-to-MaterialX
   fallback maps the runtime alias onto the evaluator's vector radius lane.
   The bridge regression and complete four-test focused group pass again.
+- The native parser, roundtrip, unit, and feature regression subset passes
+  29/29 on the committed tree.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
