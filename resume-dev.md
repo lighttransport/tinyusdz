@@ -467,6 +467,11 @@ Passed:
 - Closure-layer regression now covers a diffuse BSDF layered with an EDF,
   including composed lane routing when one lobe does not provide the other's
   parameters.
+- Under the documented Xvfb/PRIME offload environment, direct Vulkan RT
+  startup and a renderable sphere smoke pass complete on the NVIDIA GeForce
+  RTX 5060 Ti with hardware ray query. The registered texture semantic-AOV
+  Vulkan RT harness still stalls at its 180-second bound, even on a warm
+  rerun, so no full semantic sweep is claimed.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
