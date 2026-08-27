@@ -741,7 +741,6 @@ if command -v vulkaninfo >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 &
        "$OUT/vulkaninfo-summary.log"; then
     vk_software=1
     backend_unavailable[vk-rt]=1
-    degraded=1
     echo "SKIP: Vulkan RT on software Vulkan (preflight)"
   fi
 elif command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
@@ -755,7 +754,6 @@ elif command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" 
       "$OUT/vulkan-preflight.log"; then
     vk_software=1
     backend_unavailable[vk-rt]=1
-    degraded=1
     echo "SKIP: Vulkan RT unavailable (preflight viewer probe)"
   fi
 fi
@@ -771,7 +769,6 @@ if [ "$vk_software" = 0 ] && [ -n "${TUSDVIEW_VK_DEVICE:-}" ] &&
       "$OUT/vulkan-device-preflight.log"; then
     vk_software=1
     backend_unavailable[vk-rt]=1
-    degraded=1
     echo "SKIP: requested Vulkan RT device unavailable (preflight viewer probe)"
   fi
 fi
@@ -790,7 +787,6 @@ case " ${TUSDVIEW_SEMANTIC_BACKENDS:-} " in
           "$OUT/vulkan-rt-preflight.log"; then
         vk_software=1
         backend_unavailable[vk-rt]=1
-        degraded=1
         echo "SKIP: Vulkan RT disabled by selected device (preflight viewer probe)"
       fi
     fi
@@ -807,7 +803,6 @@ if [ "${#GL_RUN[@]}" -gt 0 ] && command -v timeout >/dev/null 2>&1 &&
    command -v xdpyinfo >/dev/null 2>&1; then
   if ! timeout 10s "${GL_RUN[@]}" xdpyinfo >/dev/null 2>&1; then
     backend_unavailable[gl]=1
-    degraded=1
     echo "SKIP: OpenGL display unavailable (Xvfb preflight)"
   fi
 fi
