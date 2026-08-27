@@ -642,7 +642,8 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
 `dispScalar`, or `value` inputs into the next loader's geometry lane.
 4. Validate matrix-valued/interpolated/uniform geomprops in real scene assets;
    matrix-valued transport and object/world/view evaluator transforms are
-   covered, while Vulkan instance-transform fidelity remains.
+   covered, while Vulkan instance-transform fidelity remains. The registered
+   geometry-primvar plus texture-pipeline/GPU format/mip slice passes 10/10.
 5. Close texture/projection gaps: derivatives,
    and any true measured-EDF
    profile backend beyond the documented color fallback. Nearest filtering is
