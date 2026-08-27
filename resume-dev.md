@@ -608,9 +608,12 @@ displacement terminals now resolve authored scalar `displacement`, `height`,
    profile backend beyond the documented color fallback. Nearest filtering is
    now covered for regular, latlong, triplanar, and UDIM-capable image paths;
    sRGB RGB conversion and RGBA alpha preservation are covered as well.
-6. Add graph connection/evaluation/render tests for closure composition, wrapper
-   nesting, multi-output selectors, missing inputs, type conversion,
-   direct Shader-to-Shader graphs, and the 64-node limit.
+6. The focused graph connection/evaluation/bridge suites now cover closure
+   composition, wrapper nesting, multi-output selectors, missing inputs, type
+   conversion, direct Shader-to-Shader graphs, dependency ordering, cycles,
+   and the 64-node limit (4/4 focused tests pass). Remaining work is render
+   path validation for these graph shapes, especially nested closures and
+   multi-output routing on hardware backends.
 7. Run focused CUDA/NVIDIA, HIP, and hardware Vulkan RT checks on capable
    machines; CUDA and HIP semantic-AOV checks now pass here, while the
    registered hardware Vulkan RT semantic sweep still requires a clean cold
