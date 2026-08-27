@@ -524,7 +524,7 @@ static_assert(sizeof(RtSubmeshRangeGPU) == 16, "RT submesh range must match uvec
 // back to its mesh + carries the per-instance tint/opacity.
 struct InstanceInfoGPU {
   uint32_t meshId;       // index into the MeshDesc SSBO
-  uint32_t useMaterial;  // 1 = non-instanced (material base + normalMat); 0 = tint + o2w
+  uint32_t useMaterial;  // bit0 = material; bit1 = instanced transform
   uint32_t directLightMask;
   uint32_t shadowLightMask;
   float tint[4];         // per-instance color/opacity or flatColor/flatOpacity
@@ -9290,8 +9290,9 @@ void VulkanRenderer::rebuildTlas() {
         s.instanced && s.level == RtLod::Full &&
         size_t(s.meshId) < meshes_.size() &&
         meshHasBoundMaterial(meshes_[s.meshId]);
-    info.useMaterial =
-        ((s.level == RtLod::Full && !s.instanced) || instHasMaterial) ? 1u : 0u;
+    info.useMaterial = (instHasMaterial ||
+                        (s.level == RtLod::Full && !s.instanced)) ? 1u : 0u;
+    if (s.instanced) info.useMaterial |= 2u;
     info.directLightMask = s.sourceMeshId < rtDirectLightMasks_.size()
                                ? rtDirectLightMasks_[s.sourceMeshId]
                                : ~uint32_t{0};

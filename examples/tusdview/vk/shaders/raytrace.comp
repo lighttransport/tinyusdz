@@ -69,11 +69,14 @@ struct MeshDesc {
 // Per-TLAS-instance info, indexed by gl_InstanceID (full range).
 struct InstInfo {
   uint meshId;       // index into meshes[]
-  uint useMaterial;  // 1 = non-instanced (material + normalMat); 0 = tint + o2w normal
+  uint useMaterial;  // bit0 = material; bit1 = instanced transform
   uint directLightMask;
   uint shadowLightMask;
   vec4 tint;         // per-instance color/opacity or flatColor/flatOpacity
 };
+
+bool hasMaterial(InstInfo info) { return (info.useMaterial & 1u) != 0u; }
+bool isInstanced(InstInfo info) { return (info.useMaterial & 2u) != 0u; }
 
 #define MAX_TLAS_CHUNKS 4u
 layout(set = 0, binding = 0) uniform accelerationStructureEXT TLAS[MAX_TLAS_CHUNKS];
@@ -1250,7 +1253,7 @@ bool materialAllowsHit(uint iid, int prim, vec2 bc, bool frontFace) {
   InstInfo ii = insts[iid];
   MeshDesc md = meshes[ii.meshId];
   uint mid = selectedMaterial(md, prim, frontFace);
-  if (ii.useMaterial == 0u || mid == 0xffffffffu) return true;
+  if (!hasMaterial(ii) || mid == 0xffffffffu) return true;
   float alphaMode = mat(mid, 1u).z;
   if (!(alphaMode > 0.5 && alphaMode < 1.5)) return true;
   Verts vb = Verts(md.vtxAddr);
@@ -1305,7 +1308,7 @@ float materialOpacityAtHit(uint iid, int prim, vec2 bc, bool frontFace,
   MeshDesc md = meshes[ii.meshId];
   uint mid = selectedMaterial(md, prim, frontFace);
   alphaMode = 0.0;
-  if (ii.useMaterial == 0u || mid == 0xffffffffu) {
+  if (!hasMaterial(ii) || mid == 0xffffffffu) {
     alphaMode = ii.tint.a < 1.0 ? 2.0 : 0.0;
     return clamp(ii.tint.a, 0.0, 1.0);
   }
@@ -1402,7 +1405,7 @@ vec3 approximatePrimaryLayerColor(uint iid, int prim, vec2 bc, bool front,
   uint mid = selectedMaterial(md, prim, front);
   vec3 base = vec3(0.6);
   vec3 emission = vec3(0.0);
-  if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+  if (hasMaterial(ii) && mid != 0xffffffffu) {
     Verts vb = Verts(md.vtxAddr);
     Idx ib = Idx(md.idxAddr);
     uint i0 = ib.i[uint(prim) * 3u + 0u];
@@ -1547,7 +1550,7 @@ vec3 primaryLayerTransmissionTint(uint iid, int prim, vec2 bc, bool front) {
   InstInfo ii = insts[iid];
   MeshDesc md = meshes[ii.meshId];
   uint mid = selectedMaterial(md, prim, front);
-  if (ii.useMaterial == 0u || mid == 0xffffffffu) return vec3(1.0);
+  if (!hasMaterial(ii) || mid == 0xffffffffu) return vec3(1.0);
   float weight = clamp(lrt(mid, 2u).w, 0.0, 1.0);
   float depth = max(lrt(mid, 3u).w, 0.0);
   vec3 absorption = max(vec3(0.0), vec3(1.0) -
@@ -1565,7 +1568,7 @@ float primaryLayerTransmissionWeight(uint iid, int prim, bool front, vec2 bc) {
   InstInfo ii = insts[iid];
   MeshDesc md = meshes[ii.meshId];
   uint mid = selectedMaterial(md, prim, front);
-  return (ii.useMaterial != 0u && mid != 0xffffffffu)
+  return (hasMaterial(ii) && mid != 0xffffffffu)
              ? clamp(lrt(mid, 2u).w, 0.0, 1.0) : 0.0;
 }
 
@@ -1588,7 +1591,7 @@ vec3 primaryLayerRefractedColor(uint iid, int prim, vec2 bc, bool front,
     InstInfo currentInst = insts[currentIid];
     MeshDesc currentMesh = meshes[currentInst.meshId];
     uint currentMid = selectedMaterial(currentMesh, currentPrim, currentFront);
-    if (currentInst.useMaterial == 0u || currentMid == 0xffffffffu)
+    if (!hasMaterial(currentInst) || currentMid == 0xffffffffu)
       return vec3(0.0);
     Verts vb = Verts(currentMesh.vtxAddr);
     Idx ib = Idx(currentMesh.idxAddr);
@@ -1731,9 +1734,9 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
   else {
     vec3 nObj = fetchNrm(vb, i0) * w0 + fetchNrm(vb, i1) * bc.x +
                 fetchNrm(vb, i2) * bc.y;
-    mat3 normalMatrix = ii.useMaterial != 0u
-                            ? mat3(md.nrm0.xyz, md.nrm1.xyz, md.nrm2.xyz)
-                            : instanceNormalMatrix(o2w);
+    mat3 normalMatrix = isInstanced(ii)
+                            ? instanceNormalMatrix(o2w)
+                            : mat3(md.nrm0.xyz, md.nrm1.xyz, md.nrm2.xyz);
     s.n = normalize(normalMatrix * nObj);
   }
   if (dot(s.n, geometricNormal) < 0.0) s.n = -s.n;
@@ -1759,7 +1762,7 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
   s.volumeDensity = 0.0;
   s.coatN = s.n;
   uint mid = selectedMaterial(md, prim, front);
-  if (ii.useMaterial == 0u || mid == 0xffffffffu) return;
+  if (!hasMaterial(ii) || mid == 0xffffffffu) return;
   vec2 uv0 = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
              fetchUV(vb, i2) * bc.y;
   vec2 uv1 = uv0;
@@ -2292,7 +2295,7 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
       InstInfo alphaInst = insts[iid];
       MeshDesc alphaMesh = meshes[alphaInst.meshId];
       uint alphaMid = selectedMaterial(alphaMesh, prim, front);
-      float alphaMode = (alphaInst.useMaterial == 0u ||
+      float alphaMode = (!hasMaterial(alphaInst) ||
                          alphaMid == 0xffffffffu)
           ? (alphaInst.tint.a < 1.0 ? 2.0 : 0.0)
           : mat(alphaMid, 1u).z;
@@ -2751,16 +2754,17 @@ void main() {
       N = normalize(cross(wp1 - wp0, wp2 - wp0));
     } else {
       vec3 nObj = fetchNrm(vb, i0) * w0 + fetchNrm(vb, i1) * bc.x + fetchNrm(vb, i2) * bc.y;
-      mat3 nm = (ii.useMaterial != 0u)
-                    ? mat3(md.nrm0.xyz, md.nrm1.xyz, md.nrm2.xyz)
-                    : instanceNormalMatrix(o2w);
+      mat3 nm = isInstanced(ii)
+                    ? instanceNormalMatrix(o2w)
+                    : mat3(md.nrm0.xyz, md.nrm1.xyz, md.nrm2.xyz);
       N = normalize(nm * nObj);
     }
     // Two-sided shading for the geometric-normal + instanced paths: face the normal
     // toward the ray so inward-wound / back-facing triangles still light correctly
     // (mirrors the raster's gl_FrontFacing flip). Non-instanced authored normals are
     // left as-authored (matches the material shader, which does not flip them).
-    bool authoredNonInstanced = (ii.useMaterial != 0u) && ((md.geometricNormal & 1u) == 0u);
+    bool authoredNonInstanced = hasMaterial(ii) && !isInstanced(ii) &&
+                                ((md.geometricNormal & 1u) == 0u);
     if (!authoredNonInstanced && dot(N, dir) > 0.0) N = -N;
     vec3 coatN = N;
 
@@ -2782,7 +2786,7 @@ void main() {
     uint sourceFace = md.faceAddr != 0ul
                           ? Faces(md.faceAddr).fc[uint(prim)]
                           : uint(max(prim, 0));
-    if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+    if (hasMaterial(ii) && mid != 0xffffffffu) {
       base = mat(mid, 0u).rgb;
       alpha = mat(mid, 0u).a;
       metallic = clamp(mat(mid, 1u).x, 0.0, 1.0);
@@ -3184,7 +3188,7 @@ void main() {
     float coatAffectColor = 0.0;
     float coatAffectRoughness = 0.0;
     float coatDarkening = 0.0;
-    if (ii.useMaterial != 0u) {
+    if (hasMaterial(ii)) {
       if (mid != 0xffffffffu) {
         base = mat(mid, 0u).rgb;
         alpha = mat(mid, 0u).a;
@@ -3287,7 +3291,7 @@ void main() {
     uint sourceFace = md.faceAddr != 0ul
                           ? Faces(md.faceAddr).fc[uint(prim)]
                           : uint(max(prim, 0));
-    if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+    if (hasMaterial(ii) && mid != 0xffffffffu) {
       uint tb = mid * 12u;
       uint pb = mid * 155u;
       vec2 baseUv = materialUv(mid, 0, uv0h, uv1h);
@@ -3465,7 +3469,7 @@ void main() {
                               0.02, 1.0);
       }
     }
-    if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+    if (hasMaterial(ii) && mid != 0xffffffffu) {
       uint gb = mid * 1394u;
       if (gb + 9u < uint(graphRows.length())) {
         if (graphRows[gb + 1u] >= 0.0)
@@ -3523,7 +3527,7 @@ void main() {
     }
     float fd = (max(specIor, 1.0) - 1.0) / (max(specIor, 1.0) + 1.0);
     vec3 materialF0 = mix(vec3(fd * fd), base, clamp(metallic, 0.0, 1.0));
-    if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+    if (hasMaterial(ii) && mid != 0xffffffffu) {
       uint tb = mid * 12u;
       uint pb = mid * 155u;
       bool previewSpec = matTexParams[pb + 131u] > 0.5;
