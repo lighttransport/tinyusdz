@@ -751,7 +751,7 @@ elif command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" 
   timeout 10s "$BIN" --headless --backend vk --frames 1 --mode shaded \
     --screenshot "$OUT/vulkan-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
     >"$OUT/vulkan-preflight.log" 2>&1 || :
-  if grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer|device=cpu|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
+  if grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer|device=cpu|rt=off|rt_available=0|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
       "$OUT/vulkan-preflight.log"; then
     vk_software=1
     backend_unavailable[vk-rt]=1
@@ -767,7 +767,7 @@ if [ "$vk_software" = 0 ] && [ -n "${TUSDVIEW_VK_DEVICE:-}" ] &&
   timeout 10s "$BIN" --headless --backend vk --frames 1 --mode shaded \
     --screenshot "$OUT/vulkan-device-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
     >"$OUT/vulkan-device-preflight.log" 2>&1 || :
-  if grep -Eqi 'no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
+  if grep -Eqi 'rt=off|rt_available=0|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
       "$OUT/vulkan-device-preflight.log"; then
     vk_software=1
     backend_unavailable[vk-rt]=1
@@ -775,6 +775,27 @@ if [ "$vk_software" = 0 ] && [ -n "${TUSDVIEW_VK_DEVICE:-}" ] &&
     echo "SKIP: requested Vulkan RT device unavailable (preflight viewer probe)"
   fi
 fi
+# `vulkaninfo` may exit successfully after reporting an XCB error and can
+# still list an adapter whose ray-query path is disabled. Probe the viewer's
+# actual selected device whenever this invocation requests Vulkan RT, so
+# `rt=off` cannot be mistaken for a usable RT backend.
+case " ${TUSDVIEW_SEMANTIC_BACKENDS:-} " in
+  *" vk-rt "*)
+    if [ "${backend_unavailable[vk-rt]:-0}" = 0 ] &&
+       command -v timeout >/dev/null 2>&1 && [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
+      timeout 10s "$BIN" --headless --backend vk --frames 1 --mode shaded \
+        --screenshot "$OUT/vulkan-rt-preflight.ppm" "$ROOT/models/suzanne-pbr.usda" \
+        >"$OUT/vulkan-rt-preflight.log" 2>&1 || :
+      if grep -Eqi 'rt=off|rt_available=0|no Vulkan physical device|no matching.*Vulkan|Vulkan device.*not found' \
+          "$OUT/vulkan-rt-preflight.log"; then
+        vk_software=1
+        backend_unavailable[vk-rt]=1
+        degraded=1
+        echo "SKIP: Vulkan RT disabled by selected device (preflight viewer probe)"
+      fi
+    fi
+    ;;
+esac
 GL_RUN=()
 if [ -n "${DISPLAY:-}" ] && command -v xdpyinfo >/dev/null 2>&1 &&
    xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
