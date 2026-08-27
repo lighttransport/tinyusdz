@@ -553,6 +553,9 @@ Passed:
   it reports divergent reference vectors and fails at `vk-rt coat-normal`
   because no screenshot is produced. This is consistent with the unavailable
   NVIDIA driver/ICD probe and is not counted as a product pass.
+- The semantic-AOV preflight now recognizes the viewer's explicit `rt=off` /
+  `rt_available=0` capability line and skips only Vulkan RT cases, preventing
+  false `coat-normal` failures on raster-only Vulkan devices.
 
 The first cold NVIDIA compilation of the full MaterialX RT pipeline measured
 about 155 seconds; cached startup is a few seconds. The Vulkan smoke-test
