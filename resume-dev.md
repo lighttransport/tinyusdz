@@ -658,6 +658,8 @@ The direct `surface` Shader-to-Shader wrapper now preserves authored
    Its omitted coat roughness/IOR and thin-film IOR defaults now match the
    standalone evaluator (0.0, 1.6, and 1.4 respectively); direct-schema
    default assertions pass with the focused bridge group.
+   After relinking the main viewer with these defaults, the CPU OpenPBR and
+   MaterialX render checks pass 2/2.
 
 ## Remaining work, in priority order
 
