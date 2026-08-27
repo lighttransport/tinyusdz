@@ -676,6 +676,9 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
     const char *path = (file && file->value.s) ? file->value.s : NULL;
     int id = path ? texcache_get(ctx->tex, path, srgb) : -1;
     if (id < 0) return in_or(ctx, n, "default", mv_zero(n->type));
+    const MtlxInput *filter = find_input(n, "filtertype");
+    const int nearest = filter && filter->has_value && filter->value.s &&
+                        !strcmp(filter->value.s, "nearest");
 
     MtlxValue tv = in_or(ctx, n, "tiling", mv_vec2(1, 1));
     float tile_x = tv.v[0], tile_y = (tv.v[1] != 0.0f ? tv.v[1] : tv.v[0]);
@@ -720,7 +723,14 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
         cy[i] = (dx * srn + dy * cr) / sc + ctry + offy;
     }
     float c[3][4];
-    for (int i = 0; i < 3; i++) texcache_sample(ctx->tex, id, cx[i], cy[i], c[i]);
+    for (int i = 0; i < 3; i++) {
+        if (nearest) {
+            texcache_sample_nearest_address(ctx->tex, id, cx[i], cy[i],
+                                            "periodic", "periodic", c[i]);
+        } else {
+            texcache_sample(ctx->tex, id, cx[i], cy[i], c[i]);
+        }
+    }
     /* blend weights: luminance(mix to 1 by contrast) * barycentric^7, normalized */
     float bw[3], sum = 1e-8f;
     for (int i = 0; i < 3; i++) {
