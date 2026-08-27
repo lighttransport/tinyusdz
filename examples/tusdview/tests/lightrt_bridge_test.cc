@@ -2653,11 +2653,13 @@ int main() {
       openPbrSurfaceGraph.materialXGraph.output[33] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[11] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[13] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[15] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[29] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[30] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[35] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[36] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[39] < 0 ||
+      openPbrSurfaceGraph.materialXGraph.output[27] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[45] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[46] < 0 ||
       openPbrSurfaceGraph.materialXGraph.output[47] < 0 ||
@@ -2666,6 +2668,20 @@ int main() {
       openPbrSurfaceGraph.materialXGraph.output[3] < 0) {
     std::fprintf(stderr, "direct open_pbr_surface lowering failed: %s\n",
                  openPbrSurfaceError.c_str());
+    return 1;
+  }
+  const auto openPbrLaneValue = [&](int lane) {
+    const int index = openPbrSurfaceGraph.materialXGraph.output[
+        static_cast<size_t>(lane)];
+    return index >= 0 && static_cast<size_t>(index) <
+        openPbrSurfaceGraph.materialXGraph.nodes.size()
+        ? openPbrSurfaceGraph.materialXGraph.nodes[static_cast<size_t>(index)]
+              .value[0][0]
+        : -1.0f;
+  };
+  if (!Near(openPbrLaneValue(15), 0.0f) ||
+      !Near(openPbrLaneValue(27), 1.6f)) {
+    std::fprintf(stderr, "direct open_pbr_surface defaults drifted\n");
     return 1;
   }
   if (!CheckDirectClosure(R"json({
