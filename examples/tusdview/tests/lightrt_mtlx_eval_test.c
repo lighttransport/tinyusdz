@@ -202,6 +202,11 @@ int main(void) {
       "<input name=\"filey\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
       "<input name=\"filez\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
       "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "</triplanarprojection>"
+      "<triplanarprojection name=\"trig\" type=\"color3\">"
+      "<input name=\"filex\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
+      "<input name=\"filey\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
+      "<input name=\"filez\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
       "</triplanarprojection></materialx>");
   TextureCache *projection_filter_cache = texcache_create(".");
   int projection_filter_ok = projection_filter_doc && projection_filter_cache;
@@ -220,12 +225,13 @@ int main(void) {
     projection_filter_ctx.memo_done = (char *)calloc((size_t)projection_filter_doc->nnode, 1);
     int latf = mtlx_find_node(projection_filter_doc, -1, "latf");
     int trif = mtlx_find_node(projection_filter_doc, -1, "trif");
+    int trig = mtlx_find_node(projection_filter_doc, -1, "trig");
     MtlxValue latf_value;
     MtlxValue trif_value;
     memset(&latf_value, 0, sizeof(latf_value));
     memset(&trif_value, 0, sizeof(trif_value));
     if (projection_filter_ctx.memo && projection_filter_ctx.memo_done &&
-        latf >= 0 && trif >= 0) {
+        latf >= 0 && trif >= 0 && trig >= 0) {
       latf_value = mtlx_eval_node_test(&projection_filter_ctx, latf);
       memset(projection_filter_ctx.memo_done, 0,
              (size_t)projection_filter_doc->nnode);
@@ -233,6 +239,15 @@ int main(void) {
       projection_filter_ok = latf_value.v[0] > 0.99f &&
           latf_value.v[2] < 0.01f && trif_value.v[2] > 0.99f &&
           trif_value.v[0] < 0.01f;
+      projection_filter_ctx.P.x = 0.25f;
+      projection_filter_ctx.dPdx = v3_make(1.0f, 0.0f, 0.0f);
+      projection_filter_ctx.dPdy = v3_make(0.0f, 0.0f, 0.0f);
+      projection_filter_ctx.has_position_derivatives = 1;
+      memset(projection_filter_ctx.memo_done, 0,
+             (size_t)projection_filter_doc->nnode);
+      MtlxValue trig_value = mtlx_eval_node_test(&projection_filter_ctx, trig);
+      projection_filter_ok = projection_filter_ok &&
+          fabsf(trig_value.v[0] - trig_value.v[2]) < 0.08f;
     } else {
       projection_filter_ok = 0;
     }
