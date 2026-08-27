@@ -165,8 +165,12 @@ def main() -> int:
             if backend == "vkr" and "llvmpipe" in log.lower():
                 continue
             ran += 1
-            if result.returncode or not re.search(
-                    r"graphMaterials=[1-9][0-9]* graphNodes=[1-9][0-9]*", log):
+            graph_stats = (re.search(
+                r"graphMaterials=[1-9][0-9]* graphNodes=[1-9][0-9]*", log) or
+                re.search(r"graphs=[1-9][0-9]* graph_nodes=[1-9][0-9]*", log))
+            if result.returncode or not graph_stats:
+                print(f"{backend}: render exited with {result.returncode}",
+                      file=sys.stderr)
                 print(log, file=sys.stderr)
                 return 1
             # A uniform 64x64 PNG can legitimately compress below 500 bytes

@@ -754,6 +754,21 @@ BSDF/EDF routing is covered by the bridge regression.
    `render.materialx_vulkan_compile_timeout_sec`, or the corresponding CLI
    flags. Oversized full-shader promotion retains the compact pipeline; the
    focused graph tests pass 4/4 and the NVIDIA coat-normal shard still passes.
+   The legacy-loader OpenPBR IOR/F0 gap is closed: the next graph serializer no
+   longer synthesizes executable Constant nodes for unconnected typed surface
+   inputs, and the complete two-loader NVIDIA Vulkan-RT OpenPBR semantic matrix
+   passes with image MAD 0 for every compared lane. The same audit reconfirmed
+   layered/wrapper closures, unlit, displacement, volume and texture-fed
+   absorption in the focused bridge suite; the authored flake scene covers
+   matrix operations, multi-output routing and texture bump on Vulkan ray query.
+   The displacement-UDIM loader/package test also passes. CUDA flake parity was
+   a checker-format bug (`graphs`/`graph_nodes` versus Vulkan's
+   `graphMaterials`/`graphNodes`); after accepting both backend diagnostics,
+   NVIDIA Vulkan ray query and CUDA pass 2/2. Forced OpenChess Vulkan RT now
+   completes under the default compact-shader guard. An explicit 256 KiB
+   full-interpreter override still reaches NVIDIA driver pipeline validation
+   and exceeds the bounded 120-second diagnostic run; the safe 129 KiB default
+   remains required for cold-cache operation on this driver.
    A bounded `tusdr-vkr` ray-query subset also passes 3/3 (composition and
    primvar-interpolation assets included; 1 rendered and 2 with warnings).
    The complete broad external profile now also passes through `tusdr-vkr`:

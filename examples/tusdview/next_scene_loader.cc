@@ -3657,9 +3657,11 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   // A material can author BOTH a UsdPreviewSurface and an OpenPBR/mtlx shader
   // (DCC exports, MaterialX-with-fallback); ConvertMaterial fills both but sets
   // shader_type to the last child (often OpenPBR). Pick the shader that resolved
-  // the most textures (tie -> UsdPreviewSurface, the interop path); this also
-  // handles partial or unsupported graphs without overriding a more complete
-  // fallback. Falls back cleanly for single-shader materials.
+  // the most textures; on a tie retain the converter's authoritative shader
+  // type. This matters for constant-only OpenPBR materials: selecting a
+  // synthesized PreviewSurface fallback would silently replace authored
+  // OpenPBR-only lanes such as specular_ior. Falls back cleanly for
+  // single-shader materials.
   auto texCount = [](std::initializer_list<int> ids) {
     int n = 0; for (int i : ids) if (i >= 0) ++n; return n;
   };
@@ -3685,7 +3687,11 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
                       s.specular_color.texture_id,
                       s.specular_roughness.texture_id});
   }
-  const bool usePreview = rm.preview_surface && (!rm.openpbr || pvTex >= opTex);
+  const bool preferPreviewOnTie =
+      rm.shader_type != tydn::RenderMaterial::ShaderType::OpenPBR;
+  const bool usePreview =
+      rm.preview_surface &&
+      (!rm.openpbr || pvTex > opTex || (pvTex == opTex && preferPreviewOnTie));
 
   if (usePreview) {
     const tydn::PreviewSurfaceShader& s = *rm.preview_surface;
