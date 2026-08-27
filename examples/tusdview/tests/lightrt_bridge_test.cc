@@ -66,6 +66,8 @@ int main() {
   mat.params.push_back(Vec3Param("transmission_color", 0.25f, 0.5f, 1.0f));
   mat.params.push_back(FloatParam("subsurface_weight", 0.22f));
   mat.params.push_back(Vec3Param("subsurface_color", 0.6f, 0.7f, 0.8f));
+  mat.params.push_back(FloatParam("subsurface_anisotropy", 0.2f));
+  mat.params.push_back(FloatParam("subsurface_scatter_anisotropy", -0.3f));
   mat.params.push_back(
       Vec3Param("subsurface_radius_scale", 0.7f, 0.5f, 0.3f));
   mat.params.push_back(FloatParam("thin_film_weight", 1.0f));
@@ -75,7 +77,9 @@ int main() {
   tusdview::BakeRealtimePbrMaterial(&mat);
   if (!Near(mat.lightRtOpenPBR.thinFilmWeight, 1.0f) ||
       !Near(mat.lightRtOpenPBR.thinFilmThicknessNm, 450.0f) ||
-      !Near(mat.lightRtOpenPBR.thinFilmIor, 1.4f)) {
+      !Near(mat.lightRtOpenPBR.thinFilmIor, 1.4f) ||
+      !Near(mat.lightRtOpenPBR.subsurfaceAnisotropy, 0.2f) ||
+      !Near(mat.lightRtOpenPBR.subsurfaceScatterAnisotropy, -0.3f)) {
     std::fprintf(stderr, "OpenPBR thin-film units were not preserved\n");
     return 1;
   }
