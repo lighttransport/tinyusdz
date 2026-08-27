@@ -9855,6 +9855,15 @@ static bool MaterialsNeedFullRtShader(
                      [](const DrawMaterialCPU& m) {
     const MaterialXGraphRuntimeCPU& graph = m.materialXGraph;
     if (graph.nodes.empty()) return false;
+    auto constantOnly = [&](auto&& self, int index) -> bool {
+      if (index < 0 || static_cast<size_t>(index) >= graph.nodes.size())
+        return false;
+      const MaterialXGraphNodeCPU& node =
+          graph.nodes[static_cast<size_t>(index)];
+      if (node.op == MaterialXGraphOpCPU::Constant) return true;
+      return node.op == MaterialXGraphOpCPU::Convert &&
+             self(self, node.input[0]);
+    };
     // The compact shader evaluates all semantic texture lanes plus directly
     // connected image/tiledimage nodes (and normalmap(image)).  Procedural or
     // arithmetic graphs still promote transactionally to the full interpreter.
@@ -9862,6 +9871,9 @@ static bool MaterialsNeedFullRtShader(
          ++route) {
       int nodeIndex = graph.output[route];
       if (nodeIndex < 0) continue;
+      // Constant graph lanes are already baked into DrawMaterialCPU. They do
+      // not require the large runtime MaterialX interpreter on Vulkan.
+      if (constantOnly(constantOnly, nodeIndex)) continue;
       const bool compactRoute = route <= 5 || route == 10 ||
                                 (route >= 13 && route <= 15) || route == 19;
       if (!compactRoute || static_cast<size_t>(nodeIndex) >= graph.nodes.size())
@@ -9877,9 +9889,8 @@ static bool MaterialsNeedFullRtShader(
       if ((node->op != MaterialXGraphOpCPU::Image &&
            node->op != MaterialXGraphOpCPU::TiledImage) ||
           node->textureId < 0 || node->input[0] >= 0 || node->input[1] >= 0 ||
-          node->input[2] >= 0) {
+          node->input[2] >= 0)
         return true;
-      }
     }
     return false;
   });
