@@ -1553,6 +1553,32 @@ int main() {
     return 1;
   }
 
+  // Radius scale is vector-valued even though the bounded ABI exposes only a
+  // scalar subsurface-scale lane. It must be folded into the vector radius
+  // route, not truncated to its first component.
+  tusdview::DrawMaterialCPU radiusScaleGraphMat;
+  radiusScaleGraphMat.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"radius","category":"constant","type":"color3",
+       "inputs":[{"name":"value","value":[0.3,0.5,0.7]}]},
+      {"name":"scale","category":"constant","type":"color3",
+       "inputs":[{"name":"value","value":[2.0,3.0,4.0]}]}
+    ],"outputs":[{"name":"r","nodename":"radius"},
+      {"name":"s","nodename":"scale"}]},
+    "connections":[{"input":"subsurface_radius","output":"r"},
+      {"input":"subsurface_radius_scale","output":"s"}]
+  })json";
+  std::string radiusScaleError;
+  if (!tusdview::CompileMaterialXGraphRuntime(&radiusScaleGraphMat,
+                                               &radiusScaleError) ||
+      radiusScaleGraphMat.materialXGraph.output[8] < 0 ||
+      radiusScaleGraphMat.materialXGraph.output[25] >= 0 ||
+      radiusScaleGraphMat.materialXGraph.nodes.size() != 3) {
+    std::fprintf(stderr, "subsurface radius-scale graph lowering failed: %s\n",
+                 radiusScaleError.c_str());
+    return 1;
+  }
+
   // Four-input MaterialX conditionals use the auxiliary graph lane for in2.
   // Keep both a forward-connected branch and a literal fallback covered.
   tusdview::DrawMaterialCPU conditionalMat;
