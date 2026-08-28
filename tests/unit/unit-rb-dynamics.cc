@@ -12,6 +12,8 @@
 #include "tydra/rb-dynamics.h"
 #include "tydra/rb-dynamics.hh"
 #include "tinyusdz.hh"
+#include "usdGeom.hh"
+#include "xform.hh"
 
 #include <cmath>
 #include <cstring>
@@ -331,4 +333,43 @@ void rb_phys_world_memory_limit_test(void) {
     TEST_CHECK(ok);
     if (ok) FreePhysWorld(&world);
   }
+}
+
+void rb_phys_world_transform_sync_test(void) {
+  using namespace tinyusdz;
+  using namespace tinyusdz::tydra;
+  const std::string source = R"USD(#usda 1.0
+def Cube "Body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]
+)
+{
+    double3 xformOp:translate = (1, 2, 3)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    float physics:mass = 2
+}
+)USD";
+  Stage stage;
+  std::string warn, err;
+  TEST_ASSERT(LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t*>(source.data()), source.size(), "", &stage,
+      &warn, &err));
+  TydraPhysWorld world{};
+  TEST_ASSERT(BuildPhysWorld(stage, &world, &err));
+  TEST_CHECK(world.num_bodies == 1);
+  TEST_CHECK(std::fabs(world.bodies[0].xform.position.x - 1.0f) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].xform.position.y - 2.0f) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].xform.position.z - 3.0f) < 1.0e-5f);
+  world.bodies[0].xform.position = tp_v3(4.0f, 5.0f, 6.0f);
+  TEST_ASSERT(SyncPhysWorldToStage(world, &stage, &err));
+  const GeomCube* cube = stage.root_prims()[0].as<GeomCube>();
+  TEST_ASSERT(cube != nullptr);
+  auto matrix = cube->GetLocalMatrix();
+  TEST_ASSERT(matrix.has_value());
+  value::double3 translation, scale;
+  value::quatd rotation;
+  TEST_ASSERT(decompose(matrix.value(), &translation, &rotation, &scale));
+  TEST_CHECK(std::fabs(translation[0] - 4.0) < 1.0e-8);
+  TEST_CHECK(std::fabs(translation[1] - 5.0) < 1.0e-8);
+  TEST_CHECK(std::fabs(translation[2] - 6.0) < 1.0e-8);
+  FreePhysWorld(&world);
 }

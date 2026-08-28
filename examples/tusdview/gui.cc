@@ -2578,7 +2578,35 @@ void Gui::drawBlendShapeEditor() {
 void Gui::drawVirtualHumanPanel() {
   ImGui::Begin("Facial Rig");
   ImGui::TextDisabled("UsdSkel + authored vchar controls");
-  drawBlendShapeEditor();
+  if (facialControls_.empty()) {
+    drawBlendShapeEditor();
+  } else {
+    if (ImGui::Checkbox("Manual controls", &blendActive_)) blendDirty_ = true;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Defaults")) {
+      for (const VcharControl& control : facialControls_) {
+        blendWeights_[control.blendshape] = control.defaultValue;
+      }
+      blendDirty_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu authored", facialControls_.size());
+    ImGui::BeginDisabled(!blendActive_);
+    for (const VcharControl& control : facialControls_) {
+      float& value = blendWeights_[control.blendshape];
+      ImGui::PushID(control.name.c_str());
+      if (ImGui::SliderFloat(control.name.c_str(), &value, control.minimum,
+                             control.maximum, "%.3f")) {
+        blendDirty_ = true;
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Blendshape: %s\nDefault: %.3f",
+                          control.blendshape.c_str(), control.defaultValue);
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndDisabled();
+  }
   ImGui::Separator();
   if (!draw_ || draw_->curves.empty()) {
     ImGui::TextDisabled("No BasisCurves hair/groom geometry");

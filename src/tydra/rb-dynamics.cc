@@ -1203,6 +1203,35 @@ void TraversePrims(const std::vector<Prim> &prims,
   }
 }
 
+using MutablePrimVisitor = std::function<void(Prim &, const std::string &)>;
+void TraversePrimsMutable(std::vector<Prim> &prims,
+                          const std::string &parent_path,
+                          MutablePrimVisitor visitor) {
+  for (auto &prim : prims) {
+    const std::string path = parent_path + "/" + prim.element_name();
+    visitor(prim, path);
+    TraversePrimsMutable(prim.children(), path, visitor);
+  }
+}
+
+const Xformable *GetXformable(const Prim &prim) {
+  if (const auto *v = prim.as<GeomSphere>()) return v;
+  if (const auto *v = prim.as<GeomCube>()) return v;
+  if (const auto *v = prim.as<GeomCapsule>()) return v;
+  if (const auto *v = prim.as<GeomCylinder>()) return v;
+  if (const auto *v = prim.as<Xform>()) return v;
+  return nullptr;
+}
+
+Xformable *GetXformable(Prim &prim) {
+  if (auto *v = prim.get_data().as<GeomSphere>()) return v;
+  if (auto *v = prim.get_data().as<GeomCube>()) return v;
+  if (auto *v = prim.get_data().as<GeomCapsule>()) return v;
+  if (auto *v = prim.get_data().as<GeomCylinder>()) return v;
+  if (auto *v = prim.get_data().as<Xform>()) return v;
+  return nullptr;
+}
+
 /* Check if a prim has a specific API schema in its apiSchemas metadata */
 bool HasAPISchema(const Prim &prim, APISchemas::APIName api_name) {
   const PrimMeta &meta = prim.metas();
@@ -1496,6 +1525,24 @@ bool BuildPhysWorld(
       TydraPhysBody body;
       tydra_phys_body_default(&body);
 
+      if (const Xformable *xformable = GetXformable(prim)) {
+        auto matrix = xformable->GetLocalMatrix();
+        if (matrix) {
+          value::double3 translation{{0.0, 0.0, 0.0}};
+          value::double3 scale{{1.0, 1.0, 1.0}};
+          value::quatd rotation{};
+          if (decompose(matrix.value(), &translation, &rotation, &scale)) {
+            body.xform.position = tp_v3(static_cast<float>(translation[0]),
+                                        static_cast<float>(translation[1]),
+                                        static_cast<float>(translation[2]));
+            body.xform.rotation = tp_q(static_cast<float>(rotation[0]),
+                                       static_cast<float>(rotation[1]),
+                                       static_cast<float>(rotation[2]),
+                                       static_cast<float>(rotation[3]));
+          }
+        }
+      }
+
       /* Extract mass from props */
       float mass = options.default_mass;
 
@@ -1684,14 +1731,57 @@ bool SyncPhysWorldToStage(
     const TydraPhysWorld &world,
     Stage *stage,
     std::string *err) {
-  /* Stub implementation. Full implementation would:
-   * 1. Iterate over bodies
-   * 2. Find corresponding prim by stored path
-   * 3. Update xformOp:translate and xformOp:orient
-   * For now, just validate inputs. */
-  (void)world;
   if (!stage) {
     if (err) *err = "stage is null";
+    return false;
+  }
+  int32_t body_index = 0;
+  bool overflow = false;
+  TraversePrimsMutable(stage->root_prims(), "",
+    [&](Prim &prim, const std::string &) {
+      if (!HasAPISchema(prim, APISchemas::APIName::PhysicsRigidBodyAPI)) return;
+      if (body_index >= world.num_bodies) {
+        overflow = true;
+        return;
+      }
+      Xformable *xformable = GetXformable(prim);
+      const TydraPhysBody &body = world.bodies[body_index++];
+      if (!xformable) return;
+
+      value::double3 scale{{1.0, 1.0, 1.0}};
+      auto original = xformable->GetLocalMatrix();
+      if (original) {
+        value::double3 ignored_translation;
+        value::quatd ignored_rotation;
+        decompose(original.value(), &ignored_translation, &ignored_rotation, &scale);
+      }
+      XformOp translate;
+      translate.op_type = XformOp::OpType::Translate;
+      translate.set_value(value::double3{{body.xform.position.x,
+                                          body.xform.position.y,
+                                          body.xform.position.z}});
+      XformOp orient;
+      orient.op_type = XformOp::OpType::Orient;
+      value::quatd rotation;
+      rotation[0] = body.xform.rotation.x;
+      rotation[1] = body.xform.rotation.y;
+      rotation[2] = body.xform.rotation.z;
+      rotation[3] = body.xform.rotation.w;
+      orient.set_value(rotation);
+      xformable->xformOps.clear();
+      xformable->xformOps.push_back(std::move(translate));
+      xformable->xformOps.push_back(std::move(orient));
+      if (std::fabs(scale[0] - 1.0) > 1.0e-12 ||
+          std::fabs(scale[1] - 1.0) > 1.0e-12 ||
+          std::fabs(scale[2] - 1.0) > 1.0e-12) {
+        XformOp scale_op;
+        scale_op.op_type = XformOp::OpType::Scale;
+        scale_op.set_value(scale);
+        xformable->xformOps.push_back(std::move(scale_op));
+      }
+    });
+  if (overflow || body_index != world.num_bodies) {
+    if (err) *err = "Rigid-body count no longer matches the source Stage";
     return false;
   }
   return true;
