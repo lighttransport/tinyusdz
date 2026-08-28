@@ -36,6 +36,10 @@ def command_line_value(name, default=""):
     return default
 
 
+def command_line_flag(name):
+    return f"-{name}" in unreal.SystemLibrary.get_command_line().split()
+
+
 def asset_paths(class_name, roots):
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
     result = []
@@ -77,6 +81,13 @@ def create_character_from_preset():
     if not subsystem.try_add_object_to_edit(character):
         fail("Could not register MetaHuman character for editing")
     subsystem.assemble_for_preview(character)
+    if command_line_flag("TinyUSDZAutoRig"):
+        request = unreal.MetaHumanCharacterAutoRiggingRequestParams()
+        request.blocking = True
+        request.report_progress = False
+        request.rig_type = unreal.MetaHumanRigType.JOINTS_AND_BLENDSHAPES
+        log("requesting authenticated MetaHuman face auto-rig")
+        subsystem.request_auto_rigging(character, request)
     log(f"created {character.get_path_name()} from {preset_path}")
     return subsystem, character, preset_path
 
@@ -94,6 +105,67 @@ def export_geometry(character):
     # Installed offline presets do not contain those sources, so portable
     # MaterialX materials are authored in the deterministic postprocess step.
     unreal.EditorAssetLibrary.save_directory("/Game/Generated", only_if_is_dirty=False, recursive=True)
+
+
+def export_dna(character, output_dir):
+    """Export MetaHuman's actual facial and body rig-logic payloads.
+
+    MetaHuman facial blend shapes are stored in DNA, not as ordinary Unreal
+    UMorphTarget objects.  Keeping both DNA files beside the UsdSkel assets
+    preserves GUI controls, PSD mappings, blend-shape deltas and joint logic
+    that cannot be represented by the stock SkeletalMesh USD exporter alone.
+    """
+    params = unreal.MetaHumanDNAExportParams()
+    params.external_path = output_dir
+    params.project_path = "/Game/Generated/Exported/DNA"
+    params.dna_head = True
+    params.dna_body = True
+    params.overwrite_existing_assets = True
+    unreal.MetaHumanCharacterExportBlueprintLibrary.export_dna(character, params)
+    unreal.EditorAssetLibrary.save_directory("/Game/Generated/Exported/DNA", only_if_is_dirty=False, recursive=True)
+    result = []
+    for filename in sorted(os.listdir(output_dir)):
+        if filename.lower().endswith(".dna"):
+            result.append(os.path.join(output_dir, filename))
+    if not result:
+        fail("MetaHuman DNA export produced no rig payloads")
+    missing = []
+    if not any(path.endswith("_Head.dna") for path in result):
+        missing.append({
+            "rig": "head",
+            "reason": "Offline preview presets have no fitted face DNA; UE RequestAutoRigging is a cloud service",
+        })
+    if not any(path.endswith("_Body.dna") for path in result):
+        missing.append({"rig": "body", "reason": "Character produced no body DNA"})
+    return {"files": result, "missing": missing}
+
+
+def skeletal_mesh_diagnostics():
+    diagnostics = []
+    for package in asset_paths("SkeletalMesh", ["/Game/Generated/Exported"]):
+        name = package.rsplit("/", 1)[-1]
+        mesh = unreal.load_asset(f"{package}.{name}")
+        if not mesh:
+            continue
+        morph_names = []
+        try:
+            morph_names = sorted(str(target.get_name()) for target in mesh.get_morph_targets())
+        except Exception:
+            pass
+        skeleton_path = ""
+        try:
+            skeleton = mesh.get_editor_property("skeleton")
+            skeleton_path = skeleton.get_path_name() if skeleton else ""
+        except Exception:
+            pass
+        diagnostics.append({
+            "asset": package,
+            "skeleton": skeleton_path,
+            "morph_target_count": len(morph_names),
+            "morph_targets": morph_names,
+            "facial_deformation_source": "MetaHuman DNA" if name.endswith("_Head") else "UsdSkel + MetaHuman DNA",
+        })
+    return diagnostics
 
 
 def export_usd_assets(output_dir):
@@ -127,6 +199,35 @@ def export_usd_assets(output_dir):
     return exported
 
 
+def export_groom(output_dir):
+    """Export editor HairDescription strands through the project C++ bridge.
+
+    Unreal's USD plugin imports grooms but has no groom exporter.  The bridge
+    reads the same editable source description UE uses to build its runtime
+    strand buffers and writes real BasisCurves, retaining evenly distributed
+    authored strands for a responsive Vulkan raster preview.
+    """
+    assets = asset_paths("GroomAsset", ["/MetaHumanCharacter"])
+    preferred = [path for path in assets if path.endswith("/Hair_S_Casual")]
+    candidates = preferred or [path for path in assets if "/Hair_" in path]
+    if not candidates:
+        return {"status": "unavailable", "reason": "No installed GroomAsset was found"}
+    package = candidates[0]
+    name = package.rsplit("/", 1)[-1]
+    groom = unreal.load_asset(f"{package}.{name}")
+    if not groom:
+        return {"status": "unavailable", "reason": f"Could not load {package}"}
+    destination = os.path.join(output_dir, "MetaHuman_GroomStrands.usda")
+    try:
+        bridge = unreal.TinyUSDZGroomExportLibrary
+        written = bridge.export_groom_to_usd(groom, destination, 15000)
+    except Exception as exc:
+        return {"status": "failed", "asset": package, "reason": str(exc)}
+    if not written or not os.path.exists(destination):
+        return {"status": "failed", "asset": package, "reason": "HairDescription bridge returned false"}
+    return {"status": "exported", "asset": package, "usd": destination}
+
+
 def main():
     output_dir = os.path.abspath(command_line_value("TinyUSDZOutput", os.path.join(os.getcwd(), "output")))
     os.makedirs(output_dir, exist_ok=True)
@@ -139,7 +240,10 @@ def main():
         subsystem, character, preset_path = create_character_from_preset()
         inventory["preset"] = preset_path
         export_geometry(character)
+        inventory["dna"] = export_dna(character, output_dir)
+        inventory["skeletal_meshes"] = skeletal_mesh_diagnostics()
         inventory["usd"] = export_usd_assets(output_dir)
+        inventory["groom"] = export_groom(output_dir)
         inventory["groom_assets"] = asset_paths("GroomAsset", ["/Game", "/MetaHumanCharacter"])
         inventory["status"] = "exported"
         subsystem.remove_object_to_edit(character)

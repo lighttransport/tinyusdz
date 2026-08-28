@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Build a portable hero-bust layer around UE's geometry-only USD export.
 
-The groom bridge is deliberately deterministic and dependency-free: UE groom
-assets are proprietary cooked data and UE exposes no native USD groom exporter.
-This step authors both UsdGeomBasisCurves and camera-independent hair cards so
-the two real-time representations can be evaluated by tusdview.
+UE's native USD plugin has no groom exporter.  When the project groom bridge
+has emitted its editable HairDescription, this layer references those authored
+UsdGeomBasisCurves and retains camera-independent cards as a raster fallback.
+The deterministic curves remain only as a fallback when no groom is installed.
 """
 
 import argparse
@@ -66,9 +66,54 @@ def make_cards(count):
     return points, indices, colors
 
 
-def build_layer(head_name, body_name, strand_count):
+def embedded_groom_layer(groom_path):
+    """Inline the authored prim because the viewer's curve carrier does not
+    yet cross an external reference arc (meshes do)."""
+    with open(groom_path, "r", encoding="utf-8") as stream:
+        source = stream.read()
+    start = source.find('def BasisCurves "HairStrands"')
+    if start < 0:
+        raise RuntimeError(f"No HairStrands BasisCurves prim in {groom_path}")
+    prim = source[start:].strip()
+    closing = prim.rfind("\n}")
+    if closing < 0:
+        raise RuntimeError(f"Unterminated HairStrands prim in {groom_path}")
+    prim = (prim[:closing] +
+            '\n    rel material:binding = </MetaHuman/Materials/Hair>' +
+            prim[closing:])
+    return "\n".join("    " + line if line else line for line in prim.splitlines())
+
+
+def build_layer(head_name, body_name, strand_count, native_groom_path):
     counts, strand_points, widths, colors = make_strands(strand_count, 7)
     card_points, card_indices, card_colors = make_cards(36)
+    strand_layer = (embedded_groom_layer(native_groom_path)
+                    if native_groom_path else f'''    def BasisCurves "HairStrands"
+    {{
+        float3[] extent = [(-16, -16, 135), (16, 16, 175)]
+        uniform token type = "linear"
+        uniform token basis = "bezier"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [{', '.join(map(str, counts))}]
+        point3f[] points = [{', '.join(map(tuple3, strand_points))}]
+        float[] widths = [{', '.join(f'{v:.6g}' for v in widths)}] (interpolation = "vertex")
+        color3f[] primvars:displayColor = [{', '.join(map(tuple3, colors))}] (interpolation = "vertex")
+        rel material:binding = </MetaHuman/Materials/Hair>
+    }}
+''')
+    cards_layer = ("" if native_groom_path else f'''    def Mesh "HairCards"
+    {{
+        float3[] extent = [(-16, -16, 145), (16, 16, 168)]
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [{', '.join(['4'] * 36)}]
+        int[] faceVertexIndices = [{', '.join(map(str, card_indices))}]
+        point3f[] points = [{', '.join(map(tuple3, card_points))}]
+        normal3f[] normals = [{', '.join(['(0, 1, 0)'] * (36 * 4))}] (interpolation = "faceVarying")
+        color3f[] primvars:displayColor = [{', '.join(map(tuple3, card_colors))}] (interpolation = "vertex")
+        texCoord2f[] primvars:st = [{', '.join(['(0,0)', '(1,0)', '(1,1)', '(0,1)'] * 36)}] (interpolation = "faceVarying")
+        rel material:binding = </MetaHuman/Materials/Hair>
+    }}
+''')
     return f'''#usda 1.0
 (
     defaultPrim = "MetaHuman"
@@ -131,7 +176,10 @@ def Xform "MetaHuman"
             def Shader "OpenPBR"
             {{
                 uniform token info:id = "ND_open_pbr_surface_surfaceshader"
-                color3f inputs:base_color = (0.035, 0.016, 0.007)
+                # Keep the authored groom's dark fibers readable in the
+                # raster R/TT/TRT approximation; the lobes themselves apply
+                # the melanin-like per-strand display color.
+                color3f inputs:base_color = (0.16, 0.055, 0.015)
                 float inputs:base_roughness = 0.52
                 float inputs:specular_weight = 0.35
                 float inputs:specular_roughness = 0.28
@@ -142,31 +190,9 @@ def Xform "MetaHuman"
         }}
     }}
 
-    def BasisCurves "HairStrands"
-    {{
-        float3[] extent = [(-16, -16, 135), (16, 16, 175)]
-        uniform token type = "linear"
-        uniform token basis = "bezier"
-        uniform token wrap = "nonperiodic"
-        int[] curveVertexCounts = [{', '.join(map(str, counts))}]
-        point3f[] points = [{', '.join(map(tuple3, strand_points))}]
-        float[] widths = [{', '.join(f'{v:.6g}' for v in widths)}] (interpolation = "vertex")
-        color3f[] primvars:displayColor = [{', '.join(map(tuple3, colors))}] (interpolation = "vertex")
-        rel material:binding = </MetaHuman/Materials/Hair>
-    }}
+{strand_layer}
 
-    def Mesh "HairCards"
-    {{
-        float3[] extent = [(-16, -16, 145), (16, 16, 168)]
-        uniform bool doubleSided = 1
-        int[] faceVertexCounts = [{', '.join(['4'] * 36)}]
-        int[] faceVertexIndices = [{', '.join(map(str, card_indices))}]
-        point3f[] points = [{', '.join(map(tuple3, card_points))}]
-        normal3f[] normals = [{', '.join(['(0, 1, 0)'] * (36 * 4))}] (interpolation = "faceVarying")
-        color3f[] primvars:displayColor = [{', '.join(map(tuple3, card_colors))}] (interpolation = "vertex")
-        texCoord2f[] primvars:st = [{', '.join(['(0,0)', '(1,0)', '(1,1)', '(0,1)'] * 36)}] (interpolation = "faceVarying")
-        rel material:binding = </MetaHuman/Materials/Hair>
-    }}
+{cards_layer}
 }}
 '''
 
@@ -177,11 +203,36 @@ def main():
     parser.add_argument("--strands", type=int, default=1200)
     args = parser.parse_args()
     output_dir = os.path.abspath(args.output_dir)
+    groom_path = os.path.join(output_dir, "MetaHuman_GroomStrands.usda")
+    if not os.path.exists(groom_path):
+        groom_path = ""
     layer = build_layer("TinyUSDZ_DefaultHuman_Head.usdc",
-                        "TinyUSDZ_DefaultHuman_Body.usdc", args.strands)
+                        "TinyUSDZ_DefaultHuman_Body.usdc", args.strands, groom_path)
     destination = os.path.join(output_dir, "MetaHuman_Hero.usda")
     with open(destination, "w", encoding="utf-8") as stream:
         stream.write(layer)
+    rig_manifest = os.path.join(output_dir, "MetaHuman_Rig.usda")
+    head_dna = os.path.exists(os.path.join(output_dir, "TinyUSDZ_DefaultHuman_Head.dna"))
+    head_asset = ('custom asset unreal:headDNA = @TinyUSDZ_DefaultHuman_Head.dna@'
+                  if head_dna else
+                  'custom string unreal:headDNAStatus = "missing: offline preset requires UE cloud auto-rigging"')
+    with open(rig_manifest, "w", encoding="utf-8") as stream:
+        stream.write(f'''#usda 1.0
+(
+    defaultPrim = "MetaHumanRig"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Scope "MetaHumanRig"
+{{
+    {head_asset}
+    custom asset unreal:bodyDNA = @TinyUSDZ_DefaultHuman_Body.dna@
+    custom string unreal:rigFormat = "MetaHuman DNA / RigLogic"
+    custom string unreal:usdDeformation = "UsdSkel skeleton, bind transforms, joint indices and joint weights"
+    custom string unreal:facialDeformation = "DNA blend-shape targets, GUI controls, PSD controls and animated maps"
+}}
+''')
     print(destination)
 
 
