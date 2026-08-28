@@ -13,6 +13,7 @@
 #include "app.hh"
 #include "light3d/math.h"
 #include "next/tinyusdz-next.hh"
+#include "tydra/scene-access.hh"
 #include "tydra/mcp-tools.hh"  // tinyusdz::tydra::mcp::CallTool
 
 namespace tusdview {
@@ -20,6 +21,121 @@ namespace tusdview {
 using nlohmann::json;
 
 namespace {
+struct VcharControl {
+  std::string name;
+  std::string blendshape;
+  float minimum{-1.0f};
+  float maximum{1.0f};
+  float defaultValue{0.0f};
+};
+
+struct VcharControlVisit {
+  std::vector<VcharControl> controls;
+};
+
+template <typename T>
+bool CustomValue(const tinyusdz::Dictionary& data, const std::string& key,
+                 T* value) {
+  tinyusdz::MetaVariable variable;
+  return tinyusdz::GetCustomDataByKey(data, key, &variable) &&
+         variable.get_value<T>(value);
+}
+
+bool VisitVcharControls(const tinyusdz::Path&, const tinyusdz::Prim& prim,
+                        const int32_t, void* userdata, std::string*) {
+  auto* visit = static_cast<VcharControlVisit*>(userdata);
+  if (!visit || !visit->controls.empty() || !prim.metas().has_customData()) {
+    return true;
+  }
+  const tinyusdz::Dictionary data = prim.metas().get_customData();
+  std::vector<std::string> names;
+  if (!CustomValue(data, "vchar:controlNames", &names)) return true;
+  std::vector<std::string> mappings;
+  std::vector<tinyusdz::value::float2> ranges;
+  std::vector<float> defaults;
+  CustomValue(data, "vchar:controlMappings", &mappings);
+  CustomValue(data, "vchar:controlRanges", &ranges);
+  CustomValue(data, "vchar:controlDefaults", &defaults);
+  visit->controls.reserve(names.size());
+  for (size_t i = 0; i < names.size(); ++i) {
+    VcharControl control;
+    control.name = names[i];
+    control.blendshape = i < mappings.size() ? mappings[i] : names[i];
+    if (i < ranges.size()) {
+      control.minimum = ranges[i][0];
+      control.maximum = ranges[i][1];
+      if (control.minimum > control.maximum) {
+        std::swap(control.minimum, control.maximum);
+      }
+    }
+    if (i < defaults.size()) control.defaultValue = defaults[i];
+    visit->controls.push_back(std::move(control));
+  }
+  return true;
+}
+
+std::vector<VcharControl> ReadVcharControls(const tinyusdz::Stage& stage) {
+  VcharControlVisit visit;
+  std::string ignored;
+  tinyusdz::tydra::VisitPrims(stage, VisitVcharControls, &visit, &ignored);
+  return visit.controls;
+}
+
+const tinyusdz::next::Value* NextCustomValue(
+    const tinyusdz::next::Value& root, const std::string& name) {
+  const tinyusdz::next::Dict* rootDict = root.as_dictionary();
+  if (!rootDict) return nullptr;
+  const tinyusdz::next::Value* vchar = rootDict->find("vchar");
+  const tinyusdz::next::Dict* vcharDict = vchar ? vchar->as_dictionary() : nullptr;
+  return vcharDict ? vcharDict->find(name) : nullptr;
+}
+
+std::vector<VcharControl> ReadVcharControls(
+    const tinyusdz::next::Stage& stage) {
+  std::vector<VcharControl> controls;
+  stage.Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+    if (!controls.empty()) return true;
+    const tinyusdz::next::Value& data = prim.GetMeta().customData();
+    const tinyusdz::next::Value* namesValue =
+        NextCustomValue(data, "controlNames");
+    const std::vector<std::string>* names =
+        namesValue ? namesValue->as_token_array() : nullptr;
+    if (!names) return true;
+    const tinyusdz::next::Value* mappingsValue =
+        NextCustomValue(data, "controlMappings");
+    const std::vector<std::string>* mappings =
+        mappingsValue ? mappingsValue->as_token_array() : nullptr;
+    const tinyusdz::next::Value* ranges = NextCustomValue(data, "controlRanges");
+    const tinyusdz::next::Value* defaults =
+        NextCustomValue(data, "controlDefaults");
+    const float* rangeData = ranges
+                                 ? static_cast<const float*>(ranges->raw_data())
+                                 : nullptr;
+    const std::vector<float>* defaultData =
+        defaults ? defaults->as_float_array() : nullptr;
+    controls.reserve(names->size());
+    for (size_t i = 0; i < names->size(); ++i) {
+      VcharControl control;
+      control.name = (*names)[i];
+      control.blendshape = mappings && i < mappings->size() ? (*mappings)[i]
+                                                             : control.name;
+      if (rangeData && ranges->array_size() > i) {
+        control.minimum = rangeData[i * 2u];
+        control.maximum = rangeData[i * 2u + 1u];
+        if (control.minimum > control.maximum) {
+          std::swap(control.minimum, control.maximum);
+        }
+      }
+      if (defaultData && i < defaultData->size()) {
+        control.defaultValue = (*defaultData)[i];
+      }
+      controls.push_back(std::move(control));
+    }
+    return true;
+  });
+  return controls;
+}
+
 json arr3(const float a[3]) { return json::array({a[0], a[1], a[2]}); }
 json vec3json(const light3d::Vec3& v) { return json::array({v.x, v.y, v.z}); }
 
@@ -222,6 +338,14 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       target["affected_vertex_count"] =
           target["affected_vertex_count"].get<size_t>() + morph.vtx.size();
     }
+    for (const MorphTargetChannelsCPU& channels : mesh.morphTargetChannels) {
+      if (targets.find(channels.name) == targets.end()) {
+        targets[channels.name] =
+            {{"name", channels.name}, {"min", -1.0}, {"max", 1.0},
+             {"default", 0.0}, {"mesh_count", 1},
+             {"affected_vertex_count", mesh.morphInfluence.size()}};
+      }
+    }
   }
 
   if (tool == "vchar_status") {
@@ -239,8 +363,10 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
             {"deformation", json{{"usdskel_skinning", true},
                                   {"blendshapes", true},
                                   {"external_adapter", "overlay"}}},
-            {"physics", json{{"mode", "metadata-inspection"},
-                              {"simulation", false}}},
+            {"physics", json{{"mode", "diagnostic-rigid-body-preview"},
+                              {"simulation", true},
+                              {"mesh_writeback", false},
+                              {"loader", "legacy"}}},
             {"debug", json{{"skeleton", true}, {"skin_weights", true},
                             {"blend_influence", true},
                             {"normals_tangents", true}}},
@@ -313,13 +439,155 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
     return {{"mode", mode.empty() ? "unchanged" : mode}, {"updated", true}};
   }
 
+  std::vector<VcharControl> authoredControls;
+  if (nextSession_) {
+    authoredControls = ReadVcharControls(nextSession_->GetStage());
+  } else if (loaded_.ok) {
+    authoredControls = ReadVcharControls(loaded_.stage);
+  }
+
+  if (tool == "vchar_physics") {
+    const std::string op = args.value("op", std::string());
+    if (op == "hide") {
+      gui_.setPhysicsDebugLines({});
+      return {{"visible", false}, {"initialized", physicsWorldReady_}};
+    }
+    if (op == "reset" && physicsWorldReady_) {
+      tinyusdz::tydra::FreePhysWorld(&physicsWorld_);
+      physicsWorldReady_ = false;
+      physicsSceneGen_ = ~std::uint64_t(0);
+      gui_.setPhysicsDebugLines({});
+    }
+    if ((op == "initialize" || op == "step" || op == "reset") &&
+        (!physicsWorldReady_ || physicsSceneGen_ != sceneGen_)) {
+      if (nextSession_) {
+        err = "vchar_physics simulation currently requires --legacy-load; "
+              "next-core physics annotation playback is not bridged yet";
+        return json::object();
+      }
+      if (!loaded_.ok) {
+        err = "vchar_physics requires a loaded USD scene";
+        return json::object();
+      }
+      if (physicsWorldReady_) tinyusdz::tydra::FreePhysWorld(&physicsWorld_);
+      tinyusdz::tydra::PhysWorldBuildOptions options;
+      options.max_memory_limit_mb = 64;
+      if (!tinyusdz::tydra::BuildPhysWorld(loaded_.stage, &physicsWorld_, &err,
+                                           options)) {
+        physicsWorldReady_ = false;
+        return json::object();
+      }
+      physicsWorldReady_ = true;
+      physicsSceneGen_ = sceneGen_;
+    }
+    if (op == "step") {
+      int steps = args.value("steps", 1);
+      steps = std::max(1, std::min(600, steps));
+      if (args.contains("timestep")) {
+        if (!args["timestep"].is_number()) {
+          err = "vchar_physics timestep must be numeric";
+          return json::object();
+        }
+        physicsWorld_.timestep = std::max(
+            1.0e-5f, std::min(0.1f, args["timestep"].get<float>()));
+      }
+      for (int i = 0; i < steps; ++i) {
+        if (tydra_phys_step(&physicsWorld_) != TYDRA_PHYS_OK) {
+          err = "vchar_physics solver step failed";
+          return json::object();
+        }
+      }
+    } else if (op != "status" && op != "initialize" && op != "reset") {
+      err = "vchar_physics op must be status, initialize, step, reset, or hide";
+      return json::object();
+    }
+
+    std::vector<HelperVertex> lines;
+    if (physicsWorldReady_) {
+      const float extent = draw_.hasBounds
+                               ? std::max(0.01f, (draw_.aabbMax[0] - draw_.aabbMin[0] +
+                                                draw_.aabbMax[1] - draw_.aabbMin[1] +
+                                                draw_.aabbMax[2] - draw_.aabbMin[2]) /
+                                                   300.0f)
+                               : 0.05f;
+      auto addLine = [&](float ax, float ay, float az, float bx, float by,
+                         float bz, float r, float g, float b) {
+        lines.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
+        lines.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
+      };
+      for (int32_t i = 0; i < physicsWorld_.num_bodies; ++i) {
+        const TydraPhysBody& body = physicsWorld_.bodies[i];
+        const float x = body.xform.position.x;
+        const float y = body.xform.position.y;
+        const float z = body.xform.position.z;
+        const bool sleeping = (body.flags & TYDRA_PHYS_BODY_FLAG_SLEEPING) != 0u;
+        const float r = sleeping ? 0.3f : 1.0f;
+        const float g = sleeping ? 0.6f : 0.45f;
+        addLine(x - extent, y, z, x + extent, y, z, r, g, 0.1f);
+        addLine(x, y - extent, z, x, y + extent, z, r, g, 0.1f);
+        addLine(x, y, z - extent, x, y, z + extent, r, g, 0.1f);
+      }
+      gui_.setPhysicsDebugLines(std::move(lines));
+    }
+    return {{"initialized", physicsWorldReady_},
+            {"visible", physicsWorldReady_},
+            {"body_count", physicsWorldReady_ ? physicsWorld_.num_bodies : 0},
+            {"collider_count", physicsWorldReady_ ? physicsWorld_.num_colliders : 0},
+            {"joint_count", physicsWorldReady_ ? physicsWorld_.num_joints : 0},
+            {"contact_count", physicsWorldReady_ ? physicsWorld_.num_contacts : 0},
+            {"timestep", physicsWorldReady_ ? physicsWorld_.timestep : 0.0f},
+            {"mesh_sync", false},
+            {"note", "solver bodies are visualized as crosses; skinned mesh write-back is deferred"}};
+  }
+
+  if (tool == "vchar_hair_diagnostics") {
+    json groups = json::array();
+    size_t totalStrands = 0;
+    size_t totalSamples = 0;
+    for (const DrawCurvesCPU& curves : draw_.curves) {
+      float minimumWidth = std::numeric_limits<float>::max();
+      float maximumWidth = 0.0f;
+      for (float width : curves.widths) {
+        minimumWidth = std::min(minimumWidth, width);
+        maximumWidth = std::max(maximumWidth, width);
+      }
+      const size_t strands = curves.vertexCounts.size();
+      const size_t samples = curves.points.size() / 3u;
+      totalStrands += strands;
+      totalSamples += samples;
+      groups.push_back({{"path", curves.absPath}, {"name", curves.name},
+                        {"strand_count", strands}, {"sample_count", samples},
+                        {"samples_per_strand", strands ? double(samples) / double(strands) : 0.0},
+                        {"width_interpolation", curves.widths.empty() ? "fallback" :
+                                                (curves.widths.size() == 1u ? "constant" : "varying")},
+                        {"width_min", curves.widths.empty() ? 0.0f : minimumWidth},
+                        {"width_max", maximumWidth},
+                        {"aabb_min", arr3(curves.aabbMin)},
+                        {"aabb_max", arr3(curves.aabbMax)}});
+    }
+    return {{"group_count", groups.size()}, {"strand_count", totalStrands},
+            {"sample_count", totalSamples}, {"groups", std::move(groups)},
+            {"raster_representation", "camera-facing-ribbons"},
+            {"vulkan_rt_representation", "tube-proxies"}};
+  }
+
   if (tool == "list_blendshapes" || tool == "list_facial_controls") {
     json values = json::array();
-    for (const auto& entry : targets) values.push_back(entry.second);
+    if (tool == "list_facial_controls" && !authoredControls.empty()) {
+      for (const VcharControl& control : authoredControls) {
+        values.push_back({{"name", control.name},
+                          {"blendshape", control.blendshape},
+                          {"min", control.minimum}, {"max", control.maximum},
+                          {"default", control.defaultValue}});
+      }
+    } else {
+      for (const auto& entry : targets) values.push_back(entry.second);
+    }
     return {{"count", values.size()},
             {tool == "list_blendshapes" ? "blendshapes" : "controls",
              std::move(values)},
-            {"mapping", "direct-blendshape-v1"}};
+            {"mapping", authoredControls.empty() ? "direct-blendshape-v1"
+                                                   : "authored-vchar-metadata"}};
   }
 
   const char* field = tool == "set_facial_controls" ? "controls" : "weights";
@@ -334,16 +602,33 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       err = tool + ": every value must be numeric";
       return json::object();
     }
-    if (targets.find(it.key()) == targets.end()) {
+    std::string targetName = it.key();
+    float minimum = -1.0f;
+    float maximum = 1.0f;
+    if (tool == "set_facial_controls" && !authoredControls.empty()) {
+      const auto control = std::find_if(
+          authoredControls.begin(), authoredControls.end(),
+          [&](const VcharControl& candidate) { return candidate.name == it.key(); });
+      if (control == authoredControls.end()) {
+        unknown.push_back(it.key());
+        continue;
+      }
+      targetName = control->blendshape;
+      minimum = control->minimum;
+      maximum = control->maximum;
+    }
+    if (targets.find(targetName) == targets.end()) {
       unknown.push_back(it.key());
       continue;
     }
-    const float weight = std::max(-1.0f, std::min(1.0f, it.value().get<float>()));
-    setBlendWeight(it.key(), weight);
+    const float weight =
+        std::max(minimum, std::min(maximum, it.value().get<float>()));
+    setBlendWeight(targetName, weight);
     applied[it.key()] = weight;
   }
   return {{"applied", std::move(applied)}, {"unknown", std::move(unknown)},
-          {"mapping", "direct-blendshape-v1"}};
+          {"mapping", authoredControls.empty() ? "direct-blendshape-v1"
+                                                 : "authored-vchar-metadata"}};
 }
 
 json App::mcpOpenPbrMaterial(const json& args, std::string& err) {

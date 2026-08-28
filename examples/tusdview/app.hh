@@ -36,6 +36,7 @@
 #include "ptex_atlas.hh"
 #include "renderer.hh"
 #include "rt_camera.hh"
+#include "tydra/rb-dynamics.hh"
 #include "scene_loader.hh"
 #include "stream/stream_server.hh"
 #if defined(TUSDVIEW_HAVE_MCP)
@@ -158,7 +159,10 @@ class App
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
   void setShowGrid(bool on) { gui_.setShowGrid(on); }
   void setShowSkeleton(bool on) { gui_.setShowSkeleton(on); }
-  void setVirtualHumanProfile(bool on) { virtualHumanProfile_ = on; }
+  void setVirtualHumanProfile(bool on) {
+    virtualHumanProfile_ = on;
+    gui_.setVirtualHumanProfile(on);
+  }
   void setCamDolly(float f) { camDolly_ = f; }
   void setAdaptiveQuality(bool on, float targetFps, float minScale) {
     adaptiveQuality_ = on;
@@ -343,6 +347,9 @@ class App
 
  private:
   bool virtualHumanProfile_{false};
+  TydraPhysWorld physicsWorld_{};
+  bool physicsWorldReady_{false};
+  std::uint64_t physicsSceneGen_{~std::uint64_t(0)};
   bool initWindow(std::string* err);
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;

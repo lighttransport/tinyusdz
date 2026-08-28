@@ -28,11 +28,31 @@ The embedded MCP server adds:
 - `vchar_debug` (`skin-weights`, `blend-influence`, normals, tangents, skeleton)
 - `autorigger_inspect`, `apply_rig_overlay`
 
-V1 named facial controls map directly to USD blendshape names and clamp values
-to `[-1, 1]`. A later overlay may author `vchar:controlNames`, ranges, defaults,
-and mappings without changing this API. UsdSkel joint animation and blendshapes
-execute in realtime. Physics is currently metadata inspection only; simulation
-and body auto-rigging are subsequent milestones.
+Without authored metadata, named facial controls map directly to USD blendshape
+names. A prim can instead author parallel arrays in `customData`:
+
+```usda
+customData = {
+    dictionary vchar = {
+        string[] controlNames = ["jawOpen"]
+        string[] controlMappings = ["jaw_open"]
+        float2[] controlRanges = [(0, 1)]
+        float[] controlDefaults = [0]
+    }
+}
+```
+
+The first authored control map found in stage traversal order is authoritative.
+Missing mapping/range/default entries fall back to the control name, `[-1,1]`,
+and zero. UsdSkel joint animation and blendshapes execute in realtime.
+
+`vchar_physics` initializes and steps TinyUSDZ's bounded rigid-body solver from
+authored UsdPhysics APIs. Dynamic/awake body positions are drawn as orange
+crosses (sleeping bodies are dimmed). `status`, `initialize`, `step`, `reset`,
+and `hide` are supported. This first integration intentionally keeps simulated
+body transforms as a diagnostic overlay; writing them back onto skinned mesh
+transforms is deferred because the current `SyncPhysWorldToStage` bridge does
+not retain body-to-prim paths yet.
 
 ## External auto-rigger boundary
 
