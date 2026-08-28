@@ -1481,6 +1481,7 @@ App::~App() {
   // its members are being destroyed.
   if (mcp_) mcp_->stop();
 #endif
+  if (physicsWorldReady_) tinyusdz::tydra::FreePhysWorld(&physicsWorld_);
   cancelAndJoinLoad();  // must run before members the worker writes into are destroyed
   // Finish any in-flight RT build: std::thread's destructor calls
   // std::terminate() if it is destroyed still joinable (e.g. a headless

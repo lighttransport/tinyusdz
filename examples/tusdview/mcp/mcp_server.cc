@@ -223,6 +223,17 @@ json MCPServer::buildToolsList() const {
       "Compose an auto-rigger USDA/USDC overlay non-destructively over the loaded asset.",
       {{"path", strProp("path to generated rig overlay layer")}},
       json::array({"path"})));
+  tools.push_back(tool(
+      "vchar_physics",
+      "Inspect, initialize, step, reset, or hide the realtime UsdPhysics preview.",
+      {{"op", strProp("status | initialize | step | reset | hide")},
+       {"steps", {{"type", "integer"}, {"minimum", 1}, {"maximum", 600}}},
+       {"timestep", numProp("optional seconds per simulation step")}},
+      json::array({"op"})));
+  tools.push_back(tool(
+      "vchar_hair_diagnostics",
+      "Inspect BasisCurves groom topology, widths, density, bounds and backend representation.",
+      json::object()));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
@@ -376,7 +387,8 @@ void MCPServer::drain() {
                  t == "set_blendshape_weights" ||
                  t == "list_facial_controls" ||
                  t == "set_facial_controls" || t == "vchar_debug" ||
-                 t == "autorigger_inspect" || t == "apply_rig_overlay") {
+                 t == "autorigger_inspect" || t == "apply_rig_overlay" ||
+                 t == "vchar_physics" || t == "vchar_hair_diagnostics") {
         payload = host_->mcpVirtualHuman(t, cmd->args, err);
       } else {
         // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.

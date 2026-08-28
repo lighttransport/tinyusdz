@@ -115,6 +115,10 @@ class Gui {
   void setLoadOptions(LoadOptions* options) { loadOptions_ = options; }
   void setShowGrid(bool on) { showGrid_ = on; }
   void setShowSkeleton(bool on) { showSkeleton_ = on; }
+  void setVirtualHumanProfile(bool on) { virtualHumanProfile_ = on; }
+  void setPhysicsDebugLines(std::vector<HelperVertex> lines) {
+    physicsDebugLines_ = std::move(lines);
+  }
   // Fixed-frame headless captures have no interactive UI. Give the render
   // viewport the full requested extent so saved dock state cannot change the
   // screenshot dimensions.
@@ -379,6 +383,7 @@ class Gui {
   // Maya-like blendshape weight editor for the selected prim (shown when the
   // selection, an ancestor, or a descendant mesh carries blendshape targets).
   void drawBlendShapeEditor();
+  void drawVirtualHumanPanel();
   void drawSelectionList();
   void drawCameraPanel();
   void drawStats();
@@ -517,6 +522,7 @@ class Gui {
   bool showSceneBbox_{false};
   bool showPrimBbox_{false};  // legacy config state; selection mode owns display
   bool showSkeleton_{true};
+  bool virtualHumanProfile_{false};
   bool showLights_{false};
   bool showCameras_{false};
   bool showExtent_{false};
@@ -647,6 +653,7 @@ class Gui {
   int maxTessLevel_{1};
   std::vector<HelperVertex> helperLines_;
   std::vector<HelperVertex> overlayLines_;
+  std::vector<HelperVertex> physicsDebugLines_;
 
   std::vector<uint8_t> meshVisible_;
   std::vector<uint8_t> carrierVisible_;

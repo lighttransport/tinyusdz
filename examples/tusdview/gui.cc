@@ -346,6 +346,7 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawDockspaceAndMenu();
   drawHierarchy();
   drawInspector();
+  if (virtualHumanProfile_) drawVirtualHumanPanel();
   drawSelectionList();
   drawCameraPanel();
   drawStageMeta();
@@ -2500,7 +2501,7 @@ void Gui::drawInspector() {
 }
 
 void Gui::drawBlendShapeEditor() {
-  if (!draw_ || selPath_.empty()) return;
+  if (!draw_ || (selPath_.empty() && !virtualHumanProfile_)) return;
 
   // Gather blendshapes (by name, with their in-between weights) from meshes that
   // are the selection itself, an ancestor of it (selecting a BlendShape child),
@@ -2510,7 +2511,7 @@ void Gui::drawBlendShapeEditor() {
   for (const DrawMeshCPU& m : draw_->meshes) {
     if (m.morphTargetChannels.empty()) continue;
     const std::string meshSlash = m.absPath + "/";
-    const bool related = (m.absPath == selPath_) ||
+    const bool related = virtualHumanProfile_ || (m.absPath == selPath_) ||
                          (m.absPath.rfind(selSlash, 0) == 0) ||
                          (selPath_.rfind(meshSlash, 0) == 0);
     if (!related) continue;
@@ -2572,6 +2573,47 @@ void Gui::drawBlendShapeEditor() {
     ImGui::PopID();
   }
   ImGui::EndDisabled();
+}
+
+void Gui::drawVirtualHumanPanel() {
+  ImGui::Begin("Facial Rig");
+  ImGui::TextDisabled("UsdSkel + authored vchar controls");
+  drawBlendShapeEditor();
+  ImGui::Separator();
+  if (!draw_ || draw_->curves.empty()) {
+    ImGui::TextDisabled("No BasisCurves hair/groom geometry");
+  } else if (ImGui::CollapsingHeader("Hair diagnostics",
+                                      ImGuiTreeNodeFlags_DefaultOpen)) {
+    size_t strands = 0;
+    size_t samples = 0;
+    size_t widthSamples = 0;
+    float minimumWidth = std::numeric_limits<float>::max();
+    float maximumWidth = 0.0f;
+    for (const DrawCurvesCPU& curves : draw_->curves) {
+      strands += curves.vertexCounts.size();
+      samples += curves.points.size() / 3u;
+      widthSamples += curves.widths.size();
+      for (float width : curves.widths) {
+        minimumWidth = std::min(minimumWidth, width);
+        maximumWidth = std::max(maximumWidth, width);
+      }
+    }
+    ImGui::Text("Curve prims: %zu", draw_->curves.size());
+    ImGui::Text("Strands: %zu", strands);
+    ImGui::Text("Tessellated samples: %zu", samples);
+    if (widthSamples) {
+      ImGui::Text("Width samples: %zu (%.6g .. %.6g)", widthSamples,
+                  minimumWidth, maximumWidth);
+    } else {
+      ImGui::TextDisabled("No authored widths; renderer fallback width is active");
+    }
+    ImGui::Text("Density: %.2f samples/strand",
+                strands ? static_cast<double>(samples) /
+                              static_cast<double>(strands)
+                        : 0.0);
+    ImGui::TextDisabled("Raster: camera-facing ribbons; Vulkan RT: tube proxies");
+  }
+  ImGui::End();
 }
 
 void Gui::drawSelectionList() {
@@ -6055,6 +6097,8 @@ void Gui::renderViewportScene(FramePacket* packet) {
 void Gui::buildHelpers() {
   helperLines_.clear();
   overlayLines_.clear();
+  helperLines_.insert(helperLines_.end(), physicsDebugLines_.begin(),
+                      physicsDebugLines_.end());
   const bool zUp = loaded_ && loaded_->ok && loaded_->render.meta.upAxis == "Z";
 
   auto addLine = [&](float ax, float ay, float az, float bx, float by, float bz,
