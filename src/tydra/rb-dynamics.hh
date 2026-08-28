@@ -47,6 +47,12 @@ bool SyncPhysWorldToStage(
     Stage *stage,
     std::string *err = nullptr);
 
+/// Update kinematic bodies from their matching authored Stage transforms.
+/// Rigid bodies are matched in the same deterministic traversal order used by
+/// BuildPhysWorld and SyncPhysWorldToStage.
+bool SyncStageToPhysWorld(const Stage &stage, TydraPhysWorld *world,
+                          std::string *err = nullptr);
+
 /// Free all buffers allocated by BuildPhysWorld.
 void FreePhysWorld(TydraPhysWorld *world);
 

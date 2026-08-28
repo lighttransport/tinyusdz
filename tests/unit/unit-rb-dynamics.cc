@@ -346,6 +346,7 @@ def Cube "Body" (
     double3 xformOp:translate = (1, 2, 3)
     uniform token[] xformOpOrder = ["xformOp:translate"]
     float physics:mass = 2
+    bool physics:kinematicEnabled = true
 }
 )USD";
   Stage stage;
@@ -356,6 +357,7 @@ def Cube "Body" (
   TydraPhysWorld world{};
   TEST_ASSERT(BuildPhysWorld(stage, &world, &err));
   TEST_CHECK(world.num_bodies == 1);
+  TEST_CHECK(world.bodies[0].body_type == TYDRA_PHYS_BODY_KINEMATIC);
   TEST_CHECK(std::fabs(world.bodies[0].xform.position.x - 1.0f) < 1.0e-5f);
   TEST_CHECK(std::fabs(world.bodies[0].xform.position.y - 2.0f) < 1.0e-5f);
   TEST_CHECK(std::fabs(world.bodies[0].xform.position.z - 3.0f) < 1.0e-5f);
@@ -371,5 +373,10 @@ def Cube "Body" (
   TEST_CHECK(std::fabs(translation[0] - 4.0) < 1.0e-8);
   TEST_CHECK(std::fabs(translation[1] - 5.0) < 1.0e-8);
   TEST_CHECK(std::fabs(translation[2] - 6.0) < 1.0e-8);
+  world.bodies[0].xform.position = tp_v3(0.0f, 0.0f, 0.0f);
+  TEST_ASSERT(SyncStageToPhysWorld(stage, &world, &err));
+  TEST_CHECK(std::fabs(world.bodies[0].xform.position.x - 4.0f) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].xform.position.y - 5.0f) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].xform.position.z - 6.0f) < 1.0e-5f);
   FreePhysWorld(&world);
 }

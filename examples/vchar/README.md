@@ -26,6 +26,9 @@ The embedded MCP server adds:
 - `list_blendshapes`, `set_blendshape_weights`
 - `list_facial_controls`, `set_facial_controls`
 - `vchar_debug` (`skin-weights`, `blend-influence`, normals, tangents, skeleton)
+- `vchar_skin_profile` (tuned OpenPBR SSS/specular/fuzz/coat skin profile)
+- `vchar_deformer` (UsdSkel and USD-overlay adapter status/application)
+- `vchar_physics` (simulation plus body/collider/joint/contact diagnostics)
 - `autorigger_inspect`, `apply_rig_overlay`
 
 Without authored metadata, named facial controls map directly to USD blendshape
@@ -49,14 +52,19 @@ defaults directly; hovering a control shows its mapped USD blendshape. UsdSkel
 joint animation and blendshapes execute in realtime.
 
 `vchar_physics` initializes and steps TinyUSDZ's bounded rigid-body solver from
-authored UsdPhysics APIs. Dynamic/awake body positions are drawn as orange
-crosses (sleeping bodies are dimmed). `status`, `initialize`, `step`, `reset`,
-and `hide` are supported. With `--legacy-load`, each solver step writes body
-translation/orientation back to its matching rigid-body prim and updates the
-renderer's mesh-world buffers. The orange crosses remain visible for comparing
-the rendered geometry against solver state. The next-core loader rejects
-simulation explicitly until its physics annotation bridge can retain the same
-body-to-prim mapping.
+authored UsdPhysics APIs. Animated or deformed kinematic prim transforms are
+copied into their solver proxies before every step; dynamic solver transforms
+are then written back to the matching prims and renderer mesh-world buffers.
+This makes attachments follow a skinned/animated character while retaining
+two-way coupling for simulated rigid pieces. `status`, `initialize`, `step`,
+`reset`, and `hide` are supported with `--legacy-load`.
+
+Physics diagnostics draw awake bodies as orange crosses (sleeping bodies are
+dimmed), collider AABBs in cyan, joint anchors and axes in magenta, and contact
+normals in red. The geometry and solver overlays remain visible together for
+spotting incorrect proxy transforms, joint frames, and penetration. The
+next-core loader rejects simulation explicitly until its physics annotation
+bridge can retain the same body-to-prim mapping.
 
 ## External auto-rigger boundary
 
@@ -73,7 +81,16 @@ that root. This keeps the source USDZ untouched and makes auto-rig results easy
 to replace or discard. See [autorigger-protocol.schema.json](autorigger-protocol.schema.json)
 for the request/result shape.
 
+`vchar_deformer` exposes the active in-process adapters and their evaluation
+order. The `usdskel` adapter evaluates blendshapes/inbetweens and skinning; the
+`usd-overlay` adapter adds controls, correctives, and physics metadata without
+modifying the source character. The external JSON-RPC launcher remains a
+separate integration boundary and returns a USD overlay for the same adapter
+path.
+
 Hair uses the shared BasisCurves ribbon rasterizer (and tube proxies for Vulkan
 RT), including authored widths and curve tangents. Skin uses the shared
-MaterialX/OpenPBR subsurface inputs; raster uses the viewer's realtime SSS
-approximation while RT evaluates the same material data through LightRT.
+MaterialX/OpenPBR multilobe model. `vchar_skin_profile` tunes subsurface color,
+radius, and scale together with dual specular, fuzz, and coat response; raster
+uses the viewer's realtime SSS approximation while RT evaluates the same
+material data through LightRT.

@@ -234,6 +234,18 @@ json MCPServer::buildToolsList() const {
       "vchar_hair_diagnostics",
       "Inspect BasisCurves groom topology, widths, density, bounds and backend representation.",
       json::object()));
+  tools.push_back(tool(
+      "vchar_skin_profile",
+      "Apply a tuned realtime multilobe skin preset to one OpenPBR material.",
+      {{"material_id", {{"type", "integer"}}},
+       {"strength", numProp("SSS strength in [0,1], default 0.65")}},
+      json::array({"material_id"})));
+  tools.push_back(tool(
+      "vchar_deformer",
+      "Inspect built-in deformer adapters or apply a non-destructive USD overlay adapter.",
+      {{"op", strProp("status | apply-overlay")},
+       {"path", strProp("USDA/USDC overlay path for apply-overlay")}},
+      json::array({"op"})));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
@@ -389,6 +401,8 @@ void MCPServer::drain() {
                  t == "set_facial_controls" || t == "vchar_debug" ||
                  t == "autorigger_inspect" || t == "apply_rig_overlay" ||
                  t == "vchar_physics" || t == "vchar_hair_diagnostics") {
+        payload = host_->mcpVirtualHuman(t, cmd->args, err);
+      } else if (t == "vchar_skin_profile" || t == "vchar_deformer") {
         payload = host_->mcpVirtualHuman(t, cmd->args, err);
       } else {
         // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
