@@ -48,6 +48,8 @@ bool SyncPhysWorldToStage(
     std::string *err = nullptr);
 
 /// Update kinematic bodies from their matching authored Stage transforms.
+/// Linear and angular velocities are derived from the pose delta and the
+/// world's timestep so contacts inherit animation-driven motion.
 /// Rigid bodies are matched in the same deterministic traversal order used by
 /// BuildPhysWorld and SyncPhysWorldToStage.
 bool SyncStageToPhysWorld(const Stage &stage, TydraPhysWorld *world,

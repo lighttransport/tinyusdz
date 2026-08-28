@@ -55,6 +55,9 @@ joint animation and blendshapes execute in realtime.
 authored UsdPhysics APIs. Animated or deformed kinematic prim transforms are
 copied into their solver proxies before every step; dynamic solver transforms
 are then written back to the matching prims and renderer mesh-world buffers.
+Proxy linear and angular velocities are derived from consecutive poses, so
+animation-driven colliders transfer motion through contacts instead of behaving
+like teleported static geometry.
 This makes attachments follow a skinned/animated character while retaining
 two-way coupling for simulated rigid pieces. `status`, `initialize`, `step`,
 `reset`, and `hide` are supported with `--legacy-load`.

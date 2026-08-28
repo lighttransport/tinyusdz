@@ -1839,15 +1839,26 @@ bool SyncStageToPhysWorld(const Stage &stage, TydraPhysWorld *world,
       value::double3 translation, scale;
       value::quatd rotation;
       if (!decompose(matrix.value(), &translation, &rotation, &scale)) return;
-      body.xform.position = tp_v3(static_cast<float>(translation[0]),
-                                  static_cast<float>(translation[1]),
-                                  static_cast<float>(translation[2]));
-      body.xform.rotation = tp_q(static_cast<float>(rotation[0]),
-                                 static_cast<float>(rotation[1]),
-                                 static_cast<float>(rotation[2]),
-                                 static_cast<float>(rotation[3]));
-      body.linear_velocity = tp_v3(0.0f, 0.0f, 0.0f);
-      body.angular_velocity = tp_v3(0.0f, 0.0f, 0.0f);
+      const TydraPhysTransform previous = body.xform;
+      const TydraPhysTransform next = {
+          tp_v3(static_cast<float>(translation[0]),
+                static_cast<float>(translation[1]),
+                static_cast<float>(translation[2])),
+          tp_q_normalize(tp_q(static_cast<float>(rotation[0]),
+                              static_cast<float>(rotation[1]),
+                              static_cast<float>(rotation[2]),
+                              static_cast<float>(rotation[3])))};
+      const float inverse_dt = world->timestep > TP_EPSILON
+                                   ? 1.0f / world->timestep
+                                   : 0.0f;
+      body.linear_velocity = tp_v3_scale(
+          tp_v3_sub(next.position, previous.position), inverse_dt);
+      const TydraPhysQuat delta = tp_q_mul(
+          next.rotation, tp_q_conjugate(previous.rotation));
+      TydraPhysVec3 axis;
+      const float angle = tp_q_to_axis_angle(delta, &axis);
+      body.angular_velocity = tp_v3_scale(axis, angle * inverse_dt);
+      body.xform = next;
     });
   if (overflow || body_index != world->num_bodies) {
     if (err) *err = "Rigid-body count no longer matches the source Stage";

@@ -562,9 +562,19 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       for (int32_t i = 0; i < physicsWorld_.num_bodies; ++i) {
         const TydraPhysBody& body = physicsWorld_.bodies[i];
         bodies.push_back({{"index", i},
+                          {"type", body.body_type == TYDRA_PHYS_BODY_DYNAMIC
+                                       ? "dynamic"
+                                       : (body.body_type == TYDRA_PHYS_BODY_KINEMATIC
+                                              ? "kinematic" : "static")},
                           {"position", json::array({body.xform.position.x,
                                                     body.xform.position.y,
                                                     body.xform.position.z})},
+                          {"linear_velocity", json::array({body.linear_velocity.x,
+                                                            body.linear_velocity.y,
+                                                            body.linear_velocity.z})},
+                          {"angular_velocity", json::array({body.angular_velocity.x,
+                                                             body.angular_velocity.y,
+                                                             body.angular_velocity.z})},
                           {"sleeping", (body.flags & TYDRA_PHYS_BODY_FLAG_SLEEPING) != 0u}});
       }
     }
