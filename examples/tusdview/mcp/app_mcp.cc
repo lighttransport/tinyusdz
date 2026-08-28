@@ -3,6 +3,7 @@
 // (the MCP server marshals tool calls into the render loop), so they freely read
 // the loaded scene / DrawScene and drive the camera and selection.
 #include <cmath>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <memory>
@@ -25,6 +26,28 @@ using nlohmann::json;
 namespace {
 json arr3(const float a[3]) { return json::array({a[0], a[1], a[2]}); }
 json vec3json(const light3d::Vec3& v) { return json::array({v.x, v.y, v.z}); }
+
+std::string asciiLower(std::string value) {
+  for (char& c : value) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return value;
+}
+
+int skinMaterialScore(const DrawMaterialCPU& material) {
+  const std::string text = asciiLower(material.name + " " +
+      material.displayName + " " + material.absPath);
+  int score = 0;
+  if (text.find("skin") != std::string::npos) score += 100;
+  if (text.find("face") != std::string::npos) score += 80;
+  if (text.find("head") != std::string::npos) score += 60;
+  if (text.find("body") != std::string::npos) score += 30;
+  if (text.find("eye") != std::string::npos ||
+      text.find("teeth") != std::string::npos ||
+      text.find("hair") != std::string::npos) score -= 200;
+  if (material.hasOpenPBRSurface) score += 10;
+  return score;
+}
 
 json openPbrValues(const DrawLightRtOpenPBRCPU& p) {
   return {{"base_weight", p.baseWeight}, {"base_color", arr3(p.baseColor)},
@@ -354,15 +377,35 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
   }
 
   if (tool == "vchar_skin_profile") {
-    if (!args.contains("material_id") ||
-        !args["material_id"].is_number_integer()) {
-      err = "vchar_skin_profile requires integer material_id";
-      return json::object();
+    int id = -1;
+    std::string selection = "explicit";
+    if (args.contains("material_id")) {
+      if (!args["material_id"].is_number_integer()) {
+        err = "vchar_skin_profile material_id must be integer";
+        return json::object();
+      }
+      id = args["material_id"].get<int>();
+    } else {
+      selection = "auto-name";
+      int bestScore = 0;
+      for (size_t i = 0; i < draw_.materials.size(); ++i) {
+        const DrawMaterialCPU& candidate = draw_.materials[i];
+        if (!candidate.hasOpenPBRSurface && !candidate.hasLightRtOpenPBR) continue;
+        const int score = skinMaterialScore(candidate);
+        if (score > bestScore) {
+          bestScore = score;
+          id = static_cast<int>(i);
+        }
+      }
+      if (id < 0) {
+        err = "vchar_skin_profile could not auto-detect a skin material; pass material_id";
+        return json::object();
+      }
     }
-    const int id = args["material_id"].get<int>();
     if (id < 0 || static_cast<size_t>(id) >= draw_.materials.size() ||
-        !draw_.materials[static_cast<size_t>(id)].hasOpenPBRSurface) {
-      err = "vchar_skin_profile requires an OpenPBR-capable material";
+        (!draw_.materials[static_cast<size_t>(id)].hasOpenPBRSurface &&
+         !draw_.materials[static_cast<size_t>(id)].hasLightRtOpenPBR)) {
+      err = "vchar_skin_profile requires an OpenPBR or realtime-PBR material";
       return json::object();
     }
     const float strength = std::max(
@@ -392,7 +435,9 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
     pendingOpenPbrEdit_.constants = p;
     pendingOpenPbrEdit_.makeConstant = false;
     hasPendingOpenPbrEdit_ = true;
-    return {{"pending", true}, {"material_id", id}, {"profile", "human-skin-v1"},
+    return {{"pending", true}, {"material_id", id},
+            {"material_name", material.name}, {"selection", selection},
+            {"profile", "human-skin-v1"},
             {"subsurface_weight", p.subsurface},
             {"subsurface_radius", json::array({p.subsurfaceRadius[0],
                                                 p.subsurfaceRadius[1],
