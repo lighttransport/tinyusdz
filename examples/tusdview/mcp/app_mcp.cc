@@ -249,11 +249,19 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                                   {"cuda", "deferred"}, {"hip", "deferred"}}},
             {"deformation", json{{"usdskel_skinning", true},
                                   {"blendshapes", true},
-                                  {"external_adapter", "overlay"}}},
+                                  {"adapters", json::array({"usdskel", "usd-overlay"})},
+                                  {"external_adapter", "json-rpc-overlay"}}},
             {"physics", json{{"mode", "diagnostic-rigid-body-preview"},
                               {"simulation", true},
-                              {"mesh_writeback", false},
+                              {"kinematic_stage_to_solver", true},
+                              {"dynamic_solver_to_stage", true},
+                              {"mesh_writeback", true},
+                              {"visualization", json::array(
+                                  {"bodies", "colliders", "joints", "contacts"})},
                               {"loader", "legacy"}}},
+            {"skin", json{{"material_model", "openpbr-multilobe"},
+                            {"profile", "human-skin-v1"},
+                            {"sss", true}, {"fuzz", true}, {"coat", true}}},
             {"debug", json{{"skeleton", true}, {"skin_weights", true},
                             {"blend_influence", true},
                             {"normals_tangents", true}}},
@@ -269,6 +277,25 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
             {"authoritative_result", "USD overlay layer"},
             {"input_path", loaded_.filepath},
             {"facial_first", true}, {"body", "next"}};
+  }
+
+  if (tool == "vchar_deformer") {
+    const std::string op = args.value("op", std::string());
+    if (op == "status") {
+      return {{"adapters", json::array({
+                  json{{"name", "usdskel"}, {"active", true},
+                       {"capabilities", json::array({"skinning", "blendshapes", "inbetweens"})}},
+                  json{{"name", "usd-overlay"}, {"active", true},
+                       {"capabilities", json::array({"controls", "correctives", "physics-metadata"})}},
+                  json{{"name", "external-jsonrpc"}, {"active", false},
+                       {"state", "worker-launcher-pending"}}})},
+              {"evaluation_order", json::array({"overlay", "blendshape", "skinning", "physics"})}};
+    }
+    if (op == "apply-overlay") {
+      return mcpVirtualHuman("apply_rig_overlay", args, err);
+    }
+    err = "vchar_deformer op must be status or apply-overlay";
+    return json::object();
   }
 
   if (tool == "apply_rig_overlay") {
@@ -324,6 +351,52 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       }
     }
     return {{"mode", mode.empty() ? "unchanged" : mode}, {"updated", true}};
+  }
+
+  if (tool == "vchar_skin_profile") {
+    if (!args.contains("material_id") ||
+        !args["material_id"].is_number_integer()) {
+      err = "vchar_skin_profile requires integer material_id";
+      return json::object();
+    }
+    const int id = args["material_id"].get<int>();
+    if (id < 0 || static_cast<size_t>(id) >= draw_.materials.size() ||
+        !draw_.materials[static_cast<size_t>(id)].hasOpenPBRSurface) {
+      err = "vchar_skin_profile requires an OpenPBR-capable material";
+      return json::object();
+    }
+    const float strength = std::max(
+        0.0f, std::min(1.0f, args.value("strength", 0.65f)));
+    const DrawMaterialCPU& material = draw_.materials[static_cast<size_t>(id)];
+    DrawLightRtOpenPBRCPU p = material.lightRtOpenPBR;
+    p.metalness = 0.0f;
+    p.diffuseRoughness = 0.32f;
+    p.specularWeight = 0.72f;
+    p.specularRoughness = 0.42f;
+    p.specularIor = 1.4f;
+    p.subsurface = strength;
+    p.subsurfaceScale = 0.12f;
+    p.subsurfaceRadius[0] = 1.0f;
+    p.subsurfaceRadius[1] = 0.35f;
+    p.subsurfaceRadius[2] = 0.2f;
+    p.subsurfaceColor[0] = std::min(1.0f, p.baseColor[0] * 1.08f);
+    p.subsurfaceColor[1] = p.baseColor[1] * 0.72f;
+    p.subsurfaceColor[2] = p.baseColor[2] * 0.58f;
+    p.sheenWeight = 0.08f;
+    p.sheenRoughness = 0.55f;
+    p.sheenColor[0] = 1.0f; p.sheenColor[1] = 0.72f; p.sheenColor[2] = 0.62f;
+    p.coatWeight = 0.06f;
+    p.coatRoughness = 0.3f;
+    tinyusdz::tydra::ClampRealtimePbrMaterial(&p);
+    pendingOpenPbrEdit_.materialId = id;
+    pendingOpenPbrEdit_.constants = p;
+    pendingOpenPbrEdit_.makeConstant = false;
+    hasPendingOpenPbrEdit_ = true;
+    return {{"pending", true}, {"material_id", id}, {"profile", "human-skin-v1"},
+            {"subsurface_weight", p.subsurface},
+            {"subsurface_radius", json::array({p.subsurfaceRadius[0],
+                                                p.subsurfaceRadius[1],
+                                                p.subsurfaceRadius[2]})}};
   }
 
   std::vector<VcharControl> authoredControls;
@@ -387,6 +460,10 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         physicsWorld_.timestep = std::max(
             1.0e-5f, std::min(0.1f, args["timestep"].get<float>()));
       }
+      if (!tinyusdz::tydra::SyncStageToPhysWorld(loaded_.stage, &physicsWorld_,
+                                                 &err)) {
+        return json::object();
+      }
       for (int i = 0; i < steps; ++i) {
         if (tydra_phys_step(&physicsWorld_) != TYDRA_PHYS_OK) {
           err = "vchar_physics solver step failed";
@@ -421,6 +498,16 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         lines.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
         lines.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
       };
+      auto addBox = [&](const TydraPhysAABB& box, float r, float g, float b) {
+        const float x0 = box.min.x, y0 = box.min.y, z0 = box.min.z;
+        const float x1 = box.max.x, y1 = box.max.y, z1 = box.max.z;
+        addLine(x0,y0,z0,x1,y0,z0,r,g,b); addLine(x0,y1,z0,x1,y1,z0,r,g,b);
+        addLine(x0,y0,z1,x1,y0,z1,r,g,b); addLine(x0,y1,z1,x1,y1,z1,r,g,b);
+        addLine(x0,y0,z0,x0,y1,z0,r,g,b); addLine(x1,y0,z0,x1,y1,z0,r,g,b);
+        addLine(x0,y0,z1,x0,y1,z1,r,g,b); addLine(x1,y0,z1,x1,y1,z1,r,g,b);
+        addLine(x0,y0,z0,x0,y0,z1,r,g,b); addLine(x1,y0,z0,x1,y0,z1,r,g,b);
+        addLine(x0,y1,z0,x0,y1,z1,r,g,b); addLine(x1,y1,z0,x1,y1,z1,r,g,b);
+      };
       for (int32_t i = 0; i < physicsWorld_.num_bodies; ++i) {
         const TydraPhysBody& body = physicsWorld_.bodies[i];
         const float x = body.xform.position.x;
@@ -432,6 +519,41 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         addLine(x - extent, y, z, x + extent, y, z, r, g, 0.1f);
         addLine(x, y - extent, z, x, y + extent, z, r, g, 0.1f);
         addLine(x, y, z - extent, x, y, z + extent, r, g, 0.1f);
+      }
+      for (int32_t i = 0; i < physicsWorld_.num_colliders; ++i) {
+        const TydraPhysCollider& collider = physicsWorld_.colliders[i];
+        if (collider.body_index < 0 ||
+            collider.body_index >= physicsWorld_.num_bodies) continue;
+        TydraPhysAABB box;
+        tydra_phys_collider_aabb(&collider,
+            &physicsWorld_.bodies[collider.body_index].xform, &box);
+        addBox(box, 0.15f, 0.75f, 1.0f);
+      }
+      for (int32_t i = 0; i < physicsWorld_.num_joints; ++i) {
+        const TydraPhysJoint& joint = physicsWorld_.joints[i];
+        TydraPhysTransform a = joint.local_anchor_a;
+        TydraPhysTransform b = joint.local_anchor_b;
+        if (joint.body_a >= 0 && joint.body_a < physicsWorld_.num_bodies) {
+          a = tp_xform_mul(physicsWorld_.bodies[joint.body_a].xform, a);
+        }
+        if (joint.body_b >= 0 && joint.body_b < physicsWorld_.num_bodies) {
+          b = tp_xform_mul(physicsWorld_.bodies[joint.body_b].xform, b);
+        }
+        addLine(a.position.x, a.position.y, a.position.z,
+                b.position.x, b.position.y, b.position.z, 0.9f, 0.2f, 0.9f);
+        const TydraPhysVec3 axis = tp_q_rotate(a.rotation, joint.axis);
+        addLine(a.position.x, a.position.y, a.position.z,
+                a.position.x + axis.x * extent * 2.0f,
+                a.position.y + axis.y * extent * 2.0f,
+                a.position.z + axis.z * extent * 2.0f, 1.0f, 0.2f, 0.8f);
+      }
+      for (int32_t i = 0; i < physicsWorld_.num_contacts; ++i) {
+        const TydraPhysContact& contact = physicsWorld_.contacts[i];
+        const float length = std::max(extent, contact.depth * 4.0f);
+        addLine(contact.point.x, contact.point.y, contact.point.z,
+                contact.point.x + contact.normal.x * length,
+                contact.point.y + contact.normal.y * length,
+                contact.point.z + contact.normal.z * length, 1.0f, 0.1f, 0.1f);
       }
       gui_.setPhysicsDebugLines(std::move(lines));
     }

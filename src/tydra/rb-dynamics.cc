@@ -1525,6 +1525,34 @@ bool BuildPhysWorld(
       TydraPhysBody body;
       tydra_phys_body_default(&body);
 
+      PhysicsRigidBodyAPI rigid_api;
+      if (GetPhysicsRigidBodyAPI(prim, &rigid_api)) {
+        if (!rigid_api.rigidBodyEnabled.get_value()) {
+          body.body_type = TYDRA_PHYS_BODY_STATIC;
+          body.flags &= ~TYDRA_PHYS_BODY_FLAG_GRAVITY;
+        } else if (rigid_api.kinematicEnabled.get_value()) {
+          body.body_type = TYDRA_PHYS_BODY_KINEMATIC;
+          body.flags &= ~TYDRA_PHYS_BODY_FLAG_GRAVITY;
+        }
+        if (rigid_api.startsAsleep.get_value()) {
+          body.flags |= TYDRA_PHYS_BODY_FLAG_SLEEPING;
+        }
+        if (rigid_api.velocity.authored()) {
+          value::vector3f velocity;
+          const auto authored = rigid_api.velocity.get_value();
+          if (authored.has_value() && authored.value().get_scalar(&velocity)) {
+            body.linear_velocity = tp_v3(velocity[0], velocity[1], velocity[2]);
+          }
+        }
+        if (rigid_api.angularVelocity.authored()) {
+          value::vector3f velocity;
+          const auto authored = rigid_api.angularVelocity.get_value();
+          if (authored.has_value() && authored.value().get_scalar(&velocity)) {
+            body.angular_velocity = tp_v3(velocity[0], velocity[1], velocity[2]);
+          }
+        }
+      }
+
       if (const Xformable *xformable = GetXformable(prim)) {
         auto matrix = xformable->GetLocalMatrix();
         if (matrix) {
@@ -1781,6 +1809,47 @@ bool SyncPhysWorldToStage(
       }
     });
   if (overflow || body_index != world.num_bodies) {
+    if (err) *err = "Rigid-body count no longer matches the source Stage";
+    return false;
+  }
+  return true;
+}
+
+bool SyncStageToPhysWorld(const Stage &stage, TydraPhysWorld *world,
+                          std::string *err) {
+  if (!world) {
+    if (err) *err = "world is null";
+    return false;
+  }
+  int32_t body_index = 0;
+  bool overflow = false;
+  TraversePrims(stage.root_prims(), "",
+    [&](const Prim &prim, const std::string &) {
+      if (!HasAPISchema(prim, APISchemas::APIName::PhysicsRigidBodyAPI)) return;
+      if (body_index >= world->num_bodies) {
+        overflow = true;
+        return;
+      }
+      TydraPhysBody &body = world->bodies[body_index++];
+      if (body.body_type != TYDRA_PHYS_BODY_KINEMATIC) return;
+      const Xformable *xformable = GetXformable(prim);
+      if (!xformable) return;
+      auto matrix = xformable->GetLocalMatrix();
+      if (!matrix) return;
+      value::double3 translation, scale;
+      value::quatd rotation;
+      if (!decompose(matrix.value(), &translation, &rotation, &scale)) return;
+      body.xform.position = tp_v3(static_cast<float>(translation[0]),
+                                  static_cast<float>(translation[1]),
+                                  static_cast<float>(translation[2]));
+      body.xform.rotation = tp_q(static_cast<float>(rotation[0]),
+                                 static_cast<float>(rotation[1]),
+                                 static_cast<float>(rotation[2]),
+                                 static_cast<float>(rotation[3]));
+      body.linear_velocity = tp_v3(0.0f, 0.0f, 0.0f);
+      body.angular_velocity = tp_v3(0.0f, 0.0f, 0.0f);
+    });
+  if (overflow || body_index != world->num_bodies) {
     if (err) *err = "Rigid-body count no longer matches the source Stage";
     return false;
   }
