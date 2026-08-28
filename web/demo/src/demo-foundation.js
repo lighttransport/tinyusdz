@@ -138,7 +138,7 @@ class DemoApp {
             <p>${escapeHTML(this.config.subtitle || '')}</p>
           </div>
           <div class="demo-actions">
-            <button id="open-file" type="button">Open USD</button>
+            <button id="open-file" type="button">${escapeHTML(this.config.openFileLabel || 'Open USD')}</button>
             ${this.config.enableFolderInput ? '<button id="open-folder" type="button">Open Export Folder</button>' : ''}
             <button id="load-default" type="button">Load Sample</button>
             <button id="fit-scene" type="button">Fit</button>
