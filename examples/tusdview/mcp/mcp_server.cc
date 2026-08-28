@@ -236,10 +236,10 @@ json MCPServer::buildToolsList() const {
       json::object()));
   tools.push_back(tool(
       "vchar_skin_profile",
-      "Apply a tuned realtime multilobe skin preset to one OpenPBR material.",
+      "Apply a tuned realtime multilobe skin preset; omit material_id to auto-detect face/skin/head/body.",
       {{"material_id", {{"type", "integer"}}},
        {"strength", numProp("SSS strength in [0,1], default 0.65")}},
-      json::array({"material_id"})));
+      json::array()));
   tools.push_back(tool(
       "vchar_deformer",
       "Inspect built-in deformer adapters or apply a non-destructive USD overlay adapter.",

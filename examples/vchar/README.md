@@ -96,4 +96,7 @@ RT), including authored widths and curve tangents. Skin uses the shared
 MaterialX/OpenPBR multilobe model. `vchar_skin_profile` tunes subsurface color,
 radius, and scale together with dual specular, fuzz, and coat response; raster
 uses the viewer's realtime SSS approximation while RT evaluates the same
-material data through LightRT.
+material data through LightRT. Omit `material_id` to select the strongest
+face/skin/head/body material-name match automatically. Explicit OpenPBR and the
+shared realtime-PBR fallback are both accepted, which covers converted
+UsdPreviewSurface/MaterialX assets without discarding their texture inputs.
