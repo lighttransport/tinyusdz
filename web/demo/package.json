@@ -11,9 +11,10 @@
     "generate:blender-hair": "node scripts/generate-blender-hair.mjs",
     "check:blender-hair": "node scripts/generate-blender-hair.mjs --check",
     "test:hair-demo": "node tests/hair-ribbon.mjs",
+    "test:metahuman-demo": "node tests/metahuman-fixture.mjs",
     "prepare:local-tinyusdz": "bash scripts/prepare-local-tinyusdz.sh",
     "dev": "bash scripts/prepare-local-tinyusdz.sh && vite --mode development",
-    "build": "npm run check:openchess && npm run check:hair-demo && npm run check:blender-hair && vite build",
+    "build": "npm run check:openchess && npm run check:hair-demo && npm run test:metahuman-demo && npm run check:blender-hair && vite build",
     "preview": "vite preview",
     "capture-previews": "node scripts/capture-previews.mjs"
   },

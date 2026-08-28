@@ -97,6 +97,23 @@ Implementation references: the MaterialX PBR specification's Chiang Hair BSDF,
 NVIDIA's real-time hair course (camera-facing ribbon geometry), and McGuire and
 Bavoil's *Weighted Blended Order-Independent Transparency* (JCGT 2013).
 
+### MetaHuman WebGL2 showcase
+
+`metahuman.html` is a WebGL2-only local-export viewer for the output from
+`tools/ue-metahuman-usd`. Select **Open Export Folder** and choose the folder
+containing `MetaHuman_Hero.usda`; the demo resolves sibling head/body USD
+layers without uploading or committing the character. It uses the shared
+UsdSkel GPU skinning and generic USD blendshape animation paths, MaterialX /
+OpenPBR skin with a bounded wrapped-diffusion SSS approximation, and the
+weighted-transparent R/TT/TRT groom ribbon renderer. The public
+`assets/metahuman-fixture` is a deliberately tiny proxy used for browser QA,
+not a MetaHuman asset.
+
+DNA/RigLogic deformation and Unreal PhysicsAsset simulation are reported as
+deferred. The original MetaHuman remains outside the repository; for the
+offline Ada export, fitted face DNA requires the opt-in UE cloud auto-rigging
+step described by the exporter documentation.
+
 ### How it works
 
 1. `prepare-local-tinyusdz.sh` configures two CMake builds:

@@ -139,6 +139,7 @@ class DemoApp {
           </div>
           <div class="demo-actions">
             <button id="open-file" type="button">Open USD</button>
+            ${this.config.enableFolderInput ? '<button id="open-folder" type="button">Open Export Folder</button>' : ''}
             <button id="load-default" type="button">Load Sample</button>
             <button id="fit-scene" type="button">Fit</button>
           </div>
@@ -163,6 +164,7 @@ class DemoApp {
           </aside>
         </main>
         <input id="file-input" type="file" accept=".usd,.usda,.usdc,.usdz" hidden>
+        ${this.config.enableFolderInput ? '<input id="folder-input" type="file" webkitdirectory multiple hidden>' : ''}
       </div>
     `;
 
@@ -174,6 +176,8 @@ class DemoApp {
     this.dropHint = this.root.querySelector('#drop-hint');
     this.fileInput = this.root.querySelector('#file-input');
     this.root.querySelector('#open-file').addEventListener('click', () => this.fileInput.click());
+    this.folderInput = this.root.querySelector('#folder-input');
+    this.root.querySelector('#open-folder')?.addEventListener('click', () => this.folderInput?.click());
     this.root.querySelector('#load-default').addEventListener('click', () => this.loadDefaultAsset());
     this.root.querySelector('#fit-scene').addEventListener('click', () => this.fitScene());
     this.setNotes([
@@ -233,6 +237,11 @@ class DemoApp {
       const file = this.fileInput.files?.[0];
       if (file) this.loadFile(file);
       this.fileInput.value = '';
+    });
+    this.folderInput?.addEventListener('change', () => {
+      const files = Array.from(this.folderInput.files || []);
+      if (files.length) this.loadFolder(files);
+      this.folderInput.value = '';
     });
 
     this.viewport.addEventListener('dragenter', (event) => {
@@ -400,6 +409,35 @@ class DemoApp {
     }
   }
 
+  async loadFolder(files) {
+    await this.ensureLoader();
+    const byKey = new Map();
+    for (const file of files) {
+      const relative = normalizedAssetKey(file.webkitRelativePath || file.name);
+      byKey.set(relative, file);
+      byKey.set(normalizedAssetKey(file.name), file);
+    }
+    this.localExportFiles = byKey;
+    const hero = files.find((file) => /(^|\/)MetaHuman_Hero\.usda$/i.test(file.webkitRelativePath || file.name));
+    if (!hero) {
+      throw new Error('The selected folder does not contain MetaHuman_Hero.usda.');
+    }
+    this.setStatus(`Reading MetaHuman export folder (${files.length} files)...`);
+    try {
+      const data = new Uint8Array(await hero.arrayBuffer());
+      this.currentSourceBytes = new Uint8Array(data);
+      this.currentSourceName = hero.name;
+      this.currentSourceUrl = '';
+      const usd = await this.loadComposedNextFromFiles(data, hero.webkitRelativePath || hero.name, byKey);
+      await this.displayUSD(usd, 'MetaHuman export folder');
+      Report.done();
+    } catch (error) {
+      console.error(error);
+      this.setStatus(`Failed: ${error.message}`);
+      Report.err(error, 'Loading MetaHuman export folder');
+    }
+  }
+
   async fetchBytes(url, label = url) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status} loading ${label}`);
@@ -486,6 +524,41 @@ class DemoApp {
         throw new Error(`Unexpected next composition status: ${step.status}`);
       }
       throw new Error('Next composition exceeded the dependency-layer limit.');
+    } finally {
+      session.end();
+      session.delete?.();
+    }
+  }
+
+  async loadComposedNextFromFiles(rootBytes, rootName, filesByKey) {
+    const Session = this.loader.native_?.NextFlattenSession;
+    if (typeof Session !== 'function') throw new Error('NextFlattenSession is unavailable in this WASM build.');
+    const session = new Session();
+    const rootKey = normalizedAssetKey(rootName);
+    const rootDirectory = rootKey.includes('/') ? rootKey.slice(0, rootKey.lastIndexOf('/') + 1) : '';
+    const begin = session.begin(rootBytes, rootKey.split('/').pop(), true);
+    if (!begin?.success) {
+      session.delete?.();
+      throw new Error(begin?.error || 'Failed to start local composition.');
+    }
+    try {
+      for (let iteration = 0; iteration < 64; iteration++) {
+        const step = session.step(null);
+        if (!step?.success) throw new Error(step?.error || 'Local composition failed.');
+        if (step.status === 'need-layer') {
+          const key = normalizedAssetKey(step.key);
+          const file = filesByKey.get(key) || filesByKey.get(normalizedAssetKey(rootDirectory + key));
+          if (!file) throw new Error(`Missing referenced USD layer: ${step.key}`);
+          const provided = session.provideLayer(step.key, new Uint8Array(await file.arrayBuffer()));
+          if (!provided?.success) throw new Error(provided?.error || `Failed to provide ${step.key}.`);
+          continue;
+        }
+        if (step.status === 'done' && step.data) {
+          return this.parseUSD(new Uint8Array(step.data), `${rootKey}.flattened.usdc`);
+        }
+        throw new Error(`Unexpected local composition status: ${step.status}`);
+      }
+      throw new Error('Local composition exceeded the dependency-layer limit.');
     } finally {
       session.end();
       session.delete?.();

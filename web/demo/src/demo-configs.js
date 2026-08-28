@@ -63,6 +63,24 @@ export const DEMOS = [
     href: './usdlux.html'
   },
   {
+    id: 'metahuman',
+    title: 'MetaHuman WebGL2 Rendering',
+    subtitle: 'Local UE MetaHuman export with UsdSkel, blendshapes, MaterialX skin SSS, and strand hair.',
+    // A tiny public proxy validates the complete path; the real character is
+    // selected through the export-folder picker and is never shipped here.
+    defaultAsset: './assets/metahuman-fixture/MetaHuman_Hero.usda',
+    preferredMaterialType: 'openpbr',
+    requiredBackend: 'next',
+    enableFolderInput: true,
+    useComposition: true,
+    enableSkinning: true,
+    enableAnimation: true,
+    preserveBuildData: true,
+    materialModeLabel: 'MaterialX/OpenPBR skin and Chiang-hair approximations',
+    image: './assets/previews/hair-fur.svg',
+    href: './metahuman.html'
+  },
+  {
     id: 'skinning',
     title: 'Skinning',
     subtitle: 'Builds skeletons and binds CesiumMan USDZ skinned meshes with helpers visible.',
