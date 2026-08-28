@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tinyusdz.github.io/schemas/vchar-autorigger-1.json",
+  "title": "vchar external auto-rigger JSON-RPC payloads",
+  "type": "object",
+  "required": ["jsonrpc", "method"],
+  "properties": {
+    "jsonrpc": { "const": "2.0" },
+    "id": { "type": ["integer", "string"] },
+    "method": {
+      "enum": ["rig.initialize", "rig.inspect", "rig.submit", "rig.status", "rig.cancel"]
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "asset_path": { "type": "string" },
+        "output_layer": { "type": "string", "pattern": "\\.usd[ac]$" },
+        "job_id": { "type": "string" },
+        "scope": { "enum": ["facial", "body", "all"] },
+        "options": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -47,6 +47,9 @@ class McpHost {
   // restarting the viewer. Implementations keep the last good module on error.
   virtual nlohmann::json mcpShaderReload(const nlohmann::json& args,
                                          std::string& err) = 0;
+  virtual nlohmann::json mcpVirtualHuman(const std::string& tool,
+                                         const nlohmann::json& args,
+                                         std::string& err) = 0;
 
   // Forward an unrecognized tool name to the tinyusdz library tool dispatcher
   // (tydra::mcp::CallTool), run against a snapshot of the loaded Stage.

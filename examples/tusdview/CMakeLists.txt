@@ -225,6 +225,15 @@ endif()
 add_executable(${EXAMPLE_TARGET}
     ${TUSDVIEW_SOURCES}
     ${TUSDVIEW_COMMON_SOURCES})
+# vchar is a profile of the same native runtime. Keeping one executable image is
+# deliberate: GL/Vulkan raster, Vulkan ray query, skinning, morphing and hair
+# must not acquire a second implementation. argv[0] selects the focused UI and
+# capability policy. The copy is emitted next to tusdview for scripts/packages.
+add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:${EXAMPLE_TARGET}>
+            $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>/vchar$<TARGET_FILE_SUFFIX:${EXAMPLE_TARGET}>
+    COMMENT "Creating vchar virtual-human renderer profile")
 add_dependencies(${EXAMPLE_TARGET} tusdview_lightrt_mtlx)
 if(NOT MSVC)
   target_include_directories(${EXAMPLE_TARGET} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)

@@ -1626,13 +1626,14 @@ bool App::initWindow(std::string* err) {
     if (workW > 0 && winW > workW) winW = workW;
     if (workH > 0 && winH > workH) winH = workH;
   }
-  window_ = glfwCreateWindow(winW, winH, "tusdview", nullptr, nullptr);
+  const char* windowTitle = virtualHumanProfile_ ? "vchar" : "tusdview";
+  window_ = glfwCreateWindow(winW, winH, windowTitle, nullptr, nullptr);
   if (!window_ && backend_ == Backend::GL) {
     // 4.1 unavailable (e.g. 3.3-only hardware): retry at 3.3 core. Tessellation
     // displacement is then unavailable; coarse per-vertex displacement still works.
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    window_ = glfwCreateWindow(winW, winH, "tusdview", nullptr, nullptr);
+    window_ = glfwCreateWindow(winW, winH, windowTitle, nullptr, nullptr);
   }
   if (!window_) {
     *err = "glfwCreateWindow failed";

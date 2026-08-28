@@ -6,6 +6,7 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <map>
 #include <string>
 #include <unordered_map>
 
@@ -204,6 +205,145 @@ json App::mcpListOpenPbrMaterials(const json&, std::string&) {
     }
   }
   return {{"count", materials.size()}, {"materials", std::move(materials)}};
+}
+
+json App::mcpVirtualHuman(const std::string& tool, const json& args,
+                          std::string& err) {
+  std::map<std::string, json> targets;
+  for (const DrawMeshCPU& mesh : draw_.meshes) {
+    for (const MorphTargetCPU& morph : mesh.morphs) {
+      json& target = targets[morph.name];
+      if (target.empty()) {
+        target = {{"name", morph.name}, {"min", -1.0}, {"max", 1.0},
+                  {"default", 0.0}, {"mesh_count", 0},
+                  {"affected_vertex_count", 0}};
+      }
+      target["mesh_count"] = target["mesh_count"].get<size_t>() + 1u;
+      target["affected_vertex_count"] =
+          target["affected_vertex_count"].get<size_t>() + morph.vtx.size();
+    }
+  }
+
+  if (tool == "vchar_status") {
+    size_t skinnedMeshes = 0;
+    size_t curveGroups = 0;
+    for (const DrawMeshCPU& mesh : draw_.meshes) {
+      if (!mesh.jointWt.empty()) ++skinnedMeshes;
+    }
+    curveGroups = draw_.curves.size();
+    return {{"profile", virtualHumanProfile_ ? "vchar" : "tusdview"},
+            {"input", "USD/USDA/USDC/USDZ"},
+            {"raster", json{{"opengl", true}, {"vulkan", true}}},
+            {"ray_tracing", json{{"vulkan_ray_query", true},
+                                  {"cuda", "deferred"}, {"hip", "deferred"}}},
+            {"deformation", json{{"usdskel_skinning", true},
+                                  {"blendshapes", true},
+                                  {"external_adapter", "overlay"}}},
+            {"physics", json{{"mode", "metadata-inspection"},
+                              {"simulation", false}}},
+            {"debug", json{{"skeleton", true}, {"skin_weights", true},
+                            {"blend_influence", true},
+                            {"normals_tangents", true}}},
+            {"skinned_mesh_count", skinnedMeshes},
+            {"blendshape_count", targets.size()},
+            {"hair_curve_group_count", curveGroups}};
+  }
+
+  if (tool == "autorigger_inspect") {
+    return {{"transport", "json-rpc-2.0-stdio"},
+            {"methods", json::array({"rig.initialize", "rig.inspect",
+                                      "rig.submit", "rig.status", "rig.cancel"})},
+            {"authoritative_result", "USD overlay layer"},
+            {"input_path", loaded_.filepath},
+            {"facial_first", true}, {"body", "next"}};
+  }
+
+  if (tool == "apply_rig_overlay") {
+    const std::string overlay = args.value("path", std::string());
+    if (overlay.empty() || loaded_.filepath.empty()) {
+      err = "apply_rig_overlay requires path and a loaded base asset";
+      return json::object();
+    }
+    if (overlay.find('@') != std::string::npos ||
+        loaded_.filepath.find('@') != std::string::npos) {
+      err = "apply_rig_overlay does not accept '@' in asset paths";
+      return json::object();
+    }
+    if (!std::filesystem::exists(overlay)) {
+      err = "apply_rig_overlay: overlay does not exist";
+      return json::object();
+    }
+    static uint64_t serial = 0;
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        ("vchar-rig-session-" + std::to_string(++serial) + ".usda");
+    std::ofstream stream(root, std::ios::binary | std::ios::trunc);
+    stream << "#usda 1.0\n(\n    subLayers = [\n        @" << overlay
+           << "@,\n        @" << loaded_.filepath << "@\n    ]\n)\n";
+    if (!stream) {
+      err = "apply_rig_overlay: could not create session root";
+      return json::object();
+    }
+    mcpTempFiles_.push_back(root);
+    startLoadAsync(root.string());
+    return {{"started", true}, {"base", loaded_.filepath},
+            {"overlay", overlay}, {"session_root", root.string()}};
+  }
+
+  if (tool == "vchar_debug") {
+    const std::string mode = args.value("mode", std::string());
+    if (args.contains("skeleton")) {
+      if (!args["skeleton"].is_boolean()) {
+        err = "vchar_debug skeleton must be boolean";
+        return json::object();
+      }
+      setShowSkeleton(args["skeleton"].get<bool>());
+    }
+    if (!mode.empty()) {
+      if (mode == "shaded") setRenderMode(RenderMode::Shaded);
+      else if (mode == "skin-weights") setRenderMode(RenderMode::SkinWeights);
+      else if (mode == "blend-influence") setRenderMode(RenderMode::BlendInfluence);
+      else if (mode == "normals") setRenderMode(RenderMode::Normals);
+      else if (mode == "tangents") setRenderMode(RenderMode::Tangent);
+      else {
+        err = "vchar_debug: unknown mode";
+        return json::object();
+      }
+    }
+    return {{"mode", mode.empty() ? "unchanged" : mode}, {"updated", true}};
+  }
+
+  if (tool == "list_blendshapes" || tool == "list_facial_controls") {
+    json values = json::array();
+    for (const auto& entry : targets) values.push_back(entry.second);
+    return {{"count", values.size()},
+            {tool == "list_blendshapes" ? "blendshapes" : "controls",
+             std::move(values)},
+            {"mapping", "direct-blendshape-v1"}};
+  }
+
+  const char* field = tool == "set_facial_controls" ? "controls" : "weights";
+  if (!args.contains(field) || !args[field].is_object()) {
+    err = tool + " requires object '" + field + "'";
+    return json::object();
+  }
+  json applied = json::object();
+  json unknown = json::array();
+  for (auto it = args[field].begin(); it != args[field].end(); ++it) {
+    if (!it.value().is_number()) {
+      err = tool + ": every value must be numeric";
+      return json::object();
+    }
+    if (targets.find(it.key()) == targets.end()) {
+      unknown.push_back(it.key());
+      continue;
+    }
+    const float weight = std::max(-1.0f, std::min(1.0f, it.value().get<float>()));
+    setBlendWeight(it.key(), weight);
+    applied[it.key()] = weight;
+  }
+  return {{"applied", std::move(applied)}, {"unknown", std::move(unknown)},
+          {"mapping", "direct-blendshape-v1"}};
 }
 
 json App::mcpOpenPbrMaterial(const json& args, std::string& err) {
