@@ -344,6 +344,7 @@ class OpenChessRendering {
       maxBlur: 0.015, dofResolution: 0.75,
       environment: true, environmentBackground: true, environmentIntensity: 1.4,
       backgroundIntensity: 0.7, backgroundBlur: 0.18, environmentRotation: 0,
+      shadows: true,
       exposureEV: 0, toneMap: 'ACES 2.0 (approx)', displayTransform: 'sRGB',
       focusTarget: () => this.focusOnControlsTarget()
     };
@@ -391,6 +392,7 @@ class OpenChessRendering {
     display.add(this.params, 'backgroundIntensity', 0, 2, 0.01).name('Background intensity').onChange(() => this.updateDisplay());
     display.add(this.params, 'backgroundBlur', 0, 1, 0.01).name('Background blur').onChange(() => this.updateDisplay());
     display.add(this.params, 'environmentRotation', -180, 180, 1).name('Rotation').onChange(() => this.updateDisplay());
+    display.add(this.params, 'shadows').name('Raster shadows').onChange(() => this.updateShadows());
     display.add(this.params, 'exposureEV', -5, 5, 0.1).name('Exposure (EV)').onChange(() => this.updateDisplay());
     display.add(this.params, 'toneMap', Object.keys(TONE_MAPS)).name('Tone mapping').onChange(() => this.updateDisplay());
     display.add(this.params, 'displayTransform', ['sRGB', 'Linear sRGB']).name('Display transform').onChange(() => this.updateDisplay());
@@ -417,6 +419,36 @@ class OpenChessRendering {
       console.warn('[openchess] piece MaterialX fallback failed', error);
     }
     this.sssMaterialCount = applyApproximateSSS(this.app.world);
+    this.updateShadows();
+  }
+
+  updateShadows() {
+    const enabled = this.params.shadows && (this.mode === 'webgl' || this.mode === 'webgpu');
+    const light = this.app.keyLight;
+    light.castShadow = enabled;
+    light.shadow.mapSize.set(2048, 2048);
+    light.shadow.bias = -0.0002;
+    light.shadow.normalBias = 0.018;
+    const bounds = new THREE.Box3().setFromObject(this.app.world);
+    if (!bounds.isEmpty()) {
+      const center = bounds.getCenter(new THREE.Vector3());
+      const radius = Math.max(1, bounds.getBoundingSphere(new THREE.Sphere()).radius * 1.25);
+      light.target.position.copy(center);
+      if (!light.target.parent) this.app.lightGroup.add(light.target);
+      Object.assign(light.shadow.camera, {
+        left: -radius, right: radius, top: radius, bottom: -radius,
+        near: 0.1, far: Math.max(20, radius * 8)
+      });
+      light.shadow.camera.updateProjectionMatrix();
+    }
+    this.app.world.traverse((object) => {
+      if (!object.isMesh) return;
+      object.castShadow = enabled;
+      object.receiveShadow = enabled;
+    });
+    for (const renderer of [this.webglRenderer, this.webgpuRenderer]) {
+      if (renderer?.shadowMap) renderer.shadowMap.enabled = enabled;
+    }
   }
 
   updateNotes(extra = '') {
@@ -426,6 +458,7 @@ class OpenChessRendering {
       `<strong>${MODES[this.mode]}</strong><br><code>${gpu} ${cpu}</code>`,
       `<strong>MaterialX</strong><br><code>${this.sssMaterialCount || 0} material(s) use the lightweight raster SSS approximation.</code>`,
       `<strong>Raster DOF</strong><br><code>${this.params.dof ? 'Enabled' : 'Disabled'}; lightweight screen-space depth blur on WebGL2 raster.</code>`,
+      `<strong>Raster shadows</strong><br><code>${this.params.shadows ? 'Enabled' : 'Disabled'}; fitted 2048² directional shadow map.</code>`,
       '<strong>Asset</strong><br>The Open Chess Set is CC BY 4.0, Academy Software Foundation; original artwork by Moeen and Mujtaba Sayed.',
       extra
     ].filter(Boolean));
@@ -597,6 +630,7 @@ class OpenChessRendering {
   useWebGL() {
     this.stopRenderers();
     this.mode = 'webgl';
+    this.updateShadows();
     this.installCanvas(this.webglRenderer);
     this.updateNotes();
   }
@@ -623,6 +657,7 @@ class OpenChessRendering {
       const renderer = await this.ensureWebGPU();
       this.stopRenderers();
       this.mode = 'webgpu';
+      this.updateShadows();
       this.installCanvas(renderer);
       this.app.setStatus('WebGPU raster active');
       this.updateNotes('WebGPU raster uses the same canonical material records; raster SSS remains approximate.');
@@ -666,6 +701,7 @@ class OpenChessRendering {
   startTrace(mode) {
     this.stopRenderers();
     this.mode = mode;
+    this.updateShadows();
     this.traceCanvas.style.display = 'block';
     this.app.setStatus(`${MODES[mode]}: preparing scene...`);
     this.updateNotes('Progressive accumulation resets whenever the camera or render settings change.');

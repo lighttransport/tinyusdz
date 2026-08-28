@@ -1,0 +1,2 @@
+web/demo/public/assets/blender-hair-curves.usdc filter=lfs diff=lfs merge=lfs -text
+web/demo/public/assets/hair-fur-demo.usdc filter=lfs diff=lfs merge=lfs -text

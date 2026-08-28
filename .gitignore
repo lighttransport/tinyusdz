@@ -396,6 +396,9 @@ CMakeUserPresets.json
 # TinyUSDZ/Crate-Writer specific
 *.usdc
 *.usda
+# Reproducibly generated, size-gated web hair demo fixture.
+!web/demo/public/assets/hair-fur-demo.usdc
+!web/demo/public/assets/blender-hair-curves.usdc
 # But keep test fixtures
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
