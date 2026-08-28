@@ -2953,6 +2953,16 @@ class RenderStream {
     float occlusion = 1.0f;
     float emissive[3] = {0.0f, 0.0f, 0.0f};
     float opacity_threshold = -1.0f;
+    bool has_hair = false;
+    float hair_tint_r[3] = {0.42f, 0.12f, 0.035f};
+    float hair_tint_tt[3] = {0.32f, 0.075f, 0.018f};
+    float hair_tint_trt[3] = {0.16f, 0.035f, 0.008f};
+    float hair_roughness_r[2] = {0.22f, 0.35f};
+    float hair_roughness_tt[2] = {0.32f, 0.45f};
+    float hair_roughness_trt[2] = {0.42f, 0.55f};
+    float hair_absorption[3] = {0.35f, 0.8f, 1.4f};
+    float hair_ior = 1.55f;
+    float hair_cuticle_angle = 3.0f;
     std::string base_color_texture;
     std::string normal_texture;
     std::string roughness_texture;
@@ -4148,6 +4158,60 @@ class RenderStream {
     *ss << "|occtex=" << normTexKey_(m.occlusion_texture);
     *ss << "|emittex=" << normTexKey_(m.emissive_texture);
     *ss << "|opacitytex=" << normTexKey_(m.opacity_texture);
+    if (m.has_hair) {
+      *ss << "|hair=" << fmtFloat_(m.hair_tint_r[0]) << ","
+          << fmtFloat_(m.hair_tint_r[1]) << ","
+          << fmtFloat_(m.hair_tint_r[2]);
+      *ss << "|hairtt=" << fmtFloat_(m.hair_tint_tt[0]) << ","
+          << fmtFloat_(m.hair_tint_tt[1]) << ","
+          << fmtFloat_(m.hair_tint_tt[2]);
+      *ss << "|hairtrt=" << fmtFloat_(m.hair_tint_trt[0]) << ","
+          << fmtFloat_(m.hair_tint_trt[1]) << ","
+          << fmtFloat_(m.hair_tint_trt[2]);
+      *ss << "|hairior=" << fmtFloat_(m.hair_ior)
+          << "|haircuticle=" << fmtFloat_(m.hair_cuticle_angle);
+    }
+  }
+
+  static bool populateHairMaterial_(const tinyusdz::next::UsdPrim &prim,
+                                    MaterialRecord *rec) {
+    if (!prim.IsValid() || !rec) return false;
+    const tinyusdz::next::Value *id_value = prim.GetPropertyValue("info:id");
+    std::string shader_id;
+    if (id_value) {
+      if (const std::string *token = id_value->as_token()) shader_id = *token;
+      else if (const std::string *str = id_value->as_string()) shader_id = *str;
+    }
+    bool found = shader_id.find("chiang_hair_bsdf") != std::string::npos ||
+                 shader_id.find("principled_hair") != std::string::npos;
+    if (found) {
+      rec->has_hair = true;
+      auto color = [&](const char *name, float *out) {
+        const tinyusdz::next::Value *value = prim.GetPropertyValue(name);
+        if (value) (void)value->to_float3(out);
+      };
+      auto pair = [&](const char *name, float *out) {
+        const tinyusdz::next::Value *value = prim.GetPropertyValue(name);
+        if (value) (void)value->to_float2(out);
+      };
+      auto scalar = [&](const char *name, float *out) {
+        const tinyusdz::next::Value *value = prim.GetPropertyValue(name);
+        if (value) (void)value->to_float(out);
+      };
+      color("inputs:tint_R", rec->hair_tint_r);
+      color("inputs:tint_TT", rec->hair_tint_tt);
+      color("inputs:tint_TRT", rec->hair_tint_trt);
+      pair("inputs:roughness_R", rec->hair_roughness_r);
+      pair("inputs:roughness_TT", rec->hair_roughness_tt);
+      pair("inputs:roughness_TRT", rec->hair_roughness_trt);
+      color("inputs:absorption_coefficient", rec->hair_absorption);
+      scalar("inputs:ior", &rec->hair_ior);
+      scalar("inputs:cuticle_angle", &rec->hair_cuticle_angle);
+    }
+    for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+      found = populateHairMaterial_(child, rec) || found;
+    }
+    return found;
   }
 
   bool ensureRenderMaterial_(const tinyusdz::next::UsdPrim &mat) {
@@ -4534,6 +4598,7 @@ class RenderStream {
         rec.opacity_texture = TexturePath(render_scene_, openpbr.opacity);
       }
     }
+    (void)populateHairMaterial_(mat, &rec);
     std::ostringstream ss;
     appendMaterialKey_(rec, &ss);
     rec.key = ss.str();
@@ -5237,6 +5302,28 @@ class RenderStream {
     m.set("opacity", rec.opacity);
     m.set("occlusion", rec.occlusion);
     m.set("emissive", arr3_(rec.emissive));
+    if (rec.has_hair) {
+      emscripten::val hair = emscripten::val::object();
+      hair.set("model", std::string("chiang_hair_bsdf"));
+      hair.set("tintR", arr3_(rec.hair_tint_r));
+      hair.set("tintTT", arr3_(rec.hair_tint_tt));
+      hair.set("tintTRT", arr3_(rec.hair_tint_trt));
+      emscripten::val roughness_r = emscripten::val::array();
+      emscripten::val roughness_tt = emscripten::val::array();
+      emscripten::val roughness_trt = emscripten::val::array();
+      for (size_t i = 0; i < 2; ++i) {
+        roughness_r.set(i, rec.hair_roughness_r[i]);
+        roughness_tt.set(i, rec.hair_roughness_tt[i]);
+        roughness_trt.set(i, rec.hair_roughness_trt[i]);
+      }
+      hair.set("roughnessR", roughness_r);
+      hair.set("roughnessTT", roughness_tt);
+      hair.set("roughnessTRT", roughness_trt);
+      hair.set("absorptionCoefficient", arr3_(rec.hair_absorption));
+      hair.set("ior", rec.hair_ior);
+      hair.set("cuticleAngle", rec.hair_cuticle_angle);
+      m.set("hair", hair);
+    }
     if (rec.opacity_threshold > 0.0f) {
       m.set("opacityThreshold", rec.opacity_threshold);
     }

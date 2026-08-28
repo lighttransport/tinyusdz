@@ -1,6 +1,6 @@
 # TinyUSDZ Web Demos
 
-23 interactive browser demos for USD loading, MaterialX, skinning, animation,
+24 interactive browser demos for USD loading, MaterialX, hair/fur, skinning, animation,
 physics simulation, composition, export, and more.
 
 ## Quick Start
@@ -70,6 +70,32 @@ background. Lighting/background strength, blur, rotation, exposure, output
 transform, and tone mapping are interactive; a lightweight ACES 2.0-style
 display approximation is the default (with legacy ACES, AgX, and other curves
 available for comparison).
+
+### Hair and fur showcase
+
+`hair-fur.html` renders USD `BasisCurves` as batched camera-facing ribbons in
+WebGL2. Its lightweight Chiang/Principled Hair approximation provides R, TT,
+and TRT lobes, absorption, IOR, and cuticle controls sourced from MaterialX
+`ND_chiang_hair_bsdf`. Weighted blended transparency avoids sorting individual
+strands. The default sample is generated in Blender 5.2.1 and contains
+side-by-side `wStraight` and `wWavy` forms inspired by Cem Yuksel's public hair
+models: 10,000 strands, 360,000 control points, and a 4.36 MiB USDC. Blender
+exports Hair Curves natively. Since its MaterialX exporter reports Principled
+Hair as unsupported, the generator installs a deterministic Chiang Hair export
+hook before the final USDC conversion:
+
+```bash
+BLENDER=/path/to/blender npm run generate:blender-hair
+npm run test:hair-demo
+```
+
+The smaller procedural fixture remains reproducible with
+`npm run generate:hair-demo`. The demo also generates adjustable furball and
+wind-animated grass scenes at runtime.
+
+Implementation references: the MaterialX PBR specification's Chiang Hair BSDF,
+NVIDIA's real-time hair course (camera-facing ribbon geometry), and McGuire and
+Bavoil's *Weighted Blended Order-Independent Transparency* (JCGT 2013).
 
 ### How it works
 

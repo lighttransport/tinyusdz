@@ -6,9 +6,14 @@
   "scripts": {
     "prepare:openchess": "node scripts/prepare-openchess.mjs",
     "check:openchess": "node scripts/prepare-openchess.mjs --check",
+    "generate:hair-demo": "node scripts/generate-hair-demo.mjs",
+    "check:hair-demo": "node scripts/generate-hair-demo.mjs --check",
+    "generate:blender-hair": "node scripts/generate-blender-hair.mjs",
+    "check:blender-hair": "node scripts/generate-blender-hair.mjs --check",
+    "test:hair-demo": "node tests/hair-ribbon.mjs",
     "prepare:local-tinyusdz": "bash scripts/prepare-local-tinyusdz.sh",
     "dev": "bash scripts/prepare-local-tinyusdz.sh && vite --mode development",
-    "build": "npm run check:openchess && vite build",
+    "build": "npm run check:openchess && npm run check:hair-demo && npm run check:blender-hair && vite build",
     "preview": "vite preview",
     "capture-previews": "node scripts/capture-previews.mjs"
   },

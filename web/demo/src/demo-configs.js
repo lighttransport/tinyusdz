@@ -1,5 +1,17 @@
 export const DEMOS = [
   {
+    id: 'hair-fur',
+    title: 'USD Hair / Fur Rendering',
+    subtitle: 'BasisCurves, MaterialX Principled Hair, furballs, and grass in a lightweight WebGL renderer.',
+    defaultAsset: './assets/blender-hair-curves.usdc',
+    preferredMaterialType: 'auto',
+    materialModeLabel: 'MaterialX Chiang Hair BSDF approximation',
+    requiredBackend: 'next',
+    preserveBuildData: true,
+    image: './assets/previews/hair-fur.svg',
+    href: './hair-fur.html'
+  },
+  {
     id: 'materialx-openchess',
     title: 'MaterialX OpenChess Rendering',
     subtitle: 'OpenChessSet across lightweight raster and progressive reference renderers.',

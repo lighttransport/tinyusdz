@@ -556,10 +556,6 @@ class DemoApp {
       this.addUSDLights(usd);
     }
 
-    if (isNextScene(usd) && typeof usd.releaseBuildData === 'function') {
-      usd.releaseBuildData();
-    }
-
     this.applyEnvironmentToMaterials();
     this.updateStats(usd, label);
     if (this.config.enableMaterialGraph) {
@@ -571,6 +567,12 @@ class DemoApp {
     this.setStatus(`Loaded ${label}`);
     for (const callback of this.sceneChangedCallbacks) {
       try { callback({ usd, label, root: sceneRoot }); } catch (error) { console.error(error); }
+    }
+    // Scene extensions may need the copied mesh/curve arrays to build custom
+    // GPU representations. Release them only after synchronous callbacks have
+    // consumed the adapter data.
+    if (!this.config.preserveBuildData && isNextScene(usd) && typeof usd.releaseBuildData === 'function') {
+      usd.releaseBuildData();
     }
   }
 

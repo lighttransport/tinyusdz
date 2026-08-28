@@ -40,6 +40,7 @@ export default defineConfig(({ command, mode }) => {
         rollupOptions: {
           input: {
             main: path.resolve(__dirname, 'index.html'),
+            hair_fur: path.resolve(__dirname, 'hair-fur.html'),
             materialx_openchess: path.resolve(__dirname, 'materialx-openchess.html'),
             materialx_node: path.resolve(__dirname, 'materialx-node.html'),
             materialx_physical: path.resolve(__dirname, 'materialx-physical.html'),
