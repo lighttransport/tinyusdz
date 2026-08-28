@@ -236,6 +236,11 @@ uint64_t HostMemoryCapacityBytes() {
 }  // namespace
 
 int main(int argc, char** argv) {
+  const std::string executableName =
+      (argc > 0 && argv[0]) ? std::filesystem::path(argv[0]).filename().string()
+                            : std::string();
+  const bool virtualHumanProfile = executableName == "vchar" ||
+                                   executableName == "vchar.exe";
 #if defined(HAVE_VULKAN)
   tusdview::Backend backend = tusdview::Backend::Vulkan;
 #else
@@ -1648,6 +1653,7 @@ int main(int argc, char** argv) {
   }
 
   tusdview::App app(backend);
+  app.setVirtualHumanProfile(virtualHumanProfile);
   if (argc > 0 && argv[0] && argv[0][0]) {
     std::error_code executablePathError;
     const std::filesystem::path executablePath =
@@ -1892,7 +1898,7 @@ int main(int argc, char** argv) {
   app.setUseNextLoader(useNextLoader);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
-  app.setShowSkeleton(showSkeleton);
+  app.setShowSkeleton(showSkeleton || virtualHumanProfile);
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
@@ -1918,6 +1924,11 @@ int main(int argc, char** argv) {
   app.setThreaded(useThreaded);
   app.setAdaptiveQuality(adaptiveQuality && !headless && maxFrames < 0,
                          targetRenderFps, minRenderScale);
+  if (virtualHumanProfile && (wantCuda || wantHip)) {
+    LOGW("vchar CUDA/HIP RT slots are reserved but deferred; using GL/Vulkan");
+    wantCuda = false;
+    wantHip = false;
+  }
   app.setCudaRt(wantCuda);
   app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);

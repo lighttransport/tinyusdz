@@ -185,6 +185,44 @@ json MCPServer::buildToolsList() const {
        {"watch", {{"type", "boolean"},
                   {"description", "enable or disable file watching"}}}},
       json::array({"action"})));
+  tools.push_back(tool(
+      "vchar_status",
+      "Report virtual-human renderer, deformation, hair and physics capabilities.",
+      json::object()));
+  tools.push_back(tool(
+      "list_blendshapes",
+      "List facial/body USD blendshape targets available for live control.",
+      json::object()));
+  tools.push_back(tool(
+      "set_blendshape_weights",
+      "Set session-local facial blendshape overrides by target name.",
+      {{"weights", {{"type", "object"},
+                     {"additionalProperties", {{"type", "number"}}}}}},
+      json::array({"weights"})));
+  tools.push_back(tool(
+      "list_facial_controls",
+      "List named facial controls. Initially each USD blendshape is a direct control.",
+      json::object()));
+  tools.push_back(tool(
+      "set_facial_controls",
+      "Set named facial controls. V1 maps control names directly to blendshapes.",
+      {{"controls", {{"type", "object"},
+                      {"additionalProperties", {{"type", "number"}}}}}},
+      json::array({"controls"})));
+  tools.push_back(tool(
+      "vchar_debug",
+      "Select a virtual-human diagnostic view and skeleton overlay.",
+      {{"mode", strProp("shaded | skin-weights | blend-influence | normals | tangents")},
+       {"skeleton", {{"type", "boolean"}}}}));
+  tools.push_back(tool(
+      "autorigger_inspect",
+      "Describe the JSON-RPC 2.0 stdio auto-rigger contract and current USD input.",
+      json::object()));
+  tools.push_back(tool(
+      "apply_rig_overlay",
+      "Compose an auto-rigger USDA/USDC overlay non-destructively over the loaded asset.",
+      {{"path", strProp("path to generated rig overlay layer")}},
+      json::array({"path"})));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
@@ -334,6 +372,12 @@ void MCPServer::drain() {
         payload = host_->mcpOpenPbrMaterial(cmd->args, err);
       } else if (t == "shader_reload") {
         payload = host_->mcpShaderReload(cmd->args, err);
+      } else if (t == "vchar_status" || t == "list_blendshapes" ||
+                 t == "set_blendshape_weights" ||
+                 t == "list_facial_controls" ||
+                 t == "set_facial_controls" || t == "vchar_debug" ||
+                 t == "autorigger_inspect" || t == "apply_rig_overlay") {
+        payload = host_->mcpVirtualHuman(t, cmd->args, err);
       } else {
         // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
         payload = host_->mcpCallLibraryTool(t, cmd->args, err);

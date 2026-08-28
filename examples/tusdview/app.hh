@@ -158,6 +158,7 @@ class App
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
   void setShowGrid(bool on) { gui_.setShowGrid(on); }
   void setShowSkeleton(bool on) { gui_.setShowSkeleton(on); }
+  void setVirtualHumanProfile(bool on) { virtualHumanProfile_ = on; }
   void setCamDolly(float f) { camDolly_ = f; }
   void setAdaptiveQuality(bool on, float targetFps, float minScale) {
     adaptiveQuality_ = on;
@@ -325,6 +326,9 @@ class App
                                     std::string& e) override;
   nlohmann::json mcpShaderReload(const nlohmann::json& a,
                                  std::string& e) override;
+  nlohmann::json mcpVirtualHuman(const std::string& tool,
+                                 const nlohmann::json& a,
+                                 std::string& e) override;
   nlohmann::json mcpCallLibraryTool(const std::string& name, const nlohmann::json& a,
                                     std::string& e) override;
 #endif
@@ -338,6 +342,7 @@ class App
           const std::string& screenshot = "");
 
  private:
+  bool virtualHumanProfile_{false};
   bool initWindow(std::string* err);
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;
