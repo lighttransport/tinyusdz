@@ -350,6 +350,7 @@ class App
   TydraPhysWorld physicsWorld_{};
   bool physicsWorldReady_{false};
   std::uint64_t physicsSceneGen_{~std::uint64_t(0)};
+  std::unique_ptr<tinyusdz::Stage> physicsInitialStage_;
   bool initWindow(std::string* err);
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;

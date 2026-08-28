@@ -48,6 +48,7 @@
 #include "scene_validation.hh"
 #include "skinning.hh"
 #include "texture_residency_policy.hh"
+#include "vchar_control_map.hh"
 #if defined(HAVE_VULKAN)
 #include "vk/vk_renderer.hh"
 #endif
@@ -2750,6 +2751,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     }
   }
   gui_.setScene(&loaded_, &draw_);
+  gui_.setFacialControls(ReadVcharControls(loaded_.stage));
   if (lensFocusOverride_ > 0.0f)
     cameraLens_.focusDistance = lensFocusOverride_;
   if (lensFStopOverride_ > 0.0f) {
@@ -6145,6 +6147,8 @@ int App::run(const std::string& initialFile, int maxFrames,
 
   gui_.setScene(&loaded_, &draw_);
   gui_.setNextStage(nextStageSnapshot_.get());
+  gui_.setFacialControls(nextStageSnapshot_ ? ReadVcharControls(*nextStageSnapshot_)
+                                             : ReadVcharControls(loaded_.stage));
   gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
   gui_.setLoadOptions(&loadOpts_);

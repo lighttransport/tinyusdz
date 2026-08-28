@@ -44,15 +44,19 @@ customData = {
 
 The first authored control map found in stage traversal order is authoritative.
 Missing mapping/range/default entries fall back to the control name, `[-1,1]`,
-and zero. UsdSkel joint animation and blendshapes execute in realtime.
+and zero. The dedicated Facial Rig panel uses the authored labels, limits, and
+defaults directly; hovering a control shows its mapped USD blendshape. UsdSkel
+joint animation and blendshapes execute in realtime.
 
 `vchar_physics` initializes and steps TinyUSDZ's bounded rigid-body solver from
 authored UsdPhysics APIs. Dynamic/awake body positions are drawn as orange
 crosses (sleeping bodies are dimmed). `status`, `initialize`, `step`, `reset`,
-and `hide` are supported. This first integration intentionally keeps simulated
-body transforms as a diagnostic overlay; writing them back onto skinned mesh
-transforms is deferred because the current `SyncPhysWorldToStage` bridge does
-not retain body-to-prim paths yet.
+and `hide` are supported. With `--legacy-load`, each solver step writes body
+translation/orientation back to its matching rigid-body prim and updates the
+renderer's mesh-world buffers. The orange crosses remain visible for comparing
+the rendered geometry against solver state. The next-core loader rejects
+simulation explicitly until its physics annotation bridge can retain the same
+body-to-prim mapping.
 
 ## External auto-rigger boundary
 

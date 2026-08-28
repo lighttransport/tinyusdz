@@ -21,6 +21,7 @@
 #include "load_control.hh"
 #include "renderer.hh"
 #include "scene_loader.hh"
+#include "vchar_control_map.hh"
 
 namespace tinyusdz {
 class Prim;
@@ -116,6 +117,14 @@ class Gui {
   void setShowGrid(bool on) { showGrid_ = on; }
   void setShowSkeleton(bool on) { showSkeleton_ = on; }
   void setVirtualHumanProfile(bool on) { virtualHumanProfile_ = on; }
+  void setFacialControls(std::vector<VcharControl> controls) {
+    facialControls_ = std::move(controls);
+    for (const VcharControl& control : facialControls_) {
+      if (blendWeights_.find(control.blendshape) == blendWeights_.end()) {
+        blendWeights_[control.blendshape] = control.defaultValue;
+      }
+    }
+  }
   void setPhysicsDebugLines(std::vector<HelperVertex> lines) {
     physicsDebugLines_ = std::move(lines);
   }
@@ -523,6 +532,7 @@ class Gui {
   bool showPrimBbox_{false};  // legacy config state; selection mode owns display
   bool showSkeleton_{true};
   bool virtualHumanProfile_{false};
+  std::vector<VcharControl> facialControls_;
   bool showLights_{false};
   bool showCameras_{false};
   bool showExtent_{false};
