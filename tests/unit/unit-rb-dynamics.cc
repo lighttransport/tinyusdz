@@ -362,6 +362,8 @@ def Cube "Body" (
   TEST_CHECK(std::fabs(world.bodies[0].xform.position.y - 2.0f) < 1.0e-5f);
   TEST_CHECK(std::fabs(world.bodies[0].xform.position.z - 3.0f) < 1.0e-5f);
   world.bodies[0].xform.position = tp_v3(4.0f, 5.0f, 6.0f);
+  world.bodies[0].xform.rotation =
+      tp_q_from_axis_angle(tp_v3(0.0f, 0.0f, 1.0f), TP_PI * 0.5f);
   TEST_ASSERT(SyncPhysWorldToStage(world, &stage, &err));
   const GeomCube* cube = stage.root_prims()[0].as<GeomCube>();
   TEST_ASSERT(cube != nullptr);
@@ -374,9 +376,17 @@ def Cube "Body" (
   TEST_CHECK(std::fabs(translation[1] - 5.0) < 1.0e-8);
   TEST_CHECK(std::fabs(translation[2] - 6.0) < 1.0e-8);
   world.bodies[0].xform.position = tp_v3(0.0f, 0.0f, 0.0f);
+  world.bodies[0].xform.rotation = tp_q_identity();
+  world.timestep = 0.5f;
   TEST_ASSERT(SyncStageToPhysWorld(stage, &world, &err));
   TEST_CHECK(std::fabs(world.bodies[0].xform.position.x - 4.0f) < 1.0e-5f);
   TEST_CHECK(std::fabs(world.bodies[0].xform.position.y - 5.0f) < 1.0e-5f);
   TEST_CHECK(std::fabs(world.bodies[0].xform.position.z - 6.0f) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].linear_velocity.x - 8.0f) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].linear_velocity.y - 10.0f) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].linear_velocity.z - 12.0f) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].angular_velocity.x) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].angular_velocity.y) < 1.0e-5f);
+  TEST_CHECK(std::fabs(world.bodies[0].angular_velocity.z - TP_PI) < 1.0e-5f);
   FreePhysWorld(&world);
 }
