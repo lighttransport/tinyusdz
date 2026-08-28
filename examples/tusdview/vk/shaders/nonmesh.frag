@@ -8,6 +8,7 @@ layout(location = 1) in vec4 vColor;
 layout(location = 2) in vec3 vWorldPos;
 layout(location = 3) in vec3 vView;
 layout(location = 4) flat in int vInstanceId;
+layout(location = 5) in vec3 vTangent;
 
 // Frame UBO (set 2, binding 0) — same layout as mesh.frag
 struct RasterLight { vec4 positionType; vec4 directionAngle;
@@ -72,6 +73,20 @@ vec3 F(float vh, vec3 f0) {
   return f0 + (vec3(1.0) - f0) * pow(1.0 - clamp(vh, 0.0, 1.0), 5.0);
 }
 
+// Bounded real-time approximation of UE HairBsdf's longitudinal R/TT/TRT
+// response.  The strand tangent, rather than the camera ribbon normal, drives
+// the shifted lobes; vColor acts as the melanin/absorption result authored by
+// the MaterialX hair network.
+float hairLobe(vec3 T, vec3 V, vec3 L, float shift, float width) {
+  float sinV = dot(T, V);
+  float sinL = dot(T, L);
+  float longitudinal = sinV * sinL +
+      sqrt(max(0.0, 1.0 - sinV * sinV)) *
+      sqrt(max(0.0, 1.0 - sinL * sinL));
+  longitudinal = clamp(longitudinal + shift, 0.0, 1.0);
+  return pow(longitudinal, max(2.0, 2.0 / max(width * width, 1e-3)));
+}
+
 void main() {
   vec3 N;
   if (pc.ids.x == 0 || pc.ids.x == 2) {
@@ -105,6 +120,7 @@ void main() {
   if (pc.mode.x != 0) { fragColor = vec4(0.18, 0.18, 0.18, 1); return; }
 
   vec3 V = normalize(vView);
+  vec3 T = normalize(vTangent);
   float nv = max(dot(N, V), 1e-4);
   float roughness = 0.5;
   vec3 direct = vec3(0);
@@ -164,6 +180,19 @@ void main() {
     float nl = max(dot(N, L), 0);
     if (nl <= 0 || shape <= 0) continue;
 
+    if (pc.ids.x == 1) {
+      float r = hairLobe(T, V, L, -0.025, 0.32);
+      float tt = hairLobe(T, V, L, 0.055, 0.48);
+      float trt = hairLobe(T, V, L, 0.11, 0.68);
+      float wrap = 0.35 + 0.65 * sqrt(max(0.0, 1.0 - dot(T, L) * dot(T, L)));
+      vec3 absorption = max(vColor.rgb, vec3(0.002));
+      vec3 hairSpec = vec3(r) * 0.7 + sqrt(absorption) * tt * 0.55 +
+                      absorption * trt * 0.35;
+      direct += (absorption * 0.18 * wrap + hairSpec * 0.12) * lc.rgb *
+                (att * shape * ies);
+      continue;
+    }
+
     vec3 H = normalize(V + L);
     float nh = max(dot(N, H), 0);
     float vh = max(dot(V, H), 0);
@@ -180,15 +209,25 @@ void main() {
   // Fallback to single key light when no multi-light data
   if (fr.rasterLightInfo.x == 0) {
     vec3 L = normalize(fr.lightDir.xyz);
-    vec3 H = normalize(V + L);
-    float nl = max(dot(N, L), 0);
-    float nh = max(dot(N, H), 0);
-    float vh = max(dot(V, H), 0);
-    vec3 ff = F(vh, vec3(0.04));
-    float spec = D(nh, roughness) * G1(nv, roughness) * G1(nl, roughness) *
-                 ff.x / max(4.0 * nv * nl, 1e-5);
-    vec3 diff = (vec3(1.0) - ff) * vColor.rgb * (1.0 / 3.14159265);
-    direct = (diff + spec) * fr.lightColor.xyz * nl;
+    if (pc.ids.x == 1) {
+      float r = hairLobe(T, V, L, -0.025, 0.32);
+      float tt = hairLobe(T, V, L, 0.055, 0.48);
+      float trt = hairLobe(T, V, L, 0.11, 0.68);
+      vec3 absorption = max(vColor.rgb, vec3(0.002));
+      direct = ((vec3(r) * 0.7 + sqrt(absorption) * tt * 0.55 +
+                absorption * trt * 0.35) * 0.12 + absorption * 0.08) *
+               fr.lightColor.xyz;
+    } else {
+      vec3 H = normalize(V + L);
+      float nl = max(dot(N, L), 0);
+      float nh = max(dot(N, H), 0);
+      float vh = max(dot(V, H), 0);
+      vec3 ff = F(vh, vec3(0.04));
+      float spec = D(nh, roughness) * G1(nv, roughness) * G1(nl, roughness) *
+                   ff.x / max(4.0 * nv * nl, 1e-5);
+      vec3 diff = (vec3(1.0) - ff) * vColor.rgb * (1.0 / 3.14159265);
+      direct = (diff + spec) * fr.lightColor.xyz * nl;
+    }
   }
 
   vec3 col = vColor.rgb * 0.12 + direct;

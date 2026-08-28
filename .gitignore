@@ -6,6 +6,18 @@
 # App-specific
 .opencode/
 
+# UE MetaHuman USD bridge: generated project/build/export data.  The small
+# project descriptor, plugin source and orchestration scripts remain tracked.
+tools/ue-metahuman-usd/Binaries/
+tools/ue-metahuman-usd/DerivedDataCache/
+tools/ue-metahuman-usd/Intermediate/
+tools/ue-metahuman-usd/Saved/
+tools/ue-metahuman-usd/Content/Generated/
+tools/ue-metahuman-usd/Config/DefaultInput.ini
+tools/ue-metahuman-usd/output/
+tools/ue-metahuman-usd/Plugins/*/Binaries/
+tools/ue-metahuman-usd/Plugins/*/Intermediate/
+
 # macOS metadata
 .DS_Store
 
