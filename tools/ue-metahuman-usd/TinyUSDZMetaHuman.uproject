@@ -7,9 +7,11 @@
   "Plugins": [
     { "Name": "MetaHumanCharacter", "Enabled": true },
     { "Name": "HairStrands", "Enabled": true },
+    { "Name": "TinyUSDZGroomExport", "Enabled": true },
     { "Name": "USDImporter", "Enabled": true },
     { "Name": "USDCore", "Enabled": true },
     { "Name": "PythonScriptPlugin", "Enabled": true },
-    { "Name": "EditorScriptingUtilities", "Enabled": true }
+    { "Name": "EditorScriptingUtilities", "Enabled": true },
+    { "Name": "AndroidFileServer", "Enabled": false }
   ]
 }
