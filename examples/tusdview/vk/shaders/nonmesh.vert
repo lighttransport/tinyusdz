@@ -49,6 +49,7 @@ layout(location = 1) out vec4 vColor;
 layout(location = 2) out vec3 vWorldPos;
 layout(location = 3) out vec3 vView;
 layout(location = 4) flat out int vInstanceId;
+layout(location = 5) out vec3 vTangent;
 
 void main() {
   vec3 camRight = pc.cameraRight.xyz;
@@ -66,6 +67,7 @@ void main() {
                   (0.5 * aWidths.x);
     vLocal = corner;
     vColor = aColor0;
+    vTangent = camUp;
   } else if (pc.ids.x == 2) {
     // Gaussian carrier: aPrev/aNext contain the transformed major/minor
     // covariance axes (full diameters). This preserves the authored 3-D
@@ -73,6 +75,7 @@ void main() {
     p = aP0 + (aPrev * corner.x + aNext * corner.y) * 0.5;
     vLocal = corner;
     vColor = aColor0;
+    vTangent = normalize(aPrev);
   } else {
     // Curve ribbon: derive endpoint sides from neighbouring samples. Adjacent
     // records therefore calculate the same edge at their shared endpoint,
@@ -92,6 +95,7 @@ void main() {
     p = center + side * (corner.x * 0.5 * width);
     vLocal = vec2(corner.x, along);
     vColor = mix(aColor0, aColor1, along);
+    vTangent = normalize(mix(aP1 - aPrev, aNext - aP0, along));
   }
 
   vWorldPos = p;
