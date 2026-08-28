@@ -59,9 +59,10 @@ function hairParameters(usd, curves) {
   return { ...DEFAULT_HAIR, ...(material?.hair || {}) };
 }
 
-function deferredSummary(app) {
+function deferredSummary(app, usd) {
   const files = app.localExportFiles || new Map();
-  const has = (name) => [...files.keys()].some((key) => key.endsWith(name));
+  const archive = usd?.archiveEntries || new Map();
+  const has = (name) => [...files.keys(), ...archive.keys()].some((key) => key.endsWith(name));
   return [
     has('MetaHuman_Deformers.usda')
       ? 'DNA/RigLogic deformer metadata found: deferred (generic USD blendshapes still play).'
@@ -120,7 +121,7 @@ export async function installMetaHumanRendering(app) {
     app.setNotes([
       'WebGL2 maximum-quality preset: full exported groom density, half-float weighted transparency, and 4096px shadow map.',
       'MaterialX/OpenPBR skin uses a bounded UE-inspired wrapped-diffusion SSS approximation; it is not pixel-identical UE subsurface scattering.',
-      ...deferredSummary(app)
+      ...deferredSummary(app, usd)
     ]);
     usd.releaseBuildData?.();
   }

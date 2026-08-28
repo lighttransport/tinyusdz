@@ -80,3 +80,18 @@ Run the dependency-free structural smoke test with:
 ```sh
 tools/ue-metahuman-usd/test-export.sh
 ```
+
+## Web demo USDZ package
+
+Create a self-contained package for `web/demo/metahuman.html` with:
+
+```sh
+tools/ue-metahuman-usd/package-usdz.sh
+```
+
+This uses `tusdzconvert -noFlatten` so the USDZ root preserves the hero layer's
+head/body reference arcs. The browser's next
+WASM renderer indexes the archive entries and supplies those internal layers to
+the compositor. Choose **Open MetaHuman USDZ** in the demo, or select the
+unpacked export folder. DNA/RigLogic and PhysicsAsset data are metadata only in
+both workflows.

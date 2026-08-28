@@ -71,6 +71,7 @@ export const DEMOS = [
     defaultAsset: './assets/metahuman-fixture/MetaHuman_Hero.usda',
     preferredMaterialType: 'openpbr',
     requiredBackend: 'next',
+    openFileLabel: 'Open MetaHuman USDZ',
     enableFolderInput: true,
     useComposition: true,
     enableSkinning: true,

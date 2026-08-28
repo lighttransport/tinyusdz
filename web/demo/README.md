@@ -101,8 +101,10 @@ Bavoil's *Weighted Blended Order-Independent Transparency* (JCGT 2013).
 
 `metahuman.html` is a WebGL2-only local-export viewer for the output from
 `tools/ue-metahuman-usd`. Select **Open Export Folder** and choose the folder
-containing `MetaHuman_Hero.usda`; the demo resolves sibling head/body USD
-layers without uploading or committing the character. It uses the shared
+containing `MetaHuman_Hero.usda`, or select **Open MetaHuman USDZ** for a
+self-contained package. The demo resolves sibling head/body USD layers without
+uploading or committing the character. Create a package that preserves those
+composition arcs with `tools/ue-metahuman-usd/package-usdz.sh`. It uses the shared
 UsdSkel GPU skinning and generic USD blendshape animation paths, MaterialX /
 OpenPBR skin with a bounded wrapped-diffusion SSS approximation, and the
 weighted-transparent R/TT/TRT groom ribbon renderer. The public
