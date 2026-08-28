@@ -168,6 +168,40 @@ def skeletal_mesh_diagnostics():
     return diagnostics
 
 
+def physics_diagnostics():
+    """Record Unreal PhysicsAsset topology alongside the UsdSkel export.
+
+    A PhysicsAsset is a collection of bodies and constraints bound to skeleton
+    bones, rather than a direct UsdPhysics prim hierarchy.  Keep its native
+    identity and counts so downstream tools can decide whether to reconstruct
+    joints or use their own ragdoll representation.
+    """
+    diagnostics = []
+    for package in asset_paths("SkeletalMesh", ["/Game/Generated/Exported"]):
+        name = package.rsplit("/", 1)[-1]
+        mesh = unreal.load_asset(f"{package}.{name}")
+        if not mesh:
+            continue
+        physics_asset = None
+        try:
+            physics_asset = mesh.get_editor_property("physics_asset")
+        except Exception:
+            pass
+        entry = {"skeletal_mesh": package, "physics_asset": "", "body_count": 0,
+                 "constraint_count": 0, "status": "unassigned"}
+        if physics_asset:
+            entry["physics_asset"] = physics_asset.get_path_name()
+            entry["status"] = "assigned"
+            for property_name, output_name in (("skeletal_body_setups", "body_count"),
+                                               ("constraint_setup", "constraint_count")):
+                try:
+                    entry[output_name] = len(physics_asset.get_editor_property(property_name))
+                except Exception:
+                    entry[output_name] = -1
+        diagnostics.append(entry)
+    return diagnostics
+
+
 def export_usd_assets(output_dir):
     exported = []
     assets = asset_paths("SkeletalMesh", ["/Game/Generated/Exported"])
@@ -242,6 +276,7 @@ def main():
         export_geometry(character)
         inventory["dna"] = export_dna(character, output_dir)
         inventory["skeletal_meshes"] = skeletal_mesh_diagnostics()
+        inventory["physics"] = physics_diagnostics()
         inventory["usd"] = export_usd_assets(output_dir)
         inventory["groom"] = export_groom(output_dir)
         inventory["groom_assets"] = asset_paths("GroomAsset", ["/Game", "/MetaHumanCharacter"])

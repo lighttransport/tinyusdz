@@ -10,12 +10,16 @@ test -s "$script_dir/output/TinyUSDZ_DefaultHuman_Body.usdc"
 test -s "$script_dir/output/TinyUSDZ_DefaultHuman_Body.dna"
 test -s "$scene"
 test -s "$script_dir/output/MetaHuman_GroomStrands.usda"
+test -s "$script_dir/output/MetaHuman_Deformers.usda"
+test -s "$script_dir/output/MetaHuman_Physics.usda"
 rg -q 'def BasisCurves "HairStrands"' "$scene"
 rg -q 'def BasisCurves "HairStrands"' "$script_dir/output/MetaHuman_GroomStrands.usda"
 rg -q 'unreal:sourceGroom' "$script_dir/output/MetaHuman_GroomStrands.usda"
 rg -q 'unreal:exportedCurveCount = [1-9]' "$script_dir/output/MetaHuman_GroomStrands.usda"
 rg -q 'inputs:subsurface_weight' "$scene"
 rg -q 'tinyusdz:referenceBsdf = "chiang_hair_bsdf"' "$scene"
+rg -q 'unreal:deformerFormat = "MetaHuman DNA / RigLogic"' "$script_dir/output/MetaHuman_Deformers.usda"
+rg -q 'unreal:usdPhysicsStatus' "$script_dir/output/MetaHuman_Physics.usda"
 "$repo_root/build_ninja/tusdcat" "$scene" -o /tmp/tinyusdz-metahuman-smoke.usda
 "$repo_root/build_ninja/tusdcat" "$script_dir/output/TinyUSDZ_DefaultHuman_Head.usdc" -o /tmp/tinyusdz-metahuman-head.usda
 "$repo_root/build_ninja/tusdcat" "$script_dir/output/TinyUSDZ_DefaultHuman_Body.usdc" -o /tmp/tinyusdz-metahuman-body.usda

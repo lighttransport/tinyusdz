@@ -8,6 +8,7 @@ The deterministic curves remain only as a fallback when no groom is installed.
 """
 
 import argparse
+import json
 import math
 import os
 import random
@@ -15,6 +16,76 @@ import random
 
 def tuple3(value):
     return "(" + ", ".join(f"{v:.6g}" for v in value) + ")"
+
+
+def usd_string(value):
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def write_extension_manifests(output_dir):
+    """Preserve engine-specific deformation and ragdoll data as custom USD.
+
+    UsdSkel already owns the skeleton, joint weights and ordinary blend shapes.
+    MetaHuman DNA/RigLogic and UE PhysicsAsset topology do not have a lossless
+    standard USD representation, so use namespaced custom properties rather
+    than mislabeling them as UsdSkel or UsdPhysics data.
+    """
+    inventory_path = os.path.join(output_dir, "inventory.json")
+    inventory = {}
+    if os.path.exists(inventory_path):
+        with open(inventory_path, "r", encoding="utf-8") as stream:
+            inventory = json.load(stream)
+    dna = inventory.get("dna", {})
+    dna_files = [os.path.basename(path) for path in dna.get("files", [])]
+    missing = dna.get("missing", [])
+    deformer = os.path.join(output_dir, "MetaHuman_Deformers.usda")
+    with open(deformer, "w", encoding="utf-8") as stream:
+        stream.write('''#usda 1.0
+(
+    defaultPrim = "MetaHumanDeformers"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Scope "MetaHumanDeformers"
+{
+    custom string unreal:deformerFormat = "MetaHuman DNA / RigLogic"
+    custom string unreal:usdSkelCoverage = "skeleton, bind/rest transforms, joint indices and joint weights are in the companion USDC layers"
+    custom string[] unreal:deformerTypes = ["DNA blend-shape targets", "GUI controls", "PSD controls", "joint groups", "animated maps"]
+''')
+        if dna_files:
+            stream.write("    custom asset[] unreal:dnaFiles = [" +
+                         ", ".join("@" + filename + "@" for filename in dna_files) + "]\n")
+        for entry in missing:
+            stream.write("    custom string unreal:missingRig:" + entry.get("rig", "unknown") +
+                         " = " + usd_string(entry.get("reason", "unavailable")) + "\n")
+        stream.write("}\n")
+
+    physics = os.path.join(output_dir, "MetaHuman_Physics.usda")
+    with open(physics, "w", encoding="utf-8") as stream:
+        stream.write('''#usda 1.0
+(
+    defaultPrim = "MetaHumanPhysics"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Scope "MetaHumanPhysics"
+{
+    custom string unreal:representation = "Unreal PhysicsAsset bodies and constraints bound to a UsdSkel skeleton"
+    custom string unreal:usdPhysicsStatus = "custom metadata; no lossless PhysicsAsset-to-UsdPhysics mapping is assumed"
+''')
+        for entry in inventory.get("physics", []):
+            label = entry.get("skeletal_mesh", "Mesh").rsplit("/", 1)[-1]
+            stream.write("    def Scope " + usd_string(label) + "\n    {\n")
+            stream.write("        custom string unreal:skeletalMesh = " + usd_string(entry.get("skeletal_mesh", "")) + "\n")
+            stream.write("        custom string unreal:physicsAsset = " + usd_string(entry.get("physics_asset", "")) + "\n")
+            stream.write("        custom string unreal:status = " + usd_string(entry.get("status", "unassigned")) + "\n")
+            stream.write("        custom int unreal:bodyCount = " + str(entry.get("body_count", 0)) + "\n")
+            stream.write("        custom int unreal:constraintCount = " + str(entry.get("constraint_count", 0)) + "\n")
+            stream.write("    }\n")
+        stream.write("}\n")
+    return deformer, physics
 
 
 def make_strands(count, points_per_strand):
@@ -233,6 +304,7 @@ def Scope "MetaHumanRig"
     custom string unreal:facialDeformation = "DNA blend-shape targets, GUI controls, PSD controls and animated maps"
 }}
 ''')
+    write_extension_manifests(output_dir)
     print(destination)
 
 

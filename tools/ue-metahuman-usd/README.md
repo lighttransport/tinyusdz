@@ -49,6 +49,15 @@ match this character. A small
 opaque DNA payload is a standard USD schema. Converting every DNA delta into
 `UsdSkelBlendShape` prims is the next interoperability step.
 
+The exporter also writes `MetaHuman_Deformers.usda` and
+`MetaHuman_Physics.usda`. `UsdSkel` remains authoritative for skeletons and
+skinning. DNA/RigLogic deformation metadata (DNA files, GUI controls, PSD
+controls, joint groups and animated maps) is preserved with namespaced
+`unreal:deformer*` custom properties because it has no lossless stock USD
+schema. UE `PhysicsAsset` body/constraint counts and source-asset identity are
+also emitted as `unreal:*` custom metadata: a bone-bound ragdoll PhysicsAsset
+is not automatically equivalent to a `UsdPhysics` scene.
+
 When Epic authentication and network access are configured, request the full
 fitted face rig (joints and blend shapes) before export with:
 
