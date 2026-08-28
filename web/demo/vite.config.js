@@ -46,6 +46,7 @@ export default defineConfig(({ command, mode }) => {
             materialx_physical: path.resolve(__dirname, 'materialx-physical.html'),
             usdlux: path.resolve(__dirname, 'usdlux.html'),
             skinning: path.resolve(__dirname, 'skinning.html'),
+            metahuman: path.resolve(__dirname, 'metahuman.html'),
             xform_skinning_animation: path.resolve(__dirname, 'xform-skinning-animation.html'),
             physics: path.resolve(__dirname, 'physics.html'),
             asset_resolver: path.resolve(__dirname, 'asset-resolver.html'),

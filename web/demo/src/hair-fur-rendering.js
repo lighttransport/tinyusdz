@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-const DEFAULT_HAIR = Object.freeze({
+export const DEFAULT_HAIR = Object.freeze({
   tintR: [0.42, 0.12, 0.035], tintTT: [0.28, 0.055, 0.012],
   tintTRT: [0.12, 0.025, 0.006], roughnessR: [0.22, 0.35],
   roughnessTT: [0.32, 0.45], roughnessTRT: [0.42, 0.55],
@@ -283,7 +283,7 @@ const compositeFragment = `
     gl_FragColor = vec4(linearToSRGB(aces(mix(base, hair, alpha) * exposure)), 1.0);
   }`;
 
-class HairFurRenderer {
+export class HairFurRenderer {
   constructor(app) {
     this.app = app; this.hairMeshes = []; this.elapsed = 0;
     this.opaque = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });

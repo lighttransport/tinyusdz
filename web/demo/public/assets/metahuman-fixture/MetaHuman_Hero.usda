@@ -1,0 +1,59 @@
+#usda 1.0
+(
+    defaultPrim = "MetaHuman"
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+def Xform "MetaHuman"
+{
+    def Xform "Body" (prepend references = @Fixture_Body.usda@)
+    {
+        over "BodyMesh" { rel material:binding = </MetaHuman/Materials/Skin> }
+    }
+    def Scope "Materials"
+    {
+        def Material "Skin"
+        {
+            token outputs:mtlx:surface.connect = </MetaHuman/Materials/Skin/OpenPBR.outputs:out>
+            def Shader "OpenPBR"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.5, 0.21, 0.14)
+                float inputs:base_roughness = 0.46
+                float inputs:subsurface_weight = 0.65
+                color3f inputs:subsurface_color = (1.0, 0.24, 0.12)
+                float inputs:subsurface_radius = 0.16
+                color3f inputs:subsurface_radius_scale = (1.0, 0.35, 0.18)
+                token outputs:out
+            }
+        }
+        def Material "Hair"
+        {
+            token outputs:mtlx:surface.connect = </MetaHuman/Materials/Hair/Hair.outputs:out>
+            def Shader "Hair"
+            {
+                uniform token info:id = "ND_chiang_hair_bsdf"
+                color3f inputs:tint_R = (0.22, 0.055, 0.018)
+                color3f inputs:tint_TT = (0.48, 0.13, 0.035)
+                color3f inputs:tint_TRT = (0.68, 0.24, 0.06)
+                float2 inputs:roughness_R = (0.22, 0.35)
+                float2 inputs:roughness_TT = (0.32, 0.45)
+                float2 inputs:roughness_TRT = (0.42, 0.55)
+                color3f inputs:absorption_coefficient = (0.6, 1.45, 2.6)
+                token outputs:out
+            }
+        }
+    }
+    def BasisCurves "HairStrands"
+    {
+        uniform token type = "linear"
+        uniform token basis = "bezier"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4, 4, 4]
+        point3f[] points = [(-.45,.35,0),(-.48,.75,.05),(-.28,1.05,.08),(-.1,1.22,.12), (.0,.38,0),(.05,.83,.04),(.18,1.12,.08),(.35,1.25,.08), (.42,.33,0),(.5,.7,-.04),(.38,1.08,-.08),(.2,1.24,-.12)]
+        float[] widths = [.025,.02,.012,.004,.025,.02,.012,.004,.025,.02,.012,.004] (interpolation = "vertex")
+        color3f[] primvars:displayColor = [(.28,.08,.025),(.28,.08,.025),(.32,.1,.03),(.32,.1,.03),(.28,.08,.025),(.28,.08,.025),(.32,.1,.03),(.32,.1,.03),(.28,.08,.025),(.28,.08,.025),(.32,.1,.03),(.32,.1,.03)] (interpolation = "vertex")
+        rel material:binding = </MetaHuman/Materials/Hair>
+    }
+}
