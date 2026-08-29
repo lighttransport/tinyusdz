@@ -341,7 +341,10 @@ json MCPServer::runTool(const std::string& name, const json& args, std::string& 
   // bounded at 30 seconds while allowing an explicit shader iteration to finish
   // and return its compiler diagnostics.
   const auto timeout = name == "shader_reload" ? std::chrono::seconds(180)
-                                                : std::chrono::seconds(30);
+      : name == "vchar_deformer"
+          ? std::chrono::milliseconds(std::min(600000,
+                std::max(30000, args.value("timeout_ms", 30000) + 10000)))
+          : std::chrono::seconds(30);
   if (fut.wait_for(timeout) != std::future_status::ready) {
     err = "tool call timed out";
     return json::object();
