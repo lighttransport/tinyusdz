@@ -10,6 +10,7 @@ MaterialX/OpenPBR materials, texture cache, and BasisCurves hair stay identical.
 ./build_ninja/vchar --backend vk character.usdz
 ./build_ninja/vchar --backend vk --rt character.usdz
 ./build_ninja/vchar --mcp-http 8765 character.usdz
+./build_ninja/vchar --autorigger /path/to/lightrig character.usdz
 ```
 
 The profile accepts USD, USDA, USDC and packaged USDZ input. Skeleton debug is
@@ -27,7 +28,7 @@ The embedded MCP server adds:
 - `list_facial_controls`, `set_facial_controls`
 - `vchar_debug` (`skin-weights`, `blend-influence`, normals, tangents, skeleton)
 - `vchar_skin_profile` (tuned OpenPBR SSS/specular/fuzz/coat skin profile)
-- `vchar_deformer` (UsdSkel and USD-overlay adapter status/application)
+- `vchar_deformer` (UsdSkel status, `autorig`, and overlay application)
 - `vchar_physics` (simulation plus body/collider/joint/contact diagnostics)
 - `autorigger_inspect`, `apply_rig_overlay`
 
@@ -87,9 +88,9 @@ for the request/result shape.
 `vchar_deformer` exposes the active in-process adapters and their evaluation
 order. The `usdskel` adapter evaluates blendshapes/inbetweens and skinning; the
 `usd-overlay` adapter adds controls, correctives, and physics metadata without
-modifying the source character. The external JSON-RPC launcher remains a
-separate integration boundary and returns a USD overlay for the same adapter
-path.
+modifying the source character. Select the external JSON-RPC launcher with
+`--autorigger`; the `autorig` operation applies its completed overlay through
+the same adapter path and reports bounded timeout or worker-exit failures.
 
 Hair uses the shared BasisCurves ribbon rasterizer (and tube proxies for Vulkan
 RT), including authored widths and curve tangents. Skin uses the shared

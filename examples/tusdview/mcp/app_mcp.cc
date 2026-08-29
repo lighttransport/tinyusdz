@@ -3,6 +3,7 @@
 // (the MCP server marshals tool calls into the render loop), so they freely read
 // the loaded scene / DrawScene and drive the camera and selection.
 #include <cmath>
+#include <chrono>
 #include <cctype>
 #include <cstring>
 #include <fstream>
@@ -18,6 +19,7 @@
 #include "tydra/scene-access.hh"
 #include "tydra/mcp-tools.hh"  // tinyusdz::tydra::mcp::CallTool
 #include "vchar_control_map.hh"
+#include "../../vchar/autorigger_client.hh"
 
 namespace tusdview {
 
@@ -299,7 +301,9 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                                       "rig.submit", "rig.status", "rig.cancel"})},
             {"authoritative_result", "USD overlay layer"},
             {"input_path", loaded_.filepath},
-            {"facial_first", true}, {"body", "next"}};
+            {"facial_first", true}, {"body", "next"},
+            {"configured", !autoriggerExecutable_.empty()},
+            {"executable", autoriggerExecutable_}};
   }
 
   if (tool == "vchar_deformer") {
@@ -310,14 +314,34 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                        {"capabilities", json::array({"skinning", "blendshapes", "inbetweens"})}},
                   json{{"name", "usd-overlay"}, {"active", true},
                        {"capabilities", json::array({"controls", "correctives", "physics-metadata"})}},
-                  json{{"name", "external-jsonrpc"}, {"active", false},
-                       {"state", "worker-launcher-pending"}}})},
+                  json{{"name", "external-jsonrpc"}, {"active", !autoriggerExecutable_.empty()},
+                       {"state", autoriggerExecutable_.empty() ? "not-configured" : "ready"}}})},
               {"evaluation_order", json::array({"overlay", "blendshape", "skinning", "physics"})}};
+    }
+    if (op == "autorig") {
+      if (autoriggerExecutable_.empty() || loaded_.filepath.empty()) {
+        err = "vchar_deformer autorig requires --autorigger and a loaded asset";
+        return json::object();
+      }
+      const int timeoutMs = std::max(100, args.value("timeout_ms", 30000));
+      std::filesystem::path output = args.value("output", std::string());
+      if (output.empty()) output = std::filesystem::temp_directory_path() /
+          ("vchar-lightrig-" + std::to_string(sceneGen_) + ".usda");
+      const vchar::AutoriggerResult result = vchar::RunAutorigger(
+          autoriggerExecutable_, loaded_.filepath, output.string(),
+          std::chrono::milliseconds(timeoutMs));
+      if (!result.ok) { err = result.timedOut ? "autorigger timed out" : result.error; return json::object(); }
+      json applyArgs = {{"path", output.string()}};
+      json applied = mcpVirtualHuman("apply_rig_overlay", applyArgs, err);
+      if (!err.empty()) return json::object();
+      applied["autorigger_response"] = result.response;
+      applied["autorigger_exit_code"] = result.exitCode;
+      return applied;
     }
     if (op == "apply-overlay") {
       return mcpVirtualHuman("apply_rig_overlay", args, err);
     }
-    err = "vchar_deformer op must be status or apply-overlay";
+    err = "vchar_deformer op must be status, autorig, or apply-overlay";
     return json::object();
   }
 

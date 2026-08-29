@@ -68,6 +68,7 @@ set(TUSDVIEW_SOURCES
     gizmo_build.cc
     parametric_tess.cc
     skinning.cc
+    ${PROJECT_SOURCE_DIR}/examples/vchar/autorigger_client.cc
     vchar_control_map.cc
     camera_nav.cc
     frame_packet.cc
