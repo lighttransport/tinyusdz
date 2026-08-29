@@ -39,6 +39,9 @@
 #define TINYUSDZ_SIMDSCAN_SSE2 1
 #elif defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_neon.h>  // NEON (baseline on AArch64)
+#if defined(_MSC_VER)
+#include <intrin.h>  // _BitScanForward64 for MSVC ARM64
+#endif
 #define TINYUSDZ_SIMDSCAN_NEON 1
 #endif
 #endif  // TINYUSDZ_ENABLE_SIMD
@@ -167,7 +170,13 @@ const char* ScanArrayStructural(const char* p, const char* end,
     const uint64_t mmask = vget_lane_u64(
         vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(m), 4)), 0);
     if (mmask) {
+#if defined(_MSC_VER)
+      unsigned long bidx;
+      _BitScanForward64(&bidx, mmask);
+      const int idx = static_cast<int>(bidx >> 2);
+#else
       const int idx = static_cast<int>(__builtin_ctzll(mmask) >> 2);
+#endif
       // newlines strictly before the structural byte (scalar; idx < 16)
       for (int i = 0; i < idx; ++i) {
         if (p[i] == '\n') ++nl;

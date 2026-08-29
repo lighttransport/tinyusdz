@@ -3,7 +3,7 @@
 
 set_xmakever("2.7.0")
 set_project("tinyusdz")
-set_version("1.0.0-rc1")
+set_version("1.0.0-rc2")
 
 set_languages("c11", "c++17")
 

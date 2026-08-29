@@ -93,7 +93,7 @@ namespace next {
 constexpr int version_major = 1;
 constexpr int version_minor = 0;
 constexpr int version_micro = 0;
-constexpr const char* version_string = "1.0.0-rc1";
+constexpr const char* version_string = "1.0.0-rc2";
 
 // ============================================================
 // Convenience loading functions (wrap reader APIs)
