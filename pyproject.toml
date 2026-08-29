@@ -94,3 +94,11 @@ archs = ["AMD64", "ARM64"]
 [[tool.cibuildwheel.overrides]]
 select = "cp314t-*"
 test-environment = { PYTHON_GIL = "0" }
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "large: marks tests requiring /mnt/disk1/data (alab/island/caldera)",
+    "usd_assets: marks tests requiring USD assets corpus",
+    "aousd: marks tests requiring AOUSD supplemental",
+]

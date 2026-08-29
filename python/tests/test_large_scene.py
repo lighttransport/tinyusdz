@@ -73,10 +73,13 @@ def _rss_mb():
         return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
 
-pytestmark = pytest.mark.skipif(
-    LARGE_ROOT is None or _first_existing() is None,
-    reason="large-scene data not mounted (set TINYUSDZ_LARGE_SCENE_ROOT or mount /mnt/disk1/data)",
-)
+pytestmark = [
+    pytest.mark.large,
+    pytest.mark.skipif(
+        LARGE_ROOT is None or _first_existing() is None,
+        reason="large-scene data not mounted (set TINYUSDZ_LARGE_SCENE_ROOT or mount /mnt/disk1/data)",
+    ),
+]
 
 
 def test_large_scene_discovery_prints():
@@ -178,6 +181,7 @@ def test_large_scene_individual_elements(scene_name):
     st.close()
 
 
+@pytest.mark.slow
 def test_synthetic_stress_zero_copy_and_timing():
     """Synthetic 500k-point mesh stress test regardless of disk data.
 

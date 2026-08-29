@@ -71,10 +71,13 @@ def _enumerate(limit=CAP):
     return files[:limit]
 
 
-pytestmark = pytest.mark.skipif(
-    USD_ROOT is None or not _enumerate(1),
-    reason="usd-assets corpus not found (set USD_ASSETS_ROOT)",
-)
+pytestmark = [
+    pytest.mark.usd_assets,
+    pytest.mark.skipif(
+        USD_ROOT is None or not _enumerate(1),
+        reason="usd-assets corpus not found (set USD_ASSETS_ROOT)",
+    ),
+]
 
 
 def _rss_mb():

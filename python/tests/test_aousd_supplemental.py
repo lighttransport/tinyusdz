@@ -56,10 +56,13 @@ AOUSD_ROOT = _find_aousd_root()
 CAP = int(os.environ.get("TINYUSDZ_AOUSD_CAP", "50"))
 FILTER = os.environ.get("TINYUSDZ_AOUSD_FILTER", "")
 
-pytestmark = pytest.mark.skipif(
-    AOUSD_ROOT is None,
-    reason="AOUSD supplemental not found (run scripts/fetch-aousd-supplemental.sh)",
-)
+pytestmark = [
+    pytest.mark.aousd,
+    pytest.mark.skipif(
+        AOUSD_ROOT is None,
+        reason="AOUSD supplemental not found (run scripts/fetch-aousd-supplemental.sh)",
+    ),
+]
 
 
 def test_aousd_discovery(capsys):
