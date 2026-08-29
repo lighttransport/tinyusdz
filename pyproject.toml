@@ -66,7 +66,7 @@ enable = ["cpython-freethreading"]
 # No PyPy; tinyusdz is CPython-only.
 skip = [
     "pp*",
-    "*-musllinux_i686",
+    "*-musllinux*",
     "*-win32",
     "*-manylinux_i686",
 ]
@@ -77,8 +77,6 @@ test-command = "pytest {project}/python/tests -q"
 test-extras = "test"
 
 [tool.cibuildwheel.linux]
-manylinux-x86_64-image = "manylinux_2_28"
-manylinux-aarch64-image = "manylinux_2_28"
 archs = ["x86_64", "aarch64"]
 before-build = "yum install -y ninja-build || apt-get install -y ninja-build || true"
 

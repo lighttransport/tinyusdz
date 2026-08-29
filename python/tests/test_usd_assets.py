@@ -85,7 +85,11 @@ def _rss_mb():
         import psutil
         return psutil.Process().memory_info().rss / (1024 * 1024)
     except Exception:
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        import sys
+        if sys.platform == "darwin":
+            return rss / (1024 * 1024)
+        return rss / 1024.0
 
 
 def test_usd_assets_discovery_prints():

@@ -325,6 +325,8 @@ if(MSVC)
     # version checks; this keeps compatibility with CI/toolchain combinations that
     # still target this project.
     target_compile_definitions(tinyusdz_next PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
+    # Windows headers define max/min as macros; avoid collision with std::max/min
+    add_compile_definitions(NOMINMAX)
 else()
     target_compile_options(tinyusdz_next PRIVATE -Wall -Wextra -Wpedantic)
     # Disable some warnings for LZ4 C code

@@ -2,7 +2,7 @@
 # Source list synchronized with CMakeLists.txt
 
 project('tinyusdz', ['c', 'cpp'],
-  version: '1.0.0-rc1',
+  version: '1.0.0-rc2',
   default_options: [
     'cpp_std=c++17',
     'c_std=c11',
