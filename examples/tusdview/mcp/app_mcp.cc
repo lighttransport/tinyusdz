@@ -365,7 +365,21 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       if (response.is_discarded() || !response.contains("result")) {
         err = "DNA worker returned malformed response"; return json::object();
       }
-      return response["result"];
+      json resultPayload = response["result"];
+      if (op == "dna-evaluate" && resultPayload.contains("blendshape_channels") &&
+          resultPayload["blendshape_channels"].is_array()) {
+        size_t applied = 0;
+        for (const json& channel : resultPayload["blendshape_channels"]) {
+          if (!channel.is_object() || !channel.contains("name") ||
+              !channel.contains("value") || !channel["name"].is_string() ||
+              !channel["value"].is_number()) continue;
+          gui_.setBlendWeight(channel["name"].get<std::string>(),
+                              channel["value"].get<float>());
+          ++applied;
+        }
+        resultPayload["vchar_applied_blendshape_channels"] = applied;
+      }
+      return resultPayload;
     }
     err = "vchar_deformer op must be status, autorig, apply-overlay, dna-inspect, or dna-evaluate";
     return json::object();
