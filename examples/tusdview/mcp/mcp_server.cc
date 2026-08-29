@@ -242,9 +242,14 @@ json MCPServer::buildToolsList() const {
       json::array()));
   tools.push_back(tool(
       "vchar_deformer",
-      "Inspect deformer adapters, run the configured auto-rigger, or apply a non-destructive USD overlay adapter.",
-      {{"op", strProp("status | autorig | apply-overlay")},
+      "Inspect deformer adapters, run the configured auto-rigger, or inspect/evaluate MetaHuman DNA.",
+      {{"op", strProp("status | autorig | apply-overlay | dna-inspect | dna-evaluate")},
        {"path", strProp("source asset for autorig or USDA/USDC overlay for apply-overlay")},
+       {"dna_path", strProp("MetaHuman DNA file for DNA operations")},
+       {"lod", {{"type", "integer"}, {"minimum", 0}, {"maximum", 65535}}},
+       {"control_space", strProp("raw | canonical")},
+       {"controls", {{"type", "array"}, {"items", {{"type", "number"}}},
+                     {"maxItems", 65536}}},
        {"output", strProp("optional autorig output overlay path")},
        {"timeout_ms", {{"type", "integer"}, {"minimum", 100}, {"maximum", 600000}}}},
       json::array({"op"})));

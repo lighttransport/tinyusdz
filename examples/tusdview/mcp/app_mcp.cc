@@ -298,7 +298,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
   if (tool == "autorigger_inspect") {
     return {{"transport", "json-rpc-2.0-stdio"},
             {"methods", json::array({"rig.initialize", "rig.inspect",
-                                      "rig.submit", "rig.status", "rig.cancel"})},
+                                      "rig.submit", "rig.status", "rig.cancel",
+                                      "dna.inspect", "dna.convert", "dna.evaluate"})},
             {"authoritative_result", "USD overlay layer"},
             {"input_path", loaded_.filepath},
             {"facial_first", true}, {"body", "next"},
@@ -341,7 +342,32 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
     if (op == "apply-overlay") {
       return mcpVirtualHuman("apply_rig_overlay", args, err);
     }
-    err = "vchar_deformer op must be status, autorig, or apply-overlay";
+    if (op == "dna-inspect" || op == "dna-evaluate") {
+      if (autoriggerExecutable_.empty()) {
+        err = "vchar_deformer DNA operations require --autorigger"; return json::object();
+      }
+      const std::string dnaPath = args.value("dna_path", std::string());
+      if (dnaPath.empty()) { err = "vchar_deformer DNA operations require dna_path"; return json::object(); }
+      json params = {{"asset_path", dnaPath}};
+      if (op == "dna-evaluate") {
+        params["lod"] = std::max(0, args.value("lod", 0));
+        params["control_space"] = args.value("control_space", std::string("canonical"));
+        params["controls"] = args.value("controls", json::array());
+      }
+      const json request = {{"jsonrpc","2.0"},{"id",2},
+                            {"method",op == "dna-inspect" ? "dna.inspect" : "dna.evaluate"},
+                            {"params",params}};
+      const int timeoutMs = std::max(100, args.value("timeout_ms", 30000));
+      const vchar::AutoriggerResult result = vchar::RunWorkerRequest(
+          autoriggerExecutable_, request.dump(), std::chrono::milliseconds(timeoutMs));
+      if (!result.ok) { err = result.timedOut ? "DNA worker timed out" : result.error; return json::object(); }
+      const json response = json::parse(result.response, nullptr, false);
+      if (response.is_discarded() || !response.contains("result")) {
+        err = "DNA worker returned malformed response"; return json::object();
+      }
+      return response["result"];
+    }
+    err = "vchar_deformer op must be status, autorig, apply-overlay, dna-inspect, or dna-evaluate";
     return json::object();
   }
 

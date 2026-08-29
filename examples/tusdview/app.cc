@@ -6472,6 +6472,26 @@ int App::run(const std::string& initialFile, int maxFrames,
             "Overlay application failed: " + applyError, false);
       }
     }
+    std::string dnaPath;
+    if (gui_.consumeDnaInspectRequest(&dnaPath) && !dnaWorkerFuture_.valid() &&
+        !autoriggerExecutable_.empty()) {
+      const std::string executable = autoriggerExecutable_;
+      const std::string request = nlohmann::json{{"jsonrpc","2.0"},{"id",2},
+          {"method","dna.inspect"},{"params",{{"asset_path",dnaPath}}}}.dump();
+      gui_.setDnaWorkerStatus("Reading DNA metadata", true);
+      dnaWorkerFuture_ = std::async(std::launch::async, [executable, request] {
+        return vchar::RunWorkerRequest(executable, request,
+                                       std::chrono::milliseconds(30000));
+      });
+    }
+    if (dnaWorkerFuture_.valid() &&
+        dnaWorkerFuture_.wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready) {
+      const vchar::AutoriggerResult completed = dnaWorkerFuture_.get();
+      gui_.setDnaWorkerStatus(completed.ok ? "DNA: " + completed.response :
+          (completed.timedOut ? "DNA inspection timed out" :
+           "DNA inspection failed: " + completed.error), false);
+    }
 #endif
     // Camera-panel focus edits must also reach the standalone CPU/CUDA/HIP
     // viewport tracers and the render report; Vulkan/GL consume this same lens

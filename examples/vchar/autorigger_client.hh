@@ -5,6 +5,9 @@
 
 namespace vchar {
 struct AutoriggerResult { bool ok{false}; bool timedOut{false}; int exitCode{-1}; std::string response; std::string error; };
+AutoriggerResult RunWorkerRequest(const std::string& executable,
+                                  const std::string& request,
+                                  std::chrono::milliseconds timeout);
 AutoriggerResult RunAutorigger(const std::string& executable,
                               const std::string& asset,
                               const std::string& output,
