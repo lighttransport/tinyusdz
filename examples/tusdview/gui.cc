@@ -2586,6 +2586,15 @@ void Gui::drawVirtualHumanPanel() {
   if (!autoriggerConfigured_) ImGui::TextDisabled("start with --autorigger PATH");
   else if (!autoriggerStatus_.empty()) ImGui::TextWrapped("%s", autoriggerStatus_.c_str());
   if (autoriggerRunning_) ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), ImVec2(-1, 0));
+  ImGui::SeparatorText("MetaHuman DNA");
+  ImGui::InputText("DNA file", dnaPath_.data(), dnaPath_.size());
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!autoriggerConfigured_ || dnaWorkerRunning_ || dnaPath_[0] == '\0');
+  if (ImGui::Button(dnaWorkerRunning_ ? "Inspecting DNA..." : "Inspect DNA"))
+    dnaInspectRequested_ = true;
+  ImGui::EndDisabled();
+  if (!dnaWorkerStatus_.empty()) ImGui::TextWrapped("%s", dnaWorkerStatus_.c_str());
+  if (dnaWorkerRunning_) ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), ImVec2(-1, 0));
   ImGui::Separator();
   if (facialControls_.empty()) {
     drawBlendShapeEditor();

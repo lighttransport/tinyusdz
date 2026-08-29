@@ -75,7 +75,11 @@ bridge can retain the same body-to-prim mapping.
 The external project is a persistent JSON-RPC 2.0 worker over stdin/stdout. Each
 line is one UTF-8 JSON message; stdout must contain protocol messages only.
 Supported methods are `rig.initialize`, `rig.inspect`, `rig.submit`,
-`rig.status`, and `rig.cancel`. `rig.submit` receives the source asset path,
+`rig.status`, and `rig.cancel`, plus optional LightRig DNA methods
+`dna.inspect`, `dna.convert`, and `dna.evaluate`. `dna.evaluate`
+accepts a selected LOD and either raw DNA or canonical facial controls,
+returning joints, blendshapes, and animated maps for playback clients.
+`rig.submit` receives the source asset path,
 facial-first options, and an output-layer path. Its authoritative result is a
 USDA or USDC overlay, never a rewritten character asset.
 

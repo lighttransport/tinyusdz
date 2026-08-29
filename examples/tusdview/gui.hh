@@ -125,6 +125,13 @@ class Gui {
     const bool requested = autoriggerRequested_; autoriggerRequested_ = false;
     return requested;
   }
+  void setDnaWorkerStatus(std::string status, bool running) {
+    dnaWorkerStatus_ = std::move(status); dnaWorkerRunning_ = running;
+  }
+  bool consumeDnaInspectRequest(std::string* path) {
+    if (!dnaInspectRequested_) return false;
+    dnaInspectRequested_ = false; if (path) *path = dnaPath_.data(); return true;
+  }
   void setFacialControls(std::vector<VcharControl> controls) {
     facialControls_ = std::move(controls);
     for (const VcharControl& control : facialControls_) {
@@ -545,6 +552,10 @@ class Gui {
   bool autoriggerRequested_{false};
   bool autoriggerRunning_{false};
   std::string autoriggerStatus_;
+  std::array<char, 1024> dnaPath_{};
+  bool dnaInspectRequested_{false};
+  bool dnaWorkerRunning_{false};
+  std::string dnaWorkerStatus_;
   bool showLights_{false};
   bool showCameras_{false};
   bool showExtent_{false};

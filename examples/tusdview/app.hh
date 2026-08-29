@@ -354,6 +354,7 @@ class App
   std::string autoriggerExecutable_;
   std::future<vchar::AutoriggerResult> autoriggerFuture_;
   std::string autoriggerOutput_;
+  std::future<vchar::AutoriggerResult> dnaWorkerFuture_;
   TydraPhysWorld physicsWorld_{};
   bool physicsWorldReady_{false};
   std::uint64_t physicsSceneGen_{~std::uint64_t(0)};

@@ -8,7 +8,7 @@
     "jsonrpc": { "const": "2.0" },
     "id": { "type": ["integer", "string"] },
     "method": {
-      "enum": ["rig.initialize", "rig.inspect", "rig.submit", "rig.status", "rig.cancel"]
+      "enum": ["rig.initialize", "rig.inspect", "rig.submit", "rig.status", "rig.cancel", "dna.inspect", "dna.convert", "dna.evaluate"]
     },
     "params": {
       "type": "object",
@@ -17,6 +17,9 @@
         "output_layer": { "type": "string", "pattern": "\\.usd[ac]$" },
         "job_id": { "type": "string" },
         "scope": { "enum": ["facial", "body", "all"] },
+        "lod": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "control_space": { "enum": ["raw", "canonical"] },
+        "controls": { "type": "array", "items": { "type": "number" }, "maxItems": 65536 },
         "options": { "type": "object" }
       },
       "additionalProperties": true
