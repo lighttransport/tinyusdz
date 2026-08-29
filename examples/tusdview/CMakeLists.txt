@@ -91,6 +91,11 @@ set(TUSDVIEW_COMMON_SOURCES
     ${COMMON_DIR}/light3d/material.cpp
     ${COMMON_DIR}/light3d/texture.cpp)
 
+if(MSVC)
+  list(APPEND TUSDVIEW_COMMON_SOURCES
+       ${COMMON_DIR}/light3d/material.rc)
+endif()
+
 # hipew intentionally uses variables named like HIP entry points. Keep those
 # loader variables out of the executable's dynamic symbol table so a directly
 # compiled HIP translation unit resolves hipGetDeviceCount/etc. to libamdhip64
