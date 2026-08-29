@@ -4,7 +4,10 @@ Build driver for the tinyusdz PyPI wheel.
 Flow:
   1. Invoke CMake on the standalone `src/next` project (next-core), building
      the `tinyusdz_next`, `tydra_next` and `tinyusdz_c` static libraries.
-     The legacy tinyusdz core is NOT built or linked.
+     The legacy tinyusdz core is NOT built or linked into the Python wheel
+     (v1.0.0 next + tydra-next only, npm preview tag). Native
+     (`cmake -S .`) and WASM (`web/CMakeLists.txt` / `web/binding.cc` with
+     TINYUSDZ_WASM_PRODUCT=legacy/next/combined) still build the legacy path.
   2. Compile the `src/python/py-*.c` sources into the `tinyusdz._core`
      extension, linking those static archives.
 

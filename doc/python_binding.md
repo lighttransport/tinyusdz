@@ -1,8 +1,12 @@
 # TinyUSDZ Python Binding
 
-TinyUSDZ ships a CPython extension package named `tinyusdz`, built on the
-**next core** (`src/next/` + `src/tydra/next/`) through the C API
-(`src/c-api/`). The legacy tinyusdz core is not part of the wheel.
+TinyUSDZ ships a CPython extension package named `tinyusdz` **v1.0.0**
+(next core, `preview` npm dist-tag), built on the **next core**
+(`src/next/` + `src/tydra/next/`) through the C API (`src/c-api/`). The
+legacy tinyusdz core is not linked into the Python wheel. Native C++ (`cmake
+-S .`) and WASM (`web/CMakeLists.txt` / `web/binding.cc` with
+`TINYUSDZ_WASM_PRODUCT=legacy/next/combined`) still build and ship the legacy
+path.
 
 End-user package documentation lives in [../python/README.md](../python/README.md).
 This page is for source builds and maintainer notes.

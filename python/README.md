@@ -4,7 +4,10 @@ Tiny, dependency-free **USD** (Universal Scene Description) library for
 Python: load and author USDA / USDC / USDZ, resolve composition, and extract
 GPU-ready render data — with **zero-copy NumPy interop**.
 
-Built on the TinyUSDZ *next* core (no pxrUSD install required). Wheels:
+Built on the TinyUSDZ *next* core + *tydra-next* (no pxrUSD install required,
+no legacy core in the wheel; native `cmake -S .` and WASM still
+provide the legacy path via `web/binding.cc`). **v1.0.0**, npm `preview`
+dist-tag. Wheels:
 
 - `cp310-abi3` — one stable-ABI wheel covers CPython **3.10+**
 - `cp314t` — native **free-threaded** (GIL-less) CPython 3.14 wheel
