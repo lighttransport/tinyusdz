@@ -2578,6 +2578,15 @@ void Gui::drawBlendShapeEditor() {
 void Gui::drawVirtualHumanPanel() {
   ImGui::Begin("Facial Rig");
   ImGui::TextDisabled("UsdSkel + authored vchar controls");
+  ImGui::BeginDisabled(!autoriggerConfigured_ || autoriggerRunning_ || !draw_);
+  if (ImGui::Button(autoriggerRunning_ ? "Auto-rigging..." : "Auto-rig facial"))
+    autoriggerRequested_ = true;
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  if (!autoriggerConfigured_) ImGui::TextDisabled("start with --autorigger PATH");
+  else if (!autoriggerStatus_.empty()) ImGui::TextWrapped("%s", autoriggerStatus_.c_str());
+  if (autoriggerRunning_) ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()), ImVec2(-1, 0));
+  ImGui::Separator();
   if (facialControls_.empty()) {
     drawBlendShapeEditor();
   } else {

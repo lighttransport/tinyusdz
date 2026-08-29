@@ -6441,6 +6441,38 @@ int App::run(const std::string& initialFile, int maxFrames,
                        renderThreadActive_);
 
     gui_.frame(renderer_.get(), &camera_);
+#if defined(TUSDVIEW_HAVE_MCP)
+    if (gui_.consumeAutoriggerRequest() && !autoriggerFuture_.valid() &&
+        !autoriggerExecutable_.empty() && !loaded_.filepath.empty()) {
+      autoriggerOutput_ = (std::filesystem::temp_directory_path() /
+          ("vchar-lightrig-gui-" + std::to_string(sceneGen_) + ".usda")).string();
+      const std::string executable = autoriggerExecutable_;
+      const std::string asset = loaded_.filepath;
+      const std::string output = autoriggerOutput_;
+      gui_.setAutoriggerStatus("Fitting landmarks and authoring USD rig", true);
+      autoriggerFuture_ = std::async(std::launch::async,
+          [executable, asset, output] {
+            return vchar::RunAutorigger(executable, asset, output,
+                                        std::chrono::milliseconds(30000));
+          });
+    }
+    if (autoriggerFuture_.valid() &&
+        autoriggerFuture_.wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready) {
+      const vchar::AutoriggerResult completed = autoriggerFuture_.get();
+      if (!completed.ok) {
+        gui_.setAutoriggerStatus(completed.timedOut ? "Auto-rigger timed out" :
+                                 "Auto-rigger failed: " + completed.error, false);
+      } else {
+        std::string applyError;
+        mcpVirtualHuman("apply_rig_overlay", {{"path", autoriggerOutput_}},
+                        applyError);
+        gui_.setAutoriggerStatus(applyError.empty() ?
+            "Rig overlay applied; review landmarks and facial controls" :
+            "Overlay application failed: " + applyError, false);
+      }
+    }
+#endif
     // Camera-panel focus edits must also reach the standalone CPU/CUDA/HIP
     // viewport tracers and the render report; Vulkan/GL consume this same lens
     // directly from Gui::renderViewportScene().

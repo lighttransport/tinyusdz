@@ -117,6 +117,14 @@ class Gui {
   void setShowGrid(bool on) { showGrid_ = on; }
   void setShowSkeleton(bool on) { showSkeleton_ = on; }
   void setVirtualHumanProfile(bool on) { virtualHumanProfile_ = on; }
+  void setAutoriggerConfigured(bool on) { autoriggerConfigured_ = on; }
+  void setAutoriggerStatus(std::string status, bool running) {
+    autoriggerStatus_ = std::move(status); autoriggerRunning_ = running;
+  }
+  bool consumeAutoriggerRequest() {
+    const bool requested = autoriggerRequested_; autoriggerRequested_ = false;
+    return requested;
+  }
   void setFacialControls(std::vector<VcharControl> controls) {
     facialControls_ = std::move(controls);
     for (const VcharControl& control : facialControls_) {
@@ -533,6 +541,10 @@ class Gui {
   bool showSkeleton_{true};
   bool virtualHumanProfile_{false};
   std::vector<VcharControl> facialControls_;
+  bool autoriggerConfigured_{false};
+  bool autoriggerRequested_{false};
+  bool autoriggerRunning_{false};
+  std::string autoriggerStatus_;
   bool showLights_{false};
   bool showCameras_{false};
   bool showExtent_{false};

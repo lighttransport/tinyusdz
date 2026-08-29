@@ -242,9 +242,11 @@ json MCPServer::buildToolsList() const {
       json::array()));
   tools.push_back(tool(
       "vchar_deformer",
-      "Inspect built-in deformer adapters or apply a non-destructive USD overlay adapter.",
-      {{"op", strProp("status | apply-overlay")},
-       {"path", strProp("USDA/USDC overlay path for apply-overlay")}},
+      "Inspect deformer adapters, run the configured auto-rigger, or apply a non-destructive USD overlay adapter.",
+      {{"op", strProp("status | autorig | apply-overlay")},
+       {"path", strProp("source asset for autorig or USDA/USDC overlay for apply-overlay")},
+       {"output", strProp("optional autorig output overlay path")},
+       {"timeout_ms", {{"type", "integer"}, {"minimum", 100}, {"maximum", 600000}}}},
       json::array({"op"})));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,

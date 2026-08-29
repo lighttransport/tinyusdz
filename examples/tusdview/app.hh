@@ -39,6 +39,7 @@
 #include "tydra/rb-dynamics.hh"
 #include "scene_loader.hh"
 #include "stream/stream_server.hh"
+#include "../vchar/autorigger_client.hh"
 #if defined(TUSDVIEW_HAVE_MCP)
 #include "mcp/mcp_host.hh"
 #include "mcp/mcp_server.hh"
@@ -162,6 +163,9 @@ class App
   void setVirtualHumanProfile(bool on) {
     virtualHumanProfile_ = on;
     gui_.setVirtualHumanProfile(on);
+  }
+  void setAutoriggerExecutable(const std::string& path) {
+    autoriggerExecutable_ = path; gui_.setAutoriggerConfigured(!path.empty());
   }
   void setCamDolly(float f) { camDolly_ = f; }
   void setAdaptiveQuality(bool on, float targetFps, float minScale) {
@@ -347,6 +351,9 @@ class App
 
  private:
   bool virtualHumanProfile_{false};
+  std::string autoriggerExecutable_;
+  std::future<vchar::AutoriggerResult> autoriggerFuture_;
+  std::string autoriggerOutput_;
   TydraPhysWorld physicsWorld_{};
   bool physicsWorldReady_{false};
   std::uint64_t physicsSceneGen_{~std::uint64_t(0)};

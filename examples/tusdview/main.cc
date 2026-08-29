@@ -247,6 +247,7 @@ int main(int argc, char** argv) {
   tusdview::Backend backend = tusdview::Backend::GL;
 #endif
   bool backendExplicit = false;
+  std::string autoriggerExecutable;
   std::optional<std::string> configPath;
   std::string file;
   std::string screenshot;
@@ -1044,6 +1045,8 @@ int main(int argc, char** argv) {
       wantBlend.emplace_back(std::string(spec, eq), std::atof(eq + 1));
     } if (std::strcmp(argv[i], "--mcp-stdio") == 0) {
       mcpStdio = true;
+    } if (std::strcmp(argv[i], "--autorigger") == 0 && (i + 1) < argc) {
+      autoriggerExecutable = argv[++i];
     } if (std::strncmp(argv[i], "--mcp-http", 10) == 0) {
       const char* eq = std::strchr(argv[i], '=');
       mcpHttpPort = eq ? std::atoi(eq + 1) : 8080;
@@ -1302,6 +1305,7 @@ int main(int argc, char** argv) {
           "  --max-draw-meshes N / --max-gpu-mem G  Bound raster mesh count or "
           "geometry memory (GiB).\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
+          "  --autorigger PATH  External JSON-RPC auto-rigger executable (vchar).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
           "  --mcp         Both transports.\n"
           "  --live-shader-reload  Watch the active Vulkan/CUDA/HIP RT source and\n"
@@ -1654,6 +1658,7 @@ int main(int argc, char** argv) {
 
   tusdview::App app(backend);
   app.setVirtualHumanProfile(virtualHumanProfile);
+  app.setAutoriggerExecutable(autoriggerExecutable);
   if (argc > 0 && argv[0] && argv[0][0]) {
     std::error_code executablePathError;
     const std::filesystem::path executablePath =
