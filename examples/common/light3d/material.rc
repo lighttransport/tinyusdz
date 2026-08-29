@@ -1,0 +1,3 @@
+#include "material_resource.h"
+
+IDR_LIGHT3D_MATERIAL_CPP RCDATA "material.cpp"

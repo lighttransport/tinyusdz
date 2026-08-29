@@ -2,6 +2,10 @@
 #include "light3d/mesh_data.h"
 #include <algorithm>
 #include <cassert>
+#ifdef _MSC_VER
+#include <windows.h>
+#include "material_resource.h"
+#endif
 
 namespace light3d {
 
@@ -329,6 +333,7 @@ void main() {
 }
 
 const char* getMaterialFragmentShaderGL330() {
+#ifndef _MSC_VER
     return R"glsl(#version 330 core
 
 in vec3 vWorldPos;
@@ -1475,6 +1480,36 @@ void main() {
     fragColor = vec4(color, opacity);
 }
 )glsl";
+#else
+    static const std::string shader = []() {
+        HMODULE module = GetModuleHandleW(nullptr);
+        HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(IDR_LIGHT3D_MATERIAL_CPP),
+                                       MAKEINTRESOURCEW(RT_RCDATA));
+        if (!resource) return std::string();
+        HGLOBAL data = LoadResource(module, resource);
+        const char* source = static_cast<const char*>(LockResource(data));
+        const size_t size = static_cast<size_t>(SizeofResource(module, resource));
+        if (!source || size == 0) return std::string();
+
+        const std::string text(source, size);
+        const std::string function = "const char* getMaterialFragmentShaderGL330()";
+        const std::string begin = "return R\"glsl(";
+        const std::string end = ")glsl\"";
+        size_t cursor = text.find(function);
+        cursor = cursor == std::string::npos ? cursor : text.find(begin, cursor);
+        const size_t functionEnd = text.find("// ==================== GL430", cursor);
+        std::string result;
+        while (cursor != std::string::npos && cursor < functionEnd) {
+            cursor += begin.size();
+            const size_t endPos = text.find(end, cursor);
+            if (endPos == std::string::npos || endPos >= functionEnd) break;
+            result.append(text, cursor, endPos - cursor);
+            cursor = text.find("R\"glsl(", endPos + end.size());
+        }
+        return result;
+    }();
+    return shader.c_str();
+#endif
 }
 
 // ==================== GL430 Bindless Shaders ====================
