@@ -89,11 +89,11 @@
 namespace tinyusdz {
 namespace next {
 
-// Version info
-constexpr int version_major = 0;
-constexpr int version_minor = 1;
+// Version info — keep in sync with src/tinyusdz.hh and web/{npm,js}/package.json
+constexpr int version_major = 1;
+constexpr int version_minor = 0;
 constexpr int version_micro = 0;
-constexpr const char* version_string = "0.1.0-dev";
+constexpr const char* version_string = "1.0.0";
 
 // ============================================================
 // Convenience loading functions (wrap reader APIs)

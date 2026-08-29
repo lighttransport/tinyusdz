@@ -257,6 +257,48 @@ jobs:
     - name: tests
       run: cd build_next && ctest --output-on-failure
 
+  # AOUSD Core supplemental conformance (next + Python).
+  # Fetches the pinned supplemental corpus (scripts/fetch-aousd-supplemental.sh)
+  # and runs both the C++ next_aousd_* ctests and the Python
+  # test_aousd_supplemental.py suite. Corpus is not vendored; fetch is cached
+  # in ~/.cache/tinyusdz.
+  build-aousd:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: Fetch AOUSD supplemental
+      run: |
+        SUITE_ROOT=$(bash scripts/fetch-aousd-supplemental.sh)
+        echo "AOUSD_CORE_SUPPLEMENTAL_ROOT=$SUITE_ROOT" >> $GITHUB_ENV
+        echo "TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT=$SUITE_ROOT" >> $GITHUB_ENV
+        # proper workspace symlink for discovery fallback (within $GITHUB_WORKSPACE, not ../)
+        ln -sf "$SUITE_ROOT" ./aousd-supplemental
+        ls -la "$SUITE_ROOT" | head -n 20
+        echo "AOUSD supplemental at $SUITE_ROOT"
+    - name: configure next with supplemental
+      run: |
+        echo "AOUSD_CORE_SUPPLEMENTAL_ROOT=$AOUSD_CORE_SUPPLEMENTAL_ROOT"
+        CXX=clang++ CC=clang cmake -S src/next -B build_next_aousd -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DTINYUSDZ_NEXT_BUILD_TESTS=On \
+          -DTINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT="$AOUSD_CORE_SUPPLEMENTAL_ROOT" \
+          -DTINYUSDZ_NEXT_ENABLE_THREAD=On
+    - name: make next
+      run: cmake --build build_next_aousd -j 4
+    - name: ctest aousd
+      run: ctest --test-dir build_next_aousd -R "aousd" --output-on-failure
+    - name: Python aousd binding
+      run: |
+        python3 -m pip install -e . --no-build-isolation
+        python3 -m pip install pytest numpy
+        python3 -m pytest python/tests/test_aousd_supplemental.py -v
+        python3 -m pytest python/tests -k "not large and not usd_assets" -q
+      env:
+        AOUSD_CORE_SUPPLEMENTAL_ROOT: ${{ env.AOUSD_CORE_SUPPLEMENTAL_ROOT }}
+        TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT: ${{ env.TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT }}
+
   # ARM64 ASan build — disabled. Deprecated; re-enable when the asan
   # runtime setup on the ubuntu-24.04-arm runner is sorted out.
   # build-arm64-asan:
