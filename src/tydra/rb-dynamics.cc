@@ -1529,10 +1529,12 @@ bool BuildPhysWorld(
       if (GetPhysicsRigidBodyAPI(prim, &rigid_api)) {
         if (!rigid_api.rigidBodyEnabled.get_value()) {
           body.body_type = TYDRA_PHYS_BODY_STATIC;
-          body.flags &= ~TYDRA_PHYS_BODY_FLAG_GRAVITY;
+          body.flags &=
+              ~static_cast<uint32_t>(TYDRA_PHYS_BODY_FLAG_GRAVITY);
         } else if (rigid_api.kinematicEnabled.get_value()) {
           body.body_type = TYDRA_PHYS_BODY_KINEMATIC;
-          body.flags &= ~TYDRA_PHYS_BODY_FLAG_GRAVITY;
+          body.flags &=
+              ~static_cast<uint32_t>(TYDRA_PHYS_BODY_FLAG_GRAVITY);
         }
         if (rigid_api.startsAsleep.get_value()) {
           body.flags |= TYDRA_PHYS_BODY_FLAG_SLEEPING;
@@ -1785,16 +1787,17 @@ bool SyncPhysWorldToStage(
       }
       XformOp translate;
       translate.op_type = XformOp::OpType::Translate;
-      translate.set_value(value::double3{{body.xform.position.x,
-                                          body.xform.position.y,
-                                          body.xform.position.z}});
+      translate.set_value(value::double3{{
+          static_cast<double>(body.xform.position.x),
+          static_cast<double>(body.xform.position.y),
+          static_cast<double>(body.xform.position.z)}});
       XformOp orient;
       orient.op_type = XformOp::OpType::Orient;
       value::quatd rotation;
-      rotation[0] = body.xform.rotation.x;
-      rotation[1] = body.xform.rotation.y;
-      rotation[2] = body.xform.rotation.z;
-      rotation[3] = body.xform.rotation.w;
+      rotation[0] = static_cast<double>(body.xform.rotation.x);
+      rotation[1] = static_cast<double>(body.xform.rotation.y);
+      rotation[2] = static_cast<double>(body.xform.rotation.z);
+      rotation[3] = static_cast<double>(body.xform.rotation.w);
       orient.set_value(rotation);
       xformable->xformOps.clear();
       xformable->xformOps.push_back(std::move(translate));
