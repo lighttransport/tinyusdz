@@ -2797,7 +2797,7 @@ bool RenderSceneConverter::ConvertMesh(
       }
     }
   };
-  DiagFunnel diag_funnel{this, local_err, local_warn};
+  DiagFunnel diag_funnel{this, local_err, local_warn, nullptr, {}};
   diag_funnel.cap.err = &local_err;
   diag_funnel.cap.warn = &local_warn;
   diag_funnel.prev = SetDiagCapture(&diag_funnel.cap);
@@ -5317,17 +5317,17 @@ bool RenderSceneConverter::ConvertMesh(
         // temporary vectors.
         const value::float3 *pos_ptr =
             reinterpret_cast<const value::float3 *>(points_ptr->data());
-        size_t num_faces = dst.faceVertexCounts().size();
+        size_t tangent_face_count = dst.faceVertexCounts().size();
         if (use_hybrid) {
           mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
               pos_ptr, normals_ptr, texcoords_ptr,
-              dst.faceVertexCounts().data(), num_faces,
+              dst.faceVertexCounts().data(), tangent_face_count,
               points_ptr->size(),
               &tangents, &binormals, nullptr, &mikk_err);
         } else if (use_fast) {
           mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
               pos_ptr, normals_ptr, texcoords_ptr,
-              dst.faceVertexCounts().data(), num_faces,
+              dst.faceVertexCounts().data(), tangent_face_count,
               points_ptr->size(),
               &tangents, &binormals, &mikk_err);
         } else {
@@ -5346,18 +5346,18 @@ bool RenderSceneConverter::ConvertMesh(
           if (fvi[i] < normals_count) fv_normals_vec[i] = normals_ptr[fvi[i]];
           if (fvi[i] < texcoords_count) fv_texcoords_vec[i] = texcoords_ptr[fvi[i]];
         }
-        size_t num_faces = dst.faceVertexCounts().size();
+        size_t tangent_face_count = dst.faceVertexCounts().size();
         if (use_hybrid) {
           mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
               fv_positions.data(), fv_normals_vec.data(),
               fv_texcoords_vec.data(), dst.faceVertexCounts().data(),
-              num_faces, fvi.size(),
+              tangent_face_count, fvi.size(),
               &tangents, &binormals, nullptr, &mikk_err);
         } else if (use_fast) {
           mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
               fv_positions.data(), fv_normals_vec.data(),
               fv_texcoords_vec.data(), dst.faceVertexCounts().data(),
-              num_faces, fvi.size(),
+              tangent_face_count, fvi.size(),
               &tangents, &binormals, &mikk_err);
         } else {
           mikktspace_ok = ComputeTangentsMikkTSpace(
