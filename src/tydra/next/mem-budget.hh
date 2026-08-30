@@ -98,9 +98,13 @@ class MemBudget {
           tinyusdz::tydra::next::ComputeResourceBudget(avail, 0).host_limit;
       if (host_limit) cap_bytes = std::min<uint64_t>(cap_bytes, host_limit);
     }
-    cap_ = cap_bytes > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())
-               ? (std::numeric_limits<size_t>::max)()
+#if SIZE_MAX < UINT64_MAX
+    cap_ = cap_bytes > static_cast<uint64_t>(SIZE_MAX)
+               ? SIZE_MAX
                : static_cast<size_t>(cap_bytes);
+#else
+    cap_ = static_cast<size_t>(cap_bytes);
+#endif
     base_.store(0);
     tracked_.store(0);
     peak_tracked_.store(0);

@@ -27,7 +27,9 @@
 #include <set>
 #include <sstream>
 #include <string>
+#if defined(__GLIBC__)
 #include <malloc.h>  // mallopt (peak-RSS tuning, glibc)
+#endif
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>

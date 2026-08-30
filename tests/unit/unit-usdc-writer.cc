@@ -4674,7 +4674,10 @@ def Xform "x" {
     TEST_CHECK(attr->type_name() == "char");
     auto v = attr->get_var().value_raw().get_value<char>();
     TEST_CHECK(v.has_value());
-    if (v) TEST_CHECK(static_cast<int>(*v) == -7);
+    if (v) {
+      TEST_CHECK(static_cast<uint8_t>(static_cast<unsigned char>(*v)) ==
+                 uint8_t(249));
+    }
   }
   if (const Attribute *attr = find_attr("s")) {
     TEST_CHECK(attr->type_name() == "short");
@@ -4693,7 +4696,8 @@ def Xform "x" {
     auto v = attr->get_var().value_raw().get_value<value::char3>();
     TEST_CHECK(v.has_value());
     if (v) {
-      TEST_CHECK(static_cast<int>((*v)[0]) == -1);
+      TEST_CHECK(static_cast<uint8_t>(static_cast<unsigned char>((*v)[0])) ==
+                 uint8_t(255));
       TEST_CHECK(static_cast<int>((*v)[1]) == 2);
       TEST_CHECK(static_cast<int>((*v)[2]) == 3);
     }
@@ -4732,7 +4736,9 @@ def Xform "x" {
     if (v) {
       TEST_CHECK(v->size() == 2);
       if (v->size() == 2) {
-        TEST_CHECK(static_cast<int>((*v)[0][0]) == -1);
+        TEST_CHECK(
+            static_cast<uint8_t>(static_cast<unsigned char>((*v)[0][0])) ==
+            uint8_t(255));
         TEST_CHECK(static_cast<int>((*v)[1][1]) == 4);
       }
     }

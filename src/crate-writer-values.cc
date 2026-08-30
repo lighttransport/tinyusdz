@@ -84,9 +84,20 @@ bool ComputeDictionaryFrameSize(uint64_t count, const char* label,
 }
 
 template <typename T>
+int64_t SmallIntegerValue(T value) {
+  return static_cast<int64_t>(value);
+}
+
+int64_t SmallIntegerValue(char value) {
+  const uint8_t bits = static_cast<uint8_t>(static_cast<unsigned char>(value));
+  return bits <= 0x7fu ? static_cast<int64_t>(bits)
+                       : static_cast<int64_t>(bits) - 0x100;
+}
+
+template <typename T>
 std::string FormatSmallIntegerValue(T value) {
   std::ostringstream ss;
-  ss << static_cast<int64_t>(value);
+  ss << SmallIntegerValue(value);
   return ss.str();
 }
 
@@ -98,7 +109,7 @@ std::string FormatSmallIntegerArray(const std::vector<T> &values) {
     if (i) {
       ss << ", ";
     }
-    ss << static_cast<int64_t>(values[i]);
+    ss << SmallIntegerValue(values[i]);
   }
   ss << "]";
   return ss.str();
