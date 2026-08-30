@@ -99,10 +99,12 @@ static void ApplyMaterialVolumeConstants(const ShaderNode &shader,
   auto color = [&](const char *name, float out[3]) {
     const Attribute *a = attr(name);
     if (!a || a->has_timesamples()) return;
-    if (auto v = a->get_value<value::color3f>()) {
-      out[0] = (*v)[0]; out[1] = (*v)[1]; out[2] = (*v)[2];
-    } else if (auto v = a->get_value<value::float3>()) {
-      out[0] = (*v)[0]; out[1] = (*v)[1]; out[2] = (*v)[2];
+    if (auto color_value = a->get_value<value::color3f>()) {
+      out[0] = (*color_value)[0]; out[1] = (*color_value)[1];
+      out[2] = (*color_value)[2];
+    } else if (auto float_value = a->get_value<value::float3>()) {
+      out[0] = (*float_value)[0]; out[1] = (*float_value)[1];
+      out[2] = (*float_value)[2];
     }
   };
   scalar("inputs:density", density_scale);
