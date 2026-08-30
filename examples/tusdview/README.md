@@ -7,14 +7,14 @@ displays it with an ImGui docking UI.
 
 ## Features
 
-- **USD composition with lazy payloads** — `.usd/.usda/.usdc` files are composed
+- **USD composition with optional lazy payloads** — `.usd/.usda/.usdc` files are composed
   on load (subLayers / references / payload / inherits / variants / specializes,
-  LIVRPS order). `payload` arcs are **deferred by default** in interactive runs:
-  the scene opens instantly showing non-payload content and the **Payloads**
+  LIVRPS order). Payloads load by default so the initial scene is complete. With
+  `--defer-payloads`, the scene opens showing non-payload content and the **Payloads**
   panel lists deferred payloads with per-prim **Load** buttons (plus
   **File ▸ Load All Payloads**); loading recomposes asynchronously on the worker
   thread. Headless/`--frames` runs load payloads eagerly so screenshots are
-  complete. `--load-payloads` / `--defer-payloads` override either default;
+  complete. `--load-payloads` explicitly selects the default eager behavior;
   `--no-composition` loads the root layer only (legacy fast path, also used for
   `.usdz` archives for now). `--defer-references` extends the same lazy machinery
   to `references` arcs (the **Payloads** panel's **Arc** column shows
@@ -384,7 +384,7 @@ cmake --build build -j16 --target tusdview
 
 # USD composition / lazy payloads:
 ./build/tusdview --load-payloads scene.usda         # compose payloads eagerly
-./build/tusdview --defer-payloads scene.usda        # lazy payloads (interactive default)
+./build/tusdview --defer-payloads scene.usda        # explicitly request lazy payloads
 ./build/tusdview --defer-references scene.usda       # also defer references (opt-in, non-standard)
 ./build/tusdview --no-composition scene.usda        # root layer only (no arcs)
 
@@ -459,7 +459,7 @@ Supported keys (snake_case and kebab-case are both accepted):
 - `navigation.invert_dolly` flips wheel / Alt+RMB dolly direction.
 - `composition` enables/disables USD composition on load (default `true`;
   `--no-composition` overrides).
-- `payload_policy` is `"defer"` (lazy, interactive default) or `"load"` (eager);
+- `payload_policy` is `"defer"` (lazy) or `"load"` (eager, default);
   `--defer-payloads` / `--load-payloads` override.
 - `--ui-scale` still works and overrides the config-derived font/window scaling
   for that run.
@@ -522,6 +522,11 @@ xvfb-run -a -s "-screen 0 1280x800x24" \
 tusdview embeds an **MCP (Model Context Protocol)** server so an LLM/agent can
 inspect and control the running viewer. It speaks JSON-RPC 2.0 over two
 transports:
+
+For a viewer launched without MCP command-line options, open **Tools > MCP
+Server**, edit the hostname and port (default `127.0.0.1:8080`), and choose
+**Start server**. The panel can stop and restart the HTTP endpoint without
+reloading the scene.
 
 ```bash
 ./build/tusdview --mcp-http=8080 model.usdz   # HTTP: POST JSON-RPC to http://localhost:8080/mcp

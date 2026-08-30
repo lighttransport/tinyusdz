@@ -678,6 +678,22 @@ def Xform "World"
         point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
     }
 
+    def Mesh "HiddenMesh" (
+        hidden = true
+    )
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+
+        def Mesh "ChildMesh"
+        {
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        }
+    }
+
     def PointInstancer "Inst"
     {
         rel prototypes = </World/MeshA>
@@ -711,7 +727,9 @@ def Xform "World"
   opts.stop_at_native_instances = true;
   RenderExtractResult er;
   assert(CollectRenderPrims(lr.stage, opts, &er));
-  assert(er.meshes.size() == 1);
+  // `hidden` is editor metadata, not render visibility, and does not hide
+  // either the marked prim or its children from render extraction.
+  assert(er.meshes.size() == 3);
   assert(er.point_instancers.size() == 1);
   assert(er.cameras.size() == 1);
   assert(er.lights.size() == 1);

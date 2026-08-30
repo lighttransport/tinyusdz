@@ -434,6 +434,20 @@ class Renderer {
                                         const float* /*colors*/,
                                         const float* /*opacities*/,
                                         uint32_t /*count*/) {}
+  // Install asynchronously generated index-only prototype LODs. LOD0 remains
+  // the authored mesh; `levels` contains progressively coarser LOD1+ data.
+  virtual void installPrototypeLods(
+      size_t /*meshIndex*/,
+      const std::vector<DrawPrototypeLodCPU>& /*levels*/) {}
+  // The compacted instance arrays are packed by LOD. Backends that do not
+  // implement prototype LOD render the complete packed set at LOD0.
+  virtual void updateInstanceLodVisibility(
+      size_t meshIndex, const float* xforms, const float* colors,
+      const float* opacities, const std::array<uint32_t, 4>& lodCounts) {
+    const uint32_t count = lodCounts[0] + lodCounts[1] + lodCounts[2] +
+                           lodCounts[3];
+    updateInstanceVisibility(meshIndex, xforms, colors, opacities, count);
+  }
   // Replace mesh `meshIndex`'s vertex buffer in place (same vertex count) — used
   // for per-frame GPU blendshape morph (positions/normals re-derived on the CPU
   // from the rest pose, then GPU-skinned). No-op if unsupported or size differs.

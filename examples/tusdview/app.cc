@@ -845,6 +845,47 @@ bool ValidAabb(const float mn[3], const float mx[3]) {
   return true;
 }
 
+// Pick the least enclosed horizontal side for an initial room/environment
+// view. Large, thin meshes at the scene boundary provide a format-agnostic
+// enclosure estimate; ordinary objects and closed scenes retain the standard
+// isometric view.
+bool FindOpenSideYaw(const DrawScene& draw, const float mn[3],
+                     const float mx[3], int upAxis, float* yaw) {
+  if (!yaw || !ValidAabb(mn, mx)) return false;
+  const int axes[2] = {0, upAxis == 2 ? 1 : 2};
+  float cover[4] = {0, 0, 0, 0};
+  for (const DrawMeshCPU& mesh : draw.meshes) {
+    if (mesh.purpose == "guide" || !ValidAabb(mesh.aabbMin, mesh.aabbMax)) continue;
+    for (int ai = 0; ai < 2; ++ai) {
+      const int axis = axes[ai];
+      const int other = axes[1 - ai];
+      const float extent = mx[axis] - mn[axis];
+      const float cross0 = mx[other] - mn[other];
+      const float cross1 = mx[upAxis] - mn[upAxis];
+      if (!(extent > 1e-5f && cross0 > 1e-5f && cross1 > 1e-5f)) continue;
+      const float thickness = mesh.aabbMax[axis] - mesh.aabbMin[axis];
+      const float area = (mesh.aabbMax[other] - mesh.aabbMin[other]) *
+                         (mesh.aabbMax[upAxis] - mesh.aabbMin[upAxis]);
+      if (thickness > extent * 0.025f || area < cross0 * cross1 * 0.01f) continue;
+      const float center = 0.5f * (mesh.aabbMin[axis] + mesh.aabbMax[axis]);
+      if (center <= mn[axis] + extent * 0.08f) cover[ai * 2] += area;
+      if (center >= mx[axis] - extent * 0.08f) cover[ai * 2 + 1] += area;
+    }
+  }
+  int best = 0;
+  int worst = 0;
+  for (int i = 1; i < 4; ++i) {
+    if (cover[i] < cover[best]) best = i;
+    if (cover[i] > cover[worst]) worst = i;
+  }
+  if (!(cover[worst] > 0.0f) || cover[best] > cover[worst] * 0.5f) return false;
+  constexpr float kOpenSidePi = 3.14159265358979323846f;
+  const float candidateYaw[4] = {-0.5f * kOpenSidePi, 0.5f * kOpenSidePi,
+                                 kOpenSidePi, 0.0f};
+  *yaw = candidateYaw[best];
+  return true;
+}
+
 bool AutoSubdivisionFitBounds(const DrawScene& draw, float fitMin[3],
                               float fitMax[3]) {
   float ngMin[3] = {1e30f, 1e30f, 1e30f};
@@ -1769,7 +1810,9 @@ bool App::initImGui(std::string* err) {
   } else if (!iniPath) {
     iniPath = DefaultImGuiIniPath();
   }
-  if (iniPath) {
+  // Headless/test runs use synthetic viewport sizes and must never load or
+  // overwrite the interactive user's native window/docking geometry.
+  if (iniPath && !headless_) {
     std::error_code ec;
     const std::filesystem::path dir = iniPath->parent_path();
     if (!dir.empty()) {
@@ -2362,6 +2405,8 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     // Capture the vertex total now, before the --next path frees per-mesh CPU
     // geometry on upload (otherwise the Stats panel would show 0 vertices).
     if (!alreadyUploaded) {
+      ++prototypeLodGeneration_;
+      queuedPrototypeLods_.clear();
       size_t vtot = 0;
       for (const DrawMeshCPU& m : draw_.meshes) vtot += m.vertices.size();
       draw_.vertexCount = vtot;
@@ -2453,6 +2498,8 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     if (!rtOwnsScreenshot_) {
       const bool preserveDeferredAux = freeCpu && !renderThreadActive_;
       if (preserveDeferredAux) deferredMeshAux_.resize(draw_.meshes.size());
+      for (size_t i = 0; i < draw_.meshes.size(); ++i)
+        startPrototypeLodBuild(i, draw_.meshes[i]);
       postGpu([this, freeCpu, preserveDeferredAux] {
         std::string uerr;
         const bool uploaded = renderer_->uploadScene(draw_, &uerr);
@@ -2728,6 +2775,14 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
         fitMax = robustBoundsMax_;
       }
       camera_.fitToScene(fitMin, fitMax);
+      if (!viewDirExplicit_) {
+        float openYaw = 0.0f;
+        if (FindOpenSideYaw(draw_, fitMin, fitMax, upAxis, &openYaw)) {
+          camera_.setOrbit(camera_.target(), openYaw, 0.2f,
+                           camera_.distance() * 0.72f);
+          LOGI("camera: initial view uses least-enclosed scene side");
+        }
+      }
       if (viewDirExplicit_) {
         // OrbitCamera stores target-to-eye, the opposite of --view-dir's
         // conventional eye-to-target direction.
@@ -2930,6 +2985,8 @@ void App::drainProgressiveLoad() {
              draw_.meshes.empty() ? 0 : draw_.meshes[0].instanceCount());
       }
     } else if (event.type == ProgressiveSceneEvent::Type::Reset) {
+      ++prototypeLodGeneration_;
+      queuedPrototypeLods_.clear();
       clearPtexDecode();
       renderer_->clearSceneUploadError();
       renderer_->beginScene({}, 0);
@@ -2997,6 +3054,7 @@ void App::drainProgressiveLoad() {
       ptexMeshDemanded_.push_back(uint8_t{0});
       deferredMeshAux_.emplace_back();
       DrawMeshCPU& retained = draw_.meshes.back();
+      startPrototypeLodBuild(draw_.meshes.size() - 1, retained);
       if (useNextLoader_ && !needsMeshCpuGeometryForRT() && !MeshIsDeformable(retained)) {
         if (streamAuxEager_)
           FreeMeshGeometryCPU(retained);
@@ -3004,7 +3062,8 @@ void App::drainProgressiveLoad() {
           FreeMeshSurfaceCPU(retained);
           compactDeferredMeshAux(draw_.meshes.size() - 1);
         }
-        if (!rasterLodEnabled_) FreeMeshInstanceCPU(retained);
+        if (!rasterLodEnabled_ && !dynamicPrototypeLodEnabled_)
+          FreeMeshInstanceCPU(retained);
       }
       if (streamAuxEager_) ++nextAux_;
       if (!streamFirstUploadLogged_ && loadOpts_.timing) {
@@ -3297,6 +3356,78 @@ void App::ensureWireAuxReady() {
   }
 }
 
+void App::startPrototypeLodBuild(size_t meshIndex, const DrawMeshCPU& mesh) {
+  if (!dynamicPrototypeLodEnabled_ || backend_ != Backend::Vulkan) {
+    return;
+  }
+  if (!PrototypeNeedsGeneratedLods(mesh)) {
+    if (loadOpts_.timing && mesh.instanceCount() > 0 &&
+        mesh.indices.size() / 3 >= 2000) {
+      LOGI("prototype LOD skipped: mesh %zu (instances=%zu morphs=%zu joints=%zu)",
+           meshIndex, mesh.instanceCount(), mesh.morphs.size(),
+           mesh.jointIdx.size());
+    }
+    return;
+  }
+  PrototypeLodBuildInput input;
+  input.meshIndex = meshIndex;
+  input.sceneGeneration = prototypeLodGeneration_;
+  input.vertices = mesh.vertices;
+  input.indices = mesh.indices;
+  input.submeshes = mesh.submeshes;
+  queuedPrototypeLods_.push_back(std::move(input));
+  if (loadOpts_.timing) {
+    LOGI("prototype LOD queued: mesh %zu (%zu unique, %zu effective triangles)",
+         meshIndex, mesh.indices.size() / 3,
+         (mesh.indices.size() / 3) * mesh.instanceCount());
+  }
+}
+
+void App::pollPrototypeLodBuilds() {
+  // Simplification is deliberately bounded: production scenes often have tens
+  // of eligible prototypes, and launching one std::async thread per prototype
+  // competes with rendering and texture decode precisely when interactivity is
+  // most valuable.
+  while (pendingPrototypeLods_.size() < 2 && !queuedPrototypeLods_.empty()) {
+    PrototypeLodBuildInput input = std::move(queuedPrototypeLods_.front());
+    queuedPrototypeLods_.pop_front();
+    pendingPrototypeLods_.push_back({std::async(
+        std::launch::async, [input = std::move(input)]() mutable {
+          return BuildPrototypeLods(std::move(input));
+        })});
+  }
+  for (size_t i = 0; i < pendingPrototypeLods_.size();) {
+    auto& pending = pendingPrototypeLods_[i];
+    if (pending.future.wait_for(std::chrono::seconds(0)) !=
+        std::future_status::ready) {
+      ++i;
+      continue;
+    }
+    PrototypeLodBuildResult result = pending.future.get();
+    pendingPrototypeLods_.erase(pendingPrototypeLods_.begin() +
+                                static_cast<std::ptrdiff_t>(i));
+    if (result.sceneGeneration != prototypeLodGeneration_ ||
+        result.meshIndex >= draw_.meshes.size() || result.levels.empty()) {
+      continue;
+    }
+    draw_.meshes[result.meshIndex].prototypeLods = result.levels;
+    std::string ratios;
+    for (const DrawPrototypeLodCPU& level : result.levels) {
+      if (!ratios.empty()) ratios += ", ";
+      ratios += "L" + std::to_string(level.level) + "=" +
+                std::to_string(static_cast<int>(level.triangleRatio * 100.0f)) +
+                "%";
+    }
+    LOGI("prototype LOD ready: mesh %zu (%s)", result.meshIndex,
+         ratios.c_str());
+    gui_.notifyPrototypeLodsChanged();
+    postGpu([this, meshIndex = result.meshIndex,
+             levels = std::move(result.levels)]() mutable {
+      renderer_->installPrototypeLods(meshIndex, levels);
+    });
+  }
+}
+
 void App::stepProgressiveUpload() {
   if (!progressiveActive_) return;
   // Keep uploads on the render/context thread, but use enough of each frame to
@@ -3322,10 +3453,12 @@ void App::stepProgressiveUpload() {
       progressiveActive_ = false;
       return;
     }
+    startPrototypeLodBuild(nextMesh_, draw_.meshes[nextMesh_]);
     if (useNextLoader_ && !needsMeshCpuGeometryForRT() &&
         !MeshIsDeformable(draw_.meshes[nextMesh_])) {
       FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
-      if (!rasterLodEnabled_) FreeMeshInstanceCPU(draw_.meshes[nextMesh_]);
+      if (!rasterLodEnabled_ && !dynamicPrototypeLodEnabled_)
+        FreeMeshInstanceCPU(draw_.meshes[nextMesh_]);
     }
     ++nextMesh_;
     if (elapsedMs() > uploadBudgetMs) break;
@@ -3830,8 +3963,32 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
     LoadOptions opts = loadOpts_;
     opts.gpuSkinning = wantsNextGpuSkinning();
     if (!addPrimPaths.empty()) {
+      // Hierarchy/Inspector actions may target an ancestor Xform rather than
+      // the exact prim that owns a deferred payload. Expand each request to all
+      // currently deferred payloads below it (and accept a selected descendant
+      // of a deferred owner). StageSession::LoadPayloads then installs
+      // WithDescendants rules, so payloads discovered inside the loaded payload
+      // are recursively included as well.
+      std::set<std::string> recursive = addPrimPaths;
+      auto atOrBelow = [](const std::string& path,
+                          const std::string& root) {
+        return path == root ||
+               (path.size() > root.size() &&
+                path.compare(0, root.size(), root) == 0 &&
+                path[root.size()] == '/');
+      };
+      for (const tinyusdz::next::Path& deferred :
+           nextSession_->GetDeferredPayloadPaths()) {
+        const std::string path = deferred.str();
+        for (const std::string& requested : addPrimPaths) {
+          if (atOrBelow(path, requested) || atOrBelow(requested, path)) {
+            recursive.insert(path);
+            break;
+          }
+        }
+      }
       opts.payloadPolicy = PayloadPolicy::Whitelist;
-      opts.payloadWhitelist = addPrimPaths;
+      opts.payloadWhitelist = std::move(recursive);
     }
     const std::string path = loaded_.filepath;
     loadThread_ = std::thread([this, path, opts, lp, dp]() {
@@ -6175,7 +6332,11 @@ int App::run(const std::string& initialFile, int maxFrames,
   // Start the embedded MCP server (tool calls are drained on the main thread).
   if (mcpStdio_ || mcpHttpPort_ > 0) {
     mcp_ = std::make_unique<MCPServer>(this);
-    if (mcpHttpPort_ > 0) mcp_->startHttp(mcpHttpPort_);
+    if (mcpHttpPort_ > 0) {
+      mcpHttpRunning_ = mcp_->startHttp(mcpHttpHost_, mcpHttpPort_);
+      mcpHttpStatus_ = mcpHttpRunning_ ? "MCP HTTP server started"
+                                       : "Failed to start MCP HTTP server";
+    }
     if (mcpStdio_) mcp_->startStdio();
   }
 #else
@@ -6392,6 +6553,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (!headless_) ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
+    pollPrototypeLodBuilds();
+
     // Raster view-dependent LOD (--raster-lod): drop sub-pixel instances + box
     // proxies on the raster instanced path. Applied before gui_.frame() (which runs
     // the instance cull). Idempotent; cheap.
@@ -6437,11 +6600,69 @@ int App::run(const std::string& initialFile, int maxFrames,
     }
     gui_.setAdaptiveQuality(adaptiveActive, adaptiveRenderScale_, adaptiveTier_,
                             adaptiveTargetFps_);
-    gui_.setFrameRates(renderThreadActive_ ? renderFps_ : ImGui::GetIO().Framerate,
+    const float effectiveFps =
+        renderThreadActive_ ? renderFps_ : ImGui::GetIO().Framerate;
+    if (dynamicPrototypeLodEnabled_ && backend_ == Backend::Vulkan &&
+        !headless_ && effectiveFps > 0.0f) {
+      const float target = gui_.cameraInteractive() ? 30.0f : 10.0f;
+      if (effectiveFps < target * 0.90f) {
+        ++dynamicLodSlowFrames_;
+        dynamicLodFastFrames_ = 0;
+      } else if (effectiveFps > target * 1.20f) {
+        ++dynamicLodFastFrames_;
+        dynamicLodSlowFrames_ = 0;
+      } else {
+        dynamicLodSlowFrames_ = dynamicLodFastFrames_ = 0;
+      }
+      if (dynamicLodSlowFrames_ >= 3 && dynamicPrototypeLodTier_ < 3) {
+        ++dynamicPrototypeLodTier_;
+        LOGI("dynamic prototype LOD: tier %d (%.1f FPS, target %.1f)",
+             dynamicPrototypeLodTier_, effectiveFps, target);
+        dynamicLodSlowFrames_ = 0;
+      } else if (dynamicLodFastFrames_ >= 30 &&
+                 dynamicPrototypeLodTier_ > 0) {
+        --dynamicPrototypeLodTier_;
+        LOGI("dynamic prototype LOD: tier %d (%.1f FPS, target %.1f)",
+             dynamicPrototypeLodTier_, effectiveFps, target);
+        dynamicLodFastFrames_ = 0;
+      }
+    } else {
+      dynamicPrototypeLodTier_ = 0;
+      dynamicLodSlowFrames_ = dynamicLodFastFrames_ = 0;
+    }
+    static constexpr float kPrototypeErrorPx[4] = {0.0f, 0.75f, 1.5f,
+                                                   3.0f};
+    gui_.setDynamicRasterLod(dynamicPrototypeLodEnabled_,
+                             kPrototypeErrorPx[dynamicPrototypeLodTier_]);
+    gui_.setDynamicRasterLodTier(dynamicPrototypeLodTier_);
+    gui_.setFrameRates(effectiveFps,
                        renderThreadActive_);
 
+    gui_.setMcpServerState(
+#if defined(TUSDVIEW_HAVE_MCP)
+        true,
+#else
+        false,
+#endif
+        mcpHttpRunning_, mcpHttpHost_, mcpHttpPort_ > 0 ? mcpHttpPort_ : 8080,
+        mcpHttpStatus_);
     gui_.frame(renderer_.get(), &camera_);
 #if defined(TUSDVIEW_HAVE_MCP)
+    std::string requestedMcpHost;
+    int requestedMcpPort = 0;
+    if (gui_.consumeMcpStartRequest(&requestedMcpHost, &requestedMcpPort)) {
+      if (!mcp_) mcp_ = std::make_unique<MCPServer>(this);
+      mcpHttpHost_ = requestedMcpHost;
+      mcpHttpPort_ = requestedMcpPort;
+      mcpHttpRunning_ = mcp_->startHttp(mcpHttpHost_, mcpHttpPort_);
+      mcpHttpStatus_ = mcpHttpRunning_ ? "MCP HTTP server started"
+                                       : "Failed to bind MCP HTTP server";
+    }
+    if (gui_.consumeMcpStopRequest() && mcp_ && mcpHttpRunning_) {
+      mcp_->stopHttp();
+      mcpHttpRunning_ = false;
+      mcpHttpStatus_ = "MCP HTTP server stopped";
+    }
     if (gui_.consumeAutoriggerRequest() && !autoriggerFuture_.valid() &&
         !autoriggerExecutable_.empty() && !loaded_.filepath.empty()) {
       autoriggerOutput_ = (std::filesystem::temp_directory_path() /
@@ -6508,6 +6729,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     // rendering the viewport texture so they can affect this present.
     const bool reload = gui_.wantReload();
     const bool open = gui_.wantOpen();
+    const bool openRecent = gui_.wantOpenRecent();
+    const std::string recentPath = gui_.recentToOpen();
     const bool quit = gui_.wantQuit();
     const bool cancelLoad = gui_.wantCancelLoad();
     const bool loadAllPayloads = gui_.wantLoadAllPayloads();
@@ -6828,9 +7051,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (cancelLoad) loadCtrl_.cancel.store(true);
     if (reload && !loaded_.filepath.empty()) startLoadAsync(loaded_.filepath);
     if (open && !headless_) openFileDialog();
-    if (gui_.wantOpenRecent() && !headless_) {
-      const std::string p = gui_.recentToOpen();
-      if (!p.empty()) startLoadAsync(p);
+    if (openRecent && !headless_ && !recentPath.empty()) {
+      startLoadAsync(recentPath);
     }
 
     // Lazy payload on-demand load: recompose with the requested payloads added.
