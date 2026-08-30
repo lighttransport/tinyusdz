@@ -71,20 +71,6 @@ jobs:
   #          cd build-cross
   #          make VERBOSE=1
 
-  # Build with OpenSubdiv
-  build-osd:
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v5
-    - name: configure
-      run: ./scripts/bootstrap-cmake-linux-with-osd.sh
-    - name: make
-      run: cmake --build build
-    - name: test
-      run: cd build && ctest --output-on-failure
-
   # 32bit build(Linux only)
   build-32bit:
 

@@ -65,7 +65,9 @@ namespace pathlib = ::crate;
 #pragma clang diagnostic ignored "-Wshorten-64-to-32"
 #pragma clang diagnostic ignored "-Wexceptions"
 #pragma clang diagnostic ignored "-Wunused-parameter"
+#if __has_warning("-Wnrvo")
 #pragma clang diagnostic ignored "-Wnrvo"
+#endif
 #endif
 
 namespace tinyusdz {
