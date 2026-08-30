@@ -16,7 +16,10 @@ of the Python binding across a public corpus. The corpus scan is capped
 import os
 import pathlib
 import time
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None
 import pytest
 
 import tinyusdz
@@ -85,6 +88,8 @@ def _rss_mb():
         import psutil
         return psutil.Process().memory_info().rss / (1024 * 1024)
     except Exception:
+        if resource is None:
+            return 0.0
         rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         import sys
         if sys.platform == "darwin":

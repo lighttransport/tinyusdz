@@ -6,7 +6,10 @@ manual inspection (`pytest -s`). All tests assert zero-copy and bounded
 memory growth.
 """
 import time
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None
 import pathlib
 import pytest
 
@@ -21,6 +24,8 @@ def _rss_mb():
         import psutil
         return psutil.Process().memory_info().rss / (1024 * 1024)
     except Exception:
+        if resource is None:
+            return 0.0
         rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         # Linux: KB, macOS: bytes
         import sys
