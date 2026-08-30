@@ -2047,12 +2047,19 @@ static size_t KTX2ZstdDecompress(void * /*user*/, uint8_t *dst, size_t dst_cap,
 // into a reader-owned buffer sized from the header, so a small crafted file may
 // legally declare dimensions whose block payload is multiple GiB. Bound it by
 // the same ceiling used for asset reads.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wallocator-wrappers"
+#endif
 static void *KTX2BudgetAlloc(void *user, size_t size) {
   const size_t cap = *static_cast<const size_t *>(user);
   if (size == 0 || size > cap) return nullptr;
   return std::malloc(size);
 }
 static void KTX2BudgetFree(void * /*user*/, void *ptr) { std::free(ptr); }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 // Case-insensitive ".ktx2" suffix test.
 static bool EndsWithKtx2(const std::string &s) {

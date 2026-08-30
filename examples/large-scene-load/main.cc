@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
+#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -40,7 +41,7 @@ uint64_t VmRSS_kb() {
   while (std::getline(st, line)) {
     if (line.rfind("VmRSS:", 0) == 0) {
       uint64_t kb = 0;
-      std::sscanf(line.c_str(), "VmRSS: %lu kB", &kb);
+      std::sscanf(line.c_str(), "VmRSS: %" SCNu64 " kB", &kb);
       return kb;
     }
   }
