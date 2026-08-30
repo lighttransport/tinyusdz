@@ -1685,10 +1685,11 @@ int main() {
   for (size_t i = 0; i < matrixGeompropMat.materialXGraph.nodes.size(); ++i) {
     const auto& node = matrixGeompropMat.materialXGraph.nodes[i];
     if (node.op != tusdview::MaterialXGraphOpCPU::GeomProp) continue;
-    const size_t p = tusdview::kRtMaterialGraphHeaderFloats +
+    const size_t nodeOffset = tusdview::kRtMaterialGraphHeaderFloats +
         i * tusdview::kRtMaterialGraphNodeFloats;
-    if (!Near(matrixPack[p + 18], 16.0f) ||
-        !Near(matrixPack[p + 19], static_cast<float>(matrixColumns))) {
+    if (!Near(matrixPack[nodeOffset + 18], 16.0f) ||
+        !Near(matrixPack[nodeOffset + 19],
+              static_cast<float>(matrixColumns))) {
       std::fprintf(stderr, "matrix geomprop column packing failed\n");
       return 1;
     }

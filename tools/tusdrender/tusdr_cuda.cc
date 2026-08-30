@@ -171,95 +171,105 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
     mat.baseColor[1] = color.y;
     mat.baseColor[2] = color.z;
     if (mi < materials.size()) {
-      const ResolvedMat &src = materials[mi];
-      mat.baseColor[0] = src.base_color.x;
-      mat.baseColor[1] = src.base_color.y;
-      mat.baseColor[2] = src.base_color.z;
-      mat.baseColorTex = src.tex_id;
-      mat.roughness = src.roughness;
-      mat.metallic = src.metallic;
-      mat.normalTex = src.normal_tex_id;
-      mat.coatNormalTex = src.coat_normal_tex_id;
-      mat.roughnessTex = src.rough_tex.id;
-      mat.metallicTex = src.metal_tex.id;
-      mat.emissive[0] = src.emission.x;
-      mat.emissive[1] = src.emission.y;
-      mat.emissive[2] = src.emission.z;
-      mat.emissiveTex = src.emission_tex_id;
-      mat.occlusion = src.occlusion;
-      mat.occlusionTex = src.occ_tex.id;
-      mat.opacityTex = src.opacity_tex.id;
-      mat.alpha = src.opacity;
-      mat.alphaCutoff = src.opacity_threshold;
-      mat.alphaMode = src.opacity_threshold > 0.0f
+      const ResolvedMat &material_src = materials[mi];
+      mat.baseColor[0] = material_src.base_color.x;
+      mat.baseColor[1] = material_src.base_color.y;
+      mat.baseColor[2] = material_src.base_color.z;
+      mat.baseColorTex = material_src.tex_id;
+      mat.roughness = material_src.roughness;
+      mat.metallic = material_src.metallic;
+      mat.normalTex = material_src.normal_tex_id;
+      mat.coatNormalTex = material_src.coat_normal_tex_id;
+      mat.roughnessTex = material_src.rough_tex.id;
+      mat.metallicTex = material_src.metal_tex.id;
+      mat.emissive[0] = material_src.emission.x;
+      mat.emissive[1] = material_src.emission.y;
+      mat.emissive[2] = material_src.emission.z;
+      mat.emissiveTex = material_src.emission_tex_id;
+      mat.occlusion = material_src.occlusion;
+      mat.occlusionTex = material_src.occ_tex.id;
+      mat.opacityTex = material_src.opacity_tex.id;
+      mat.alpha = material_src.opacity;
+      mat.alphaCutoff = material_src.opacity_threshold;
+      mat.alphaMode = material_src.opacity_threshold > 0.0f
                           ? static_cast<int>(tusdview::AlphaMode::Mask)
-                          : src.opacity < 1.0f
+                          : material_src.opacity < 1.0f
                                 ? static_cast<int>(tusdview::AlphaMode::Blend)
                                 : static_cast<int>(tusdview::AlphaMode::Opaque);
-      mat.coatWeight = src.clearcoat;
-      mat.coatRoughness = src.clearcoat_roughness;
-      mat.coatWeightTex = src.clearcoat_tex.id;
-      mat.coatRoughnessTex = src.clearcoat_rough_tex.id;
-      mat.displacementConst = src.displacement;
-      mat.displacementTex = src.displacement_tex.id;
-      mat.displacementTexScale = src.displacement_tex.scale;
-      mat.displacementTexBias = src.displacement_tex.bias;
-      mat.specularColor[0] = src.specular_color.x;
-      mat.specularColor[1] = src.specular_color.y;
-      mat.specularColor[2] = src.specular_color.z;
-      mat.specularColorTex = src.specular_tex_id;
-      mat.ior = src.ior;
-      mat.useSpecularWorkflow = src.use_specular_workflow != 0;
-      mat.hasOpenPBRSurface = src.has_openpbr;
-      mat.hasLightRtOpenPBR = src.has_openpbr;
-      mat.lightRtOpenPBR = src.openpbr;
-      mat.materialXNodeGraphJson = src.materialx_graph_json;
+      mat.coatWeight = material_src.clearcoat;
+      mat.coatRoughness = material_src.clearcoat_roughness;
+      mat.coatWeightTex = material_src.clearcoat_tex.id;
+      mat.coatRoughnessTex = material_src.clearcoat_rough_tex.id;
+      mat.displacementConst = material_src.displacement;
+      mat.displacementTex = material_src.displacement_tex.id;
+      mat.displacementTexScale = material_src.displacement_tex.scale;
+      mat.displacementTexBias = material_src.displacement_tex.bias;
+      mat.specularColor[0] = material_src.specular_color.x;
+      mat.specularColor[1] = material_src.specular_color.y;
+      mat.specularColor[2] = material_src.specular_color.z;
+      mat.specularColorTex = material_src.specular_tex_id;
+      mat.ior = material_src.ior;
+      mat.useSpecularWorkflow = material_src.use_specular_workflow != 0;
+      mat.hasOpenPBRSurface = material_src.has_openpbr;
+      mat.hasLightRtOpenPBR = material_src.has_openpbr;
+      mat.lightRtOpenPBR = material_src.openpbr;
+      mat.materialXNodeGraphJson = material_src.materialx_graph_json;
       const auto set_sample = [&](int texture, int channel,
                                   const ScalarTex *scalar,
                                   tusdview::DrawTexSampleCPU *sample) {
         sample->tex = texture;
         sample->channel = channel;
-        sample->uv.m00 = src.uv_xform.rc * src.uv_xform.sx;
-        sample->uv.m01 = -src.uv_xform.rs * src.uv_xform.sy;
-        sample->uv.m10 = src.uv_xform.rs * src.uv_xform.sx;
-        sample->uv.m11 = src.uv_xform.rc * src.uv_xform.sy;
-        sample->uv.tx = src.uv_xform.tx;
-        sample->uv.ty = src.uv_xform.ty;
+        sample->uv.m00 = material_src.uv_xform.rc * material_src.uv_xform.sx;
+        sample->uv.m01 = -material_src.uv_xform.rs * material_src.uv_xform.sy;
+        sample->uv.m10 = material_src.uv_xform.rs * material_src.uv_xform.sx;
+        sample->uv.m11 = material_src.uv_xform.rc * material_src.uv_xform.sy;
+        sample->uv.tx = material_src.uv_xform.tx;
+        sample->uv.ty = material_src.uv_xform.ty;
         if (scalar) {
           sample->scale[0] = scalar->scale;
           sample->bias[0] = scalar->bias;
         }
       };
-      set_sample(src.tex_id, -1, nullptr, &mat.baseColorSample);
-      set_sample(src.normal_tex_id, -1, nullptr, &mat.normalSample);
-      set_sample(src.coat_normal_tex_id, -1, nullptr, &mat.coatNormalSample);
-      set_sample(src.displacement_tex.id, src.displacement_tex.ch,
-                 &src.displacement_tex, &mat.displacementSample);
-      set_sample(src.rough_tex.id, src.rough_tex.ch, &src.rough_tex,
+      set_sample(material_src.tex_id, -1, nullptr, &mat.baseColorSample);
+      set_sample(material_src.normal_tex_id, -1, nullptr, &mat.normalSample);
+      set_sample(material_src.coat_normal_tex_id, -1, nullptr,
+                 &mat.coatNormalSample);
+      set_sample(material_src.displacement_tex.id,
+                 material_src.displacement_tex.ch,
+                 &material_src.displacement_tex, &mat.displacementSample);
+      set_sample(material_src.rough_tex.id, material_src.rough_tex.ch,
+                 &material_src.rough_tex,
                  &mat.roughnessSample);
-      set_sample(src.metal_tex.id, src.metal_tex.ch, &src.metal_tex,
+      set_sample(material_src.metal_tex.id, material_src.metal_tex.ch,
+                 &material_src.metal_tex,
                  &mat.metallicSample);
-      set_sample(src.emission_tex_id, -1, nullptr, &mat.emissiveSample);
-      set_sample(src.occ_tex.id, src.occ_tex.ch, &src.occ_tex,
+      set_sample(material_src.emission_tex_id, -1, nullptr,
+                 &mat.emissiveSample);
+      set_sample(material_src.occ_tex.id, material_src.occ_tex.ch,
+                 &material_src.occ_tex,
                  &mat.occlusionSample);
-      set_sample(src.opacity_tex.id, src.opacity_tex.ch, &src.opacity_tex,
+      set_sample(material_src.opacity_tex.id, material_src.opacity_tex.ch,
+                 &material_src.opacity_tex,
                  &mat.opacitySample);
-      set_sample(src.clearcoat_tex.id, src.clearcoat_tex.ch,
-                 &src.clearcoat_tex, &mat.coatWeightSample);
-      set_sample(src.clearcoat_rough_tex.id, src.clearcoat_rough_tex.ch,
-                 &src.clearcoat_rough_tex, &mat.coatRoughnessSample);
-      mat.roughnessChannel = src.rough_tex.ch;
-      mat.metallicChannel = src.metal_tex.ch;
-      mat.occlusionChannel = src.occ_tex.ch;
-      mat.opacityChannel = src.opacity_tex.ch;
-      mat.roughnessTexScale = src.rough_tex.scale;
-      mat.roughnessTexBias = src.rough_tex.bias;
-      mat.metallicTexScale = src.metal_tex.scale;
-      mat.metallicTexBias = src.metal_tex.bias;
-      mat.occlusionTexScale = src.occ_tex.scale;
-      mat.occlusionTexBias = src.occ_tex.bias;
-      mat.opacityTexScale = src.opacity_tex.scale;
-      mat.opacityTexBias = src.opacity_tex.bias;
+      set_sample(material_src.clearcoat_tex.id,
+                 material_src.clearcoat_tex.ch, &material_src.clearcoat_tex,
+                 &mat.coatWeightSample);
+      set_sample(material_src.clearcoat_rough_tex.id,
+                 material_src.clearcoat_rough_tex.ch,
+                 &material_src.clearcoat_rough_tex,
+                 &mat.coatRoughnessSample);
+      mat.roughnessChannel = material_src.rough_tex.ch;
+      mat.metallicChannel = material_src.metal_tex.ch;
+      mat.occlusionChannel = material_src.occ_tex.ch;
+      mat.opacityChannel = material_src.opacity_tex.ch;
+      mat.roughnessTexScale = material_src.rough_tex.scale;
+      mat.roughnessTexBias = material_src.rough_tex.bias;
+      mat.metallicTexScale = material_src.metal_tex.scale;
+      mat.metallicTexBias = material_src.metal_tex.bias;
+      mat.occlusionTexScale = material_src.occ_tex.scale;
+      mat.occlusionTexBias = material_src.occ_tex.bias;
+      mat.opacityTexScale = material_src.opacity_tex.scale;
+      mat.opacityTexBias = material_src.opacity_tex.bias;
       if (!mat.materialXNodeGraphJson.empty()) {
         std::string graph_error;
         if (!tusdview::CompileMaterialXGraphRuntime(&mat, &graph_error)) {

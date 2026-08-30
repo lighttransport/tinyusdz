@@ -618,10 +618,10 @@ bool RunVulkanGaussianLightRT(const Options &opt, DirectScene *direct,
   std::vector<lrt_ray> rays;
   GenerateCameraRays(camera, w, h, spp, &rays);
   std::vector<lrt_hit> hits(nrays);
-  for (lrt_hit &h : hits) {
-    h.t = std::numeric_limits<float>::max();
-    h.u = h.v = 0.0f;
-    h.prim_id = LRT_TRI_NO_HIT;
+  for (lrt_hit &hit : hits) {
+    hit.t = std::numeric_limits<float>::max();
+    hit.u = hit.v = 0.0f;
+    hit.prim_id = LRT_TRI_NO_HIT;
   }
   std::vector<lrt_hit> chunk_hits(nrays);
   size_t released_chunks = 0;

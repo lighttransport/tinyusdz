@@ -17,7 +17,7 @@ namespace tusdr {
 namespace qjs {
 
 constexpr double kPiD = 3.14159265358979323846;
-RenderContext *g_render_ctx = nullptr;
+static RenderContext *g_render_ctx = nullptr;
 
 double ArgD(JSContext *ctx, int argc, JSValueConst *argv, int i, double def) {
   if (i >= argc) return def;

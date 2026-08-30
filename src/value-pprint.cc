@@ -175,20 +175,31 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half4 &v) {
   return os;
 }
 
-// treat char vector type as byte
+namespace {
+
+int SignedCharValue(char value) {
+  const uint8_t bits = static_cast<uint8_t>(static_cast<unsigned char>(value));
+  return bits <= 0x7fu ? static_cast<int>(bits)
+                       : static_cast<int>(bits) - 0x100;
+}
+
+}  // namespace
+
+// USD char is a signed 8-bit value regardless of the target's plain-char ABI.
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char2 &v) {
-  os << "(" << int(v[0]) << ", " << int(v[1]) << ")";
+  os << "(" << SignedCharValue(v[0]) << ", " << SignedCharValue(v[1]) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char3 &v) {
-  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ")";
+  os << "(" << SignedCharValue(v[0]) << ", " << SignedCharValue(v[1]) << ", "
+     << SignedCharValue(v[2]) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char4 &v) {
-  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ", "
-     << int(v[3]) << ")";
+  os << "(" << SignedCharValue(v[0]) << ", " << SignedCharValue(v[1]) << ", "
+     << SignedCharValue(v[2]) << ", " << SignedCharValue(v[3]) << ")";
   return os;
 }
 

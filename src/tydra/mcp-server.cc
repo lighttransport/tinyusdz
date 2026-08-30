@@ -469,16 +469,17 @@ void MCPServer::Impl::register_methods() {
     (void)params;
     (void)sess_id;
 
+    nlohmann::json result;
+
     if (!params.contains("uri")) {
       err = "`name` is missing in params.";
-      return {};
+      return result;
     }
 
     std::string uri = params["uri"];
-    nlohmann::json result;
     if (!mcp::ReadResource(mcp_ctx_, uri, result)) {
       err += "Failed to read resource: " + uri;
-      return {};
+      return result;
     }
     
     return result;
@@ -501,22 +502,22 @@ void MCPServer::Impl::register_methods() {
   register_method("tools/call",[this](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
 
     (void)sess_id;
+
+    nlohmann::json result;
     
     if (!params.contains("name")) {
       err = "`name` is missing in params.";
-      return {};
+      return result;
     }
 
     std::string tool_name = params["name"];
     nlohmann::json empty{};
-    nlohmann::json result;
-    
     std::string err_;
     bool ret = mcp::CallTool(mcp_ctx_, tool_name, params.contains("arguments") ? params["arguments"] : empty, result, err_);
 
     if (!ret) {
       err = "Unknown tool: " + tool_name;
-      return {};
+      return result;
     }
 
     return result;
