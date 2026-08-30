@@ -100,6 +100,10 @@ add_sanitizers(${TEST_TARGET_NAME})
 # tests (security_deeply_nested_test, ~500 levels) don't blow the stack.
 # Match other platforms which default to a larger stack.
 if(WIN32 AND MSVC)
+  # NOMINMAX is provided project-wide for Windows headers, while many legacy
+  # unit-test translation units also define it locally. Keep those standalone
+  # source guards compatible without emitting one C4005 warning per file.
+  target_compile_options(${TEST_TARGET_NAME} PRIVATE /wd4005)
   target_link_options(${TEST_TARGET_NAME} PRIVATE /STACK:8388608)
 endif()
 
@@ -149,6 +153,9 @@ set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${
 if(TARGET tinyusdz_next)
   set(NEXT_TEST_TARGET unit-test-next)
   add_executable(${NEXT_TEST_TARGET} unit-next-main.cc unit-next-usdskel.cc)
+  if(WIN32 AND MSVC)
+    target_compile_options(${NEXT_TEST_TARGET} PRIVATE /wd4005)
+  endif()
   target_link_libraries(${NEXT_TEST_TARGET} PRIVATE tinyusdz_next ${CMAKE_DL_LIBS})
   target_include_directories(${NEXT_TEST_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src

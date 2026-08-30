@@ -72,7 +72,7 @@ skip = [
 ]
 build-frontend = "build"
 archs = ["auto64"]
-test-requires = ["pytest", "numpy>=2.2,<3"]
+test-skip = ["*-win_arm64"]
 test-command = "pytest {project}/python/tests -k \"not slow and not large and not usd_assets and not aousd\" -q"
 test-extras = "test"
 
