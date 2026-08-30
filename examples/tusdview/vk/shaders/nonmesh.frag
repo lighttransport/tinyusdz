@@ -89,6 +89,7 @@ float hairLobe(vec3 T, vec3 V, vec3 L, float shift, float width) {
 
 void main() {
   vec3 N;
+  float edgeCoverage = 1.0;
   if (pc.ids.x == 0 || pc.ids.x == 2) {
     // Point billboard: circular discard + spherical normal proxy
     float rr = dot(vLocal, vLocal);
@@ -100,6 +101,13 @@ void main() {
   } else {
     // Curve ribbon: view direction as normal
     N = normalize(vView);
+    // Analytic one-pixel coverage for camera-facing ribbons. The old hard
+    // triangle edge made subpixel whiskers staircase and flicker even though
+    // their centerline tessellation was smooth.
+    float edge = abs(vLocal.x);
+    float aa = max(fwidth(edge), 1.0e-4);
+    edgeCoverage = 1.0 - smoothstep(1.0 - aa, 1.0, edge);
+    if (edgeCoverage <= 1.0e-3) discard;
   }
 
   if (pc.mode.y != 0) { fragColor = vec4(0.0); return; }
@@ -230,6 +238,13 @@ void main() {
     }
   }
 
-  vec3 col = vColor.rgb * 0.12 + direct;
-  fragColor = vec4(linearToSrgb(col * exp2(fr.camPos.w)), vColor.a);
+  // Curves this thin are dominated by subpixel coverage; a very dark ambient
+  // term turns a continuous white whisker into apparent dashes whenever the
+  // narrow hair lobe misses the light. Keep enough authored color to make the
+  // antialiased centerline visually continuous, while retaining direct lobes.
+  float ambientWeight = pc.ids.x == 1 ? 0.35 : 0.12;
+  vec3 col = vColor.rgb * ambientWeight + direct;
+  float alpha = clamp(vColor.a * edgeCoverage, 0.0, 1.0);
+  vec3 display = linearToSrgb(col * exp2(fr.camPos.w));
+  fragColor = vec4(display * alpha, alpha);
 }

@@ -3517,6 +3517,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   dm.displacementShaderPath = rm.displacement_shader_path;
   dm.volumeShaderPath = rm.volume_shader_path;
   dm.volumeMaterialXNodeGraphJson = rm.volume_nodegraph_json;
+  bool jpegOpacityCoverage = false;
   ResolveNextDisplacementMaterial(stage, matPrim, &dm);
   if (rm.has_volume)
     ResolveNextSurfaceVolumeMaterial(stage, matPrim, &dm);
@@ -3552,6 +3553,21 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
         static_cast<size_t>(sp.texture_id) >= scratch.textures.size()) return;
     const tydn::RenderTexture& rt =
         scratch.textures[static_cast<size_t>(sp.texture_id)];
+    // Lossy JPEG cannot carry physical alpha and is commonly emitted by USD
+    // preview pipelines as a grayscale coverage map.  Treating its antialiased
+    // edge values as transmission makes otherwise-solid clothes/foliage enter
+    // the no-depth-write blend pass.  Remember this intent here; after the USD
+    // alpha policy is copied below we promote only the implicit Blend case to
+    // a coverage mask.  Explicit opacityThreshold remains authoritative.
+    auto hasJpegSuffix = [](const std::string& path) {
+      const size_t dot = path.find_last_of('.');
+      if (dot == std::string::npos) return false;
+      std::string ext = path.substr(dot);
+      std::transform(ext.begin(), ext.end(), ext.begin(),
+                     [](unsigned char c) { return char(std::tolower(c)); });
+      return ext == ".jpg" || ext == ".jpeg";
+    };
+    jpegOpacityCoverage = hasJpegSuffix(rt.asset_path);
     const int channel = NextScalarChannel(rt.output_channel);
     // The material shader already multiplies base-color alpha. A common USD
     // graph connects the SAME UsdUVTexture outputs:rgb to diffuseColor and
@@ -3847,6 +3863,11 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   // AlphaMode enums line up 1:1 (Opaque=0, Mask=1, Blend=2).
   dm.alphaMode = static_cast<int>(rm.alpha_mode);
   dm.alphaCutoff = rm.alpha_cutoff;
+  if (jpegOpacityCoverage &&
+      dm.alphaMode == static_cast<int>(AlphaMode::Blend)) {
+    dm.alphaMode = static_cast<int>(AlphaMode::Mask);
+    dm.alphaCutoff = 0.5f;
+  }
 
   BakeRealtimePbrMaterial(&dm);  // derive shared PBR constants from the adapter
 
@@ -8174,6 +8195,21 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                            : resolveMaterialPath(backMaterialPath,
                                                  m.texcoords_0_name,
                                                  m.texcoords_1_name);
+    // Thin preview coverage surfaces (cloth, leaves, hair cards) need both
+    // sides at folds and open boundaries. Exporters commonly leave the USD
+    // default doubleSided=false even though a grayscale cutout supplies the
+    // apparent boundary; back-face culling then removes sleeve/cloth patches
+    // as the camera moves. Restrict the fallback to texture-backed masks so
+    // ordinary closed opaque meshes retain authored culling.
+    if (wholeMat >= 0 && static_cast<size_t>(wholeMat) < draw->materials.size()) {
+      const DrawMaterialCPU& material =
+          draw->materials[static_cast<size_t>(wholeMat)];
+      if (material.alphaMode == static_cast<int>(AlphaMode::Mask) &&
+          material.opacityTex >= 0) {
+        m.double_sided = true;
+        loc.doubleSided = true;
+      }
+    }
     double mw16[16];
     std::memcpy(mw16, meshRecord.world, sizeof(mw16));
     // Blendshapes, BEFORE skinning: a blendshape deforms the bind-space points and
