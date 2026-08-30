@@ -113,6 +113,16 @@ int main() {
     return 1;
   }
 
+
+  // Room-scale inspection should not retain an unnecessarily microscopic near
+  // plane, which destroys separation for nearly-coplanar panels and decals.
+  camera.setOrbit(light3d::Vec3{0.0f, 0.0f, 0.0f}, 0.6f, 0.35f, 1.0f);
+  if (!(camera.nearPlane() >= 1.0e-4f)) {
+    std::fprintf(stderr, "inside-scene near plane wastes depth precision\n");
+    return 1;
+  }
+  camera.setOrbit(light3d::Vec3{0.0f, 0.0f, 0.0f}, 0.6f, 0.35f, 0.001f);
+
   const float yaw = camera.yaw();
   const float pitch = camera.pitch();
   const float distance = camera.distance();

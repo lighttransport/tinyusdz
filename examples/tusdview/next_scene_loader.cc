@@ -1480,6 +1480,23 @@ std::string ResolveNextPurpose(const tnext::Stage& stage,
   return ResolveNextPurpose(stage.GetPrimAtPath(abs));
 }
 
+// Unreal renders many thin architectural/foliage assets two-sided but its USD
+// exporter does not always author the corresponding Mesh doubleSided opinion.
+// Apply that compatibility fallback only inside an Unreal assetInfo hierarchy;
+// an explicit USD opinion, including false, always wins.
+bool NeedsUnrealDoubleSidedFallback(const tnext::UsdPrim& meshPrim) {
+  if (!meshPrim.IsValid()) return false;
+  if (const tnext::PrimSpec* spec = meshPrim.GetPrimSpec()) {
+    if (spec->property_value("doubleSided")) return false;
+  }
+  for (tnext::UsdPrim prim = meshPrim; prim.IsValid(); prim = prim.GetParent()) {
+    const tnext::Dict* dict = prim.GetMeta().assetInfo().as_dictionary();
+    const tnext::Value* unreal = dict ? dict->find("unreal") : nullptr;
+    if (unreal && unreal->as_dictionary()) return true;
+  }
+  return false;
+}
+
 // Resolve the SkelAnimation that drives a mesh's blendshapes, returning a
 // blendShape-name -> weight map. The next converter emits no skel/morph data, so
 // we read straight from the stage: prefer a `skel:animationSource` relationship
@@ -2460,6 +2477,7 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
   // RenderScene in RAM.
   tydn::RenderMesh rm;
   if (!conv.ConvertMesh(stage, mp, &rm)) return false;
+  if (NeedsUnrealDoubleSidedFallback(mp)) rm.double_sided = true;
   std::vector<uint32_t> vertexToPoint;
   if (!FillFlatGeometry(rm, dm, &vertexToPoint)) return false;
   const size_t numPoints = rm.point_count();
@@ -6177,6 +6195,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
 
   std::function<void(const tnext::UsdPrim&)> walk = [&](const tnext::UsdPrim& p) {
+    if (!p.IsActive()) return;
     if (p.GetTypeName() == "PointInstancer") {
       double iw16[16];
       tydn::ComputeWorldTransform(stage, p, iw16, time);
@@ -7175,6 +7194,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     pass.name = "displayColorFallback";
     pass.displayName = pass.name;
     pass.baseColor[0] = pass.baseColor[1] = pass.baseColor[2] = 1.0f;
+    // Storm/usdview gives unbound displayColor geometry a visible dielectric
+    // highlight. The generic default material's 0.5 roughness makes large DCC
+    // displayColor scenes look uniformly matte, even though authored Preview
+    // Surface materials already retain their own roughness/specular controls.
+    // Apply a moderately glossy neutral fallback only to this unbound path.
+    pass.metallic = 0.0f;
+    pass.roughness = 0.32f;
+    pass.ior = 1.5f;
+    pass.useSpecularWorkflow = false;
+    pass.specularColor[0] = pass.specularColor[1] = pass.specularColor[2] = 1.0f;
     // This is a neutral multiplier, not an authored surface shader. Leaving
     // hasLightRtOpenPBR false makes every backend use the compact white
     // material times displayColor; marking it as a full OpenPBR block caused
@@ -7913,6 +7942,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                   stage, meshPrims[i].prim, &result->mesh);
             }
             if (convertedMesh &&
+                NeedsUnrealDoubleSidedFallback(meshPrims[i].prim)) {
+              result->mesh.double_sided = true;
+            }
+            if (convertedMesh &&
                 FillFlatGeometry(result->mesh, &result->draw,
                                  &result->vertexToPoint)) {
               if (!result->mesh.has_skin() &&
@@ -8054,6 +8087,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         if (convertedMesh) draw->truncated = true;
       } else {
         convertedMesh = conv.ConvertRenderableMesh(stage, mp, &m);
+      }
+      if (convertedMesh && NeedsUnrealDoubleSidedFallback(mp)) {
+        m.double_sided = true;
       }
       if (!convertedMesh || !FillFlatGeometry(m, &loc, &vertexToPoint)) {
         releasePendingPrim(&meshRecord.prim);

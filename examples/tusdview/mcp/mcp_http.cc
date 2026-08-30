@@ -53,18 +53,21 @@ int MCPServer::HttpHandler(mg_connection* conn, void* user) {
   return 405;
 }
 
-bool MCPServer::startHttp(int port) {
-  const std::string ports = std::to_string(port);
+bool MCPServer::startHttp(const std::string& hostname, int port) {
+  if (httpCtx_) return true;
+  const std::string ports = hostname.empty()
+                                ? std::to_string(port)
+                                : hostname + ":" + std::to_string(port);
   const char* options[] = {"listening_ports", ports.c_str(), "num_threads", "4",
                            nullptr};
   httpCtx_ = mg_start(nullptr, this, options);
   if (!httpCtx_) {
-    LOGE("MCP: failed to start HTTP server on port %d", port);
+    LOGE("MCP: failed to start HTTP server on %s", ports.c_str());
     return false;
   }
   mg_set_request_handler(httpCtx_, "/", HttpHandler, this);
   mg_set_request_handler(httpCtx_, "/mcp", HttpHandler, this);
-  LOGI("MCP HTTP server listening on http://localhost:%d/mcp", port);
+  LOGI("MCP HTTP server listening on http://%s/mcp", ports.c_str());
   return true;
 }
 

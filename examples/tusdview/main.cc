@@ -273,6 +273,7 @@ int main(int argc, char** argv) {
   float rtLodCullPx = -1.0f;    // <0 => keep App default
   float rtLodBand = -1.0f;      // <0 => keep App default (stochastic band width)
   bool rasterLod = false;       // --raster-lod: view-dependent raster instance LOD
+  bool dynamicLod = false;      // generated prototype LOD + FPS controller
   float rasterLodFullPx = 0.0f; // 0 => keep App default
   float rasterLodCullPx = -1.0f;// <0 => keep App default
   LargeSceneProfile largeSceneProfile = LargeSceneProfile::Off;
@@ -290,6 +291,7 @@ int main(int argc, char** argv) {
   bool rtLodCullExplicit = false;
   bool rtLodBandExplicit = false;
   bool rasterLodExplicit = false;
+  bool dynamicLodExplicit = false;
   bool rasterLodFullExplicit = false;
   bool rasterLodCullExplicit = false;
   bool useNextExplicit = false;
@@ -504,6 +506,12 @@ int main(int argc, char** argv) {
     } if (std::strcmp(argv[i], "--raster-lod") == 0) {
       rasterLod = true;
       rasterLodExplicit = true;
+    } if (std::strcmp(argv[i], "--dynamic-lod") == 0) {
+      dynamicLod = true;
+      dynamicLodExplicit = true;
+    } if (std::strcmp(argv[i], "--no-dynamic-lod") == 0) {
+      dynamicLod = false;
+      dynamicLodExplicit = true;
     } if (std::strcmp(argv[i], "--raster-lod-full-px") == 0 && (i + 1) < argc) {
       rasterLodFullPx = static_cast<float>(std::atof(argv[++i]));
       rasterLodFullExplicit = true;
@@ -1226,11 +1234,9 @@ int main(int argc, char** argv) {
           "(compatibility flag).\n"
           "  --legacy-load Use the legacy eager loader.\n"
           "  --no-composition  Load the root layer only (skip USD composition arcs).\n"
-          "  --defer-payloads  Lazy payloads: skip payload arcs on load; load on "
-          "demand from the GUI (default for interactive runs).\n"
-          "  --load-payloads   Compose payload arcs eagerly (default for "
-          "--frames/headless runs when no large-scene profile is active; "
-          "profiles defer unless this flag is explicit).\n"
+          "  --defer-payloads  Lazy payloads: skip payload arcs on load and load "
+          "them on demand from the GUI.\n"
+          "  --load-payloads   Compose payload arcs eagerly (default).\n"
           "  --defer-references  Also defer `references` arcs (loaded on demand "
           "like payloads). Non-standard: USD assumes references always resolve, "
           "so most scene content stays unloaded until requested.\n"
@@ -1302,6 +1308,8 @@ int main(int argc, char** argv) {
           "LOD (--no-rt-lod disables RT LOD for deterministic full-scene capture); "
           "final path-trace quality disables implicit RT LOD; tune explicit LOD "
           "with --*-lod-full-px, --*-lod-cull-px, and --rt-lod-band.\n"
+          "  --dynamic-lod / --no-dynamic-lod  Enable or disable asynchronous "
+          "multi-level prototype LOD and its FPS controller.\n"
           "  --max-draw-meshes N / --max-gpu-mem G  Bound raster mesh count or "
           "geometry memory (GiB).\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
@@ -1351,6 +1359,8 @@ int main(int argc, char** argv) {
   if (automaticInteractiveProfile) {
     effectiveProfile = LargeSceneProfile::Auto;
   }
+  if (!dynamicLodExplicit)
+    dynamicLod = automaticInteractiveProfile && !fullFidelity;
   if (effectiveProfile == LargeSceneProfile::Auto) {
     // Auto is deliberately content-name agnostic. Use the conservative generic
     // preset; users can select a workload preset before opening or via CLI.
@@ -1459,7 +1469,15 @@ int main(int argc, char** argv) {
       backend = tusdview::Backend::Vulkan;
       backendExplicit = true;
     }
-    if (!rasterLodExplicit) rasterLod = true;
+    // An ordinary interactive open starts at full authored geometry. Raster
+    // LOD substitutes small meshes with generic AABBs, which is useful for an
+    // explicitly selected large-scene profile but can visibly corrupt thin,
+    // overlapping architectural parts (wall boards, trim, roof panels) in
+    // scenes that already fit comfortably in VRAM. Adaptive render scaling is
+    // the first response to a missed frame target; the GPU-budget pass remains
+    // the safety net when the full scene does not fit. Keep raster LOD opt-in
+    // for the automatic interactive profile.
+    if (!rasterLodExplicit && !automaticInteractiveProfile) rasterLod = true;
     if (!rtLodExplicit) rtLod = true;
     if (!rtLodFullExplicit) rtLodFullPx = 64.0f;
     if (!rtLodCullExplicit) rtLodCullPx = 2.0f;
@@ -1687,7 +1705,10 @@ int main(int argc, char** argv) {
     if (config.config.windowScale) app.setWindowScale(*config.config.windowScale);
     if (!windowSizeExplicit && config.config.windowWidth &&
         config.config.windowHeight) {
-      app.setWindowSize(*config.config.windowWidth, *config.config.windowHeight);
+      // Config dimensions are a first-run fallback. Persisted native geometry
+      // in imgui.ini wins unless the user explicitly passes --size.
+      app.setDefaultWindowSize(*config.config.windowWidth,
+                               *config.config.windowHeight);
     }
     if (config.config.orbitSensitivity) {
       app.setOrbitSensitivity(*config.config.orbitSensitivity);
@@ -1812,9 +1833,10 @@ int main(int argc, char** argv) {
         deferPayloads = (*config.config.payloadPolicy == "defer");
       }
     }
-    const bool defer = deferPayloads.value_or(
-        effectiveProfile != LargeSceneProfile::Off ||
-        (maxFrames < 0 && !headless));
+    // Match ordinary USD viewer semantics: the initial scene is complete unless
+    // lazy payload loading was explicitly requested. Geometry/VRAM budgets and
+    // dynamic LOD remain the safety net for genuinely large composed scenes.
+    const bool defer = deferPayloads.value_or(false);
     lo.payloadPolicy = defer ? tusdview::PayloadPolicy::DeferAll
                              : tusdview::PayloadPolicy::LoadAll;
     // Explicit opt-in only (no headless default flip): deferring references is
@@ -1891,6 +1913,7 @@ int main(int argc, char** argv) {
   app.setRobustFrame(robustFrame);
   app.setRtLod(rtLod, rtLodFullPx, rtLodCullPx, rtLodBand);
   app.setRasterLod(rasterLod, rasterLodFullPx, rasterLodCullPx);
+  app.setDynamicPrototypeLod(dynamicLod);
   if (uiScale) {
     if (*uiScale > 0.25f) {
       app.clearWindowSizeOverride();

@@ -118,8 +118,11 @@ float OrbitCamera::nearPlane() const {
   // precision for hidden-line wireframe rendering.
   const float d = std::abs(distance_);
   const float r = sceneRadius_ > 1e-4f ? sceneRadius_ : 1.0f;
-  const float inspectionNear =
-      std::max(1e-4f, std::min(r * 1e-5f, 0.01f));
+  // Preserve useful D32 separation for nearly-coplanar architectural panels,
+  // labels and decals. Scale with the scene and inspection distance, but keep a
+  // genuinely close plane when the camera itself is at sub-unit distance.
+  const float inspectionNear = std::max(
+      1e-4f, std::min({r * 1e-4f, std::max(d * 1e-4f, 1e-4f), 0.1f}));
   if (haveSceneBounds_) {
     const float outside = light3d::length(eye() - sceneCenter_) - r;
     if (outside > 0.0f) return std::max(inspectionNear, outside * 0.05f);

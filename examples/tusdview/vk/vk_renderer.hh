@@ -102,6 +102,13 @@ class VulkanRenderer final : public Renderer {
   void updateInstanceVisibility(size_t meshIndex, const float* xforms,
                                 const float* colors, const float* opacities,
                                 uint32_t count) override;
+  void installPrototypeLods(
+      size_t meshIndex,
+      const std::vector<DrawPrototypeLodCPU>& levels) override;
+  void updateInstanceLodVisibility(
+      size_t meshIndex, const float* xforms, const float* colors,
+      const float* opacities,
+      const std::array<uint32_t, 4>& lodCounts) override;
   // Raster LOD box proxies (optimization B): the VK raster path collapses distant
   // instances to a shared unit cube (box-fit per instance) instead of dropping them.
   bool supportsProxyDraw() const override { return true; }
@@ -318,6 +325,17 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory instVtxColorMem{VK_NULL_HANDLE};
     uint32_t instanceCount{0};
     uint32_t drawInstanceCount{0};
+    struct PrototypeLodGPU {
+      VkBuffer ebo{VK_NULL_HANDLE};
+      VkDeviceMemory eboMem{VK_NULL_HANDLE};
+      std::vector<DrawSubmesh> submeshes;
+      float objectError{0.0f};
+      float triangleRatio{1.0f};
+      uint32_t level{1};
+    };
+    std::vector<PrototypeLodGPU> prototypeLods;
+    std::array<uint32_t, 4> lodInstanceCount{{0, 0, 0, 0}};
+    std::array<uint32_t, 4> lodInstanceOffset{{0, 0, 0, 0}};
     // Multi-draw-indirect (MDI) placement. When mdiEligible (device supports MDI
     // and this prototype is non-morph), the instance-rate buffers above point into
     // the renderer's ONE global instance buffer rather than a per-mesh allocation:

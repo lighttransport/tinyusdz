@@ -70,6 +70,17 @@ struct DrawSubmesh {
   int backfaceMaterialId{-1};
 };
 
+// Generated index-only raster LOD for an instanced prototype. All levels reuse
+// DrawMeshCPU::vertices, so materials, UVs, normals and picking identity remain
+// identical to the authored mesh while the submitted triangle count falls.
+struct DrawPrototypeLodCPU {
+  std::vector<uint32_t> indices;
+  std::vector<DrawSubmesh> submeshes;
+  float objectError{0.0f};  // meshoptimizer normalized geometric/attribute error
+  float triangleRatio{1.0f};
+  uint32_t level{1};  // requested logical level (1..3); LOD0 is authored
+};
+
 // One blendshape target in DrawVertex order (sparse), for per-frame GPU morph.
 // `vtx[i]` is the affected DrawVertex; `dpos` holds its position offset (3
 // floats, parallel to `vtx`). Normals are regenerated from the morphed
@@ -179,6 +190,9 @@ struct DrawMeshCPU {
   int maxInfluencesPerVertex{0};
   std::vector<uint32_t> indices;  // triangulated, grouped by submesh/material
   std::vector<DrawSubmesh> submeshes;
+  // Generated asynchronously after the authored mesh has been uploaded. LOD0
+  // is the authored indices/submeshes above; entries here are LOD1..LOD3.
+  std::vector<DrawPrototypeLodCPU> prototypeLods;
 
   // GPU instancing: per-instance 3x4 object-to-world matrices, 12 floats each
   // (3 rows of (x,y,z,translate); the constant bottom row is implicit). When

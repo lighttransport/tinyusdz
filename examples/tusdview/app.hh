@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <future>
 #include <functional>
@@ -34,6 +35,7 @@
 #include "load_control.hh"
 #include "parametric_tess.hh"
 #include "ptex_atlas.hh"
+#include "prototype_lod.hh"
 #include "renderer.hh"
 #include "rt_camera.hh"
 #include "tydra/rb-dynamics.hh"
@@ -105,6 +107,9 @@ class App
     if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
     if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
   }
+  void setDynamicPrototypeLod(bool enabled) {
+    dynamicPrototypeLodEnabled_ = enabled;
+  }
 
   // HiDPI UI scale (font + widget sizes). Auto-detected from the monitor at
   // startup (1.0 on standard-density displays, 2.0 on HiDPI / >=2K panels) unless
@@ -130,6 +135,12 @@ class App
   void setWindowSize(int width, int height) {
     if (width > 0 && height > 0) {
       hasWindowSizeOverride_ = true;
+      windowWidth_ = width;
+      windowHeight_ = height;
+    }
+  }
+  void setDefaultWindowSize(int width, int height) {
+    if (width > 0 && height > 0) {
       windowWidth_ = width;
       windowHeight_ = height;
     }
@@ -458,6 +469,8 @@ class App
   // affected meshes while this is true, or the next Vulkan sw-BVH rebuild
   // fails with "no geometry".
   bool needsMeshCpuGeometryForRT() const;
+  void startPrototypeLodBuild(size_t meshIndex, const DrawMeshCPU& mesh);
+  void pollPrototypeLodBuilds();
   const char* skinningModeName(SkinningMode mode) const;
   // Advance the playback clock by `dtSec` and request a re-evaluation at the new
   // time (called once per frame while playing).
@@ -604,6 +617,16 @@ class App
   // at 4, marginally blockier at 8).
   float rasterLodFullPx_{8.0f};
   float rasterLodCullPx_{1.5f};
+  bool dynamicPrototypeLodEnabled_{false};
+  struct PendingPrototypeLod {
+    std::future<PrototypeLodBuildResult> future;
+  };
+  std::vector<PendingPrototypeLod> pendingPrototypeLods_;
+  std::deque<PrototypeLodBuildInput> queuedPrototypeLods_;
+  uint64_t prototypeLodGeneration_{0};
+  int dynamicPrototypeLodTier_{0};
+  int dynamicLodSlowFrames_{0};
+  int dynamicLodFastFrames_{0};
   bool lodHaveLast_{false};
   bool lodArmedOnce_{false};
   bool lodPendingReselect_{false};
@@ -934,6 +957,9 @@ class App
   // MCP server (transports started in run(); commands drained each frame).
   bool mcpStdio_{false};
   int mcpHttpPort_{0};
+  std::string mcpHttpHost_{"127.0.0.1"};
+  bool mcpHttpRunning_{false};
+  std::string mcpHttpStatus_;
   std::uint64_t windowGeneration_{0};
   std::uint64_t rendererGeneration_{0};
   bool liveShaderWatchRequested_{false};

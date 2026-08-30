@@ -713,6 +713,16 @@ endif()
 target_sources(${EXAMPLE_TARGET} PRIVATE
     stream/stream_server.cc
     ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
+
+# Runtime-generated index-only prototype LODs. Keep this viewer-private: the
+# core library's optional TINYUSDZ_WITH_MESHOPT setting remains unchanged.
+target_sources(${EXAMPLE_TARGET} PRIVATE prototype_lod.cc)
+if(NOT TINYUSDZ_WITH_MESHOPT)
+  target_sources(${EXAMPLE_TARGET} PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/allocator.cpp
+      ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/simplifier.cpp
+      ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vcacheoptimizer.cpp)
+endif()
 target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
     NO_SSL NO_CGI USE_WEBSOCKET=1
     TUSDVIEW_RT_PTEXTURE_IMAGE_CAP=${TUSDVIEW_RT_PTEXTURE_IMAGE_CAP})

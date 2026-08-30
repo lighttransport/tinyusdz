@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdio>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -123,6 +124,33 @@ class Gui {
   }
   bool consumeAutoriggerRequest() {
     const bool requested = autoriggerRequested_; autoriggerRequested_ = false;
+    return requested;
+  }
+  void setMcpServerState(bool available, bool running,
+                         const std::string& hostname, int port,
+                         const std::string& status) {
+    mcpAvailable_ = available;
+    if (!mcpStateInitialized_ || running) {
+      mcpPort_ = port;
+      if (!mcpHostEditing_) {
+        std::snprintf(mcpHostname_.data(), mcpHostname_.size(), "%s",
+                      hostname.c_str());
+      }
+    }
+    mcpRunning_ = running;
+    mcpStatus_ = status;
+    mcpStateInitialized_ = true;
+  }
+  bool consumeMcpStartRequest(std::string* hostname, int* port) {
+    if (!mcpStartRequested_) return false;
+    mcpStartRequested_ = false;
+    if (hostname) *hostname = mcpHostname_.data();
+    if (port) *port = mcpPort_;
+    return true;
+  }
+  bool consumeMcpStopRequest() {
+    const bool requested = mcpStopRequested_;
+    mcpStopRequested_ = false;
     return requested;
   }
   void setDnaWorkerStatus(std::string status, bool running) {
@@ -418,6 +446,7 @@ class Gui {
   void drawCompositionGraph();
   void drawViewport();
   void drawAboutModal();
+  void drawMcpServerPanel();
   void drawLoadingModal();
   void drawProgressOverlay();  // non-modal GPU upload / RT-build progress
   void drawStageMeta();
@@ -567,6 +596,16 @@ class Gui {
   enum class NavigationHelpMode { None, Simple, Full };
   NavigationHelpMode navigationHelpMode_{NavigationHelpMode::None};
   bool showAbout_{false};
+  bool showMcpServer_{false};
+  bool mcpAvailable_{false};
+  bool mcpStateInitialized_{false};
+  bool mcpRunning_{false};
+  bool mcpHostEditing_{false};
+  bool mcpStartRequested_{false};
+  bool mcpStopRequested_{false};
+  std::array<char, 256> mcpHostname_{{'1','2','7','.','0','.','0','.','1','\0'}};
+  int mcpPort_{8080};
+  std::string mcpStatus_;
   bool cullEnabled_{true};  // per-mesh + per-instance frustum culling (View menu)
   // Per-frame render stats (computed in buildViewVisibilityMask + the per-instance
   // cull pass; rendered by drawStats). "visible" reflects frustum culling.
@@ -614,6 +653,7 @@ class Gui {
     std::vector<float> colors;   // 3 floats/visible-instance (empty when none)
     std::vector<float> opacities;  // 1 float/visible-instance (empty when none)
     uint32_t count{0};
+    std::array<uint32_t, 4> lodCounts{{0, 0, 0, 0}};
     bool hasColors{false};
     bool hasOpacities{false};
   };
@@ -634,6 +674,9 @@ class Gui {
   // the rasterised geometry. Off by default (exact parity). proxyEnabled is gated on
   // the renderer supporting the box-proxy draw (GL); else cull-only.
   bool rasterLodEnabled_{false};
+  bool dynamicRasterLodEnabled_{false};
+  float dynamicRasterLodErrorPx_{0.0f};
+  int dynamicRasterLodTier_{0};
   float rasterLodFullPx_{48.0f};
   float rasterLodCullPx_{1.5f};
   CullJobMesh proxyResult_;        // accumulated box proxies (sync path / applied)
@@ -655,6 +698,16 @@ class Gui {
     if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
     if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
   }
+  void setDynamicRasterLod(bool on, float errorPx) {
+    if (dynamicRasterLodEnabled_ != on ||
+        dynamicRasterLodErrorPx_ != errorPx) {
+      lastCullValid_ = false;
+    }
+    dynamicRasterLodEnabled_ = on;
+    dynamicRasterLodErrorPx_ = std::max(0.0f, errorPx);
+  }
+  void setDynamicRasterLodTier(int tier) { dynamicRasterLodTier_ = tier; }
+  void notifyPrototypeLodsChanged() { lastCullValid_ = false; }
  private:
   // Build the LOD camera (thresholds + projection focal length) for this cull.
   RtLodCamera buildRasterLodCam() const;

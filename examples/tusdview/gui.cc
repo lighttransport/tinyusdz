@@ -357,9 +357,57 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawCompositionGraph();
   drawViewport();
   drawTimeline();
+  drawMcpServerPanel();
   drawAboutModal();
   drawLoadingModal();
   drawProgressOverlay();
+}
+
+void Gui::drawMcpServerPanel() {
+  if (!showMcpServer_) return;
+  ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("MCP Server", &showMcpServer_)) {
+    ImGui::End();
+    return;
+  }
+
+  if (!mcpAvailable_) {
+    ImGui::TextWrapped(
+        "MCP support is not available in this build. Reconfigure with "
+        "TUSDVIEW_ENABLE_MCP=ON.");
+    ImGui::End();
+    return;
+  }
+
+  ImGui::Text("Status: %s", mcpRunning_ ? "Running" : "Stopped");
+  ImGui::BeginDisabled(mcpRunning_);
+  ImGui::SetNextItemWidth(220.0f);
+  ImGui::InputText("Hostname", mcpHostname_.data(), mcpHostname_.size());
+  mcpHostEditing_ = ImGui::IsItemActive();
+  ImGui::SetNextItemWidth(220.0f);
+  // No +/- steppers: at high UI scales they consumed nearly the entire item
+  // width and left room for only one digit of the port number.
+  ImGui::InputInt("Port", &mcpPort_, 0, 0);
+  mcpPort_ = std::max(1, std::min(65535, mcpPort_));
+  ImGui::EndDisabled();
+
+  if (mcpRunning_) {
+    ImGui::TextWrapped("Endpoint: http://%s:%d/mcp", mcpHostname_.data(),
+                       mcpPort_);
+    if (ImGui::Button("Stop server")) mcpStopRequested_ = true;
+  } else {
+    ImGui::BeginDisabled(mcpHostname_[0] == '\0');
+    if (ImGui::Button("Start server")) mcpStartRequested_ = true;
+    ImGui::EndDisabled();
+  }
+  if (!mcpStatus_.empty()) {
+    ImGui::Separator();
+    ImGui::TextWrapped("%s", mcpStatus_.c_str());
+  }
+  ImGui::TextDisabled(
+      "The MCP endpoint is unauthenticated. Use 127.0.0.1 unless remote "
+      "access is intentional.");
+  ImGui::End();
 }
 
 void Gui::drawAboutModal() {
@@ -939,6 +987,12 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::SliderFloat("Disp scale", &displacementScale_, 0.0f, 4.0f, "%.2f");
       ImGui::SetNextItemWidth(80.0f);
       ImGui::SliderInt("Max tess", &maxTessLevel_, 1, 16);
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Tools")) {
+      if (ImGui::MenuItem("MCP Server", nullptr, showMcpServer_)) {
+        showMcpServer_ = true;
+      }
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
@@ -2997,8 +3051,20 @@ void Gui::drawCameraPanel() {
 }
 
 void Gui::drawPayloads() {
-  ImGui::Begin("Payloads");
+  if (!ImGui::Begin("Payloads")) {
+    ImGui::End();
+    return;
+  }
   if (nextStage_) {
+    // The overwhelmingly common case has no deferred payloads. Do not traverse
+    // the entire composed stage merely to decide whether the empty panel says
+    // "No deferred payloads" or "All payloads loaded"; on large scenes that
+    // O(prims) walk happened every frame and made the viewer appear hung.
+    if (deferredPayloadPaths_.empty()) {
+      ImGui::TextDisabled("No deferred payloads.");
+      ImGui::End();
+      return;
+    }
     std::unordered_map<std::string, std::string> authoredAssets;
     nextStage_->Traverse([&](const tinyusdz::next::UsdPrim& prim) {
       for (const std::string& payload : prim.GetMeta().payloads) {
@@ -3006,12 +3072,6 @@ void Gui::drawPayloads() {
       }
       return true;
     });
-    if (deferredPayloadPaths_.empty()) {
-      ImGui::TextDisabled(authoredAssets.empty() ? "No deferred payloads."
-                                                 : "All payloads loaded.");
-      ImGui::End();
-      return;
-    }
     ImGui::Text("Deferred payloads: %zu", deferredPayloadPaths_.size());
     if (ImGui::Button("Load All") && !loadStatus_.active) {
       wantLoadAllPayloads_ = true;
@@ -3817,6 +3877,18 @@ void Gui::drawStats() {
     ImGui::Text("FPS: %.1f (%.2f ms)", uiFps,
                 uiFps > 0.0f ? 1000.0f / uiFps : 0.0f);
   }
+  if (dynamicRasterLodEnabled_) {
+    size_t ready = 0;
+    size_t levels = 0;
+    if (draw_) {
+      for (const DrawMeshCPU& mesh : draw_->meshes) {
+        if (!mesh.prototypeLods.empty()) ++ready;
+        levels += mesh.prototypeLods.size();
+      }
+    }
+    ImGui::Text("Prototype LOD: tier %d, error %.2f px, %zu prototypes/%zu levels",
+                dynamicRasterLodTier_, dynamicRasterLodErrorPx_, ready, levels);
+  }
   ImGui::Text("Backend: %s", renderer_ ? renderer_->caps().backend_name : "?");
   // CPU RSS + GPU VRAM, refreshed a few times a second (the queries touch /proc
   // and the driver, so they are throttled rather than run every frame).
@@ -4346,7 +4418,8 @@ void Gui::buildViewVisibilityMask() {
   // Wire density is controlled continuously per projected edge in the shader.
   // Hard mesh/instance size culls make whole edge sets pop during dolly, so keep
   // only ordinary frustum culling while a wire mode is active.
-  const bool lodOn = rasterLodEnabled_ && !wireActive && cam_ && renderer_;
+  const bool lodOn = (rasterLodEnabled_ || dynamicRasterLodEnabled_) &&
+                     !wireActive && cam_ && renderer_;
   RtLodCamera lodCam;
   if (lodOn) lodCam = buildRasterLodCam();
   // Backends without the shared box-proxy draw (VK) still size-cull; they just
@@ -4487,11 +4560,12 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
   out->xforms.clear();
   out->colors.clear();
   out->opacities.clear();
-  if (!cullEnabled) {
+  if (!cullEnabled && !lodCam.prototypeLodEnabled) {
     out->xforms = m.instanceXforms;  // full set (a prior cull may have compacted)
     if (out->hasColors) out->colors = m.instanceColors;
     if (out->hasOpacities) out->opacities = m.instanceOpacities;
     out->count = static_cast<uint32_t>(ninst);
+    out->lodCounts = {{out->count, 0, 0, 0}};
     return;
   }
   const float* lo = m.protoAabbMin;
@@ -4502,6 +4576,9 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
   // Degenerate (unset) prototype AABB carries no size -> never size-cull/proxy it.
   const bool degenerate = !(hi[0] > lo[0] || hi[1] > lo[1] || hi[2] > lo[2]);
   const bool doProxy = proxyOut && lodCam.proxyEnabled && !degenerate;
+  std::array<std::vector<float>, 4> lodXforms;
+  std::array<std::vector<float>, 4> lodColors;
+  std::array<std::vector<float>, 4> lodOpacities;
   // Classify + append instance k. Frustum-tests its world AABB unless `assumeInside`
   // (its whole cell already tested Inside); when LOD is on the AABB is always built
   // (its projected size drives Full / Proxy / Cull).
@@ -4525,7 +4602,7 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
           wmx[r] = std::max(wmx[r], w);
         }
       }
-      if (!assumeInside &&
+      if (cullEnabled && !assumeInside &&
           fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
               light3d::CullResult::Outside)
         return;
@@ -4545,11 +4622,28 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
         return;
       }
     }
-    out->xforms.insert(out->xforms.end(), o2w, o2w + 12);
+    uint32_t chosenLod = 0;
+    if (lodCam.prototypeLodEnabled && lodCam.prototypeErrorPx > 0.0f &&
+        !degenerate) {
+      const float radiusPx = ProjectedRadiusPx(center, radius, lodCam);
+      // meshoptimizer reports normalized object-space error. Projecting twice
+      // the bounding radius converts that to a conservative screen error.
+      for (auto it = m.prototypeLods.rbegin(); it != m.prototypeLods.rend(); ++it) {
+        if (it->level > 3) continue;
+        const float screenError = 2.0f * radiusPx * it->objectError;
+        if (screenError <= lodCam.prototypeErrorPx) {
+          chosenLod = it->level;
+          break;
+        }
+      }
+    }
+    auto& xf = lodXforms[chosenLod];
+    xf.insert(xf.end(), o2w, o2w + 12);
     if (hc)
-      out->colors.insert(out->colors.end(), &m.instanceColors[k * 3],
-                         &m.instanceColors[k * 3] + 3);
-    if (ho) out->opacities.push_back(m.instanceOpacities[k]);
+      lodColors[chosenLod].insert(lodColors[chosenLod].end(),
+                                  &m.instanceColors[k * 3],
+                                  &m.instanceColors[k * 3] + 3);
+    if (ho) lodOpacities[chosenLod].push_back(m.instanceOpacities[k]);
   };
 
   if (grid && grid->valid) {
@@ -4598,6 +4692,17 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
   } else {
     for (std::uint32_t k = 0; k < ninst; ++k) emit(k, /*assumeInside=*/false);
   }
+  out->lodCounts = {{0, 0, 0, 0}};
+  for (size_t level = 0; level < 4; ++level) {
+    out->lodCounts[level] =
+        static_cast<uint32_t>(lodXforms[level].size() / 12);
+    out->xforms.insert(out->xforms.end(), lodXforms[level].begin(),
+                       lodXforms[level].end());
+    out->colors.insert(out->colors.end(), lodColors[level].begin(),
+                       lodColors[level].end());
+    out->opacities.insert(out->opacities.end(), lodOpacities[level].begin(),
+                          lodOpacities[level].end());
+  }
   out->count = static_cast<uint32_t>(out->xforms.size() / 12);
   if (proxyOut) {
     proxyOut->hasColors = true;  // every box proxy carries a tint
@@ -4609,7 +4714,9 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
 RtLodCamera Gui::buildRasterLodCam() const {
   RtLodCamera c;
   const bool wireActive = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
-  c.lodEnabled = rasterLodEnabled_ && !wireActive;
+  c.lodEnabled = (rasterLodEnabled_ || dynamicRasterLodEnabled_) && !wireActive;
+  c.prototypeLodEnabled = dynamicRasterLodEnabled_ && !wireActive;
+  c.prototypeErrorPx = dynamicRasterLodErrorPx_;
   // Box proxies have no authored wire topology. Wire modes disable size LOD
   // altogether above; the shader's projected-edge fade controls density without
   // hard full/proxy/cull transitions during dolly.
@@ -4674,7 +4781,10 @@ void Gui::cullWorkerMain() {
     compactMeshInstances(m, fr, cullJobEnabled_, grid, cullJobLodCam_, &r,
                          &cullJobProxy_);
     visInstances += r.count;
-    instTris += protoTris * r.count;
+    instTris += protoTris * r.lodCounts[0];
+    for (const DrawPrototypeLodCPU& level : m.prototypeLods)
+      if (level.level < r.lodCounts.size())
+        instTris += (level.indices.size() / 3) * r.lodCounts[level.level];
     cullJobResult_.push_back(std::move(r));
   }
   cullJobVisInstances_ = visInstances;
@@ -4721,18 +4831,23 @@ void Gui::cullInstancesSync() {
     compactMeshInstances(m, fr, cullEnabled_, grid, lodCam, &r, &proxyResult_);
     // Route the GPU upload to the render thread when threaded (else inline).
     uint32_t cnt = r.count;
+    const auto lodCounts = r.lodCounts;
     bool hc = r.hasColors;
     bool ho = r.hasOpacities;
     std::vector<float> xf = r.xforms, col = r.colors, op = r.opacities;
-    gpu([this, miCap = mi, cntCap = cnt, hcCap = hc, hoCap = ho,
+    gpu([this, miCap = mi, cntCap = cnt, lodCounts, hcCap = hc, hoCap = ho,
          xfCap = std::move(xf), colCap = std::move(col),
          opCap = std::move(op)]() mutable {
-      renderer_->updateInstanceVisibility(miCap, xfCap.data(),
-                                          hcCap ? colCap.data() : nullptr,
-                                          hoCap ? opCap.data() : nullptr, cntCap);
+      (void)cntCap;
+      renderer_->updateInstanceLodVisibility(
+          miCap, xfCap.data(), hcCap ? colCap.data() : nullptr,
+          hoCap ? opCap.data() : nullptr, lodCounts);
     });
     visInstances += r.count;
-    instTris += protoTris * r.count;
+    instTris += protoTris * r.lodCounts[0];
+    for (const DrawPrototypeLodCPU& level : m.prototypeLods)
+      if (level.level < r.lodCounts.size())
+        instTris += (level.indices.size() / 3) * r.lodCounts[level.level];
   }
   // Upload the accumulated box proxies (one shared instanced draw). Always called
   // (count 0 when LOD off) so a previous frame's proxies are cleared.
@@ -4808,16 +4923,18 @@ void Gui::cullInstances() {
     for (CullJobMesh& r : cullJobResult_) {
       size_t mi = r.meshIndex;
       uint32_t cnt = r.count;
+      const auto lodCounts = r.lodCounts;
       bool hc = r.hasColors;
       bool ho = r.hasOpacities;
       std::vector<float> xf = std::move(r.xforms), col = std::move(r.colors),
                          op = std::move(r.opacities);
-      gpu([this, miCap = mi, cntCap = cnt, hcCap = hc, hoCap = ho,
+      gpu([this, miCap = mi, cntCap = cnt, lodCounts, hcCap = hc, hoCap = ho,
            xfCap = std::move(xf), colCap = std::move(col),
            opCap = std::move(op)]() mutable {
-        renderer_->updateInstanceVisibility(miCap, xfCap.data(),
-                                            hcCap ? colCap.data() : nullptr,
-                                            hoCap ? opCap.data() : nullptr, cntCap);
+        (void)cntCap;
+        renderer_->updateInstanceLodVisibility(
+            miCap, xfCap.data(), hcCap ? colCap.data() : nullptr,
+            hoCap ? opCap.data() : nullptr, lodCounts);
       });
     }
     // Apply the accumulated box proxies (shared instanced draw).
@@ -6045,6 +6162,24 @@ void Gui::renderViewportScene(FramePacket* packet) {
       p.lightDir[i] = draw_->previewLightDir[i];
       p.lightColor[i] = draw_->previewLightColor[i];
     }
+  } else if (cam_) {
+    // With no authored UsdLux light, use a camera-relative studio key. A fixed
+    // world-space fallback illuminates an open room from behind whenever the
+    // initial camera chooses its opposite/open side. Keep the key slightly
+    // above and to camera-right instead of a perfectly coaxial headlight so
+    // rounded forms retain shape and dielectric highlights remain visible.
+    const light3d::Vec3 towardCamera =
+        light3d::normalize(cam_->eye() - cam_->target());
+    const light3d::Vec3 up = cam_->worldUp();
+    const light3d::Vec3 viewForward = -towardCamera;
+    light3d::Vec3 right = light3d::normalize(light3d::cross(viewForward, up));
+    if (light3d::length(right) < 1.0e-6f) right = {1.0f, 0.0f, 0.0f};
+    const light3d::Vec3 key =
+        light3d::normalize(towardCamera + up * 0.35f + right * 0.22f);
+    p.lightDir[0] = key.x;
+    p.lightDir[1] = key.y;
+    p.lightDir[2] = key.z;
+    p.lightColor[0] = p.lightColor[1] = p.lightColor[2] = 1.0f;
   }
   // Per-phase frame timing (TUSDVIEW_TIME_FRAME): isolates where a heavy scene
   // spends its frame -- instance cull/upload (CPU + GPU upload) vs renderFrame

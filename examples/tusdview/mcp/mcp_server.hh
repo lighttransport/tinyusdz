@@ -32,7 +32,8 @@ class MCPServer {
   // Start the stdio reader thread (owns stdin/stdout for JSON-RPC).
   void startStdio();
   // Start the HTTP server on `port`. Returns false if it could not bind.
-  bool startHttp(int port);
+  bool startHttp(const std::string& hostname, int port);
+  void stopHttp();  // may be restarted without stopping the MCP dispatcher
 
   // Execute queued tool calls on the MAIN thread. Call once per frame.
   void drain();
@@ -56,7 +57,6 @@ class MCPServer {
   nlohmann::json runTool(const std::string& name, const nlohmann::json& args,
                          std::string& err);
 
-  void stopHttp();  // mg_stop (defined in mcp_http.cc; keeps civetweb confined)
   static int HttpHandler(mg_connection* conn, void* user);
 
   McpHost* host_{nullptr};

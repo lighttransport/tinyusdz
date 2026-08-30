@@ -32,6 +32,8 @@ struct RtLodCamera {
   float bandFrac{0.25f};
   bool lodEnabled{false};   // false => every visible instance Full, no cull (parity)
   bool proxyEnabled{false}; // false => below-fullPx instances stay Full (P1 cull-only)
+  bool prototypeLodEnabled{false};
+  float prototypeErrorPx{0.0f};  // 0 requests authored LOD0
   bool frustumCull{true};
   std::uint32_t ditherSeed{0};  // stable for a settled pose (stochastic crossfade)
 };

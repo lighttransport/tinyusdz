@@ -5697,6 +5697,10 @@ void VulkanRenderer::destroyScene() {
     if (m.influenceDataMem) vkFreeMemory(device_, m.influenceDataMem, nullptr);
     if (m.ebo) vkDestroyBuffer(device_, m.ebo, nullptr);
     if (m.eboMem) vkFreeMemory(device_, m.eboMem, nullptr);
+    for (auto& lod : m.prototypeLods) {
+      if (lod.ebo) vkDestroyBuffer(device_, lod.ebo, nullptr);
+      if (lod.eboMem) vkFreeMemory(device_, lod.eboMem, nullptr);
+    }
     if (m.blas && pfnDestroyAS_) pfnDestroyAS_(device_, m.blas, nullptr);
     if (m.blasBuf) vkDestroyBuffer(device_, m.blasBuf, nullptr);
     if (m.blasMem) vkFreeMemory(device_, m.blasMem, nullptr);
@@ -7628,6 +7632,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     const size_t ni = sm.instanceXforms.size() / 12;
     gm.instanceCount = static_cast<uint32_t>(ni);
     gm.drawInstanceCount = gm.instanceCount;
+    gm.lodInstanceCount[0] = gm.instanceCount;
     // Per-instance color/opacity: authored instanceColors/instanceOpacities,
     // else prototype flatColor/flatOpacity repeated (matches the GL path).
     std::vector<float> icol;
@@ -8046,11 +8051,36 @@ void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xfo
                                               const float* colors,
                                               const float* opacities,
                                               uint32_t count) {
+  std::array<uint32_t, 4> counts{{count, 0, 0, 0}};
+  updateInstanceLodVisibility(meshIndex, xforms, colors, opacities, counts);
+}
+
+void VulkanRenderer::updateInstanceLodVisibility(
+    size_t meshIndex, const float* xforms, const float* colors,
+    const float* opacities, const std::array<uint32_t, 4>& requestedCounts) {
   if (meshIndex >= meshes_.size()) return;
   VkMeshGPU& m = meshes_[meshIndex];
   if (m.instanceCount == 0) return;
-  if (count > m.instanceCount) count = m.instanceCount;  // never grow past capacity
-  m.drawInstanceCount = count;
+  std::array<uint32_t, 4> counts = requestedCounts;
+  uint64_t requested = 0;
+  for (uint32_t n : counts) requested += n;
+  if (!mdiActive_ || !m.mdiEligible || m.prototypeLods.empty()) {
+    counts = {{static_cast<uint32_t>(
+                   std::min<uint64_t>(requested, m.instanceCount)),
+               0, 0, 0}};
+    requested = counts[0];
+  }
+  if (requested > m.instanceCount) {
+    // A stale async cull result must never overrun the fixed instance slice.
+    counts = {{m.instanceCount, 0, 0, 0}};
+  }
+  uint32_t count = 0;
+  for (size_t level = 0; level < counts.size(); ++level) {
+    m.lodInstanceOffset[level] = count;
+    m.lodInstanceCount[level] = counts[level];
+    count += counts[level];
+  }
+  m.drawInstanceCount = counts[0];
   if (count == 0) return;
   // Write the compacted visible subset into the host-visible instance buffer(s).
   // Pooled buffers (instVboMem == VK_NULL_HANDLE) are persistently mapped, so write
@@ -8097,6 +8127,31 @@ void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xfo
         vkUnmapMemory(device_, m.instColorMem);
       }
     }
+  }
+}
+
+void VulkanRenderer::installPrototypeLods(
+    size_t meshIndex, const std::vector<DrawPrototypeLodCPU>& levels) {
+  if (meshIndex >= meshes_.size() || levels.empty()) return;
+  VkMeshGPU& m = meshes_[meshIndex];
+  for (auto& old : m.prototypeLods) {
+    if (old.ebo) vkDestroyBuffer(device_, old.ebo, nullptr);
+    if (old.eboMem) vkFreeMemory(device_, old.eboMem, nullptr);
+  }
+  m.prototypeLods.clear();
+  for (const DrawPrototypeLodCPU& src : levels) {
+    if (src.indices.empty() || src.level == 0 || src.level > 3) continue;
+    VkMeshGPU::PrototypeLodGPU lod;
+    if (!createHostBuffer(src.indices.size() * sizeof(uint32_t),
+                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT, src.indices.data(),
+                          &lod.ebo, &lod.eboMem, false, false)) {
+      continue;
+    }
+    lod.submeshes = src.submeshes;
+    lod.objectError = src.objectError;
+    lod.triangleRatio = src.triangleRatio;
+    lod.level = src.level;
+    m.prototypeLods.push_back(std::move(lod));
   }
 }
 
@@ -13541,6 +13596,55 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         vkCmdBindIndexBuffer(cb, mdiEbo_, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexedIndirect(cb, mdiIndirectBuf_, 0, mdiDrawCount_,
                                  sizeof(VkDrawIndexedIndirectCommand));
+      }
+      // Generated prototype LODs share the MDI vertex and instance buffers, but
+      // use their own compact index buffers. Keeping these as a small direct-draw
+      // tail avoids rebuilding the global indirect batch when an async LOD job
+      // completes. In large instanced scenes this is tens of draws, not one draw
+      // per instance.
+      if (mdiActive_) {
+        InstPushC lodPush{};
+        int lodCullState = -1;
+        VkBuffer lodBufs[5] = {
+            mdiVbo_, mdiInstDevLocal_ ? mdiInstDevBuf_ : mdiInstBuf_,
+            mdiInstDevLocal_ ? mdiInstColDevBuf_ : mdiInstColBuf_,
+            mdiVtxColBuf_, mdiMorphBuf_};
+        VkDeviceSize lodOffs[5] = {0, 0, 0, 0, 0};
+        vkCmdBindVertexBuffers(cb, 0, 5, lodBufs, lodOffs);
+        for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+          if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
+          const auto& mesh = meshes_[mi];
+          if (!mesh.mdiEligible || mesh.hasTranslucentInstances) continue;
+          if (dynCullSupported_) {
+            const VkCullModeFlags want =
+                mesh.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+            if (static_cast<int>(want) != lodCullState) {
+              vkCmdSetCullMode_(cb, want);
+              lodCullState = static_cast<int>(want);
+            }
+          }
+          lodPush.draw[0] = static_cast<int>(mdiMeshMetaBase_ + mi);
+          vkCmdPushConstants(cb, instPipelineLayout_,
+                             VK_SHADER_STAGE_VERTEX_BIT |
+                                 VK_SHADER_STAGE_FRAGMENT_BIT,
+                             0, sizeof(InstPushC), &lodPush);
+          for (const auto& lod : mesh.prototypeLods) {
+            if (lod.level > 3 || !lod.ebo ||
+                mesh.lodInstanceCount[lod.level] == 0) {
+              continue;
+            }
+            vkCmdBindIndexBuffer(cb, lod.ebo, 0, VK_INDEX_TYPE_UINT32);
+            const uint32_t firstInstance =
+                mesh.mdiInstFirst + mesh.lodInstanceOffset[lod.level];
+            for (const auto& sub : lod.submeshes) {
+              vkCmdDrawIndexed(cb, sub.indexCount,
+                               mesh.lodInstanceCount[lod.level],
+                               sub.indexOffset,
+                               static_cast<int32_t>(mesh.mdiVertBase),
+                               firstInstance);
+            }
+          }
+        }
       }
       // Per-mesh loop: non-eligible instanced prototypes (morph or translucent
       // batches) plus, when MDI is unavailable, all of them. Eligible opaque meshes
