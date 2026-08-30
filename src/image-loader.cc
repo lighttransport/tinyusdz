@@ -1601,15 +1601,15 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
 namespace {
 
 bool ImageMMapSizeFitsSizeT(uint64_t size) {
-  // On 64-bit Apple platforms this comparison is tautological and AppleClang
-  // diagnoses it as an error under -Werror. Keep the check for 32-bit targets
-  // where the mmap size can exceed size_t.
-  if constexpr (sizeof(size_t) < sizeof(uint64_t)) {
-    return size <= static_cast<uint64_t>((std::numeric_limits<size_t>::max)());
-  } else {
-    (void)size;
-    return true;
-  }
+  // Some compilers diagnose the comparison as tautological even in a
+  // discarded `if constexpr` branch. Remove it before parsing on 64-bit
+  // targets, while retaining the narrowing guard for 32-bit builds.
+#if SIZE_MAX < UINT64_MAX
+  return size <= static_cast<uint64_t>(SIZE_MAX);
+#else
+  (void)size;
+  return true;
+#endif
 }
 
 }  // namespace

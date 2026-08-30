@@ -198,6 +198,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: install configure dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev \
+          libxinerama-dev libxcursor-dev libxi-dev
     - name: configure
       run: |
         CXX=clang++ CC=clang cmake -B build_tusdview -S . -G Ninja \
