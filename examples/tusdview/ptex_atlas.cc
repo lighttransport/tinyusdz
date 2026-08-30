@@ -92,7 +92,8 @@ float HalfToFloat(uint16_t h) {
 }
 
 uint16_t U16(const uint8_t* p) {
-  return uint16_t(p[0]) | uint16_t(p[1]) << 8;
+  const uint32_t value = uint32_t(p[0]) | (uint32_t(p[1]) << 8u);
+  return static_cast<uint16_t>(value);
 }
 
 float Component(const tinyusdz::ptx::FaceImage& face, size_t pixel,
