@@ -8,7 +8,10 @@ systemd-run cgroup test is optional (skip when not available).
 import os
 import pathlib
 import subprocess
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None
 import time
 import pytest
 
@@ -22,6 +25,8 @@ def _rss_mb():
         import psutil
         return psutil.Process().memory_info().rss / (1024 * 1024)
     except Exception:
+        if resource is None:
+            return 0.0
         rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         import sys
         if sys.platform == "darwin":

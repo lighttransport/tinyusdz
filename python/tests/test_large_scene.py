@@ -15,7 +15,10 @@ use TINYUSDZ_RUN_LARGE=1 to force the full set.
 import os
 import pathlib
 import time
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None  # Windows has no resource module
 import pytest
 
 import tinyusdz
@@ -69,6 +72,8 @@ def _rss_mb():
         import psutil  # optional
         return psutil.Process().memory_info().rss / (1024 * 1024)
     except Exception:
+        if resource is None:
+            return 0.0
         rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         import sys
         if sys.platform == "darwin":
