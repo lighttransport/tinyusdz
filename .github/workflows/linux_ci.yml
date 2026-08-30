@@ -189,10 +189,9 @@ jobs:
     - name: tests
       run: cd build_mcp && ctest --output-on-failure
 
-  # Build and run the hermetic tusdview unit tests (no GPU required). These
-  # compiled unit tests validate lighting, texture, material, geometry, and camera
-  # extraction. The tusdview GUI viewer (GLFW/Vulkan) is NOT built — only the
-  # test executables are compiled, keeping CI fast and dependency-free.
+  # Build and run the tusdview unit tests (no GPU required). These compiled
+  # unit tests validate lighting, texture, material, geometry, and camera
+  # extraction. The viewer itself is not built by the target list below.
   build-tusdview-hermetic:
 
     runs-on: ubuntu-latest
@@ -206,7 +205,7 @@ jobs:
           -DTINYUSDZ_WITH_TYDRA=On \
           -DTINYUSDZ_BUILD_EXAMPLES=On \
           -DTINYUSDZ_BUILD_TESTS=On \
-          -DTINYUSDZ_BUILD_GUI_VIEWER=Off
+          -DTINYUSDZ_BUILD_GUI_VIEWER=On
     - name: build tests
       run: cmake --build build_tusdview -j2 --target tusdview_lighting_test \
                                          --target tusdview_lightrt_bridge_test \

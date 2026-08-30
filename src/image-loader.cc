@@ -1598,12 +1598,28 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
   return std::move(ret);
 }
 
+namespace {
+
+bool ImageMMapSizeFitsSizeT(uint64_t size) {
+  // On 64-bit Apple platforms this comparison is tautological and AppleClang
+  // diagnoses it as an error under -Werror. Keep the check for 32-bit targets
+  // where the mmap size can exceed size_t.
+  if constexpr (sizeof(size_t) < sizeof(uint64_t)) {
+    return size <= static_cast<uint64_t>((std::numeric_limits<size_t>::max)());
+  } else {
+    (void)size;
+    return true;
+  }
+}
+
+}  // namespace
+
 nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromFile(
     const std::string &filename) {
   io::MMapFileHandle mapped;
   std::string map_err;
   if (io::MMapFile(filename, &mapped, false, &map_err)) {
-    if (mapped.size <= static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+    if (ImageMMapSizeFitsSizeT(mapped.size)) {
       auto result = GetImageInfoFromMemory(mapped.addr,
                                            static_cast<size_t>(mapped.size),
                                            filename);

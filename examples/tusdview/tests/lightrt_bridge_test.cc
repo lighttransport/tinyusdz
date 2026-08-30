@@ -48,6 +48,7 @@ std::string MaterialTextureDir() {
   const fs::path cwd = fs::current_path();
   const fs::path candidates[] = {
       cwd / "models" / "textures",
+      cwd / ".." / "models" / "textures",
       cwd / ".." / ".." / "models" / "textures",
       cwd / ".." / ".." / ".." / "models" / "textures"};
   for (const fs::path& candidate : candidates) {

@@ -533,7 +533,9 @@ if(TINYUSDZ_BUILD_TESTS)
       tusdview_rt_lod_test
       tusdview_scene_safety_test)
     add_test(NAME ${tv_test} COMMAND ${tv_test})
-    set_tests_properties(${tv_test} PROPERTIES LABELS "tusdview")
+    set_tests_properties(${tv_test} PROPERTIES
+      LABELS "tusdview"
+      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     if(COMMAND add_sanitizers)
       add_sanitizers(${tv_test})
     endif()
