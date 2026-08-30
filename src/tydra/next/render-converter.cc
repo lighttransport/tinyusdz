@@ -5714,11 +5714,12 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     };
     add_channel(&out->texcoords_0, &out->texcoords_0_interp, 2);
     add_channel(&out->texcoords_1, &out->texcoords_1_interp, 2);
-    add_channel(&out->colors, &out->colors_interp,
-                out->colors.size() == out->point_count() * 4 ||
-                        out->colors.size() == indices.size() * 4
-                    ? 4u
-                    : 3u);
+    const uint32_t color_stride =
+        out->colors.size() == out->point_count() * 4 ||
+                out->colors.size() == indices.size() * 4
+            ? 4u
+            : 3u;
+    add_channel(&out->colors, &out->colors_interp, color_stride);
     add_channel(&out->opacities, &out->opacities_interp, 1);
 
     std::vector<std::vector<float>> channel_values(channels.size());
@@ -5756,6 +5757,34 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
         &subdivision_error);
     if (result == ::tinyusdz::tsd::Result::Success) {
       out->subdivision_face_source = std::move(refined.face_source);
+      // Uniform primvars are one value per authored face. They are not vertex
+      // or face-varying subdivision channels, but every refined child face
+      // must inherit its level-0 face's value. Leaving the original short
+      // array in place made consumers index it with refined face ids; misses
+      // read as zero (notably turning indexed displayOpacity=1 into invisible
+      // patches on subdivided character meshes).
+      auto refine_uniform = [&](FloatChunked* data, Interpolation interp,
+                                uint32_t stride) {
+        if (!data || data->empty() || interp != Interpolation::Uniform ||
+            stride == 0 || data->size() != counts.size() * stride) {
+          return;
+        }
+        const std::vector<float> authored = data->flatten();
+        std::vector<float> expanded;
+        expanded.reserve(out->subdivision_face_source.size() * stride);
+        for (uint32_t source_face : out->subdivision_face_source) {
+          if (source_face >= counts.size()) return;
+          const size_t begin = static_cast<size_t>(source_face) * stride;
+          expanded.insert(expanded.end(), authored.begin() + begin,
+                          authored.begin() + begin + stride);
+        }
+        data->clear();
+        data->append(expanded.data(), expanded.size());
+      };
+      refine_uniform(&out->texcoords_0, out->texcoords_0_interp, 2);
+      refine_uniform(&out->texcoords_1, out->texcoords_1_interp, 2);
+      refine_uniform(&out->colors, out->colors_interp, color_stride);
+      refine_uniform(&out->opacities, out->opacities_interp, 1);
       out->points.clear();
       out->points.append(refined.points.data(), refined.points.size());
       out->face_vertex_counts.clear();
@@ -9005,21 +9034,36 @@ bool RenderSceneConverter::ExtractPreviewSurface(const Stage& stage,
                                                  RenderScene* scene) {
   if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
 
-  ExtractShaderParam(stage, shader_prim, "diffuseColor", &out->diffuse_color, scene);
-  ExtractShaderParam(stage, shader_prim, "emissiveColor", &out->emissive_color, scene);
-  ExtractShaderParam(stage, shader_prim, "specularColor", &out->specular_color, scene);
-  ExtractShaderParam(stage, shader_prim, "metallic", &out->metallic, scene);
-  ExtractShaderParam(stage, shader_prim, "roughness", &out->roughness, scene);
-  ExtractShaderParam(stage, shader_prim, "clearcoat", &out->clearcoat, scene);
-  ExtractShaderParam(stage, shader_prim, "clearcoatRoughness",
-                     &out->clearcoat_roughness, scene);
-  ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
-  ExtractShaderParam(stage, shader_prim, "opacityThreshold",
-                     &out->opacity_threshold, scene);
-  ExtractShaderParam(stage, shader_prim, "ior", &out->ior, scene);
-  ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
-  ExtractShaderParam(stage, shader_prim, "displacement", &out->displacement, scene);
-  ExtractShaderParam(stage, shader_prim, "occlusion", &out->occlusion, scene);
+  // AttributeEval returns a successful zero-valued result for an unauthored
+  // shader input.  Those zeros are not the UsdPreviewSurface schema defaults
+  // (most importantly, unauthored opacity is 1).  Preserve the initialized
+  // PreviewSurfaceShader defaults unless the input is actually authored or
+  // connected.  This also keeps the 0.5 roughness, 1.5 IOR and unit occlusion
+  // fallbacks instead of silently replacing them with zero.
+  ::tinyusdz::next::AttributeEval authored_eval(&stage);
+  authored_eval.SetTime(config_.time_code);
+  auto extract_authored = [&](const char* name, ShaderParam* param) {
+    const std::string attr_name = std::string("inputs:") + name;
+    if (GetAttribute(shader_prim, attr_name) == nullptr &&
+        !authored_eval.HasConnection(shader_prim, attr_name)) {
+      return;
+    }
+    (void)ExtractShaderParam(stage, shader_prim, name, param, scene);
+  };
+
+  extract_authored("diffuseColor", &out->diffuse_color);
+  extract_authored("emissiveColor", &out->emissive_color);
+  extract_authored("specularColor", &out->specular_color);
+  extract_authored("metallic", &out->metallic);
+  extract_authored("roughness", &out->roughness);
+  extract_authored("clearcoat", &out->clearcoat);
+  extract_authored("clearcoatRoughness", &out->clearcoat_roughness);
+  extract_authored("opacity", &out->opacity);
+  extract_authored("opacityThreshold", &out->opacity_threshold);
+  extract_authored("ior", &out->ior);
+  extract_authored("normal", &out->normal);
+  extract_authored("displacement", &out->displacement);
+  extract_authored("occlusion", &out->occlusion);
 
   ::tinyusdz::next::AttributeEval eval(&stage);
   eval.SetTime(config_.time_code);

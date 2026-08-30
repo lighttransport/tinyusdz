@@ -113,6 +113,13 @@ json focusedPayload(const Gui& gui, const DrawScene& draw) {
     out["aabb_min"] = arr3(m.aabbMin);
     out["aabb_max"] = arr3(m.aabbMax);
     out["double_sided"] = m.doubleSided;
+    out["has_vertex_opacity"] = !m.vertexAlpha.empty();
+    if (!m.vertexAlpha.empty()) {
+      const auto mm = std::minmax_element(m.vertexAlpha.begin(),
+                                          m.vertexAlpha.end());
+      out["vertex_opacity_min"] = *mm.first;
+      out["vertex_opacity_max"] = *mm.second;
+    }
     json world = json::array();
     for (int i = 0; i < 16; ++i) world.push_back(m.world[i]);
     out["world"] = world;
@@ -127,6 +134,8 @@ json focusedPayload(const Gui& gui, const DrawScene& draw) {
       mat["roughness"] = dm.roughness;
       mat["emissive"] = arr3(dm.emissive);
       mat["alpha"] = dm.alpha;
+      mat["alpha_mode"] = dm.alphaMode;
+      mat["alpha_cutoff"] = dm.alphaCutoff;
       mat["base_color_tex"] = dm.baseColorTex;
     }
     out["material"] = mat;
