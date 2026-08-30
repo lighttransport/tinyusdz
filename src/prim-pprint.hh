@@ -37,6 +37,14 @@ void print_prim(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const Prim &p
 template <size_t ChunkSize = 4096, size_t Alignment = 16>
 void print_primspec(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const PrimSpec &primspec, const uint32_t indent=0);
 
+// The default specializations are defined explicitly in pprinter.cc.
+extern template void print_prim<4096, 16>(
+    ChunkedStreamWriter<4096, 16>& writer, const Prim& prim,
+    const uint32_t indent);
+extern template void print_primspec<4096, 16>(
+    ChunkedStreamWriter<4096, 16>& writer, const PrimSpec& primspec,
+    const uint32_t indent);
+
 ///
 /// StreamWriter versions for efficient printing
 ///

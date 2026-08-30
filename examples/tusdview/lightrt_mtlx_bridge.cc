@@ -1692,13 +1692,13 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                               {"type", "color3"}, {"inputs", nlohmann::json::array({
                                   renamedInput(nodeInput(node, "intensity", nlohmann::json::array({1, 1, 1})), "in1"),
                                   nlohmann::json{{"name", "in2"}, {"nodename", exposure}}})}});
-      auto multiplyLane = [&](const char* lane, const char* type,
+      auto multiplyLane = [&](const char* lane, const char* laneType,
                               const std::string& factor) {
         const auto source = lanes.find(lane);
         if (source == lanes.end()) return;
         const std::string output = name + "__light_" + lane;
         runtimeNodes.push_back({{"name", output}, {"category", "multiply"},
-                                {"type", type}, {"inputs", nlohmann::json::array({
+                                {"type", laneType}, {"inputs", nlohmann::json::array({
                                     nlohmann::json{{"name", "in1"}, {"nodename", source->second}},
                                     nlohmann::json{{"name", "in2"}, {"nodename", factor}}})}});
         lanes[lane] = output;

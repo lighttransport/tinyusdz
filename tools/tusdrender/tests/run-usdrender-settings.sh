@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-RENDERER="${TUSDRENDER:-$ROOT/build_ninja/tools/tusdrender/tusdrender}"
+RENDERER="${TUSDRENDER:-${1:-$ROOT/build_ninja/tools/tusdrender/tusdrender}}"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tusdrender-settings.XXXXXX")"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
