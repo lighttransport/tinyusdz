@@ -638,6 +638,10 @@ struct DrawMaterialCPU {
   float alpha{1.0f};
   int alphaMode{static_cast<int>(AlphaMode::Opaque)};
   float alphaCutoff{0.5f};
+  // True when Mask was inferred only because an opacity map is JPEG coverage,
+  // rather than authored through opacityThreshold. A fractional
+  // displayOpacity must be allowed to promote this heuristic to Blend.
+  bool alphaMaskHeuristic{false};
   // UsdPreviewSurface specular workflow (T12): when true, F0 is specularColor
   // directly; else F0 is the dielectric reflectance from `ior` lerped toward the
   // base color by metalness (ior 1.5 -> the fixed 0.04 the metallic path used).

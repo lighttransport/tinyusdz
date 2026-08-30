@@ -3517,7 +3517,6 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   dm.displacementShaderPath = rm.displacement_shader_path;
   dm.volumeShaderPath = rm.volume_shader_path;
   dm.volumeMaterialXNodeGraphJson = rm.volume_nodegraph_json;
-  bool jpegOpacityCoverage = false;
   ResolveNextDisplacementMaterial(stage, matPrim, &dm);
   if (rm.has_volume)
     ResolveNextSurfaceVolumeMaterial(stage, matPrim, &dm);
@@ -3548,26 +3547,47 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
                             "': using degraded material");
   }
 
+  bool jpegOpacityCoverage = false;
+  auto looksLikeBinaryCoverage = [](const light3d::Image& image,
+                                    int channel) -> bool {
+    if (image.width <= 0 || image.height <= 0 || image.channels <= 0 ||
+        image.data.empty()) {
+      return false;
+    }
+    const int c = std::max(0, std::min(channel, image.channels - 1));
+    const size_t pixels = static_cast<size_t>(image.width) *
+                          static_cast<size_t>(image.height);
+    // Inspect at most ~64K regularly spaced texels. JPEG ringing around a hard
+    // black/white cutout stays near the endpoints; a lens/transmission map has
+    // a meaningful population of intermediate values and must remain Blend.
+    const size_t step = std::max<size_t>(1, pixels / 65536u);
+    size_t samples = 0;
+    size_t middle = 0;
+    size_t low = 0;
+    size_t high = 0;
+    for (size_t p = 0; p < pixels; p += step) {
+      const uint8_t v = image.data[p * static_cast<size_t>(image.channels) +
+                                   static_cast<size_t>(c)];
+      ++samples;
+      if (v <= 32) ++low;
+      else if (v >= 223) ++high;
+      else ++middle;
+    }
+    return samples > 0 && low > 0 && high > 0 &&
+           middle * 50u <= samples;  // <=2% non-binary texels
+  };
   auto loadOpacity = [&](const tydn::ShaderParam& sp, int baseTextureId) {
     if (sp.texture_id < 0 ||
         static_cast<size_t>(sp.texture_id) >= scratch.textures.size()) return;
     const tydn::RenderTexture& rt =
         scratch.textures[static_cast<size_t>(sp.texture_id)];
-    // Lossy JPEG cannot carry physical alpha and is commonly emitted by USD
-    // preview pipelines as a grayscale coverage map.  Treating its antialiased
-    // edge values as transmission makes otherwise-solid clothes/foliage enter
-    // the no-depth-write blend pass.  Remember this intent here; after the USD
-    // alpha policy is copied below we promote only the implicit Blend case to
-    // a coverage mask.  Explicit opacityThreshold remains authoritative.
-    auto hasJpegSuffix = [](const std::string& path) {
-      const size_t dot = path.find_last_of('.');
-      if (dot == std::string::npos) return false;
-      std::string ext = path.substr(dot);
+    const size_t dot = rt.asset_path.find_last_of('.');
+    if (dot != std::string::npos) {
+      std::string ext = rt.asset_path.substr(dot);
       std::transform(ext.begin(), ext.end(), ext.begin(),
                      [](unsigned char c) { return char(std::tolower(c)); });
-      return ext == ".jpg" || ext == ".jpeg";
-    };
-    jpegOpacityCoverage = hasJpegSuffix(rt.asset_path);
+      jpegOpacityCoverage = ext == ".jpg" || ext == ".jpeg";
+    }
     const int channel = NextScalarChannel(rt.output_channel);
     // The material shader already multiplies base-color alpha. A common USD
     // graph connects the SAME UsdUVTexture outputs:rgb to diffuseColor and
@@ -3577,6 +3597,12 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     if (t < 0) return;
     dm.opacityTex = t;
     dm.opacityChannel = channel;
+    if (jpegOpacityCoverage) {
+      jpegOpacityCoverage =
+          static_cast<size_t>(t) < draw->textures.size() &&
+          looksLikeBinaryCoverage(draw->textures[static_cast<size_t>(t)].image,
+                                  channel);
+    }
     FillNextSample(rt, &dm.opacitySample, uv0Name, uv1Name);
     channelScaleBias(rt, channel, &dm.opacityTexScale, &dm.opacityTexBias);
   };
@@ -3867,6 +3893,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
       dm.alphaMode == static_cast<int>(AlphaMode::Blend)) {
     dm.alphaMode = static_cast<int>(AlphaMode::Mask);
     dm.alphaCutoff = 0.5f;
+    dm.alphaMaskHeuristic = true;
   }
 
   BakeRealtimePbrMaterial(&dm);  // derive shared PBR constants from the adapter
@@ -5987,28 +6014,19 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   draw->optimization.uniqueMaterials = draw->materials.size();
   std::unordered_map<std::string, int> matIndexByPath;
   std::unordered_map<uint64_t, std::vector<int>> matIndexByContent;
-  // A material is built ONCE and shared by every mesh that binds it, but the
-  // UV-set names are the MESH's. Resolve the texture->UV-set routing at the first
-  // mesh that binds the material, and warn if a later mesh would have resolved it
-  // differently (two meshes binding one material with differently-named secondary
-  // sets cannot both be satisfied without splitting the material -- rare enough
-  // that reporting beats silently rendering one of them with the wrong UVs).
-  std::unordered_map<std::string, std::string> matUv1ByPath;
+  // Texture UV routing is mesh-dependent: a shared USD material can request
+  // `perfuv`, while different bound meshes may extract that primvar into different
+  // DrawVertex slots. Cache the converted GPU material by both its USD path and
+  // the mesh UV layout. Caching by path alone made later meshes reuse the first
+  // mesh's routing; opacity maps then sampled unrelated coordinates (most visibly
+  // on transparent lenses).
   auto resolveMaterialPath = [&](const std::string& mpath,
                                  const std::string& uv0Name,
                                  const std::string& uv1Name) -> int {
     if (mpath.empty()) return 0;
-    auto it = matIndexByPath.find(mpath);
-    if (it != matIndexByPath.end()) {
-      const auto uit = matUv1ByPath.find(mpath);
-      if (uit != matUv1ByPath.end() && uit->second != uv1Name) {
-        LOGW("material '%s' is bound by meshes with different secondary UV sets "
-             "('%s' vs '%s'); keeping the first. Textures routed to the second "
-             "UV set may sample the wrong coordinates on the later mesh.",
-             mpath.c_str(), uit->second.c_str(), uv1Name.c_str());
-      }
-      return it->second;
-    }
+    const std::string cacheKey = mpath + '\x1f' + uv0Name + '\x1f' + uv1Name;
+    auto it = matIndexByPath.find(cacheKey);
+    if (it != matIndexByPath.end()) return it->second;
     tnext::UsdPrim matPrim = stage.GetPrimAtPath(mpath);
     int idx = matPrim.IsValid() ? BuildNextMaterial(stage, conv, matPrim, draw,
                                                     texCache, uv0Name, uv1Name)
@@ -6034,8 +6052,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
     draw->optimization.uniqueMaterials = draw->materials.size();
     if (idx < 0) idx = 0;
-    matIndexByPath[mpath] = idx;
-    matUv1ByPath[mpath] = uv1Name;
+    matIndexByPath[cacheKey] = idx;
     return idx;
   };
   // Prototype-material wrapper for EmitInstancedProto (no per-mesh UV-set names
@@ -7251,8 +7268,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       variant.lightRtOpenPBR.opacity = std::max(
           0.0f, std::min(1.0f, variant.lightRtOpenPBR.opacity * alpha));
     }
-    if (variant.alphaMode == static_cast<int>(AlphaMode::Opaque)) {
+    // Authored opacityThreshold remains a mask. A JPEG coverage mask is only
+    // a precision heuristic, however: once displayOpacity makes the surface
+    // fractional (including varying opacity), it must enter the Blend pass.
+    if (variant.alphaMode == static_cast<int>(AlphaMode::Opaque) ||
+        variant.alphaMaskHeuristic) {
       variant.alphaMode = static_cast<int>(AlphaMode::Blend);
+      variant.alphaMaskHeuristic = false;
     }
     const int idx = static_cast<int>(draw->materials.size());
     draw->materials.push_back(std::move(variant));
@@ -7693,58 +7715,6 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   size_t weldedVertices = 0;
   size_t sourcePoints = 0;
 
-  // USD's `proxy` and `render` purposes are ALTERNATIVES -- a stand-in and the real
-  // geometry, two representations of one thing -- not two things to draw at once.
-  // Drawn together they land on top of each other: intent-vfx/simpleAsset authors an
-  // unadorned Cube as the proxy for an unadorned Sphere, and USD's defaults make that
-  // cube (size 2) exactly enclose that sphere (radius 1), so the stand-in box hid the
-  // asset completely. Prefer the real thing: a proxy is SUPERSEDED by render-purpose
-  // geometry and not emitted; a proxy that stands in for nothing still draws, which is
-  // the whole point of authoring one.
-  //
-  // The two are alternatives of the same ASSET, so the model root is the scope that
-  // pairs them -- NOT any shared ancestor. Scoping by shared ancestor deletes real
-  // geometry: Apple's stage_composition/purpose.usda puts four unrelated cubes side by
-  // side under one Scope, one of them proxy-purpose, and a shared-ancestor rule drops
-  // that cube even though nothing supersedes it. `group` is excluded for the same
-  // reason -- it is the container for many models (/World), not one asset.
-  auto modelRootOf = [&](const std::string& abs) -> std::string {
-    std::string p = abs;
-    while (!p.empty()) {
-      const tnext::UsdPrim prim = stage.GetPrimAtPath(p);
-      if (prim.IsValid()) {
-        const std::string& kind = prim.GetMeta().kind();
-        if (!kind.empty() && kind != "group") return p;
-      }
-      if (p == "/") break;
-      const size_t slash = p.find_last_of('/');
-      p = (slash == std::string::npos || slash == 0) ? "/" : p.substr(0, slash);
-    }
-    return {};  // no enclosing model: nothing to scope a supersede to
-  };
-
-  // Model-root lookup walks the stage ancestry. Cache it because every proxy
-  // candidate is checked once while building the render-model set and again
-  // during the stable conversion pass; large assembled scenes can repeat
-  // this lookup tens of thousands of times.
-  std::unordered_map<std::string, std::string> modelRootCache;
-  modelRootCache.reserve(meshPrims.size());
-  std::unordered_set<std::string> renderModels;
-  auto cachedModelRootOf = [&](const std::string& abs) -> const std::string& {
-    auto hit = modelRootCache.find(abs);
-    if (hit != modelRootCache.end()) return hit->second;
-    std::string root = modelRootOf(abs);
-    auto inserted = modelRootCache.emplace(abs, std::move(root));
-    return inserted.first->second;
-  };
-  for (const PendingMeshPrim& pending : meshPrims) {
-    const std::string& pendingPath = pending.path;
-    if (pending.purpose != "render") continue;
-    const std::string& model = cachedModelRootOf(pendingPath);
-    if (!model.empty()) renderModels.insert(model);
-  }
-  size_t supersededProxyCount = 0;
-
   // Multiple instance-proxy records may address the same underlying PrimSpec.
   // Release its authored geometry only after the final record has produced its
   // self-contained conversion result; until then a parallel worker may still
@@ -8022,14 +7992,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     if (ctrl) ctrl->meshesDone.fetch_add(1);
 
     PendingMeshPrim& pending = meshPrims[meshIndex];
-    if (!renderModels.empty() && pending.purpose == "proxy" &&
-        renderModels.count(cachedModelRootOf(pending.path))) {
-      ++supersededProxyCount;
-      converted[meshIndex].reset();  // may have arrived in the previous wave
-      releasePendingPrim(&pending.prim);
-      pending = PendingMeshPrim();
-      continue;
-    }
+    // Retain proxy-purpose geometry for hierarchy/MCP selection and for the
+    // Purpose > Proxy visibility toggle. The GUI hides proxy purpose by
+    // default, so it does not z-fight with the paired render representation.
 
     const size_t geometryBytesForMesh = geometryBytes[meshIndex];
     const bool overGeometryBudget = !pending.deferredProxy &&
@@ -8799,10 +8764,6 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     *warn += "next: deferred conversion of " +
              std::to_string(lazySkippedMeshCount) +
              " mesh(es) beyond the large-scene preview limit";
-  }
-  if (supersededProxyCount > 0) {
-    LOGI("next: %zu proxy-purpose mesh(es) superseded by render-purpose geometry",
-         supersededProxyCount);
   }
   for (const BatchKey& key : batchOrder) flushBatch(open.find(key)->second);
   if (!streamOk) {

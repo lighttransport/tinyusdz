@@ -910,7 +910,7 @@ void main() {
       "    float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}float ies=sampleIes(li,normalize(-L),normalize(da.xyz),normalize(uLightIesAxisX[li].xyz),normalize(uLightIesAxisY[li].xyz));\n"
       "    float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));\n"
       "    vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1.0)-F)*vColor*(1.0/3.14159265);float vis=li==uShadowLightSlot?shadowVis(vWorldPos,Nf,L):1;direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*ies*nl*vis)/float(sc);}}\n"
-      "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.12);\n"
+      "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.20);\n"
       "  vec3 col = vColor*amb + direct;\n"
       "  FragColor = vec4(linearToSrgb((col + uEmissive) * exp2(uExposure)), vOpacity);\n"
       "}\n";
@@ -1395,7 +1395,7 @@ void GLRenderer::buildTessProgram() {
       "  float nv=max(dot(Nf,V),1e-4),r=0.5;vec3 direct=vec3(0);\n"
       "  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int lt=int(pt.w+0.5),sc=(lt==2||lt==3||lt==4)?4:1;for(int si=0;si<sc;++si){vec3 samplePos=pt.xyz,ax=normalize(uLightIesAxisX[li].xyz),ay=normalize(uLightIesAxisY[li].xyz);if(lt==3){samplePos+=ax*((si&1)==0?-0.25:0.25)*uLightAreaParams[li].y+ay*((si&2)==0?-0.25:0.25)*uLightAreaParams[li].z;}else if(lt==2||lt==4){float k=0.3535533906;samplePos+=ax*(((si&1)==0?-k:k)*uLightAreaParams[li].x)+ay*(((si&2)==0?-k:k)*uLightAreaParams[li].x);}vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=samplePos-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}float ies=sampleIes(li,normalize(-L),normalize(da.xyz),normalize(uLightIesAxisX[li].xyz),normalize(uLightIesAxisY[li].xyz));float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*base*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*ies*nl)/float(sc);}}\n"
       "  if(uLightCount==0){vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));vec3 lc=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1);float nl=max(dot(Nf,L),0.0);vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*base*(1.0/3.14159265);direct=(diff+spec)*lc*nl;}\n"
-      "  vec3 amb=uHasIbl?texture(uIrradianceMap,normalize(uEnvRotation*Nf)).rgb*uIblColor:vec3(0.12);\n"
+      "  vec3 amb=uHasIbl?texture(uIrradianceMap,normalize(uEnvRotation*Nf)).rgb*uIblColor:vec3(0.20);\n"
       "  vec3 col=base*amb+direct;\n"
       "  FragColor=vec4(linearToSrgb(col*exp2(uExposure)),1.0);\n"
       "}\n";
@@ -2582,6 +2582,7 @@ void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
   const GLuint vtxColorAttrib = gmInstanced ? 10u : 9u;
   const bool hasVtxColor = sm.vertexColors.size() == sm.vertices.size() * 3;
   const bool hasVtxAlpha = sm.vertexAlpha.size() == sm.vertices.size();
+  gm.hasVertexOpacity = hasVtxAlpha;
   if (gmInstanced && hasVtxAlpha) {
     for (float opacity : sm.vertexAlpha) {
       if (opacity < 1.0f - 1.0e-6f) {
@@ -3370,7 +3371,14 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glActiveTexture(GL_TEXTURE0);
     }
 
-    const int wantCull = (mesh.doubleSided || wireframe) ? 0 : 1;
+    // Avoid compositing both sides of a uniform translucent closed shell. This
+    // is especially visible on convex lenses; varying-opacity cloth/cornea
+    // meshes retain authored two-sided folds.
+    const bool translucentFrontSurface =
+        alphaPass == AlphaPass::Translucent && mesh.doubleSided &&
+        !mesh.hasVertexOpacity;
+    const int wantCull =
+        (mesh.doubleSided && !translucentFrontSurface) || wireframe ? 0 : 1;
     if (wantCull != cullState) {
       if (wantCull) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
       else glDisable(GL_CULL_FACE);

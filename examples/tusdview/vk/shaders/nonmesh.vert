@@ -61,6 +61,7 @@ void main() {
                 cornerId == 2 ? vec2(-1, 1) : vec2(1,1);
 
   vec3 p;
+  vec3 ribbonCenter;
   if (pc.ids.x == 0) {
     // Point billboard: camera-facing quad
     p = aP0 + (camRight * corner.x + camUp * corner.y) *
@@ -82,6 +83,7 @@ void main() {
     // avoiding the triangular sawtooth gaps of independent segment quads.
     float along = corner.y * 0.5 + 0.5;
     vec3 center = mix(aP0, aP1, along);
+    ribbonCenter = center;
     vec3 eye = pc.mode.y == 0 ? fr.camPos.xyz : pc.shadowEye.xyz;
     vec3 view0 = normalize(eye - aP0);
     vec3 view1 = normalize(eye - aP1);
@@ -106,4 +108,38 @@ void main() {
       ? fr.pointShadowViewProj[pc.mode.y - 2]
       : (pc.mode.y == 1 ? fr.shadowViewProj : fr.viewProj);
   gl_Position = vp * vec4(p, 1.0);
+
+  // Very thin ribbons otherwise become unstable sub-pixel triangles before
+  // the fragment shader gets a chance to apply analytic edge coverage. Keep
+  // at least a 1.3-pixel raster footprint in the color pass; vLocal still
+  // carries the authored edge, so the fragment shader softens the expansion.
+  if (pc.ids.x == 1 && pc.mode.y == 0 &&
+      pc.cameraRight.w > 0.0 && pc.cameraUp.w > 0.0) {
+    vec4 centerClip = vp * vec4(ribbonCenter, 1.0);
+    if (abs(centerClip.w) > 1e-6 && abs(gl_Position.w) > 1e-6) {
+      vec2 centerNdc = centerClip.xy / centerClip.w;
+      vec2 edgeNdc = gl_Position.xy / gl_Position.w;
+      vec2 viewport = vec2(pc.cameraRight.w, pc.cameraUp.w);
+      vec2 deltaPixels = (edgeNdc - centerNdc) * viewport * 0.5;
+      float halfWidthPixels = length(deltaPixels);
+      if (halfWidthPixels > 1e-5 && halfWidthPixels < 0.65) {
+        edgeNdc = centerNdc + (edgeNdc - centerNdc) *
+                                  (0.65 / halfWidthPixels);
+      }
+      // Adjacent curve segments are separate ribbon instances. A half-pixel
+      // overlap closes rasterization-rule pinholes at their shared endpoints,
+      // which otherwise turn distant whiskers into dotted lines.
+      vec4 p0Clip = vp * vec4(aP0, 1.0);
+      vec4 p1Clip = vp * vec4(aP1, 1.0);
+      if (abs(p0Clip.w) > 1e-6 && abs(p1Clip.w) > 1e-6) {
+        vec2 segmentPixels =
+            (p1Clip.xy / p1Clip.w - p0Clip.xy / p0Clip.w) * viewport * 0.5;
+        if (dot(segmentPixels, segmentPixels) > 1e-6) {
+          vec2 segmentDirPixels = normalize(segmentPixels);
+          edgeNdc += segmentDirPixels * corner.y / viewport;
+        }
+      }
+      gl_Position.xy = edgeNdc * gl_Position.w;
+    }
+  }
 }

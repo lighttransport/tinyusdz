@@ -1850,11 +1850,11 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   // transparent surfaces composite over the opaque geometry behind them.
   if (r == VK_SUCCESS) {
     VkPipelineDepthStencilStateCreateInfo dsT = ds;
-    // The translucent pass is already sorted back-to-front. Do not reject a
-    // farther transparent layer against an earlier transparent fragment: the
-    // depth buffer contains only the opaque pass, while transparent surfaces
-    // must all participate in the over composite.
-    dsT.depthTestEnable = VK_FALSE;
+    // Test translucent fragments against the opaque depth buffer so hidden
+    // shells (for example a cornea behind opaque eyewear) cannot composite on
+    // top. Transparent surfaces do not write depth, so the back-to-front pass
+    // still composites all mutually-overlapping transparent layers.
+    dsT.depthTestEnable = VK_TRUE;
     dsT.depthWriteEnable = VK_FALSE;
     dsT.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     VkPipelineColorBlendAttachmentState cbaT = cba;
@@ -7198,6 +7198,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   gm.geometricNormal = sm.geometricNormal;  // also feeds the RT MeshDesc + AOV flags
   gm.doubleSided = sm.doubleSided;
+  gm.hasVertexOpacity = sm.vertexAlpha.size() == sm.vertices.size();
   gm.purposeId = PurposeId(sm.purpose);
   gm.kindId = sm.kindId;
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
@@ -7986,9 +7987,11 @@ void VulkanRenderer::drawNativeCarriers(VkCommandBuffer cb) {
   push.cameraRight[0] = view_[0];
   push.cameraRight[1] = view_[4];
   push.cameraRight[2] = view_[8];
+  push.cameraRight[3] = static_cast<float>(swapExtent_.width);
   push.cameraUp[0] = view_[1];
   push.cameraUp[1] = view_[5];
   push.cameraUp[2] = view_[9];
+  push.cameraUp[3] = static_cast<float>(swapExtent_.height);
   for (const NativeCarrierRange& range : nativeCarrierRanges_) {
     const size_t visibleIndex = static_cast<size_t>(range.carrierId);
     if ((nativeCarrierPurposeMask_ & (1u << range.purpose)) == 0 ||
@@ -13139,6 +13142,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           }
           PushC push{};
           std::memcpy(push.model, mesh.world, sizeof(push.model));
+          const bool shadowDisplaced =
+              displacement_ && sub.materialId >= 0 &&
+              static_cast<size_t>(sub.materialId) < rtMaterialsCpu_.size() &&
+              rtMaterialsCpu_[static_cast<size_t>(sub.materialId)]
+                  .hasDisplacement();
+          push.emissive[3] = shadowDisplaced ? 1.0f : 0.0f;
           push.ids[0] = sub.materialId >= 0 &&
                                 static_cast<size_t>(sub.materialId) <
                                     dispMatCapacity_
@@ -13381,8 +13390,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       // (gl_renderer's wantCull). Dynamic state, so it persists across the
       // tess-pipeline switch below; only touched on a transition.
       if (dynCullSupported_) {
+        const bool translucentFrontSurface =
+            apass == 1 && mesh.doubleSided && !mesh.hasVertexOpacity;
         const VkCullModeFlags want =
-            mesh.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+            mesh.doubleSided && !translucentFrontSurface
+                ? VK_CULL_MODE_NONE
+                : VK_CULL_MODE_BACK_BIT;
         if (static_cast<int>(want) != cullState) {
           vkCmdSetCullMode_(cb, want);
           cullState = static_cast<int>(want);
@@ -13416,15 +13429,21 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           const VkCullModeFlags want =
               splitBack ? (side == 0 ? VK_CULL_MODE_BACK_BIT
                                      : VK_CULL_MODE_FRONT_BIT)
-                        : (mesh.doubleSided ? VK_CULL_MODE_NONE
-                                            : VK_CULL_MODE_BACK_BIT);
+                        : (mesh.doubleSided &&
+                                   !(apass == 1 && !mesh.hasVertexOpacity)
+                               ? VK_CULL_MODE_NONE
+                               : VK_CULL_MODE_BACK_BIT);
           if (static_cast<int>(want) != cullState) {
             vkCmdSetCullMode_(cb, want);
             cullState = static_cast<int>(want);
           }
         }
         // Opaque pass skips Blend submeshes; translucent pass skips the rest.
-        if (apass == 0 && subTranslucent(materialId)) continue;
+        // Shaded mode composites Blend materials in pass 1. Diagnostic/ID modes
+        // have only the depth-writing pass, so keep Blend geometry there; otherwise
+        // a visible translucent surface has no picking ID and clicks fall through
+        // to unrelated opaque geometry behind it.
+        if (apass == 0 && subTranslucent(materialId) && rtMode_ == 0) continue;
         if (apass == 1 && !subTranslucent(materialId)) continue;
         auto materialTexSlot = [&](const std::vector<int>& slots) -> int {
           if (materialId >= 0 &&
@@ -13459,14 +13478,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         // makes the unconditional vertex/TES sample a no-op.
         bool displaced = false;
         if (displacement_ && materialId >= 0 &&
-            static_cast<size_t>(materialId) < matDispTex_.size()) {
-          const int dt = matDispTex_[static_cast<size_t>(materialId)];
-          if (dt >= 0 && static_cast<size_t>(dt) < texDescs_.size()) {
-            displaced = true;
-          }
+            static_cast<size_t>(materialId) < rtMaterialsCpu_.size()) {
+          displaced = rtMaterialsCpu_[static_cast<size_t>(materialId)]
+                          .hasDisplacement();
         }
         PushC pc{};
         std::memcpy(pc.model, W.m, sizeof(pc.model));
+        pc.emissive[3] = displaced ? 1.0f : 0.0f;
         if (materialId >= 0 &&
             static_cast<size_t>(materialId) * 12 + 10 < matColor_.size()) {
           // matColor_ stride 12: [0..2]=baseColor, [3]=alpha, [4]=metallic,

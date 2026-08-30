@@ -566,6 +566,9 @@ class App
   int reportCaptureWidth_{0};
   int reportCaptureHeight_{0};
   bool headless_{false};
+  // Only an unbounded interactive run may read or write imgui.ini. Headless
+  // captures and finite --frames runs use synthetic/test window dimensions.
+  bool persistImGuiState_{true};
   std::vector<std::pair<std::string, RenderMode>> modeSweep_;  // --mode-sweep
   std::string modeSweepPattern_;
   size_t modeSweepIndex_{0};  // windowless offscreen rendering (Vulkan only)

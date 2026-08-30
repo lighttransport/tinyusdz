@@ -6163,22 +6163,14 @@ void Gui::renderViewportScene(FramePacket* packet) {
       p.lightColor[i] = draw_->previewLightColor[i];
     }
   } else if (cam_) {
-    // With no authored UsdLux light, use a camera-relative studio key. A fixed
-    // world-space fallback illuminates an open room from behind whenever the
-    // initial camera chooses its opposite/open side. Keep the key slightly
-    // above and to camera-right instead of a perfectly coaxial headlight so
-    // rounded forms retain shape and dielectric highlights remain visible.
+    // Match usdview/Storm's default GlfSimpleLight: a camera-positioned
+    // headlight. The previous above/right studio offset left view-facing
+    // surfaces underexposed even though their display transfer was correct.
     const light3d::Vec3 towardCamera =
         light3d::normalize(cam_->eye() - cam_->target());
-    const light3d::Vec3 up = cam_->worldUp();
-    const light3d::Vec3 viewForward = -towardCamera;
-    light3d::Vec3 right = light3d::normalize(light3d::cross(viewForward, up));
-    if (light3d::length(right) < 1.0e-6f) right = {1.0f, 0.0f, 0.0f};
-    const light3d::Vec3 key =
-        light3d::normalize(towardCamera + up * 0.35f + right * 0.22f);
-    p.lightDir[0] = key.x;
-    p.lightDir[1] = key.y;
-    p.lightDir[2] = key.z;
+    p.lightDir[0] = towardCamera.x;
+    p.lightDir[1] = towardCamera.y;
+    p.lightDir[2] = towardCamera.z;
     p.lightColor[0] = p.lightColor[1] = p.lightColor[2] = 1.0f;
   }
   // Per-phase frame timing (TUSDVIEW_TIME_FRAME): isolates where a heavy scene

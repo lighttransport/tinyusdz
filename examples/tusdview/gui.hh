@@ -591,7 +591,10 @@ class Gui {
   bool showPrimLabels_{false};
   bool showPurposeDefault_{true};
   bool showPurposeRender_{true};
-  bool showPurposeProxy_{true};
+  // Render and proxy are alternate representations. Keep proxy geometry
+  // available for inspection/picking, but do not draw it over render-purpose
+  // geometry until the user explicitly enables the Proxy purpose.
+  bool showPurposeProxy_{false};
   bool showPurposeGuide_{false};
   enum class NavigationHelpMode { None, Simple, Full };
   NavigationHelpMode navigationHelpMode_{NavigationHelpMode::None};

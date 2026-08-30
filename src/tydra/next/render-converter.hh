@@ -66,8 +66,12 @@ struct MeshConfig {
   // name that won is reported back on RenderMesh::texcoords_0_name, so a
   // consumer can match it against a UsdPrimvarReader varname
   // (RenderTexture::uv_primvar).
-  std::vector<std::string> uv_primvar_names = {"st", "UVMap", "uv", "st0",
-                                               "map1"};
+  // Production assets commonly carry a dense render UV (`perfuv`) alongside
+  // simulation/effects sets and a generic `st`. Preview materials explicitly
+  // target perfuv; selecting st first can leave perfuv outside the two retained
+  // slots and silently sample the wrong atlas after subdivision.
+  std::vector<std::string> uv_primvar_names = {"perfuv", "st", "UVMap", "uv",
+                                               "st0", "map1", "fxuv"};
 
   // Index optimization
   bool build_vertex_indices = true;

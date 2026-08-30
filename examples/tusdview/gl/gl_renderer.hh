@@ -109,6 +109,7 @@ class GLRenderer final : public Renderer {
     float flatColor[3]{0.8f, 0.8f, 0.8f};  // per-draw color when no per-instance
     float flatOpacity{1.0f};
     GLuint vertexColorVbo{0};        // RGBA: displayColor + displayOpacity; 0 = none
+    bool hasVertexOpacity{false};     // varying opacity needs authored two-sided folds
     GLuint uv1Vbo{0};                // 2nd texcoord set (attrib 6, non-instanced); 0 = none
     GLuint morphInflVbo{0};          // blendshape influence (attrib 7, non-instanced); 0 = none
     GLuint faceIdBuf{0};             // texture buffer: per-triangle source face id; 0 = none

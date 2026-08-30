@@ -120,10 +120,13 @@ void main() {
                   dot(vec3(uv, 1.0), mtp.p[mid].dispUv1.xyz));
   vec2 dsb = pc.ids.x >= 0 ? mtp.p[mid].scalar1.zw : vec2(1.0, 0.0);
   float dispRow = mtp.p[mid].semanticUdimSlots2.y;
-  float height = dispRow >= 0.0
-      ? sampleDisplacement(duv, dispRow).r
-      : textureLod(uDisplacementTex, duv, 0.0).r;
-  float disp = height * dsb.x + dsb.y;
+  float disp = 0.0;
+  if (pc.emissive.w > 0.5) {
+    float height = dispRow >= 0.0
+        ? sampleDisplacement(duv, dispRow).r
+        : textureLod(uDisplacementTex, duv, 0.0).r;
+    disp = height * dsb.x + dsb.y;
+  }
   pos += nrm * (disp * fr.disp.x);
   mat3 nmat = transpose(inverse(mat3(pc.model)));
   vNormalW = nmat * nrm;

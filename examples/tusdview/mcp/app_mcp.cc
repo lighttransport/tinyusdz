@@ -137,6 +137,15 @@ json focusedPayload(const Gui& gui, const DrawScene& draw) {
       mat["alpha_mode"] = dm.alphaMode;
       mat["alpha_cutoff"] = dm.alphaCutoff;
       mat["base_color_tex"] = dm.baseColorTex;
+      mat["base_color_uv_set"] = dm.baseColorSample.uvSet;
+      mat["opacity_tex"] = dm.opacityTex;
+      mat["opacity_uv_set"] = dm.opacitySample.uvSet;
+      mat["opacity_channel"] = dm.opacitySample.channel;
+      if (dm.opacityTex >= 0 &&
+          static_cast<size_t>(dm.opacityTex) < draw.textures.size()) {
+        mat["opacity_asset"] =
+            draw.textures[static_cast<size_t>(dm.opacityTex)].assetIdentifier;
+      }
     }
     out["material"] = mat;
   }

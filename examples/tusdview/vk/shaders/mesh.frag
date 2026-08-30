@@ -706,7 +706,19 @@ void main() {
       return;
     }
     if (fr.mode.x == 15) { outColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }  // prim id
-    if (fr.mode.x == 16) { outColor = vec4(idColor(pc.ids.z), 1.0); return; }        // mesh id
+    if (fr.mode.x == 16) {  // mesh id / picking
+      // The picking pass is depth-writing and includes Blend geometry. Reject
+      // texture holes while retaining any visibly translucent surface, so clicks
+      // select the same frontmost geometry shown by the shaded pass.
+      float pickOpacity = clamp(pc.baseColor.a * sampleBaseColor(vUV).a *
+                                sampleOpacity(vUV) * vColor.a, 0.0, 1.0);
+      float pickCutoff = (pc.matAux.z > 0.5 && pc.matAux.z < 1.5)
+                             ? pc.matAux.w
+                             : (1.0 / 255.0);
+      if (pickOpacity < pickCutoff) discard;
+      outColor = vec4(idColor(pc.ids.z), 1.0);
+      return;
+    }
     if (fr.mode.x == 19) {  // missing normals
       outColor = ((pc.ids.y & 1) != 0) ? vec4(0.95, 0.1, 0.85, 1.0) : vec4(0.2, 0.2, 0.2, 1.0);
       return;
@@ -1038,7 +1050,10 @@ void main() {
     ambient = (baseIbl * (1.0 - coatWeight * coatF0) + coatIbl) *
               fr.iblColor.rgb;
   } else {
-    ambient = base * 0.12;
+    // Match the neutral fill supplied by Storm's default material-lighting
+    // environment when the stage has no authored DomeLight. The old 12% floor
+    // left correctly gamma-encoded midtones looking nearly black.
+    ambient = base * 0.20;
   }
   ambient *= clamp(pbr.coatParams.w, 0.0, 1.0) * sampleOcclusion(vUV);
   vec3 c = linearToSrgb((ambient + direct + emissive) * exp2(fr.iblParams.y));

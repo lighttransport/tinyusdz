@@ -148,7 +148,7 @@ void main() {
                  ? vColor * texture(uIrradianceMap,
                                     normalize(mat3(fr.envRot) * Nf)).rgb *
                        fr.iblColor.rgb
-                 : vColor * 0.12;
+                 : vColor * 0.20;
   vec3 direct = vec3(0.0);
   uint lightMask = uint(meta[vDrawSlot].ids.z);
   for (uint li = 0u; li < min(fr.rasterLightInfo.x, 16u); ++li) {

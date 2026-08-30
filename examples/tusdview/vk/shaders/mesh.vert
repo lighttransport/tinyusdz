@@ -136,10 +136,17 @@ void main() {
                   dot(vec3(aUV, 1.0), mtp.p[mid].dispUv1.xyz));
   vec2 dsb = pc.ids.x >= 0 ? mtp.p[mid].scalar1.zw : vec2(1.0, 0.0);
   float dispRow = mtp.p[mid].semanticUdimSlots2.y;
-  float height = dispRow >= 0.0
-      ? sampleDisplacement(duv, dispRow).r
-      : textureLod(uDisplacementTex, duv, 0.0).r;
-  float disp = height * dsb.x + dsb.y;
+  // emissive.w is a per-draw displacement enable.  Do not rely on the black
+  // fallback descriptor here: every material descriptor contains binding 16,
+  // and a stale/reused fallback image must never be able to deform an unrelated
+  // mesh.  GL has always gated this sample with uHasDisplacement.
+  float disp = 0.0;
+  if (pc.emissive.w > 0.5) {
+    float height = dispRow >= 0.0
+        ? sampleDisplacement(duv, dispRow).r
+        : textureLod(uDisplacementTex, duv, 0.0).r;
+    disp = height * dsb.x + dsb.y;
+  }
   // Guard normalize(): geometric-normal meshes (e.g. the --next flat preview)
   // store a zero normal, and normalize(vec3(0)) is NaN. With no displacement that
   // NaN still propagates (NaN * 0 == NaN) into pos -> gl_Position, clipping the

@@ -1614,7 +1614,7 @@ bool App::initWindow(std::string* err) {
   // from ImGui's settings callback works under X11/Xvfb but is not reliably
   // honored by HiDPI compositors/window managers after the surface and swapchain
   // already exist. ImGui still loads the same file later for docking state.
-  if (!hasWindowSizeOverride_) {
+  if (persistImGuiState_ && !hasWindowSizeOverride_) {
     std::optional<std::filesystem::path> iniPath;
     if (!executablePath_.empty()) {
       const std::filesystem::path localIni =
@@ -1812,7 +1812,7 @@ bool App::initImGui(std::string* err) {
   }
   // Headless/test runs use synthetic viewport sizes and must never load or
   // overwrite the interactive user's native window/docking geometry.
-  if (iniPath && !headless_) {
+  if (iniPath && persistImGuiState_) {
     std::error_code ec;
     const std::filesystem::path dir = iniPath->parent_path();
     if (!dir.empty()) {
@@ -6048,6 +6048,10 @@ int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   runStart_ = std::chrono::steady_clock::now();
   checkpointCount_ = 0;
+  // Finite-frame invocations are automation/test runs even when they create a
+  // real GLFW window. Never let their small synthetic viewport (commonly
+  // 64x64 or 96x96) replace the interactive user's saved window geometry.
+  persistImGuiState_ = !headless_ && maxFrames < 0;
   auto finishRun = [&](int code) {
     writeRenderReport(initialFile, code);
     return code;

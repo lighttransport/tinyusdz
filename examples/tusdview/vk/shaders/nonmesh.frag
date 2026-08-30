@@ -242,7 +242,7 @@ void main() {
   // term turns a continuous white whisker into apparent dashes whenever the
   // narrow hair lobe misses the light. Keep enough authored color to make the
   // antialiased centerline visually continuous, while retaining direct lobes.
-  float ambientWeight = pc.ids.x == 1 ? 0.35 : 0.12;
+  float ambientWeight = pc.ids.x == 1 ? 0.35 : 0.20;
   vec3 col = vColor.rgb * ambientWeight + direct;
   float alpha = clamp(vColor.a * edgeCoverage, 0.0, 1.0);
   vec3 display = linearToSrgb(col * exp2(fr.camPos.w));
