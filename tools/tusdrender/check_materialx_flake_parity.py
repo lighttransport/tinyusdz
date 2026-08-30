@@ -152,8 +152,9 @@ def main() -> int:
                 return 1
             log = result.stdout
             if not re.search(success, log):
-                if any(word in log for word in
-                       ("unavailable", "no CUDA", "no HIP", "no Vulkan",
+                lower_log = log.lower()
+                if any(word in lower_log for word in
+                       ("unavailable", "no cuda", "no hip", "no vulkan",
                         "renderer init failed", "failed to create")):
                     continue
                 print(log, file=sys.stderr)

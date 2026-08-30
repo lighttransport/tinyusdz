@@ -44,12 +44,31 @@ set_source_files_properties(tusddiff.cc PROPERTIES COMPILE_FLAGS "${TUSDDIFF_CXX
 set_target_properties(${TUSDDIFF_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 if(TINYUSDZ_BUILD_TESTS)
+  # Keep the CLI regression fixtures hermetic. USD files are ignored globally,
+  # so source-tree testdata can silently disappear from clean checkouts.
+  set(TUSDDIFF_TESTDATA_DIR "${CMAKE_CURRENT_BINARY_DIR}/testdata")
+  file(MAKE_DIRECTORY "${TUSDDIFF_TESTDATA_DIR}")
+  file(WRITE "${TUSDDIFF_TESTDATA_DIR}/base.usda" [=[#usda 1.0
+def Xform "Root" {
+    custom int value = 1
+}
+]=])
+  file(WRITE "${TUSDDIFF_TESTDATA_DIR}/composed.usda" [=[#usda 1.0
+(
+    subLayers = [@base.usda@]
+)
+]=])
+  file(WRITE "${TUSDDIFF_TESTDATA_DIR}/flattened.usda" [=[#usda 1.0
+def Xform "Root" {
+    custom int value = 1
+}
+]=])
   add_test(NAME tusddiff_flatten_composed
     COMMAND tusddiff --flatten
-            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/composed.usda
-            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/flattened.usda)
+            ${TUSDDIFF_TESTDATA_DIR}/composed.usda
+            ${TUSDDIFF_TESTDATA_DIR}/flattened.usda)
   add_test(NAME tusddiff_openusd_cli_aliases
     COMMAND tusddiff -n -q -f
-            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/composed.usda
-            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/flattened.usda)
+            ${TUSDDIFF_TESTDATA_DIR}/composed.usda
+            ${TUSDDIFF_TESTDATA_DIR}/flattened.usda)
 endif()

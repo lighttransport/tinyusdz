@@ -783,7 +783,6 @@ def main() -> int:
         out_dir = pathlib.Path(tmp)
         fixture_dir = out_dir / "semantic-fixtures"
         fixture_dir.mkdir()
-        generate_texture_fixtures(repo, fixture_dir)
         lobe_grid = repo / "tests" / "usda" / \
             "tusdrender-openpbr-lobe-golden.usda"
         displacement = out_dir / "displacement.usda"
@@ -823,6 +822,8 @@ def main() -> int:
         if not available:
             print("SKIP: no production GPU RT backend is available")
             return SKIP
+
+        generate_texture_fixtures(repo, fixture_dir)
 
         if cuda_cache_expect:
             cuda_log = grid_logs["cuda"]
