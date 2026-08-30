@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -522,9 +523,20 @@ int main(int argc, char **argv) {
   std::string scene_path = opts.scene;
   std::string cleanup_path;
   if (scene_path.empty()) {
-    const char *tmp = std::getenv("TMPDIR");
-    std::string dir = tmp ? tmp : "/tmp";
-    scene_path = dir + "/perfrc_scene_" + std::to_string(opts.prims) + ".usda";
+    std::error_code temp_error;
+    std::filesystem::path temp_dir =
+        std::filesystem::temp_directory_path(temp_error);
+    if (temp_error) {
+      temp_dir = std::filesystem::current_path(temp_error);
+    }
+    if (temp_error) {
+      std::fprintf(stderr, "failed to determine temporary directory: %s\n",
+                   temp_error.message().c_str());
+      return 1;
+    }
+    scene_path =
+        (temp_dir / ("perfrc_scene_" + std::to_string(opts.prims) + ".usda"))
+            .string();
     cleanup_path = scene_path;
     std::string err;
     if (!WriteFileText(scene_path, GenSceneUSDA(opts.prims), &err)) {

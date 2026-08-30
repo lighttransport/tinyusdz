@@ -42,7 +42,7 @@ Repository = "https://github.com/lighttransport/tinyusdz"
 Issues = "https://github.com/lighttransport/tinyusdz/issues"
 
 [project.optional-dependencies]
-test = ["pytest>=7", "numpy>=1.26,<2.1"]
+test = ["pytest>=7", "numpy>=2.2,<3"]
 
 [tool.setuptools]
 package-dir = {"" = "python"}
@@ -72,13 +72,13 @@ skip = [
 ]
 build-frontend = "build"
 archs = ["auto64"]
-test-requires = ["pytest", "numpy>=1.26,<2.1"]
+test-requires = ["pytest", "numpy>=2.2,<3"]
 test-command = "pytest {project}/python/tests -k \"not slow and not large and not usd_assets and not aousd\" -q"
 test-extras = "test"
 
 [tool.cibuildwheel.linux]
-manylinux-x86_64-image = "quay.io/pypa/manylinux_2_28_x86_64:2024.10.08"
-manylinux-aarch64-image = "quay.io/pypa/manylinux_2_28_aarch64:2024.10.08"
+manylinux-x86_64-image = "quay.io/pypa/manylinux_2_28_x86_64:2025.10.10-1"
+manylinux-aarch64-image = "quay.io/pypa/manylinux_2_28_aarch64:2025.10.10-1"
 archs = ["x86_64", "aarch64"]
 before-build = "yum install -y ninja-build || apt-get install -y ninja-build || true"
 
