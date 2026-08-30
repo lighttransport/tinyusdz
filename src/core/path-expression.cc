@@ -10,7 +10,9 @@
 
 #if defined(__clang__)
 #pragma clang diagnostic push
+#if __has_warning("-Wnrvo")
 #pragma clang diagnostic ignored "-Wnrvo"
+#endif
 #endif
 
 namespace tinyusdz {
