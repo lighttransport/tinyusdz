@@ -212,13 +212,15 @@ jobs:
           -DTINYUSDZ_BUILD_TESTS=On \
           -DTINYUSDZ_BUILD_GUI_VIEWER=On
     - name: build tests
-      run: cmake --build build_tusdview -j2 --target tusdview_lighting_test \
-                                         --target tusdview_lightrt_bridge_test \
-                                         --target tusdview_openpbr_material_test \
-                                         --target tusdview_texture_pipeline_test \
-                                         --target tusdview_lightrt_mtlx_eval_test \
-                                         --target tusdview_geometry_primvar_test \
-                                         --target tusdview_camera_nav_test
+      run: |
+        cmake --build build_tusdview -j2 \
+          --target tusdview_lighting_test \
+          --target tusdview_lightrt_bridge_test \
+          --target tusdview_openpbr_material_test \
+          --target tusdview_texture_pipeline_test \
+          --target tusdview_lightrt_mtlx_eval_test \
+          --target tusdview_geometry_primvar_test \
+          --target tusdview_camera_nav_test
     - name: tests
       run: |
         cd build_tusdview && ctest --output-on-failure -R "tusdview_lighting|tusdview_lightrt_bridge|tusdview_openpbr|tusdview_texture_pipeline|tusdview_lightrt_mtlx|tusdview_geometry|tusdview_camera_nav"
