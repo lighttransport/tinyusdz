@@ -6,34 +6,9 @@
 #include <cstring>
 #include <limits>
 
-// tinyvdb is header-only; emit its implementation here (single TU). It reuses
-// the repository's vendored miniz (see external/tinyvdb/tinyvdbio.h).
-// The vendored library has unused helpers and maybe-uninitialized patterns that
-// trip the project's -Werror; suppress those just for the third-party header.
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic ignored "-Wunused-variable"
-#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
-#endif
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-#endif
-#if defined(__clang__)
-#pragma clang diagnostic ignored "-Wunused-private-field"
-#pragma clang diagnostic ignored "-Wsign-conversion"
-#pragma clang diagnostic ignored "-Wshorten-64-to-32"
-#pragma clang diagnostic ignored "-Wsuggest-override"
-#pragma clang diagnostic ignored "-Wsuggest-destructor-override"
-#pragma clang diagnostic ignored "-Wreserved-identifier"
-#pragma clang diagnostic ignored "-Wdocumentation-unknown-command"
-#endif
-#define TINYVDB_IO_IMPLEMENTATION
-#define TVDB_USE_ZSTD
+// TinyVDB's C implementation is compiled separately in tinyvdb_io.c. Keep
+// this C++ translation unit limited to the public C declarations.
 #include "external/tinyvdb/tinyvdb_io.h"
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
 namespace tinyusdz {
 namespace usdVol {
@@ -68,7 +43,9 @@ void GatherLeaves(const tvdb_grid_t &grid, std::vector<LeafView> *leaves) {
       for (uint32_t c = 0; c < root.num_children; ++c) {
         StackEntry child;
         child.node = root.child_indices[c];
-        for (int a = 0; a < 3; ++a) child.origin[a] = root.child_origins[c * 3 + a];
+        for (uint32_t a = 0; a < 3; ++a) {
+          child.origin[a] = root.child_origins[c * 3 + a];
+        }
         stack.push_back(child);
       }
     } else if (node.type == TVDB_NODE_INTERNAL) {

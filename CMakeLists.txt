@@ -997,6 +997,8 @@ endif()
 
 if(TINYUSDZ_WITH_USDVOL)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVol.cc)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/tinyvdb/tinyvdb_io.c)
 endif()
 
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
