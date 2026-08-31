@@ -54,6 +54,8 @@ if(NOT TARGET tusd_gpu_rt_common)
     ${TUSD_GPU_RT_VIEW_DIR}/ptex_atlas.cc
     ${TUSD_GPU_RT_VIEW_DIR}/texture_tools.cc
     ${TUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_bridge.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_graph_compile.cc
+    ${TUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_pack.cc
     ${TUSD_GPU_RT_VIEW_DIR}/displacement_bake.cc
     ${TUSD_GPU_RT_VIEW_DIR}/rt_bvh.cc
     ${TUSD_GPU_RT_VIEW_DIR}/rt_scene_build.cc
@@ -417,4 +419,9 @@ if(MINGW)
     target_link_options(tusdrender PRIVATE -static)
     message(STATUS "tusdrender: static C++ runtime (-static) for MinGW build")
   endif()
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(
+    ${TUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_graph_compile.cc PROPERTIES
+    COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O1>")
 endif()

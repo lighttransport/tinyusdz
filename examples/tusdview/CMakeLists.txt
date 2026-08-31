@@ -184,6 +184,8 @@ set(TUSD_GPU_RT_COMMON_SOURCES
     ptex_atlas.cc
     texture_tools.cc
     lightrt_mtlx_bridge.cc
+    lightrt_mtlx_graph_compile.cc
+    lightrt_mtlx_pack.cc
     displacement_bake.cc
     rt_bvh.cc
     rt_scene_build.cc
@@ -300,6 +302,8 @@ if(TINYUSDZ_BUILD_TESTS)
   add_executable(tusdview_lightrt_bridge_test
       tests/lightrt_bridge_test.cc
       lightrt_mtlx_bridge.cc
+      lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_pack.cc
       lighting_ies.cc
       rt_scene_build.cc
       rt_bvh.cc
@@ -328,6 +332,8 @@ if(TINYUSDZ_BUILD_TESTS)
       mesh_build.cc
       texture_tools.cc
       lightrt_mtlx_bridge.cc
+      lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_pack.cc
       lighting_ies.cc
       displacement_bake.cc
       skinning.cc
@@ -353,6 +359,8 @@ if(TINYUSDZ_BUILD_TESTS)
       mesh_build.cc
       texture_tools.cc
       lightrt_mtlx_bridge.cc
+      lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_pack.cc
       rt_scene_build.cc
       rt_bvh.cc
       ptex_atlas.cc
@@ -378,6 +386,8 @@ if(TINYUSDZ_BUILD_TESTS)
       mesh_build.cc
       texture_tools.cc
       lightrt_mtlx_bridge.cc
+      lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_pack.cc
       lighting_ies.cc
       displacement_bake.cc
       skinning.cc
@@ -401,6 +411,8 @@ if(TINYUSDZ_BUILD_TESTS)
       mesh_build.cc
       texture_tools.cc
       lightrt_mtlx_bridge.cc
+      lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_pack.cc
       lighting_ies.cc
       displacement_bake.cc
       skinning.cc
@@ -497,6 +509,8 @@ if(TINYUSDZ_BUILD_TESTS)
       tests/scene_safety_test.cc
       scene_optimize.cc
       lightrt_mtlx_bridge.cc
+      lightrt_mtlx_graph_compile.cc
+      lightrt_mtlx_pack.cc
       ${TUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
       $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
   target_compile_features(tusdview_scene_safety_test PRIVATE cxx_std_17)
@@ -818,3 +832,10 @@ set_source_files_properties(
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  # GCC spends minutes in IPA/PTA when optimizing the large MaterialX graph
+  # compiler at -O2/-O3. Keep the runtime renderer fully optimized while
+  # bounding this editor/compiler-oriented TU's build cost.
+  set_source_files_properties(lightrt_mtlx_graph_compile.cc PROPERTIES
+    COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O1>")
+endif()

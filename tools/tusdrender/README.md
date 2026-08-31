@@ -14,11 +14,19 @@ tusdrender scene.usd out.png -rtPreview -w 960 -height 540 -autoframe
 
 On Linux, `tusdrender` automatically uses the first available fast linker in
 the order mold, LLD, then gold. This is target-local—the rest of TinyUSDZ keeps
-the linker selected by the parent build—and primarily avoids long final links
-in `RelWithDebInfo`, where the executable combines several large static
-archives and their DWARF data. CMake prints the selected linker while
+the linker selected by the parent build. CMake prints the selected linker while
 configuring. Versioned LLD installations are supported even when the system's
 unversioned alternative is absent.
+
+Do not infer the active phase from Ninja's abbreviated progress line. A measured
+three-minute rebuild was GCC optimizing `lightrt_mtlx_bridge.cc`, while the
+actual GNU BFD link took less than a second. The MaterialX graph compiler and
+flat GPU ABI packing now use separate translation units, and the graph compiler
+uses source-local `-O1` in Release/RelWithDebInfo to avoid GCC's pathological
+IPA/PTA cost. On the reference Linux build this reduced a cold graph compile
+from about 148 to 71 seconds; ordinary bridge and packing edits rebuild in about
+8 and 1 seconds respectively. Use `/usr/bin/time -v cmake --build ...` plus
+Ninja's `.ninja_log` when diagnosing a regression.
 
 Disable the target-local selection when diagnosing a linker/toolchain issue:
 
