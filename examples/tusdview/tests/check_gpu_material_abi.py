@@ -18,6 +18,14 @@ kernel = (root / "examples/tusdview/raytracer_kernel_src.txt").read_text()
 cpu = (root / "examples/tusdview/cpu/cpu_raytracer.cc").read_text()
 shader = (root / "src/external/lightrt/vk/shaders/trace_materialx_path.comp").read_text()
 viewer_vk_shader = (root / "examples/tusdview/vk/shaders/raytrace.comp").read_text()
+viewer_swrt_shader = (
+    root / "examples/tusdview/vk/shaders/raytrace_swbvh.comp"
+).read_text()
+viewer_raster_shader = (root / "examples/tusdview/vk/shaders/mesh.frag").read_text()
+viewer_environment_shader = (
+    root / "examples/tusdview/vk/shaders/environment.frag"
+).read_text()
+viewer_vk_source = (root / "examples/tusdview/vk/vk_renderer.cc").read_text()
 openpbr = (root / "src/tydra/openpbr-params.hh").read_text()
 vk_header = (root / "src/external/lightrt/lightrt_c_vk.h").read_text()
 vk_source = (root / "src/external/lightrt/lightrt_c_vk.c").read_text()
@@ -92,6 +100,34 @@ require(viewer_vk_shader, r"vec4 context;\s*// MaterialX time, frame",
         "tusdview Vulkan MaterialX context ABI")
 require(viewer_vk_shader, r"pc\.context\.x,\s*pc\.context\.y",
         "tusdview Vulkan MaterialX time/frame transport")
+require(viewer_vk_source,
+        r"kMaterialBindingCount\s*=\s*34\s*\+\s*2\s*\*\s*kRasterMaterialGraphImageCount",
+        "tusdview raster scene-color descriptor count")
+require(viewer_vk_source, r"TUSDVIEW_RT_ALLOW_COLD_COMPILE",
+        "tusdview hardware RT cold-compile opt-in")
+require(viewer_vk_source,
+        r"hardware RT pipeline requires blocking cold compilation",
+        "tusdview non-blocking hardware RT fallback")
+require(viewer_raster_shader,
+        r"binding\s*=\s*48\)\s*uniform\s+sampler2D\s+uOpaqueSceneColor",
+        "tusdview weighted-OIT opaque scene color")
+require(viewer_raster_shader, r"screenRefractionUv",
+        "tusdview screen-space refraction projection")
+require(viewer_raster_shader, r"blockerDepth",
+        "tusdview high-quality PCSS blocker search")
+require(viewer_raster_shader, r"opaqueCoverage\s*=\s*0\.5",
+        "tusdview mixed opacity-atlas coverage split")
+require(viewer_environment_shader,
+        r"binding\s*=\s*49\)\s*uniform\s+samplerCube\s+uEnvironmentMap",
+        "tusdview raster environment background")
+for rt_shader, label in ((viewer_vk_shader, "hardware ray query"),
+                         (viewer_swrt_shader, "compute BVH")):
+    require(rt_shader, r"dielectricBlend",
+            f"tusdview {label} PreviewSurface dielectric classification")
+    require(rt_shader, r"transmission\s*=\s*max\([^;]*1\.0\s*-\s*resolvedOpacity",
+            f"tusdview {label} opacity-derived transmission")
+    require(rt_shader, r"Visibility\(",
+            f"tusdview {label} transparent shadow visibility")
 for op in (44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,
            72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,

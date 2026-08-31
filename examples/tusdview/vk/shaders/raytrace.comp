@@ -1962,6 +1962,11 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
               matTexParams[pb + 153u], matTexParams[pb + 154u]);
     s.coatN = normalize(tangent * cn.x + bitangent * cn.y + s.n * cn.z);
   }
+  float resolvedMode = 0.0;
+  float resolvedOpacity = materialOpacityAtHit(iid, prim, bc, front,
+                                                resolvedMode);
+  if (resolvedMode > 1.5 && s.ior > 1.01)
+    s.transmission = max(s.transmission, 1.0 - resolvedOpacity);
   s.base *= ii.tint.rgb;
 }
 
@@ -2165,6 +2170,38 @@ float ptEnvironmentPdf(vec3 direction) {
          2.5464790894703255;
 }
 
+vec3 ptShadowVisibility(PtSurface s, vec3 direction, float maxT,
+                        uint lightIndex, int lightFlags) {
+  // Keep this visibility query deliberately compact. Full colored multilayer
+  // visibility is handled by the compute-BVH path; embedding material
+  // evaluation in a hardware ray-query candidate loop causes pathological
+  // NVIDIA pipeline compilation. Alpha masks are still candidate-filtered and
+  // dielectric transport remains correct on camera/BSDF paths.
+  for (uint chunk = 0u; chunk < tlasChunkCount(); ++chunk) {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, TLAS[chunk],
+                          gl_RayFlagsTerminateOnFirstHitEXT, 0xff,
+                          s.p + s.n * 1.0e-4, 1.0e-4, direction, maxT);
+    while (rayQueryProceedEXT(query)) {
+      if (rayQueryGetIntersectionTypeEXT(query, false) !=
+          gl_RayQueryCandidateIntersectionTriangleEXT) continue;
+      uint si = globalInstanceId(
+          chunk, rayQueryGetIntersectionInstanceIdEXT(query, false));
+      int sp = rayQueryGetIntersectionPrimitiveIndexEXT(query, false);
+      vec2 sb = rayQueryGetIntersectionBarycentricsEXT(query, false);
+      bool sf = rayQueryGetIntersectionFrontFaceEXT(query, false);
+      bool linked = lightIndex < 32u
+          ? (insts[si].shadowLightMask & (1u << lightIndex)) != 0u
+          : (lightFlags & (1 << 6)) != 0;
+      if (linked && materialAllowsHit(si, sp, sb, sf))
+        rayQueryConfirmIntersectionEXT(query);
+    }
+    if (rayQueryGetIntersectionTypeEXT(query, true) !=
+        gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.0);
+  }
+  return vec3(1.0);
+}
+
 vec3 ptSampleDirect(PtSurface s, uint iid, vec3 viewDir, inout uint seed) {
   uint count = uint(lightRows.length()) / RT_LIGHT_ROWS;
   if (count == 0u) return vec3(0.0);
@@ -2231,30 +2268,11 @@ vec3 ptSampleDirect(PtSurface s, uint iid, vec3 viewDir, inout uint seed) {
   shape *= rtIesFactor(li, -toLight);
   if (nl <= 0.0 || emitterCosine <= 0.0 || shape <= 0.0)
     return vec3(0.0);
-  for (uint chunk = 0u; (flags & 2) != 0 && chunk < tlasChunkCount(); ++chunk) {
-    rayQueryEXT shadowQuery;
-    rayQueryInitializeEXT(shadowQuery, TLAS[chunk],
-                          gl_RayFlagsTerminateOnFirstHitEXT, 0xff,
-                          s.p + s.n * 1.0e-4, 1.0e-4, toLight,
-                          max(maxT - 2.0e-4, 1.0e-4));
-    while (rayQueryProceedEXT(shadowQuery)) {
-      if (rayQueryGetIntersectionTypeEXT(shadowQuery, false) ==
-          gl_RayQueryCandidateIntersectionTriangleEXT) {
-        uint si = globalInstanceId(
-            chunk, rayQueryGetIntersectionInstanceIdEXT(shadowQuery, false));
-        int sp = rayQueryGetIntersectionPrimitiveIndexEXT(shadowQuery, false);
-        vec2 sb = rayQueryGetIntersectionBarycentricsEXT(shadowQuery, false);
-        bool sf = rayQueryGetIntersectionFrontFaceEXT(shadowQuery, false);
-        bool shadowLinked = li < 32u
-            ? (insts[si].shadowLightMask & (1u << li)) != 0u
-            : (flags & (1 << 6)) != 0;
-        if (shadowLinked && materialAllowsHit(si, sp, sb, sf))
-          rayQueryConfirmIntersectionEXT(shadowQuery);
-      }
-    }
-    if (rayQueryGetIntersectionTypeEXT(shadowQuery, true) !=
-        gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.0);
-  }
+  vec3 visibility = (flags & 2) != 0
+      ? ptShadowVisibility(s, toLight, max(maxT - 2.0e-4, 1.0e-4), li, flags)
+      : vec3(1.0);
+  if (max(max(visibility.r, visibility.g), visibility.b) < 1.0e-4)
+    return vec3(0.0);
   vec3 v = normalize(viewDir);
   float dielectricF0 = pow((s.ior - 1.0) / (s.ior + 1.0), 2.0);
   vec3 dielectric = s.specularColor * dielectricF0 * s.specularWeight;
@@ -2273,7 +2291,7 @@ vec3 ptSampleDirect(PtSurface s, uint iid, vec3 viewDir, inout uint seed) {
                                    0.0, 0.0, 0.0, ignoredPdf);
   float areaFactor = lightType >= 1 && lightType <= 4
                          ? max(light(li, 5u).w, 1.0e-7) : 1.0;
-  return brdf * light(li, 3u).rgb *
+  return visibility * brdf * light(li, 3u).rgb *
          (attenuation * areaFactor * emitterCosine * shape * nl /
           max(selectionPdf, 1.0e-8));
 }
@@ -2326,7 +2344,13 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
           : mat(alphaMid, 1u).z;
       if (alphaMode > 1.5) {
         float opacity = materialOpacityAtHit(iid, prim, bc, front, alphaMode);
-        if (opacity < 1.0 && rnd(seed) >= opacity) {
+        float explicitTransmission = alphaMid == 0xffffffffu
+            ? 0.0 : clamp(lrt(alphaMid, 2u).w, 0.0, 1.0);
+        float materialIor = alphaMid == 0xffffffffu
+            ? 1.0 : max(lrt(alphaMid, 10u).w, 1.0);
+        bool dielectricBlend = explicitTransmission > 1.0e-4 ||
+                               (materialIor > 1.01 && opacity < 0.999);
+        if (!dielectricBlend && opacity < 1.0 && rnd(seed) >= opacity) {
           ro += rd * (hitT + 1.0e-4);
           ++transparentEvents;
           bounce = bounce == 0u ? 0xffffffffu : bounce - 1u;
@@ -2414,14 +2438,12 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
           sheenCoefficient, coatF0Color, s.coatWeight,
           diffuseProbability, glossyProbability,
           coatProbability, reflectionPdf);
-      uint ei = 0u; int ep = -1; vec2 eb = vec2(0.0); bool ef = true;
-      mat4x3 ew; float et = 1.0e30;
-      bool blocked = traceAcceptedPrimary(s.p + s.n * 1.0e-4,
-                                          environmentDirection, 1.0e-4,
-                                          1.0e30, ei, ep, eb, ef, ew, et);
-      if (!blocked) {
+      vec3 environmentVisibility = ptShadowVisibility(
+          s, environmentDirection, 1.0e30, 32u, 1 << 6);
+      if (max(max(environmentVisibility.r, environmentVisibility.g),
+              environmentVisibility.b) > 1.0e-4) {
         float mis = ptPowerHeuristic(environmentPdf, reflectionPdf);
-        radiance += throughput * reflection * environmentNoL *
+        radiance += throughput * environmentVisibility * reflection * environmentNoL *
                     ptEnvironment(environmentDirection) *
                     (mis / environmentPdf);
       }

@@ -259,6 +259,24 @@ vec3 swDomeRadiance(vec3 direction) {
   return vec3(0.0);
 }
 
+// Camera/refraction misses use the sharp environment rather than the diffuse
+// SH irradiance used for surface lighting.  This is also what makes a DomeLight
+// visible as the RT background.
+vec3 swDomeBackground(vec3 direction, vec3 fallback) {
+  uint count = uint(lightRows.length()) / 20u;
+  for (uint i = 0u; i < count; ++i) {
+    vec4 lp0 = lightRows[i * 20u + 0u];
+    if (int(lp0.x + 0.5) != 6) continue;
+    vec3 color = max(lightRows[i * 20u + 4u].rgb, vec3(0.0));
+    if ((int(lp0.y + 0.5) & (1 << 7)) == 0) return color;
+    vec3 d = vec3(dot(lightRows[i * 20u + 10u].xyz, direction),
+                  dot(lightRows[i * 20u + 11u].xyz, direction),
+                  dot(lightRows[i * 20u + 12u].xyz, direction));
+    return max(textureLod(uEnvCube, d, 0.0).rgb, vec3(0.0)) * color;
+  }
+  return fallback;
+}
+
 vec3 swApplyThinFilm(vec3 f0, float cosTheta, float weight,
                      float thickness, float ior) {
   float w = clamp(weight, 0.0, 1.0);
@@ -955,10 +973,19 @@ bool traceClosestSW(vec3 o, vec3 d, out int hitInst, out int hitTri,
                              hitFront, hitT);
 }
 
-float swLayerTransmissionWeight(int tri) {
+float swLayerTransmissionWeight(int iid, int tri, vec2 bc) {
   int mid = triMat[tri];
   if (mid < 0 || mid >= int(lrtRows.length() / 20u)) return 0.0;
-  return clamp(lrt(mid, 2u).w, 0.0, 1.0);
+  float transmission = clamp(lrt(mid, 2u).w, 0.0, 1.0);
+  float alphaMode = 0.0;
+  float opacity = swOpacityAtHit(iid, tri, bc, alphaMode);
+  float ior = max(lrt(mid, 10u).w, 1.0);
+  // UsdPreviewSurface glass commonly authors opacity + IOR without an
+  // explicit OpenPBR transmission input. Treat that as dielectric
+  // transmission, matching the production path integrator and raster path.
+  if (alphaMode > 1.5 && ior > 1.01)
+    transmission = max(transmission, 1.0 - opacity);
+  return transmission;
 }
 
 vec3 swLayerRefractedColor(int iid, int tri, vec2 bc, bool front,
@@ -998,7 +1025,7 @@ vec3 swLayerRefractedColor(int iid, int tri, vec2 bc, bool front,
     if (!traceClosestSWRange(hit + refrDir * 1.0e-3, refrDir, 1.0e-3,
                              1.0e30, nextIid, nextTri, nextBc, nextFront,
                              nextT))
-      return throughput * swDomeRadiance(refrDir);
+      return throughput * swDomeBackground(refrDir, vec3(0.0));
     currentDir = refrDir;
     currentIid = nextIid;
     currentTri = nextTri;
@@ -1008,7 +1035,7 @@ vec3 swLayerRefractedColor(int iid, int tri, vec2 bc, bool front,
       return throughput * swApproxLayerColor(currentIid, currentTri,
                                               currentBc);
   }
-  return throughput * swDomeRadiance(currentDir);
+  return throughput * swDomeBackground(currentDir, vec3(0.0));
 }
 
 #if TUSDVIEW_SW_PATH_ONLY
@@ -1280,6 +1307,10 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
               matTexParams[pb + 153u], matTexParams[pb + 154u]);
     s.coatN = normalize(s.tangent * cn.x + s.bitangent * cn.y + s.n * cn.z);
   } else s.coatN = s.n;
+  float resolvedMode = 0.0;
+  float resolvedOpacity = swOpacityAtHit(iid, tri, bc, resolvedMode);
+  if (resolvedMode > 1.5 && s.ior > 1.01)
+    s.transmission = max(s.transmission, 1.0 - resolvedOpacity);
   s.base *= inst.tint.rgb;
 }
 
@@ -1366,8 +1397,7 @@ float swPtSpectralIor(float iorD, float abbe, float dispersion, int channel) {
 }
 
 vec3 swPtEnvironment(vec3 d) {
-  vec3 env = swDomeRadiance(d);
-  return dot(env, env) > 1.0e-12 ? env : srgbToLinear(pc.clearColor.rgb);
+  return swDomeBackground(d, srgbToLinear(pc.clearColor.rgb));
 }
 
 vec3 swPtEnvironmentCellDirection(int cell, vec2 jitter) {
@@ -1464,13 +1494,14 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
          sheen + F * glossy + coat;
 }
 
-bool swPtVisible(SwPtSurface s, vec3 direction, float maxT, uint lightIndex,
-                 int flags) {
+vec3 swPtVisibility(SwPtSurface s, vec3 direction, float maxT,
+                    uint lightIndex, int flags) {
   float cursor = 1.0e-4;
+  vec3 visibility = vec3(1.0);
   [[dont_unroll]] for (int pass = 0; pass < 32; ++pass) {
     int ii, tri; vec2 bc; bool front; float t;
     if (!traceClosestSWRange(s.p + s.n * 1.0e-4, direction, cursor,
-                             maxT, ii, tri, bc, front, t)) return true;
+                             maxT, ii, tri, bc, front, t)) return visibility;
     bool linked = lightIndex < 32u
         ? (insts[ii].shadowLightMask & (1u << lightIndex)) != 0u
         : (flags & (1 << 6)) != 0;
@@ -1479,9 +1510,22 @@ bool swPtVisible(SwPtSurface s, vec3 direction, float maxT, uint lightIndex,
     float mode = 0.0;
     float alpha = swOpacityAtHit(ii, tri, bc, mode);
     if (mode > 0.5 && mode < 1.5 && alpha <= 0.0) continue;
-    return false;
+    if (mode > 1.5) {
+      int mid = swPtMaterial(tri, front);
+      float transmission = mid >= 0
+          ? clamp(lrt(mid, 2u).w, 0.0, 1.0) : 0.0;
+      float ior = mid >= 0 ? max(lrt(mid, 10u).w, 1.0) : 1.0;
+      if (ior > 1.01) transmission = max(transmission, 1.0 - alpha);
+      vec3 tint = mid >= 0 ? max(lrt(mid, 2u).rgb, vec3(0.0)) : vec3(1.0);
+      float f0 = pow((ior - 1.0) / max(ior + 1.0, 1.0e-5), 2.0);
+      visibility *= mix(vec3(1.0 - alpha), tint * (1.0 - f0), transmission);
+      if (max(max(visibility.r, visibility.g), visibility.b) < 1.0e-3)
+        return vec3(0.0);
+      continue;
+    }
+    return vec3(0.0);
   }
-  return false;
+  return vec3(0.0);
 }
 
 vec3 swPtSampleDirect(SwPtSurface s, int iid, vec3 v, inout uint seed) {
@@ -1551,8 +1595,11 @@ vec3 swPtSampleDirect(SwPtSurface s, int iid, vec3 v, inout uint seed) {
             pow(max(cc, 0.0), max(lightRows[li * 20u + 6u].z, 0.0));
   }
   shape *= swIesFactor(li, -L);
-  if (shape <= 0.0 || ((flags & 2) != 0 &&
-      !swPtVisible(s, L, max(maxT - 2.0e-4, 1.0e-4), li, flags)))
+  if (shape <= 0.0) return vec3(0.0);
+  vec3 visibility = (flags & 2) != 0
+      ? swPtVisibility(s, L, max(maxT - 2.0e-4, 1.0e-4), li, flags)
+      : vec3(1.0);
+  if (max(max(visibility.r, visibility.g), visibility.b) < 1.0e-4)
     return vec3(0.0);
   float r = (s.ior - 1.0) / (s.ior + 1.0);
   vec3 f0 = mix(s.specularColor * (r * r * s.specularWeight), s.base,
@@ -1571,7 +1618,7 @@ vec3 swPtSampleDirect(SwPtSurface s, int iid, vec3 v, inout uint seed) {
   float areaFactor = type == 7 ? geometryArea
       : (type >= 1 && type <= 4
           ? max(lightRows[li * 20u + 5u].w, 1.0e-7) : 1.0);
-  return brdf * emission * (attenuation * areaFactor * emitterCos * shape * nl /
+  return visibility * brdf * emission * (attenuation * areaFactor * emitterCos * shape * nl /
                             max(selectPdf, 1.0e-8));
 }
 
@@ -1618,7 +1665,13 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
           : (insts[iid].tint.a < 1.0 ? 2.0 : 0.0);
       if (alphaMode > 1.5) {
         float opacity = swOpacityAtHit(iid, tri, bc, alphaMode);
-        if (opacity < 1.0 && swRandom(seed) >= opacity) {
+        float explicitTransmission = alphaMid >= 0
+            ? clamp(lrt(alphaMid, 2u).w, 0.0, 1.0) : 0.0;
+        float materialIor = alphaMid >= 0
+            ? max(lrt(alphaMid, 10u).w, 1.0) : 1.0;
+        bool dielectricBlend = explicitTransmission > 1.0e-4 ||
+                               (materialIor > 1.01 && opacity < 0.999);
+        if (!dielectricBlend && opacity < 1.0 && swRandom(seed) >= opacity) {
           ro += rd * (hitT + 1.0e-4);
           ++transparentEvents;
           bounce = bounce == 0u ? 0xffffffffu : bounce - 1u;
@@ -1677,11 +1730,12 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
       float bsdfPdf;
       vec3 f = swPtEvaluateReflection(s, -rd, envDir, diffuseC, f0, sheenC,
                                       coatF0, pd, pg, pcg, bsdfPdf);
-      int ei, et; vec2 eb; bool ef; float ed;
-      if (!swTraceAccepted(s.p + s.n * 1.0e-4, envDir, 1.0e-4, 1.0e30,
-                           ei, et, eb, ef, ed)) {
+      vec3 envVisibility = swPtVisibility(s, envDir, 1.0e30,
+                                           32u, 1 << 6);
+      if (max(max(envVisibility.r, envVisibility.g), envVisibility.b) >
+          1.0e-4) {
         result += throughput * f * envNl * swPtEnvironment(envDir) *
-                  (swPtPower(envPdf, bsdfPdf) / envPdf);
+                  envVisibility * (swPtPower(envPdf, bsdfPdf) / envPdf);
       }
     }
     float xi = swRandom(seed) * sum;
@@ -1805,6 +1859,7 @@ void main() {
   swRayForPixel(px, size, origin, dir);
 
   vec3 bgc = srgbToLinear(pc.clearColor.rgb);
+  bgc = swDomeBackground(dir, bgc);
   vec3 outc = bgc;
 
 #if TUSDVIEW_SW_PATH_ONLY
@@ -2364,7 +2419,8 @@ void main() {
         layerColor[0] = outc;
         layerAlpha[0] = swOpacityAtHit(hitInst, hitTri, hitBc, topMode);
         layerTint[0] = swLayerTransmissionTint(hitInst, hitTri);
-        float topTransmission = swLayerTransmissionWeight(hitTri);
+        float topTransmission = swLayerTransmissionWeight(hitInst, hitTri,
+                                                          hitBc);
         vec3 refractedOrigin, refractedDir;
         vec3 topRefract = swLayerRefractedColor(hitInst, hitTri, hitBc,
                                                 hitFront, origin, dir,
@@ -2394,7 +2450,7 @@ void main() {
           // Carry the refracted direction through each transparent
           // intermediate interface. Without this, stacked glass layers are
           // shaded on a straight ray even though the top interface bent it.
-          if (swLayerTransmissionWeight(lt) > 0.0) {
+          if (swLayerTransmissionWeight(li, lt, lb) > 0.0) {
             vec3 nextOrigin, nextDir;
             swLayerRefractedColor(li, lt, lb, lf, walkOrigin, walkDir,
                                   nextOrigin, nextDir);

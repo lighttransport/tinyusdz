@@ -162,15 +162,25 @@ std::string GetValidBoundMaterialPath(const Stage& stage, const UsdPrim& prim,
                                       const std::string& purpose = "") {
   if (stronger) *stronger = false;
   if (!prim.IsValid()) return "";
-  static const char* kBindingOrder[] = {"material:binding:preview",
-                                        "material:binding",
-                                        "material:binding:full"};
+  static const char* kPreviewBindingOrder[] = {"material:binding:preview",
+                                               "material:binding",
+                                               "material:binding:full"};
+  static const char* kFullBindingOrder[] = {"material:binding:full",
+                                            "material:binding",
+                                            "material:binding:preview"};
   const PrimSpec* spec = prim.GetPrimSpec();
-  const std::string purpose_rel =
-      purpose.empty() ? std::string() : "material:binding:" + purpose;
-  const size_t count = purpose.empty() ? size_t{3} : size_t{1};
+  const bool standardPurpose = purpose == "preview" || purpose == "full";
+  const std::string purpose_rel = purpose.empty() || standardPurpose
+                                      ? std::string()
+                                      : "material:binding:" + purpose;
+  const char* const* bindingOrder = purpose == "full" ? kFullBindingOrder
+                                                       : kPreviewBindingOrder;
+  const size_t count = purpose.empty() || standardPurpose ? size_t{3}
+                                                          : size_t{1};
   for (size_t i = 0; i < count; ++i) {
-    const char* rel = purpose.empty() ? kBindingOrder[i] : purpose_rel.c_str();
+    const char* rel = (purpose.empty() || standardPurpose)
+                          ? bindingOrder[i]
+                          : purpose_rel.c_str();
     const std::vector<Path>* targets = prim.GetRelationship(rel);
     if (!targets || targets->empty()) continue;
     const std::string path = (*targets)[0].str();

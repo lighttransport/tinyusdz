@@ -33,6 +33,8 @@
 #include "line_vert.spv.h"
 #include "mesh_frag.spv.h"
 #include "mesh_oit_frag.spv.h"
+#include "environment_vert.spv.h"
+#include "environment_frag.spv.h"
 #include "shadow_frag.spv.h"
 #include "shadow_inst_frag.spv.h"
 #include "mesh_inst_frag.spv.h"
@@ -42,6 +44,7 @@
 #include "mesh_tess_tese.spv.h"
 #include "mesh_tess_vert.spv.h"
 #include "mesh_vert.spv.h"
+#include "wire_frag.spv.h"
 #include "nonmesh_frag.spv.h"
 #include "nonmesh_frag_oit.spv.h"
 #include "nonmesh_vert.spv.h"
@@ -85,6 +88,109 @@ namespace {
 thread_local uint64_t* gPipelineBindCounter = nullptr;
 thread_local uint64_t* gDescriptorSetBindCounter = nullptr;
 
+bool VkApiTraceEnabled() {
+  static const bool enabled = [] {
+    const char* value = std::getenv("TUSDVIEW_VK_API_TRACE");
+    return value != nullptr && std::atoi(value) != 0;
+  }();
+  return enabled;
+}
+
+template <typename Fn>
+VkResult TraceVkApiCall(const char* name, Fn&& fn) {
+  if (!VkApiTraceEnabled()) return fn();
+  const auto start = std::chrono::steady_clock::now();
+  LOGI("[vk-api] begin %s", name);
+  const VkResult result = fn();
+  const double milliseconds =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - start).count();
+  LOGI("[vk-api] end   %s result=%d elapsed=%.3f ms", name,
+       static_cast<int>(result), milliseconds);
+  return result;
+}
+
+VkResult TracedCreateDevice(VkPhysicalDevice physicalDevice,
+                            const VkDeviceCreateInfo* createInfo,
+                            const VkAllocationCallbacks* allocator,
+                            VkDevice* device) {
+  return TraceVkApiCall("vkCreateDevice", [&] {
+    return ::vkCreateDevice(physicalDevice, createInfo, allocator, device);
+  });
+}
+
+VkResult TracedCreateGraphicsPipelines(
+    VkDevice device, VkPipelineCache cache, uint32_t count,
+    const VkGraphicsPipelineCreateInfo* createInfos,
+    const VkAllocationCallbacks* allocator, VkPipeline* pipelines) {
+  return TraceVkApiCall("vkCreateGraphicsPipelines", [&] {
+    return ::vkCreateGraphicsPipelines(device, cache, count, createInfos,
+                                       allocator, pipelines);
+  });
+}
+
+VkResult TracedCreateComputePipelines(
+    VkDevice device, VkPipelineCache cache, uint32_t count,
+    const VkComputePipelineCreateInfo* createInfos,
+    const VkAllocationCallbacks* allocator, VkPipeline* pipelines) {
+  return TraceVkApiCall("vkCreateComputePipelines", [&] {
+    return ::vkCreateComputePipelines(device, cache, count, createInfos,
+                                      allocator, pipelines);
+  });
+}
+
+VkResult TracedDeviceWaitIdle(VkDevice device) {
+  return TraceVkApiCall("vkDeviceWaitIdle", [&] {
+    return ::vkDeviceWaitIdle(device);
+  });
+}
+
+VkResult TracedQueueWaitIdle(VkQueue queue) {
+  return TraceVkApiCall("vkQueueWaitIdle", [&] {
+    return ::vkQueueWaitIdle(queue);
+  });
+}
+
+VkResult TracedWaitForFences(VkDevice device, uint32_t count,
+                             const VkFence* fences, VkBool32 waitAll,
+                             uint64_t timeout) {
+  return TraceVkApiCall("vkWaitForFences", [&] {
+    return ::vkWaitForFences(device, count, fences, waitAll, timeout);
+  });
+}
+
+VkResult TracedQueueSubmit(VkQueue queue, uint32_t count,
+                           const VkSubmitInfo* submits, VkFence fence) {
+  return TraceVkApiCall("vkQueueSubmit", [&] {
+    return ::vkQueueSubmit(queue, count, submits, fence);
+  });
+}
+
+VkResult TracedEnumeratePhysicalDevices(VkInstance instance, uint32_t* count,
+                                        VkPhysicalDevice* devices) {
+  return TraceVkApiCall(devices ? "vkEnumeratePhysicalDevices(list)"
+                                : "vkEnumeratePhysicalDevices(count)", [&] {
+    return ::vkEnumeratePhysicalDevices(instance, count, devices);
+  });
+}
+
+VkResult TracedGetSurfaceSupport(VkPhysicalDevice device, uint32_t family,
+                                 VkSurfaceKHR surface, VkBool32* supported) {
+  return TraceVkApiCall("vkGetPhysicalDeviceSurfaceSupportKHR", [&] {
+    return ::vkGetPhysicalDeviceSurfaceSupportKHR(device, family, surface,
+                                                   supported);
+  });
+}
+
+VkResult TracedCreateSwapchain(VkDevice device,
+                               const VkSwapchainCreateInfoKHR* createInfo,
+                               const VkAllocationCallbacks* allocator,
+                               VkSwapchainKHR* swapchain) {
+  return TraceVkApiCall("vkCreateSwapchainKHR", [&] {
+    return ::vkCreateSwapchainKHR(device, createInfo, allocator, swapchain);
+  });
+}
+
 void CountedCmdBindPipeline(VkCommandBuffer commandBuffer,
                             VkPipelineBindPoint pipelineBindPoint,
                             VkPipeline pipeline) {
@@ -126,6 +232,16 @@ class BindCounterScope {
 
 #define vkCmdBindPipeline CountedCmdBindPipeline
 #define vkCmdBindDescriptorSets CountedCmdBindDescriptorSets
+#define vkCreateDevice TracedCreateDevice
+#define vkCreateGraphicsPipelines TracedCreateGraphicsPipelines
+#define vkCreateComputePipelines TracedCreateComputePipelines
+#define vkDeviceWaitIdle TracedDeviceWaitIdle
+#define vkQueueWaitIdle TracedQueueWaitIdle
+#define vkWaitForFences TracedWaitForFences
+#define vkQueueSubmit TracedQueueSubmit
+#define vkEnumeratePhysicalDevices TracedEnumeratePhysicalDevices
+#define vkGetPhysicalDeviceSurfaceSupportKHR TracedGetSurfaceSupport
+#define vkCreateSwapchainKHR TracedCreateSwapchain
 
 size_t CanonicalRasterMaterialIndex(const std::vector<int>& logicalToCanonical,
                                     int logicalId, size_t canonicalCount) {
@@ -266,7 +382,7 @@ std::string RtPipelineCachePath(const VkPhysicalDeviceProperties& props,
 
 constexpr uint32_t kRasterDescriptorSetCount = 4;
 constexpr uint32_t kMaterialBindingCount =
-    32 + 2 * kRasterMaterialGraphImageCount;
+    34 + 2 * kRasterMaterialGraphImageCount;
 constexpr uint32_t kDeformBindingCount = 8;
 constexpr uint32_t kMaxMaterialSets = 8192;
 constexpr uint32_t kMaxDeformSets = 16384;
@@ -827,9 +943,7 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
     vkGetPhysicalDeviceQueueFamilyProperties(d, &qn, qfp.data());
     bool queued = false;
     for (uint32_t i = 0; i < qn; ++i) {
-      VkBool32 present = VK_TRUE;  // headless: presentation not required
-      if (!headless_) vkGetPhysicalDeviceSurfaceSupportKHR(d, i, surface_, &present);
-      if ((qfp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present) {
+      if (qfp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
         Candidate c;
         c.device = d;
         c.deviceIndex = devIndex;
@@ -846,15 +960,13 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
     if (!queued) {
       rejected.push_back(std::string("device[") + std::to_string(devIndex) +
                          "] " + props2.properties.deviceName +
-                         ": no graphics" +
-                         (headless_ ? "" : "+present") + " queue");
+                         ": no graphics queue");
     }
   }
 
   if (candidates.empty()) {
     if (err) {
-      *err = "no graphics" + std::string(headless_ ? "" : "+present") +
-             " queue family";
+      *err = "no graphics queue family";
       for (const std::string& r : rejected) *err += "\n  " + r;
     }
     return false;
@@ -887,10 +999,55 @@ bool VulkanRenderer::pickPhysicalDevice(std::string* err) {
         });
   }
 
+  // WSI queries can runtime-resume a displayless secondary adapter. Rank on
+  // device/queue properties first, then ask only the preferred adapter whether
+  // its graphics queue can present. If auto-selection's first choice cannot,
+  // fall through in score order. An explicit --vk-device never probes another
+  // adapter for presentation support.
+  if (!headless_ && best != candidates.end()) {
+    auto canPresent = [&](const Candidate& candidate) {
+      VkBool32 present = VK_FALSE;
+      const VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(
+          candidate.device, candidate.queueFamily, surface_, &present);
+      return result == VK_SUCCESS && present == VK_TRUE;
+    };
+    if (manual) {
+      if (!canPresent(*best)) best = candidates.end();
+    } else {
+      while (best != candidates.end() && !canPresent(*best)) {
+        rejected.push_back(std::string("device[") +
+                           std::to_string(best->deviceIndex) + "] " +
+                           best->props.deviceName +
+                           ": graphics queue cannot present to this surface");
+        candidates.erase(best);
+        if (candidates.empty()) {
+          best = candidates.end();
+          break;
+        }
+        const bool haveHardware = std::any_of(
+            candidates.begin(), candidates.end(), [](const Candidate& c) {
+              return c.props.deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU;
+            });
+        best = std::max_element(
+            candidates.begin(), candidates.end(),
+            [haveHardware](const Candidate& a, const Candidate& b) {
+              const bool aCpu =
+                  a.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+              const bool bCpu =
+                  b.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+              if (haveHardware && aCpu != bCpu) return aCpu;
+              if (a.score != b.score) return a.score < b.score;
+              return a.deviceIndex > b.deviceIndex;
+            });
+      }
+    }
+  }
+
   if (best == candidates.end()) {
     if (err) {
-      *err = "no Vulkan physical device matches --vk-device '" +
-             *devicePreference_.vulkanDevice + "'. Candidates:";
+      *err = manual ? "selected Vulkan device cannot present or does not match '" +
+                          *devicePreference_.vulkanDevice + "'. Candidates:"
+                    : "no Vulkan physical device can present to this surface. Candidates:";
       for (const Candidate& c : candidates) {
         *err += "\n  [" + std::to_string(c.deviceIndex) + "] ";
         *err += c.props.deviceName;
@@ -1207,6 +1364,10 @@ bool VulkanRenderer::createDevice(std::string* err) {
   if (supported.tessellationShader) {
     enabledFeatures.tessellationShader = VK_TRUE;
     tessSupported_ = true;
+  }
+  if (supported.fillModeNonSolid) {
+    enabledFeatures.fillModeNonSolid = VK_TRUE;
+    surfaceWireSupported_ = true;
   }
   if (supported.samplerAnisotropy) {
     enabledFeatures.samplerAnisotropy = VK_TRUE;
@@ -2218,19 +2379,52 @@ bool VulkanRenderer::createPipeline(std::string* err) {
                                          &pipeline_);
   reportPipeline("opaque");
   if (r == VK_SUCCESS) {
-    VkPipelineInputAssemblyStateCreateInfo wireIa = ia;
-    wireIa.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    VkShaderModule envVs = createShader(environment_vert_spv,
+                                        sizeof(environment_vert_spv));
+    VkShaderModule envFs = createShader(environment_frag_spv,
+                                        sizeof(environment_frag_spv));
+    if (envVs && envFs) {
+      VkPipelineShaderStageCreateInfo envStages[2] = {stages[0], stages[1]};
+      envStages[0].module = envVs;
+      envStages[1].module = envFs;
+      VkPipelineVertexInputStateCreateInfo envVin{};
+      envVin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+      VkPipelineDepthStencilStateCreateInfo envDs = ds;
+      envDs.depthTestEnable = VK_FALSE;
+      envDs.depthWriteEnable = VK_FALSE;
+      VkGraphicsPipelineCreateInfo envCi = ci;
+      envCi.pStages = envStages;
+      envCi.pVertexInputState = &envVin;
+      envCi.pDepthStencilState = &envDs;
+      if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &envCi, nullptr,
+                                    &environmentPipeline_) != VK_SUCCESS) {
+        environmentPipeline_ = VK_NULL_HANDLE;
+        LOGW("Vulkan environment background pipeline unavailable");
+      }
+      reportPipeline("environment background");
+    }
+    if (envVs) vkDestroyShaderModule(device_, envVs, nullptr);
+    if (envFs) vkDestroyShaderModule(device_, envFs, nullptr);
+  }
+  if (r == VK_SUCCESS && surfaceWireSupported_) {
+    VkShaderModule wireFs = createShader(wire_frag_spv, sizeof(wire_frag_spv));
+    VkPipelineShaderStageCreateInfo wireStages[2] = {stages[0], stages[1]};
+    if (wireFs) wireStages[1].module = wireFs;
     VkPipelineDepthStencilStateCreateInfo wireDs = ds;
     wireDs.depthWriteEnable = VK_FALSE;
     wireDs.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkPipelineRasterizationStateCreateInfo wireRs = rs;
+    wireRs.polygonMode = VK_POLYGON_MODE_LINE;
     VkGraphicsPipelineCreateInfo wireCi = ci;
-    wireCi.pInputAssemblyState = &wireIa;
+    wireCi.pStages = wireStages;
     wireCi.pDepthStencilState = &wireDs;
-    if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &wireCi, nullptr,
+    wireCi.pRasterizationState = &wireRs;
+    if (!wireFs || vkCreateGraphicsPipelines(device_, pipelineCache, 1, &wireCi, nullptr,
                                   &wirePipeline_) != VK_SUCCESS) {
       wirePipeline_ = VK_NULL_HANDLE;
     }
-    reportPipeline("original-cage wire");
+    if (wireFs) vkDestroyShaderModule(device_, wireFs, nullptr);
+    reportPipeline("surface wire");
   }
   // Translucent variant: same shaders/state, but premultiplied "over" blend
   // (mesh.frag premultiplies for Blend materials) and depth-write-off so
@@ -2386,6 +2580,7 @@ void VulkanRenderer::createTessPipeline() {
   VkShaderModule tcs = createShader(mesh_tess_tesc_spv, sizeof(mesh_tess_tesc_spv));
   VkShaderModule tes = createShader(mesh_tess_tese_spv, sizeof(mesh_tess_tese_spv));
   VkShaderModule fs = createShader(mesh_frag_spv, sizeof(mesh_frag_spv));
+  VkShaderModule wireFs = createShader(wire_frag_spv, sizeof(wire_frag_spv));
   if (!vs || !tcs || !tes || !fs) {
     if (vs) vkDestroyShaderModule(device_, vs, nullptr);
     if (tcs) vkDestroyShaderModule(device_, tcs, nullptr);
@@ -2495,10 +2690,28 @@ void VulkanRenderer::createTessPipeline() {
   ci.subpass = 0;
   VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                          &tessPipeline_);
+  if (r == VK_SUCCESS && surfaceWireSupported_) {
+    VkPipelineShaderStageCreateInfo wireStages[4] = {stages[0], stages[1],
+                                                     stages[2], stages[3]};
+    if (wireFs) wireStages[3].module = wireFs;
+    VkPipelineRasterizationStateCreateInfo wireRs = rs;
+    wireRs.polygonMode = VK_POLYGON_MODE_LINE;
+    VkPipelineDepthStencilStateCreateInfo wireDs = ds;
+    wireDs.depthWriteEnable = VK_FALSE;
+    wireDs.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkGraphicsPipelineCreateInfo wireCi = ci;
+    wireCi.pStages = wireStages;
+    wireCi.pRasterizationState = &wireRs;
+    wireCi.pDepthStencilState = &wireDs;
+    if (!wireFs || vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &wireCi, nullptr,
+                                  &tessWirePipeline_) != VK_SUCCESS)
+      tessWirePipeline_ = VK_NULL_HANDLE;
+  }
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, tcs, nullptr);
   vkDestroyShaderModule(device_, tes, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
+  if (wireFs) vkDestroyShaderModule(device_, wireFs, nullptr);
   if (r != VK_SUCCESS) {
     tessPipeline_ = VK_NULL_HANDLE;
     LOGD("tessellation pipeline creation failed (%d); using coarse displacement", int(r));
@@ -4115,7 +4328,9 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
       material.occlusionTex};
   // The first 32 bindings are the established semantic table. Bindings
   // 32..39 and 40..47 are the bounded per-material graph image and UDIM
-  // image slots respectively.
+  // image slots respectively. Binding 48 is the completed opaque scene color
+  // sampled by high-quality weighted-OIT refraction; 49 is the sharp DomeLight
+  // cube used by the raster environment background.
   views[19] = shadowDepthView_ ? shadowDepthView_ : whiteView_;
   // Extra 2D-only material slots. UDIM sources fall back to white (treated as
   // unbound) rather than sampling the wrong image.
@@ -4137,6 +4352,9 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
   views[29] = udimView(material.coatRoughnessTex);
   views[30] = udimView(material.coatNormalTex);
   views[31] = udimView(material.displacementTex);
+  views[48] = colorView_ ? colorView_ : blackView_;
+  views[49] = iblEnvView_ ? iblEnvView_
+                          : (iblSpecView_ ? iblSpecView_ : blackCubeView_);
   textureSlots[19] = -1;
   textureSlots[20] = material.specularColorTex;
   textureSlots[21] = material.coatWeightTex;
@@ -4150,6 +4368,8 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
   textureSlots[29] = material.coatRoughnessTex;
   textureSlots[30] = material.coatNormalTex;
   textureSlots[31] = material.displacementTex;
+  textureSlots[48] = -1;
+  textureSlots[49] = -1;
   std::vector<int> graphTextureIds;
   graphTextureIds.reserve(kRasterMaterialGraphImageCount);
   auto graphIsUdim = [&](int slot) {
@@ -5656,6 +5876,7 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   const auto initStart = std::chrono::steady_clock::now();
   auto timed = [&](const char* name, auto&& fn) {
     const auto start = std::chrono::steady_clock::now();
+    if (VkApiTraceEnabled()) LOGI("[vk-api] phase begin %s", name);
     const bool ok = fn();
     if (startupTiming) {
       const double seconds =
@@ -5663,6 +5884,8 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
               .count();
       LOGI("Vulkan startup timing: %-24s %.3f s", name, seconds);
     }
+    if (VkApiTraceEnabled())
+      LOGI("[vk-api] phase end   %s ok=%d", name, ok ? 1 : 0);
     return ok;
   };
   nativeCarrierCpuForced_ =
@@ -7037,6 +7260,29 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
   vkDeviceWaitIdle(device_);
   destroyIblImages();
   refreshMaterialDescriptors();
+  const auto refreshSwRtIblDescriptors = [&]() {
+    if (!swRtSet_) return;
+    VkDescriptorImageInfo images[3]{};
+    images[0] = {sampler_,
+                 iblEnvView_ ? iblEnvView_
+                             : (iblSpecView_ ? iblSpecView_ : blackCubeView_),
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    images[1] = {sampler_, iblSpecView_ ? iblSpecView_ : blackCubeView_,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    images[2] = {sampler_, iblLutView_ ? iblLutView_ : blackView_,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet writes[3]{};
+    for (uint32_t i = 0; i < 3; ++i) {
+      writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[i].dstSet = swRtSet_;
+      writes[i].dstBinding = 8u + i;
+      writes[i].descriptorCount = 1;
+      writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      writes[i].pImageInfo = &images[i];
+    }
+    vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
+  };
+  refreshSwRtIblDescriptors();
   const DrawLightCPU* dome = nullptr;
   for (const DrawLightCPU& l : lights) {
     if (l.type == DrawLightCPU::Type::Dome && l.ibl.valid) {
@@ -7091,6 +7337,9 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
   }
   iblActive_ = true;
   refreshMaterialDescriptors();
+  // The compute-BVH descriptor set is independent from the raster/hardware-RT
+  // sets and can already exist when a CLI/UI DomeLight is baked at runtime.
+  refreshSwRtIblDescriptors();
 }
 
 void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
@@ -10933,12 +11182,30 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   cpci.stage.module = cs;
   cpci.stage.pName = "main";
   cpci.layout = rtPipelineLayout_;
-  if (hasMaterialXGraphs && pipelineCompileRequiredSupported_) {
-    cpci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+  // NVIDIA can spend minutes optimizing this monolithic ray-query compute
+  // shader after any SPIR-V change, making the viewer appear hung inside
+  // vkCreateComputePipelines. A cold pipeline is allowed to skip expensive
+  // optimization; the resulting cache still gives deterministic startup and
+  // is preferable to never reaching the first frame. Existing warm caches keep
+  // their normal optimized creation path.
+  const bool allowBlockingColdCompile = [] {
+    const char* value = std::getenv("TUSDVIEW_RT_ALLOW_COLD_COMPILE");
+    return value != nullptr && std::atoi(value) != 0;
+  }();
+  if (pipelineCompileRequiredSupported_ && !allowBlockingColdCompile) {
+    cpci.flags = VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+  } else if (!cacheHit) {
+    cpci.flags = VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
   }
   const auto pipelineStart = std::chrono::steady_clock::now();
-  VkResult r = vkCreateComputePipelines(device_, pipeCache, 1, &cpci, nullptr,
-                                        &rtPipeline_);
+  // Some NVIDIA drivers advertise pipeline-creation cache control but still
+  // block inside vkCreateComputePipelines instead of returning
+  // VK_PIPELINE_COMPILE_REQUIRED. Do not enter the driver at all for a known
+  // cold shader unless the user explicitly requested cache warming.
+  VkResult r = !allowBlockingColdCompile
+                   ? VK_PIPELINE_COMPILE_REQUIRED
+                   : vkCreateComputePipelines(device_, pipeCache, 1, &cpci,
+                                              nullptr, &rtPipeline_);
   // A cold full MaterialX pipeline is optional. If the driver reports that it
   // would need compilation, immediately install the compact ABI-compatible
   // variant and leave full promotion for a later cache-warmed attempt.
@@ -10950,9 +11217,13 @@ bool VulkanRenderer::createRtResources(std::string* err) {
     cs = createShader(rtShaderCode, rtShaderBytes);
     if (cs) {
       cpci.stage.module = cs;
-      cpci.flags = 0;
-      r = vkCreateComputePipelines(device_, pipeCache, 1, &cpci, nullptr,
-                                   &rtPipeline_);
+      cpci.flags = allowBlockingColdCompile
+                       ? VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT
+                       : VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+      r = !allowBlockingColdCompile
+              ? VK_PIPELINE_COMPILE_REQUIRED
+              : vkCreateComputePipelines(device_, pipeCache, 1, &cpci,
+                                         nullptr, &rtPipeline_);
       rtUsesFullShader_ = false;
       LOGW("Vulkan RT full MaterialX pipeline requires cold compilation; "
            "using compact pipeline until the full variant is cache-warmed");
@@ -11002,8 +11273,10 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   }
   if (r != VK_SUCCESS) {
     if (err) {
-      *err = "rt compute pipeline (VkResult " +
-             std::to_string(static_cast<int>(r)) + ")";
+      *err = r == VK_PIPELINE_COMPILE_REQUIRED
+                 ? "hardware RT pipeline requires blocking cold compilation"
+                 : "rt compute pipeline (VkResult " +
+                       std::to_string(static_cast<int>(r)) + ")";
     }
     return false;
   }
@@ -11344,7 +11617,12 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
     if (cache) vkDestroyPipelineCache(device_, cache, nullptr);
     return result == VK_SUCCESS;
   };
-  if (!createCachedPipeline(raytrace_swbvh_comp_spv,
+  // Path-only SPIR-V excludes the large preview/AOV shader body. When path
+  // tracing was requested at startup, compiling the preview pipeline first is
+  // wasted work and can itself trigger the same long NVIDIA JIT stall that led
+  // us here from hardware ray query.
+  if (!pathTrace_.enabled &&
+      !createCachedPipeline(raytrace_swbvh_comp_spv,
                             sizeof(raytrace_swbvh_comp_spv), "preview",
                             &swRtPipeline_)) {
     if (err) *err = "sw-rt compute pipeline";
@@ -11358,6 +11636,10 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
     return false;
   }
 #endif
+  if (!swRtPipeline_ && !swRtPathPipeline_) {
+    if (err) *err = "no compute-BVH pipeline for selected RT mode";
+    return false;
+  }
   return true;
 #else
   (void)err;
@@ -12161,8 +12443,21 @@ void VulkanRenderer::setRayTracing(bool enable) {
   if (needsHwInit || needsSwInit) {
     std::string error;
     const auto start = std::chrono::steady_clock::now();
-    const bool ok = needsHwInit ? createRtResources(&error)
-                                : createSwRtResources(&error);
+    bool usedHardwareInit = needsHwInit;
+    bool ok = needsHwInit ? createRtResources(&error)
+                          : createSwRtResources(&error);
+#if defined(TUSDVIEW_HAVE_SWRT_SHADER) && TUSDVIEW_HAVE_SWRT_SHADER
+    if (!ok && needsHwInit) {
+      LOGW("%s; falling back to the non-blocking compute-BVH RT pipeline",
+           error.c_str());
+      destroyRt();
+      rtTechnique_ = RtTechnique::kComputeBvh;
+      rtSupported_ = true;
+      error.clear();
+      ok = createSwRtResources(&error);
+      usedHardwareInit = false;
+    }
+#endif
     // The RT storage/accumulation images are (re)created by createRtImage(),
     // which can only write their descriptors once rtSet_ exists -- and rtSet_
     // is created here, by createRtResources(). Enabling RT at STARTUP happens
@@ -12186,7 +12481,7 @@ void VulkanRenderer::setRayTracing(bool enable) {
                       .count();
       LOGI("Vulkan ray tracing resources initialized in %.1f ms (%s)",
            rtInitMs_,
-           needsHwInit ? "hardware ray query" : "compute-BVH fallback");
+           usedHardwareInit ? "hardware ray query" : "compute-BVH fallback");
     }
   }
   if (want == rtActive_) return;
@@ -12783,6 +13078,9 @@ void VulkanRenderer::resizeViewport(int width, int height) {
       endOneShot(init);
     }
     refreshMaterialDescriptors();
+    if (rasterQualityHigh_ && oitFb_) {
+      LOGI("Vulkan high-quality screen-space refraction ready");
+    }
   }
 
   if (imguiInited_) {
@@ -13177,8 +13475,13 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
     overlayCopy_.clear();
   }
 
-  // Copy selection-highlight edge lines (Vulkan has no wireframe overlay pass).
-  if (params.highlightLines && params.highlightLineVertexCount > 0) {
+  // Subset and RT highlights still use explicit CPU edges. Whole-mesh raster
+  // selection uses the surface-wire pipeline below so it follows tessellation
+  // and displacement exactly and does not draw a coarse overlay afterward.
+  highlightMeshIndex_ = params.highlightMeshIndex;
+  highlightHasSubset_ = params.highlightIndices && params.highlightIndexCount > 0;
+  if (params.highlightLines && params.highlightLineVertexCount > 0 &&
+      (!surfaceWireSupported_ || highlightHasSubset_ || rtActive_)) {
     highlightLineCopy_.assign(
         params.highlightLines,
         params.highlightLines + params.highlightLineVertexCount);
@@ -14120,6 +14423,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       return materialId >= 0 && k < matColor_.size() &&
              static_cast<int>(matColor_[k] + 0.5f) == 2;  // Blend
     };
+    auto subMixedOpacity = [&](int materialId) -> bool {
+      if (!subTranslucent(materialId) || materialId < 0 ||
+          static_cast<size_t>(materialId) >= matOpacityTex_.size() ||
+          matOpacityTex_[static_cast<size_t>(materialId)] < 0) return false;
+      const size_t alpha = static_cast<size_t>(materialId) * 12 + 3;
+      return alpha < matColor_.size() && matColor_[alpha] >= 0.999f;
+    };
     uint64_t oitDrawCalls = 0;
     auto drawMeshPass = [&](int apass, VkPipeline meshPl) {
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPl);
@@ -14165,6 +14475,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       fr->rasterLightInfo[1] = fr->rasterLightInfo[2] =
           fr->rasterLightInfo[3] = 0u;
       fr->mode[0] = rtMode_;
+      fr->mode[1] = rasterQualityHigh_ ? 1 : 0;
       std::memcpy(fr->envRot, iblRotation_, sizeof(fr->envRot));
       fr->iblColor[0] = iblColor_[0];
       fr->iblColor[1] = iblColor_[1];
@@ -14195,6 +14506,26 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         std::memcpy(fr->pointShadowViewProj, pointShadowCameras_.viewProj.data(),
                     sizeof(fr->pointShadowViewProj));
       }
+    }
+    if (apass == 0 && iblActive_ && environmentPipeline_ &&
+        !materialSets_.empty() && materialSets_[0] && dispParamsSet_) {
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        environmentPipeline_);
+      if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_NONE);
+      vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              pipelineLayout_, 0, 1, &materialSets_[0], 0,
+                              nullptr);
+      vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              pipelineLayout_, 2, 1, &dispParamsSet_, 0,
+                              nullptr);
+      PushC environmentPush{};
+      const light3d::Mat4 invViewProj = (P * V).inverse();
+      std::memcpy(environmentPush.model, invViewProj.m,
+                  sizeof(environmentPush.model));
+      vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0,
+                         sizeof(environmentPush), &environmentPush);
+      vkCmdDraw(cb, 3, 1, 0, 0);
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPl);
     }
     // Draw order: back-to-front by world centroid for the translucent pass.
     if (rasterMeshOrder_.size() != meshes_.size()) {
@@ -14282,7 +14613,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         // have only the depth-writing pass, so keep Blend geometry there; otherwise
         // a visible translucent surface has no picking ID and clicks fall through
         // to unrelated opaque geometry behind it.
-        if (apass == 0 && subTranslucent(materialId) && rtMode_ == 0) continue;
+        const bool mixedOpacity = subMixedOpacity(materialId);
+        if (apass == 0 && subTranslucent(materialId) && !mixedOpacity &&
+            rtMode_ == 0) continue;
         if (apass == 1 && !subTranslucent(materialId)) continue;
         auto materialTexSlot = [&](const std::vector<int>& slots) -> int {
           if (materialId >= 0 &&
@@ -14358,6 +14691,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
             rasterLogicalToCanonical_, materialId, dispMatCapacity_));
         pc.ids[1] = flags;
         pc.ids[2] = static_cast<int>(mi);
+        // A single texture atlas may contain both opaque metal and glass. Draw
+        // its opaque texels into the depth-writing pass, then only its fractional
+        // texels into the transparent pass. Otherwise weighted OIT averages rear
+        // metal surfaces into the front and makes the whole asset look ghosted.
+        if (mixedOpacity && rtMode_ == 0) {
+          pc.ids[2] |= apass == 0 ? (1 << 30) : (1 << 29);
+        }
         pc.ids[3] = 0;
         if (isUdimSlot(baseSlot)) pc.ids[3] |= 1;
         if (isUdimSlot(metallicSlot)) pc.ids[3] |= 2;
@@ -14418,10 +14758,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       drawMeshPass(/*apass=*/1, translucentPipeline_);
     }
 
-    // Storm-style surface wire: draw the authored polygon cage through its own
-    // line-list EBO. This deliberately does not use the tessellation pipeline or
-    // triangle EBO, so subdivision/displacement detail never invents extra wires.
-    if (wireMode_ != 0 && wirePipeline_ != VK_NULL_HANDLE) {
+    // Draw the actual rendered triangle surface in line mode. Displaced meshes
+    // use the same tessellation evaluation stage as their shaded pass, avoiding
+    // the detached low-resolution authored cage and its depth fighting.
+    if ((wireMode_ != 0 || (highlightMeshIndex_ >= 0 && !highlightHasSubset_)) &&
+        wirePipeline_ != VK_NULL_HANDLE) {
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePipeline_);
       if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_NONE);
       if (!materialSets_.empty() && materialSets_[0]) {
@@ -14441,8 +14782,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       }
       for (size_t mi = 0; mi < meshes_.size(); ++mi) {
         if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
+        const bool selected = static_cast<int>(mi) == highlightMeshIndex_ &&
+                              !highlightHasSubset_;
+        if (wireMode_ == 0 && !selected) continue;
         const VkMeshGPU& mesh = meshes_[mi];
-        if (!mesh.vbo || !mesh.wireEbo || mesh.wireIndexCount == 0 ||
+        if (!mesh.vbo || !mesh.ebo || mesh.submeshes.empty() ||
             mesh.instanceCount > 0)
           continue;
         VkDescriptorSet deform =
@@ -14456,17 +14800,28 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                             mesh.morphOffsetVbo};
         VkDeviceSize offsets[7]{};
         vkCmdBindVertexBuffers(cb, 0, 7, bufs, offsets);
-        vkCmdBindIndexBuffer(cb, mesh.wireEbo, 0, VK_INDEX_TYPE_UINT32);
-        PushC pc{};
-        std::memcpy(pc.model, mesh.world, sizeof(pc.model));
-        pc.baseColor[0] = pc.baseColor[1] = pc.baseColor[2] = 0.18f;
-        pc.baseColor[3] = 1.0f;
-        pc.ids[0] = 0;
-        pc.ids[1] = (mesh.geometricNormal ? 1 : 0);
-        pc.ids[2] = static_cast<int>(mi);
-        pc.ids[3] = 0x40000000;  // authored-cage wire pass
-        vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc), &pc);
-        vkCmdDrawIndexed(cb, mesh.wireIndexCount, 1, 0, 0, 0);
+        vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
+        for (const DrawSubmesh& sub : mesh.submeshes) {
+          PushC pc{};
+          std::memcpy(pc.model, mesh.world, sizeof(pc.model));
+          pc.baseColor[0] = selected ? 1.0f : 0.62f;
+          pc.baseColor[1] = selected ? 0.48f : 0.66f;
+          pc.baseColor[2] = selected ? 0.04f : 0.72f;
+          pc.baseColor[3] = 1.0f;
+          pc.ids[0] = sub.materialId;
+          pc.ids[1] = (mesh.geometricNormal ? 1 : 0);
+          pc.ids[2] = static_cast<int>(mi);
+          pc.ids[3] = 0x40000000;
+          vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc), &pc);
+          const bool tessWire = tessWirePipeline_ && displacement_ &&
+                                maxTessLevel_ > 1 && sub.materialId >= 0;
+          if (tessWire)
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              tessWirePipeline_);
+          vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
+          if (tessWire)
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePipeline_);
+        }
       }
     }
 
@@ -15356,6 +15711,7 @@ void VulkanRenderer::shutdown() {
     materialSampler = VK_NULL_HANDLE;
   }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
+  if (environmentPipeline_) { vkDestroyPipeline(device_, environmentPipeline_, nullptr); environmentPipeline_ = VK_NULL_HANDLE; }
   if (wirePipeline_) { vkDestroyPipeline(device_, wirePipeline_, nullptr); wirePipeline_ = VK_NULL_HANDLE; }
   if (shadowPipeline_) { vkDestroyPipeline(device_, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
   if (instShadowPipeline_) { vkDestroyPipeline(device_, instShadowPipeline_, nullptr); instShadowPipeline_ = VK_NULL_HANDLE; }
@@ -15367,6 +15723,7 @@ void VulkanRenderer::shutdown() {
   if (oitCompositeSetLayout_) { vkDestroyDescriptorSetLayout(device_, oitCompositeSetLayout_, nullptr); oitCompositeSetLayout_ = VK_NULL_HANDLE; }
   if (gpuQueryPool_) { vkDestroyQueryPool(device_, gpuQueryPool_, nullptr); gpuQueryPool_ = VK_NULL_HANDLE; }
   if (tessPipeline_) { vkDestroyPipeline(device_, tessPipeline_, nullptr); tessPipeline_ = VK_NULL_HANDLE; }
+  if (tessWirePipeline_) { vkDestroyPipeline(device_, tessWirePipeline_, nullptr); tessWirePipeline_ = VK_NULL_HANDLE; }
   if (nativeCarrierPipeline_) { vkDestroyPipeline(device_, nativeCarrierPipeline_, nullptr); nativeCarrierPipeline_ = VK_NULL_HANDLE; }
   if (oitNativeCarrierPipeline_) { vkDestroyPipeline(device_, oitNativeCarrierPipeline_, nullptr); oitNativeCarrierPipeline_ = VK_NULL_HANDLE; }
   if (nativeCarrierShadowPipeline_) { vkDestroyPipeline(device_, nativeCarrierShadowPipeline_, nullptr); nativeCarrierShadowPipeline_ = VK_NULL_HANDLE; }

@@ -2870,6 +2870,15 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   runtimeDomeValid_ = false;
   runtimeDomeKey_.clear();
   gui_.setScene(&loaded_, &draw_);
+  if (!startupEnvmapPath_.empty()) {
+    Gui::DomeLightRequest request;
+    request.source = Gui::DomeSource::File;
+    request.filePath = startupEnvmapPath_;
+    request.intensity = startupEnvmapIntensity_;
+    request.rotationDegrees = startupEnvmapRotationDegrees_;
+    applyDomeLightRequest(request);
+    gui_.setDomeRequestState(request);
+  }
   gui_.setFacialControls(ReadVcharControls(loaded_.stage));
   if (lensFocusOverride_ > 0.0f)
     cameraLens_.focusDistance = lensFocusOverride_;
@@ -4918,6 +4927,11 @@ void App::applyDomeLightRequest(const Gui::DomeLightRequest& request) {
         error = "Choose or drop an environment-map image.";
       runtimeDomeValid_ = ok;
       runtimeDomeKey_ = ok ? key : std::string();
+      if (ok && request.source == Gui::DomeSource::File) {
+        LOGI("runtime dome IBL ready: '%s' (%s quality)",
+             request.filePath.c_str(),
+             loadOpts_.textureOptions.domeIbl >= 2 ? "high" : "low");
+      }
       if (!ok) status = error;
     }
     if (runtimeDomeValid_) {
@@ -5133,6 +5147,7 @@ bool App::createAndInitRenderer(Backend backend, std::string* err) {
   ++rendererGeneration_;
   renderer_->setDevicePreference(devicePreference_);
   renderer_->setTransparencyMode(transparencyMode_);
+  renderer_->setRasterQualityHigh(rasterQualityHigh_);
   renderer_->setMaterialXVulkanShaderLimits(
       materialXVulkanShaderMaxSourceBytes_,
       materialXVulkanCompileTimeoutSec_);
@@ -6362,6 +6377,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     ++rendererGeneration_;
     renderer_->setDevicePreference(devicePreference_);
     renderer_->setTransparencyMode(transparencyMode_);
+    renderer_->setRasterQualityHigh(rasterQualityHigh_);
     renderer_->setMaterialXVulkanShaderLimits(
         materialXVulkanShaderMaxSourceBytes_,
         materialXVulkanCompileTimeoutSec_);
@@ -6488,6 +6504,15 @@ int App::run(const std::string& initialFile, int maxFrames,
   runtimeDomeValid_ = false;
   runtimeDomeKey_.clear();
   gui_.setScene(&loaded_, &draw_);
+  if (!startupEnvmapPath_.empty()) {
+    Gui::DomeLightRequest request;
+    request.source = Gui::DomeSource::File;
+    request.filePath = startupEnvmapPath_;
+    request.intensity = startupEnvmapIntensity_;
+    request.rotationDegrees = startupEnvmapRotationDegrees_;
+    applyDomeLightRequest(request);
+    gui_.setDomeRequestState(request);
+  }
   gui_.setNextStage(nextStageSnapshot_.get());
   gui_.setFacialControls(nextStageSnapshot_ ? ReadVcharControls(*nextStageSnapshot_)
                                              : ReadVcharControls(loaded_.stage));

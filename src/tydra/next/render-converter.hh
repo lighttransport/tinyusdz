@@ -103,6 +103,9 @@ struct MeshConfig {
 };
 
 struct MaterialConfig {
+  // Preferred UsdShade material binding purpose. Supported real-time values
+  // are "preview" and "full"; empty retains the preview fallback order.
+  std::string binding_purpose{"preview"};
   // Texture loading
   bool load_textures = true;
   bool allow_missing_textures = true;

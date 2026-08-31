@@ -109,6 +109,11 @@ class Gui {
     domeRequest_.browse = false;
     domeDirty_ = true;
   }
+  void setDomeRequestState(const DomeLightRequest& request) {
+    domeRequest_ = request;
+    domeRequest_.browse = false;
+    domeDirty_ = false;
+  }
   void setDomeStatus(const std::string& status) { domeStatus_ = status; }
   void setNextStage(const tinyusdz::next::Stage* stage) { nextStage_ = stage; }
   // StageSession owns the authoritative deferred set. The composed next Stage

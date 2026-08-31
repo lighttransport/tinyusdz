@@ -44,6 +44,7 @@ class VulkanRenderer final : public Renderer {
   void setTransparencyMode(TransparencyMode mode) override {
     transparencyMode_ = mode;
   }
+  void setRasterQualityHigh(bool high) override { rasterQualityHigh_ = high; }
   bool init(GLFWwindow* window, std::string* err) override;
   void setHeadlessSize(int w, int h) override {
     if (w > 0) headlessW_ = w;
@@ -676,15 +677,19 @@ class VulkanRenderer final : public Renderer {
   // Pipeline
   VkPipelineLayout pipelineLayout_{VK_NULL_HANDLE};
   VkPipeline pipeline_{VK_NULL_HANDLE};
+  VkPipeline environmentPipeline_{VK_NULL_HANDLE};
   VkPipeline wirePipeline_{VK_NULL_HANDLE};
+  VkPipeline tessWirePipeline_{VK_NULL_HANDLE};
   VkPipeline shadowPipeline_{VK_NULL_HANDLE};
   // GPU tessellation displacement pipeline (shares pipelineLayout_; PATCH_LIST
   // topology + tesc/tese). Created only when the device supports the
   // tessellationShader feature; otherwise displaced meshes stay coarse.
   bool tessSupported_{false};
+  bool surfaceWireSupported_{false};
   bool samplerAnisotropySupported_{false};
   bool weightedOitSupported_{false};
   TransparencyMode transparencyMode_{TransparencyMode::Auto};
+  bool rasterQualityHigh_{false};
   float maxSamplerAnisotropy_{1.0f};
   // VK_EXT_extended_dynamic_state: per-draw cull mode, so single-sided meshes
   // back-face-cull like the GL backend. Optional; false = no culling (legacy).
@@ -807,6 +812,8 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory highlightLineMem_[kFramesInFlight]{};
   VkDeviceSize highlightLineCap_[kFramesInFlight]{};
   std::vector<HelperVertex> highlightLineCopy_;
+  int highlightMeshIndex_{-1};
+  bool highlightHasSubset_{false};
   bool highlightXray_{false};
   std::vector<uint8_t> meshVisible_;  // per-mesh visibility mask (raster), copied in renderFrame
   // Reused each frame; avoids allocating the alpha-pass mesh order vector in

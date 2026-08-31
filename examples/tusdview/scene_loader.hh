@@ -35,6 +35,10 @@ enum class PayloadPolicy {
 };
 
 struct LoadOptions {
+  // UsdShade material binding purpose used by real-time conversion. Empty or
+  // "preview" preserves the historical preview -> all-purpose -> full order;
+  // "full" selects full -> all-purpose -> preview for production assets.
+  std::string materialPurpose{"preview"};
   // Aggregate host/GPU limits for the next large-scene path. Zero preserves
   // legacy behavior. The loader applies these before geometry materialization.
   size_t maxMemoryBytes{0};

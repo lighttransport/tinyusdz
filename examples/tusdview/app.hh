@@ -200,6 +200,13 @@ class App
     devicePreference_ = preference;
   }
   void setTransparencyMode(TransparencyMode mode) { transparencyMode_ = mode; }
+  void setRasterQualityHigh(bool high) { rasterQualityHigh_ = high; }
+  void setStartupEnvmap(const std::string& path, float intensity,
+                        float rotationDegrees) {
+    startupEnvmapPath_ = path;
+    startupEnvmapIntensity_ = intensity;
+    startupEnvmapRotationDegrees_ = rotationDegrees;
+  }
   void setSkinningMode(SkinningMode mode) { skinningRequested_ = mode; }
   void setPlayAnimation(bool on) { playRequested_ = on; }
 
@@ -530,6 +537,7 @@ class App
   bool allowBackendFallback_{false};
   RendererDevicePreference devicePreference_;
   TransparencyMode transparencyMode_{TransparencyMode::Auto};
+  bool rasterQualityHigh_{false};
   GLFWwindow* window_{nullptr};
   std::unique_ptr<Renderer> renderer_;
 
@@ -540,6 +548,9 @@ class App
   bool runtimeDomeValid_{false};
   std::string runtimeDomeKey_;
   std::string droppedEnvmapPath_;
+  std::string startupEnvmapPath_;
+  float startupEnvmapIntensity_{1.0f};
+  float startupEnvmapRotationDegrees_{0.0f};
   LoadOptions loadOpts_;
   double uploadBudgetMs_{8.0};
   bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview

@@ -13,10 +13,13 @@
 # --- Pre-compiled (embedded) SPIR-V ----------------------------------------
 set(TUSDVIEW_SHADER_EMBED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vk/shaders/embedded)
 
-# The four raster shader headers are mandatory for the Vulkan backend.
+# Core raster and environment shader headers are mandatory for the Vulkan backend.
 set(_required_spv
     ${TUSDVIEW_SHADER_EMBED_DIR}/mesh_vert.spv.h
     ${TUSDVIEW_SHADER_EMBED_DIR}/mesh_frag.spv.h
+    ${TUSDVIEW_SHADER_EMBED_DIR}/wire_frag.spv.h
+    ${TUSDVIEW_SHADER_EMBED_DIR}/environment_vert.spv.h
+    ${TUSDVIEW_SHADER_EMBED_DIR}/environment_frag.spv.h
     ${TUSDVIEW_SHADER_EMBED_DIR}/line_vert.spv.h
     ${TUSDVIEW_SHADER_EMBED_DIR}/line_frag.spv.h)
 set(_missing_spv "")

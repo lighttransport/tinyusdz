@@ -3645,11 +3645,18 @@ Float4 Float4FromArray(const float v[4]) {
 // SAME prim, not reject the prim (GetBoundMaterialPath returns only the
 // first authored rel).
 std::string FirstValidBoundMaterialPath(const Stage& stage,
-                                        const ::tinyusdz::next::UsdPrim& prim) {
-  static const char* kBindingOrder[] = {"material:binding:preview",
+                                        const ::tinyusdz::next::UsdPrim& prim,
+                                        const std::string& purpose) {
+  static const char* kPreviewOrder[] = {"material:binding:preview",
                                         "material:binding",
                                         "material:binding:full"};
-  for (const char* rel : kBindingOrder) {
+  static const char* kFullOrder[] = {"material:binding:full",
+                                     "material:binding",
+                                     "material:binding:preview"};
+  const char* const* bindingOrder = purpose == "full" ? kFullOrder
+                                                       : kPreviewOrder;
+  for (size_t i = 0; i < 3; ++i) {
+    const char* rel = bindingOrder[i];
     const std::vector<::tinyusdz::next::Path>* targets =
         prim.GetRelationship(rel);
     if (!targets || targets->empty()) continue;
@@ -3663,11 +3670,13 @@ std::string FirstValidBoundMaterialPath(const Stage& stage,
 }
 
 std::string FindInheritedMaterialBinding(const Stage& stage,
-                                         const std::string& prim_path) {
+                                         const std::string& prim_path,
+                                         const std::string& purpose) {
   // Core UsdShade resolution now validates targets at every purpose/ancestor
   // step and associates bindMaterialAs with the relationship that actually
   // won. Keep one implementation shared by the converter and applications.
-  return ::tinyusdz::next::GetInheritedBoundMaterialPath(stage, prim_path);
+  return ::tinyusdz::next::GetInheritedBoundMaterialPathForPurpose(
+      stage, prim_path, purpose.empty() ? "preview" : purpose);
 }
 
 }  // namespace
@@ -4694,7 +4703,8 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
     placeholder.name = extracted.curves[i].prim.GetName();
     placeholder.prim_path = extracted.curves[i].path;
     const std::string material =
-        FindInheritedMaterialBinding(stage, placeholder.prim_path);
+        FindInheritedMaterialBinding(stage, placeholder.prim_path,
+                                     config_.material.binding_purpose);
     const auto found = catalog.material_by_path.find(material);
     if (found != catalog.material_by_path.end()) {
       placeholder.material_id = found->second;
@@ -4869,7 +4879,8 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(Stage& stage,
       ReleaseSourceMeshStaticArrays(stage, extracted.curves[i].prim);
     }
     const std::string material =
-        FindInheritedMaterialBinding(stage, curves.prim_path);
+        FindInheritedMaterialBinding(stage, curves.prim_path,
+                                     config_.material.binding_purpose);
     const auto found = binding_catalog.material_by_path.find(material);
     if (found != binding_catalog.material_by_path.end()) {
       curves.material_id = found->second;
@@ -5147,7 +5158,8 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
   if (!scene) return;
   for (RenderCurves& curves : scene->curves) {
     const std::string material_path =
-        FindInheritedMaterialBinding(stage, curves.prim_path);
+        FindInheritedMaterialBinding(stage, curves.prim_path,
+                                     config_.material.binding_purpose);
     if (!material_path.empty()) {
       const auto it = scene->material_by_path.find(material_path);
       if (it != scene->material_by_path.end()) curves.material_id = it->second;
@@ -5178,7 +5190,8 @@ void RenderSceneConverter::AssignMeshMaterialBinding(const Stage& stage,
                                                      RenderMesh* mesh) {
   if (!mesh) return;
   const std::string material_path =
-      FindInheritedMaterialBinding(stage, mesh->prim_path);
+      FindInheritedMaterialBinding(stage, mesh->prim_path,
+                                   config_.material.binding_purpose);
   if (!material_path.empty()) {
     const auto it = scene.material_by_path.find(material_path);
     if (it != scene.material_by_path.end()) mesh->material_id = it->second;
@@ -5195,7 +5208,8 @@ void RenderSceneConverter::AssignMeshMaterialBinding(const Stage& stage,
     if (sub_mat.empty()) {
       UsdPrim sub_prim = stage.GetPrimAtPath(sub.path);
       if (sub_prim.IsValid()) {
-        sub_mat = FirstValidBoundMaterialPath(stage, sub_prim);
+        sub_mat = FirstValidBoundMaterialPath(
+            stage, sub_prim, config_.material.binding_purpose);
       }
     }
     if (sub_mat.empty()) continue;

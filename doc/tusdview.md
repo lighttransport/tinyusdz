@@ -448,6 +448,84 @@ and automatic/latlong/mirrored-ball/angular coordinate mapping. When a stage
 authors multiple DomeLights, tusdview sends only the selected dome to every
 backend so raster and ray-traced results agree.
 
+For deterministic headless or scripted rendering, `--envmap PATH` selects the
+same file-backed DomeLight path without modifying the USD. Use
+`--envmap-intensity N` and `--envmap-rotation DEG` for exposure-independent
+lighting and yaw control. `--raster-quality high` is an opt-in Vulkan raster
+preset: it selects full-purpose material bindings by default, enables the high
+DomeLight bake, ACES-fitted display output, normal-variance specular filtering,
+receiver-plane-biased contact-hardening PCSS shadows, filtered point/area-light
+shadows, and IOR-aware refraction for glass. Weighted OIT samples the completed
+opaque scene color and falls back to the HDR environment for off-screen rays.
+The selected DomeLight is also drawn as the raster background and a CLI
+`--envmap` selection is reflected in the Dome Light panel.
+Override the binding choice explicitly with `--material-purpose preview|full`;
+the normal default remains `preview`, so existing screenshots are unchanged.
+
+Vulkan `--path-trace` resolves both explicit OpenPBR transmission and
+UsdPreviewSurface glass authored as Blend opacity plus a dielectric IOR.
+Dielectric paths use Fresnel-weighted reflection/refraction, front/back medium
+tracking, total-internal reflection, optional dispersion, and Beer absorption
+from transmission depth or volume density. The compute-BVH path also accumulates
+bounded colored visibility through transparent shadow layers. Hardware ray-query
+shadows retain their compact alpha-mask visibility query to avoid a known
+pathological NVIDIA compiler expansion; camera and BSDF refraction are shared by
+both paths. Ordinary IOR=1 alpha blends remain stochastic coverage rather than
+being misclassified as glass.
+
+The combined hardware ray-query compute module can block inside NVIDIA's
+`vkCreateComputePipelines` for minutes, and a device-wide Vulkan cache file does
+not prove this particular shader is present. Normal `--rt` startup therefore
+does not enter a potentially blocking hardware compile: it immediately selects
+the Vulkan compute-BVH pipeline, including the path-only shader for
+`--path-trace`. Set `TUSDVIEW_RT_ALLOW_COLD_COMPILE=1` only for an intentional
+hardware pipeline cache-warming run. This opt-in may take minutes; API tracing
+will show the time inside `vkCreateComputePipelines`.
+
+For an intermittent Vulkan driver stall, set `TUSDVIEW_VK_API_TRACE=1`. Zero
+disables tracing (`TUSDVIEW_VK_API_TRACE=0`); only a nonzero value enables it. The
+viewer logs begin/end records, `VkResult`, and elapsed time for physical-device
+enumeration, presentation-support queries, device/swapchain creation,
+graphics/compute pipeline creation, queue submission, fence waits, and
+device/queue idle waits. A final unmatched `begin` line identifies the API call
+inside which the driver stopped. Combine it with `TUSDVIEW_STARTUP_TIMING=1`
+for the higher-level initialization phases. Device selection ranks adapters
+before making WSI queries, so an explicit `--vk-device` asks only that adapter
+for presentation support and automatic selection stops at the first usable
+candidate.
+
+tusdview does not create a throw-away Vulkan instance merely to estimate VRAM:
+doing so can runtime-resume every ICD, including a displayless secondary GPU.
+The startup budget uses its conservative fallback unless `--vram-budget` is
+provided. Set `TUSDVIEW_VULKAN_VRAM_PROBE=1` only when the legacy Vulkan-based
+capacity probe is specifically needed for budget diagnostics.
+
+On a multi-ICD Linux host, `vkEnumeratePhysicalDevices` must enter every ICD
+enabled by the Vulkan loader; `--vk-device nvidia` chooses a device after that
+enumeration and therefore cannot prevent RADV from runtime-resuming an AMD
+adapter. To isolate a diagnostic or production run to NVIDIA at loader level,
+use the installed NVIDIA manifest explicitly:
+
+```sh
+VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+TUSDVIEW_VK_API_TRACE=1 TUSDVIEW_STARTUP_TIMING=1 \
+  ./build_ninja/tusdview --backend vk --vk-device nvidia
+```
+
+`VK_ICD_FILENAMES` can be used in the same way with older Vulkan loaders. Check
+the actual manifest location under `/usr/share/vulkan/icd.d`; do not copy this
+path blindly on another distribution. This loader filtering is intentionally
+not done automatically because `--vk-device` also accepts indices and generic
+name substrings, and changing the ICD set changes enumeration indices.
+
+The external ALab check is intentionally asset-free in Git:
+
+```sh
+ALAB_GENERATED=/path/to/alab/usd/generated \
+TUSDVIEW_HDR=/path/to/studio.hdr \
+  examples/tusdview/tests/run-alab-photoreal-vulkan.sh
+```
+
 With `TINYUSDZ_WITH_TEXTOOLS=ON` (default; see
 `src/external/textools/README.tinyusdz.md`) tusdview uses the vendored
 tir/texcomp/texpipe/envmap libraries:

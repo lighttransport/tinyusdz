@@ -263,7 +263,8 @@ int main(int argc, char** argv) {
   long long maxTris = 0;      // 0 = default budget
   double maxGpuMemGiB = 0.0;  // --max-gpu-mem: raster full-mesh VRAM cap (GiB)
   // --vram-budget: the ONE number the whole budget tree descends from. Left at 0
-  // it is probed from the device (see QueryDeviceLocalVramBytes).
+  // it uses a conservative fallback. Set TUSDVIEW_VULKAN_VRAM_PROBE=1 to
+  // perform the legacy pre-renderer Vulkan probe, or pass --vram-budget.
   double vramBudgetGiB = 0.0;
   bool vramBudgetExplicit = false;
   long long maxDrawMeshes = 0;  // --max-draw-meshes: raster full-mesh count cap
@@ -397,6 +398,12 @@ int main(int argc, char** argv) {
   textureOptions.keepCompressed = true;
   textureOptions.generateMips = true;
   bool domeIblExplicit = false;
+  bool rasterQualityHigh = false;
+  std::string materialPurpose = "preview";
+  bool materialPurposeExplicit = false;
+  std::string envmapPath;
+  float envmapIntensity = 1.0f;
+  float envmapRotation = 0.0f;
   bool maxTextureSizeExplicit = false;
   tinyusdz::tydra::next::TextureFit textureFit{};  // Default (2/3 of VRAM)
   bool textureFitExplicit = false;
@@ -870,6 +877,40 @@ int main(int argc, char** argv) {
         LOGE("--dome-ibl must be off, low or high");
         return 1;
       }
+    } if (std::strcmp(argv[i], "--raster-quality") == 0 && (i + 1) < argc) {
+      const char* quality = argv[++i];
+      if (std::strcmp(quality, "current") == 0) {
+        rasterQualityHigh = false;
+      } else if (std::strcmp(quality, "high") == 0) {
+        rasterQualityHigh = true;
+      } else {
+        LOGE("--raster-quality must be current or high");
+        return 1;
+      }
+    } if (std::strcmp(argv[i], "--material-purpose") == 0 &&
+             (i + 1) < argc) {
+      materialPurpose = argv[++i];
+      materialPurposeExplicit = true;
+      if (materialPurpose != "preview" && materialPurpose != "full") {
+        LOGE("--material-purpose must be preview or full");
+        return 1;
+      }
+    } if (std::strcmp(argv[i], "--envmap") == 0 && (i + 1) < argc) {
+      envmapPath = argv[++i];
+    } if (std::strcmp(argv[i], "--envmap-intensity") == 0 &&
+             (i + 1) < argc) {
+      if (!ParseFiniteNonNegativeFloat(argv[++i], &envmapIntensity)) {
+        LOGE("--envmap-intensity must be a finite non-negative number");
+        return 1;
+      }
+    } if (std::strcmp(argv[i], "--envmap-rotation") == 0 &&
+             (i + 1) < argc) {
+      char* end = nullptr;
+      envmapRotation = std::strtof(argv[++i], &end);
+      if (!end || *end != '\0' || !std::isfinite(envmapRotation)) {
+        LOGE("--envmap-rotation must be a finite number of degrees");
+        return 1;
+      }
     } if (std::strcmp(argv[i], "--udim") == 0 && (i + 1) < argc) {
       const char* mode = argv[++i];
       if (std::strcmp(mode, "sparse") == 0) {
@@ -1199,6 +1240,10 @@ int main(int argc, char** argv) {
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
           "  --no-skeleton Hide skeleton helper overlays (useful for AOV comparisons).\n"
           "  --dome-ibl off|low|high  Control DomeLight IBL precomputation.\n"
+          "  --envmap PATH  Override authored DomeLights with an HDR/EXR/image.\n"
+          "  --envmap-intensity N / --envmap-rotation DEG  Environment controls.\n"
+          "  --raster-quality current|high  Opt into filmic PBR raster shading.\n"
+          "  --material-purpose preview|full  Select UsdShade binding purpose.\n"
           "  --large-scene-profile off|auto|balanced|instance-heavy|"
           "procedural-heavy  Select a generic Vulkan workload preset. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
@@ -1411,7 +1456,15 @@ int main(int argc, char** argv) {
         vramBudgetGiB * double(tinyusdz::tydra::next::GiB(1)));
   } else {
 #if defined(HAVE_VULKAN)
-    vramCapacity = tusdview::QueryDeviceLocalVramBytes();
+    // Enumerating physical devices through a throw-away instance can runtime-
+    // resume every installed GPU. On hybrid systems that includes displayless
+    // secondary adapters and has been observed to stall in amdgpu resume before
+    // the real renderer even starts. Avoid that redundant probe by default.
+    // The explicit environment switch remains useful for budget diagnostics.
+    if (const char* probe = std::getenv("TUSDVIEW_VULKAN_VRAM_PROBE")) {
+      if (std::atoi(probe) != 0)
+        vramCapacity = tusdview::QueryDeviceLocalVramBytes();
+    }
 #endif
     // No Vulkan, or the probe failed: keep the historical 16 GiB assumption
     // rather than collapsing every budget to zero.
@@ -1705,6 +1758,10 @@ int main(int argc, char** argv) {
     else cameraConform = tusdview::CameraConform::Fit;
   }
 
+  if (!envmapPath.empty() && !std::filesystem::is_regular_file(envmapPath)) {
+    LOGE("--envmap file does not exist: %s", envmapPath.c_str());
+    return 1;
+  }
   tusdview::App app(backend);
   app.setVirtualHumanProfile(virtualHumanProfile);
   app.setAutoriggerExecutable(autoriggerExecutable);
@@ -1801,6 +1858,10 @@ int main(int argc, char** argv) {
   // screenshots are complete.
   {
     tusdview::LoadOptions lo;
+    if (rasterQualityHigh && !materialPurposeExplicit) materialPurpose = "full";
+    if (rasterQualityHigh && !domeIblExplicit) textureOptions.domeIbl = 2;
+    lo.materialPurpose = materialPurpose;
+    if (rasterQualityHigh) lo.curveTessellationSegments = 16;
     lo.composition = !noComposition;
     lo.compositionThreads = compositionThreads;
     lo.conversionThreads = conversionThreads;
@@ -1972,6 +2033,8 @@ int main(int argc, char** argv) {
   app.setRequestRayTracing(wantRt);
   app.setDevicePreference(devicePreference);
   app.setTransparencyMode(transparencyMode);
+  app.setRasterQualityHigh(rasterQualityHigh);
+  app.setStartupEnvmap(envmapPath, envmapIntensity, envmapRotation);
   app.setAllowBackendFallback(!backendExplicit && backend == tusdview::Backend::Vulkan);
   app.setSkinningMode(skinningMode);
   app.setPlayAnimation(playAnim);

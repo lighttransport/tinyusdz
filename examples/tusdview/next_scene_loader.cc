@@ -4037,6 +4037,14 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
 
   BakeMaterialXGraphTextures(&dm, draw);
   DiagnoseUnsupportedRealtimeLobes(dm, draw);
+  if (std::getenv("TUSDVIEW_DEBUG_MATERIALS")) {
+    LOGI("next material '%s': shader=%s alpha=%.4f mode=%d opacityTex=%d "
+         "ior=%.4f transmission=%.4f baseTex=%d",
+         rm.prim_path.c_str(), usePreview ? "preview" : "openpbr", dm.alpha,
+         dm.alphaMode, dm.opacityTex, dm.ior,
+         dm.hasLightRtOpenPBR ? dm.lightRtOpenPBR.transmission : 0.0f,
+         dm.baseColorTex);
+  }
   draw->materials.push_back(std::move(dm));
   return static_cast<int>(draw->materials.size() - 1);
 }
@@ -5878,6 +5886,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   //        after baking it into a batch, so the whole RenderScene's geometry
   //        (~half the load peak) is never resident at once. ---
   tydn::ConverterConfig cfg;
+  cfg.material.binding_purpose = opts.materialPurpose;
   cfg.mesh.subdivision_level = std::max(0, opts.subdivisionLevel);
   cfg.mesh.subdivision_prim_levels.insert(opts.subdivisionPrimLevels.begin(),
                                           opts.subdivisionPrimLevels.end());
@@ -7348,7 +7357,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       // Resolve through the subset's ancestry so an absent or invalid subset
       // purpose falls back to the whole-mesh material.
       const std::string bind =
-          tnext::GetInheritedBoundMaterialPath(stage, c.GetPath().str());
+          tnext::GetInheritedBoundMaterialPathForPurpose(
+              stage, c.GetPath().str(), opts.materialPurpose);
       const std::string backBind = cachedBackMaterialPath(c);
       if (bind.empty() && backBind.empty()) continue;
       std::vector<int32_t> faces = ReadInts(c, "indices", time);
@@ -7608,7 +7618,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         pending.prim = std::move(rec.prim);
         pending.path = std::move(rec.path);
         pending.purpose = std::move(rec.purpose);
-        pending.materialPath = std::move(rec.material_path);
+        pending.materialPath =
+            tnext::GetInheritedBoundMaterialPathForPurpose(
+                stage, pending.path, opts.materialPurpose);
         pending.animatedWorld = rec.animated_world;
         std::memcpy(pending.world, rec.world, sizeof(pending.world));
         meshPrims.push_back(std::move(pending));

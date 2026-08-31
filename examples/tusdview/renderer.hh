@@ -243,8 +243,7 @@ struct RenderFrameParams {
   const uint32_t* highlightIndices{nullptr};
   int highlightIndexCount{0};
   // Selection highlight as world-space orange edge lines (2 verts/segment). The
-  // GL backend uses the polygon-mode overlay above; the Vulkan backend, which has
-  // no wireframe pass, draws these through its line pipeline instead.
+  // Used for subset selection and backends/modes without a surface-wire pass.
   const HelperVertex* highlightLines{nullptr};
   int highlightLineVertexCount{0};
   // false: selection obeys the scene depth buffer; true: draw through geometry.
@@ -326,6 +325,7 @@ class Renderer {
   virtual void setDevicePreference(
       const RendererDevicePreference& /*preference*/) {}
   virtual void setTransparencyMode(TransparencyMode /*mode*/) {}
+  virtual void setRasterQualityHigh(bool /*high*/) {}
 
   // Resize the headless composite at runtime (recreate the offscreen swap images
   // + framebuffers). Returns false if unsupported / not headless. The caller must

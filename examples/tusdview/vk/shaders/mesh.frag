@@ -64,6 +64,11 @@ layout(set = 0, binding = 44) uniform sampler2DArray uGraphUdim4;
 layout(set = 0, binding = 45) uniform sampler2DArray uGraphUdim5;
 layout(set = 0, binding = 46) uniform sampler2DArray uGraphUdim6;
 layout(set = 0, binding = 47) uniform sampler2DArray uGraphUdim7;
+#ifdef TUSDVIEW_OIT
+// Opaque color from the completed first raster pass. Weighted OIT renders into
+// separate accumulation attachments, so this is safe to sample for refraction.
+layout(set = 0, binding = 48) uniform sampler2D uOpaqueSceneColor;
+#endif
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
 layout(set = 1, binding = 6, std430) readonly buffer Faces { uint faceId[]; };
@@ -199,6 +204,25 @@ vec3 linearToSrgb(vec3 c) {
   vec3 lo = c * 12.92;
   vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
   return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
+}
+
+vec3 srgbToLinear(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c / 12.92;
+  vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
+  return mix(hi, lo, lessThanEqual(c, vec3(0.04045)));
+}
+
+// Narkowicz' compact ACES fit. The high-quality raster path keeps lighting in
+// scene-linear space until this display transform, preserving HDR highlights
+// from DomeLight images instead of clipping every channel at one.
+vec3 acesFitted(vec3 x) {
+  const float a = 2.51;
+  const float b = 0.03;
+  const float c = 2.43;
+  const float d = 0.59;
+  const float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
 vec3 purposeColor(int p) {
@@ -584,7 +608,28 @@ float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
     vec3 p = clip.xyz / clip.w;
     if (p.z <= 0.0 || p.z >= 1.0) return 1.0;
     float bias = max(0.00035, 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
-    return p.z - bias <= texture(uPointShadowMap, normalize(d)).r ? 1.0 : 0.0;
+    vec3 dir = normalize(d);
+    if (fr.mode.y == 0) {
+      return p.z - bias <= texture(uPointShadowMap, dir).r ? 1.0 : 0.0;
+    }
+    // Small tangent-plane disk around the cube lookup. This removes the hard,
+    // aliased edge of the old single-tap point/area-light shadow while keeping
+    // the kernel bounded for real-time use.
+    vec3 axis = abs(dir.y) < 0.95 ? vec3(0.0, 1.0, 0.0)
+                                  : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(axis, dir));
+    vec3 bitangent = cross(dir, tangent);
+    float visible = 0.0;
+    const int pointTaps = 12;
+    const float goldenAngle = 2.39996323;
+    for (int i = 0; i < pointTaps; ++i) {
+      float r = sqrt((float(i) + 0.5) / float(pointTaps));
+      float a = float(i) * goldenAngle;
+      vec2 disk = vec2(cos(a), sin(a)) * r * 0.0035;
+      vec3 tapDir = normalize(dir + tangent * disk.x + bitangent * disk.y);
+      visible += p.z - bias <= texture(uPointShadowMap, tapDir).r ? 1.0 : 0.0;
+    }
+    return visible / float(pointTaps);
   }
   if (fr.iblParams.w < 0.5) return 1.0;
   vec4 clip = fr.shadowViewProj * vec4(worldPos, 1.0);
@@ -593,14 +638,45 @@ float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
   p.y = 1.0 - p.y;
   if (p.z <= 0.0 || p.z >= 1.0 || any(lessThan(p.xy, vec2(0.0))) ||
       any(greaterThan(p.xy, vec2(1.0)))) return 1.0;
-  float bias = max(0.00035, 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+  float slopeBias = 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0));
+  float receiverBias = 1.25 * (abs(dFdx(p.z)) + abs(dFdy(p.z)));
+  float bias = max(0.00035, max(slopeBias, receiverBias));
   vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+  if (fr.mode.y != 0) {
+    // Bounded PCSS: estimate nearby blocker depth, then expand a tent kernel
+    // with receiver/blocker separation. Close contacts stay crisp while more
+    // distant receivers get the broad soft penumbra expected from area lights.
+    float blockerDepth = 0.0;
+    float blockers = 0.0;
+    for (int y = -1; y <= 1; ++y)
+      for (int x = -1; x <= 1; ++x) {
+        float z = texture(uShadowMap, p.xy + vec2(x, y) * texel * 2.0).r;
+        if (z < p.z - bias) { blockerDepth += z; blockers += 1.0; }
+      }
+    if (blockers < 0.5) return 1.0;
+    blockerDepth /= blockers;
+    float penumbra = clamp((p.z - blockerDepth) /
+                           max(blockerDepth, 1.0e-3) * 80.0, 1.25, 4.5);
+    float visible = 0.0;
+    float weightSum = 0.0;
+    for (int y = -3; y <= 3; ++y)
+      for (int x = -3; x <= 3; ++x) {
+        vec2 q = vec2(x, y) / 3.0;
+        float weight = max(0.0, 1.0 - length(q) * 0.72);
+        float z = texture(uShadowMap, p.xy + q * texel * penumbra).r;
+        visible += (p.z - bias <= z ? 1.0 : 0.0) * weight;
+        weightSum += weight;
+      }
+    return visible / max(weightSum, 1.0e-4);
+  }
   float visible = 0.0;
-  for (int y = -1; y <= 1; ++y)
-    for (int x = -1; x <= 1; ++x)
+  int shadowRadius = 1;
+  for (int y = -shadowRadius; y <= shadowRadius; ++y)
+    for (int x = -shadowRadius; x <= shadowRadius; ++x)
       visible += p.z - bias <= texture(uShadowMap, p.xy + vec2(x, y) * texel).r
                      ? 1.0 : 0.0;
-  return visible / 9.0;
+  float taps = float((shadowRadius * 2 + 1) * (shadowRadius * 2 + 1));
+  return visible / taps;
 }
 
 vec3 applyTangentNormal(vec3 n, vec3 tangentNormal, vec2 normalUv) {
@@ -729,7 +805,7 @@ void shadeFragment() {
                              ? pc.matAux.w
                              : (1.0 / 255.0);
       if (pickOpacity < pickCutoff) discard;
-      outColor = vec4(idColor(pc.ids.z), 1.0);
+      outColor = vec4(idColor(pc.ids.z & 0x1fffffff), 1.0);
       return;
     }
     if (fr.mode.x == 19) {  // missing normals
@@ -806,6 +882,17 @@ void shadeFragment() {
     if (opacity < pc.matAux.w) discard;
     opacity = 1.0;
   }
+  // Mixed opaque/glass atlases are submitted to both passes. The high bits of
+  // ids.z select the complementary coverage so opaque texels write depth and
+  // transparent texels alone enter sorted/weighted blending.
+  // This path is specifically for a single atlas mixing opaque and transparent
+  // islands. ALab's full-quality mask stores some solid painted-metal islands
+  // around 0.6--0.8 rather than one, while its glass is near zero; use the
+  // conventional coverage split instead of interpreting the metal as alpha.
+  const float opaqueCoverage = 0.5;
+  if ((pc.ids.z & (1 << 30)) != 0 && opacity < opaqueCoverage) discard;
+  if ((pc.ids.z & (1 << 29)) != 0 && opacity >= opaqueCoverage) discard;
+  if ((pc.ids.z & (1 << 30)) != 0) opacity = 1.0;
   // Per-vertex displayColor multiplies the base color (GL parity: attrib 9's
   // vColor does the same in material.cpp). White when the mesh has none.
   vec3 base = pc.baseColor.rgb * vColor.rgb *
@@ -826,6 +913,14 @@ void shadeFragment() {
   vec3 coatNf = (dot(coatN, V) < 0.0) ? -coatN : coatN;
   float NoV = max(dot(Nf, V), 1e-4);
   float rgh = clamp(roughness, 0.02, 1.0);
+  if (fr.mode.y != 0) {
+    // Specular anti-aliasing: widen the microfacet lobe when the shading normal
+    // changes rapidly inside a pixel, suppressing normal-map sparkle.
+    vec3 dnx = dFdx(Nf);
+    vec3 dny = dFdy(Nf);
+    float normalVariance = min(0.25, 0.5 * (dot(dnx, dnx) + dot(dny, dny)));
+    rgh = clamp(sqrt(rgh * rgh + normalVariance), 0.02, 1.0);
+  }
   float met = clamp(metallic, 0.0, 1.0);
   vec3 F0 = computeF0(base, met);
   MaterialTexParam pbr = matTexParam();
@@ -1070,13 +1165,95 @@ void shadeFragment() {
   }
   ambient *= clamp(pbr.coatParams.w, 0.0, 1.0) * sampleOcclusion(vUV);
   vec3 c = (ambient + direct + emissive) * exp2(fr.iblParams.y);
+  float screenTransmission = 0.0;
+  vec2 screenRefractionUv = vec2(0.0);
+  float screenRefractionRoughness = 0.0;
+  // Bounded real-time transmission for the raster path. The opaque scene-color
+  // refraction pass can refine this later; this environment-space result is a
+  // stable physically-directed fallback for off-screen rays and makes authored
+  // PreviewSurface opacity+IOR glass respond to the HDR dome immediately.
+  if (fr.mode.y != 0 && fr.iblColor.w > 0.5) {
+    float encodedIor = abs(pbr.specParams.w);
+    float ior = max(encodedIor > 100.0 ? encodedIor - 100.0 : encodedIor,
+                    1.0001);
+    float authoredTransmission = clamp(pbr.transmissionParams.x, 0.0, 1.0);
+    float previewTransmission = (ior > 1.01) ? (1.0 - opacity) : 0.0;
+    float transmission = max(authoredTransmission, previewTransmission) *
+                         (1.0 - met);
+    if (transmission > 1.0e-4) {
+      vec3 Tw = refract(-V, Nf, 1.0 / ior);
+      if (dot(Tw, Tw) < 1.0e-6) Tw = reflect(-V, Nf);
+      vec3 Te = normalize(mat3(fr.envRot) * Tw);
+      vec3 transmitted = textureLod(
+          uPrefilteredMap, Te,
+          clamp(rgh + pbr.transmissionParams.z, 0.02, 1.0) *
+              (fr.iblParams.x - 1.0)).rgb;
+      vec3 tint = authoredTransmission > 0.0
+                      ? max(pbr.transmissionColor.rgb, vec3(0.0))
+                      : vec3(1.0);
+      vec3 surfaceF = fresnelSchlick(NoV, F0);
+      transmitted *= tint * (vec3(1.0) - surfaceF) * fr.iblColor.rgb;
+      c = mix(c, transmitted * exp2(fr.iblParams.y), transmission);
+#ifdef TUSDVIEW_OIT
+      // Project a short refracted ray into screen space. The opaque pass is a
+      // stable fallback for geometry behind glass; off-screen rays retain the
+      // environment result above. Depth controls authored travel distance and
+      // is clamped to avoid extreme offsets on large-unit scenes.
+      float defaultTravel = max(fr.camPos.w * 0.02, 0.02);
+      float travel = clamp(pbr.transmissionParams.y > 0.0
+                               ? pbr.transmissionParams.y
+                               : defaultTravel,
+                           0.02, max(defaultTravel * 4.0, 2.0));
+      vec4 fromClip = fr.viewProj * vec4(vWorldPos, 1.0);
+      vec4 toClip = fr.viewProj * vec4(vWorldPos + Tw * travel, 1.0);
+      vec2 fromNdc = fromClip.xy / max(abs(fromClip.w), 1.0e-5);
+      vec2 toNdc = toClip.xy / max(abs(toClip.w), 1.0e-5);
+      screenRefractionUv = gl_FragCoord.xy /
+                           vec2(textureSize(uOpaqueSceneColor, 0));
+      screenRefractionUv += (toNdc - fromNdc) * vec2(0.5, -0.5);
+      screenTransmission = transmission;
+      screenRefractionRoughness = rgh;
+#endif
+    }
+  }
 #ifndef TUSDVIEW_OIT
-  c = linearToSrgb(c);
+  c = linearToSrgb(fr.mode.y != 0 ? acesFitted(c) : c);
   if (pc.matAux.z > 1.5 && opacity < 1.0) {
     c *= opacity;  // pipeline uses premultiplied alpha blending
   }
+#else
+  if (fr.mode.y != 0) c = acesFitted(c);
+#ifdef TUSDVIEW_OIT
+  if (fr.mode.y != 0 && screenTransmission > 1.0e-4 &&
+      all(greaterThan(screenRefractionUv, vec2(0.002))) &&
+      all(lessThan(screenRefractionUv, vec2(0.998)))) {
+    vec2 texel = 1.0 / vec2(textureSize(uOpaqueSceneColor, 0));
+    vec2 blur = texel * (1.0 + 6.0 * screenRefractionRoughness);
+    vec3 refracted = srgbToLinear(texture(uOpaqueSceneColor,
+                                          screenRefractionUv).rgb) * 0.4;
+    refracted += srgbToLinear(texture(uOpaqueSceneColor,
+        screenRefractionUv + vec2( blur.x, 0.0)).rgb) * 0.15;
+    refracted += srgbToLinear(texture(uOpaqueSceneColor,
+        screenRefractionUv + vec2(-blur.x, 0.0)).rgb) * 0.15;
+    refracted += srgbToLinear(texture(uOpaqueSceneColor,
+        screenRefractionUv + vec2(0.0,  blur.y)).rgb) * 0.15;
+    refracted += srgbToLinear(texture(uOpaqueSceneColor,
+        screenRefractionUv + vec2(0.0, -blur.y)).rgb) * 0.15;
+    c = mix(c, refracted, screenTransmission);
+  }
 #endif
+#endif
+  // Transmission changes the ray direction but still covers the pixel. If OIT
+  // used the opacity texture as coverage, clear glass (opacity near zero) would
+  // discard the already-computed refracted color and become an invisible hole.
+#ifdef TUSDVIEW_OIT
+  float surfaceCoverage = fr.mode.y != 0
+                              ? max(opacity, screenTransmission)
+                              : opacity;
+  outColor = vec4(c, clamp(surfaceCoverage, 0.0, 1.0));
+#else
   outColor = vec4(c, opacity);
+#endif
 }
 
 #ifdef TUSDVIEW_OIT

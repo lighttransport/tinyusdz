@@ -416,11 +416,14 @@ void test_material_binding_resolution() {
   layer.begin_prim("LooseMesh", "Mesh");
   layer.add_relationship("material:binding:preview", Path("/MissingMat"));
   layer.add_relationship("material:binding", Path("/LeafMat"));
+  layer.add_relationship("material:binding:full", Path("/FullMat"));
   layer.add_relationship("material:binding:back", Path("/MissingBackMat"));
   layer.end_prim();
   layer.begin_prim("ParentMat", "Material");
   layer.end_prim();
   layer.begin_prim("LeafMat", "Material");
+  layer.end_prim();
+  layer.begin_prim("FullMat", "Material");
   layer.end_prim();
   layer.begin_prim("ParentBackMat", "Material");
   layer.end_prim();
@@ -441,6 +444,11 @@ void test_material_binding_resolution() {
   }
   if (GetInheritedBoundMaterialPath(stage, "/LooseMesh") != "/LeafMat") {
     FAIL("valid same-prim fallback binding was not selected");
+    return;
+  }
+  if (GetInheritedBoundMaterialPathForPurpose(stage, "/LooseMesh", "full") !=
+      "/FullMat") {
+    FAIL("full-purpose binding did not outrank all-purpose/preview bindings");
     return;
   }
   if (GetInheritedBoundMaterialPathForPurpose(stage, "/Root/Mesh", "back") !=
