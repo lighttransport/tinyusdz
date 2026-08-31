@@ -5169,6 +5169,18 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
     return true;
   };
 
+  auto compactPoint = [](const DrawMeshCPU& m, uint32_t i) {
+    const size_t base = static_cast<size_t>(i) * 3;
+    constexpr float kInvU16 = 1.0f / 65535.0f;
+    return light3d::Vec3{
+        m.pickQuantMin[0] + m.pickQuantExtent[0] *
+                                (float(m.pickPositions[base]) * kInvU16),
+        m.pickQuantMin[1] + m.pickQuantExtent[1] *
+                                (float(m.pickPositions[base + 1]) * kInvU16),
+        m.pickQuantMin[2] + m.pickQuantExtent[2] *
+                                (float(m.pickPositions[base + 2]) * kInvU16)};
+  };
+
   int best = -1;
   float bestT = 1e30f;
   int bestBounds = -1;
@@ -5215,23 +5227,35 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
         if (hitAabb(imn, imx, bestT, &instanceT)) {
           boundsHit = true;
           bool exactInstanceHit = false;
-          if (!gpuDeformed && !m.vertices.empty() && m.indices.size() >= 3) {
-            auto instancePoint = [&](const DrawVertex& v) {
+          const bool hasFullTriangles =
+              !m.vertices.empty() && m.indices.size() >= 3;
+          const bool hasCompactTriangles =
+              !m.pickPositions.empty() && m.pickIndices.size() >= 3;
+          if (!gpuDeformed && (hasFullTriangles || hasCompactTriangles)) {
+            auto instancePoint = [&](const light3d::Vec3& v) {
               return light3d::Vec3{
-                  x[0] * v.px + x[1] * v.py + x[2] * v.pz + x[3],
-                  x[4] * v.px + x[5] * v.py + x[6] * v.pz + x[7],
-                  x[8] * v.px + x[9] * v.py + x[10] * v.pz + x[11]};
+                  x[0] * v.x + x[1] * v.y + x[2] * v.z + x[3],
+                  x[4] * v.x + x[5] * v.y + x[6] * v.z + x[7],
+                  x[8] * v.x + x[9] * v.y + x[10] * v.z + x[11]};
             };
-            for (size_t ti = 0; ti + 2 < m.indices.size(); ti += 3) {
-              const uint32_t ia = m.indices[ti + 0];
-              const uint32_t ib = m.indices[ti + 1];
-              const uint32_t ic = m.indices[ti + 2];
-              if (ia >= m.vertices.size() || ib >= m.vertices.size() ||
-                  ic >= m.vertices.size()) continue;
+            const std::vector<uint32_t>& pi =
+                hasFullTriangles ? m.indices : m.pickIndices;
+            const size_t pointCount = hasFullTriangles
+                                          ? m.vertices.size()
+                                          : m.pickPositions.size() / 3;
+            auto point = [&](uint32_t i) {
+              return hasFullTriangles
+                         ? light3d::Vec3{m.vertices[i].px, m.vertices[i].py,
+                                         m.vertices[i].pz}
+                         : compactPoint(m, i);
+            };
+            for (size_t ti = 0; ti + 2 < pi.size(); ti += 3) {
+              const uint32_t ia = pi[ti + 0], ib = pi[ti + 1], ic = pi[ti + 2];
+              if (ia >= pointCount || ib >= pointCount || ic >= pointCount)
+                continue;
               float triangleT = 0.0f;
-              if (rayTri(instancePoint(m.vertices[ia]),
-                         instancePoint(m.vertices[ib]),
-                         instancePoint(m.vertices[ic]), triangleT) &&
+              if (rayTri(instancePoint(point(ia)), instancePoint(point(ib)),
+                         instancePoint(point(ic)), triangleT) &&
                   triangleT < bestT) {
                 bestT = triangleT;
                 best = static_cast<int>(mi);
@@ -5242,7 +5266,8 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
           // Retain bounds-only picking for released/deformed prototype data,
           // but never let an exact miss on retained triangles turn the whole
           // instance box into a selectable solid.
-          if ((!m.vertices.empty() && !gpuDeformed) && !exactInstanceHit) {
+          if ((hasFullTriangles || hasCompactTriangles) && !gpuDeformed &&
+              !exactInstanceHit) {
             continue;
           }
           if (!exactInstanceHit && instanceT < bestBoundsT) {
@@ -5254,31 +5279,47 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH,
     } else {
       float boundsT = 0.0f;
       boundsHit = hitAabb(pickMin, pickMax, bestT, &boundsT);
-      if (boundsHit && boundsT < bestBoundsT) {
+      const bool hasExactStatic =
+          !gpuDeformed && ((!m.vertices.empty() && m.indices.size() >= 3) ||
+                           (!m.pickPositions.empty() &&
+                            m.pickIndices.size() >= 3));
+      if (boundsHit && !hasExactStatic && boundsT < bestBoundsT) {
         bestBoundsT = boundsT;
         bestBounds = static_cast<int>(mi);
       }
     }
     if (!boundsHit) continue;
 
-    // Static next meshes normally arrive here after FreeMeshSurfaceCPU (and,
-    // once auxiliary upload is done, without indices too). Use the closest
-    // retained object bound instead of making selection depend on whether a CPU
-    // geometry copy happened to survive. GPU-deformed meshes also use bounds:
-    // their retained vertices are the rest pose, not the shape on screen.
-    if (m.instanceCount() > 0 || m.vertices.empty() ||
-        m.indices.size() < 3 || gpuDeformed)
+    // Static next meshes normally arrive here after FreeMeshSurfaceCPU, so use
+    // their compact picking triangles. Only GPU-deformed meshes and legacy
+    // carriers without either triangle representation retain the bounds fallback:
+    // their CPU vertices are the rest pose, not necessarily the shape on screen.
+    const bool hasFullTriangles = !m.vertices.empty() && m.indices.size() >= 3;
+    const bool hasCompactTriangles =
+        !m.pickPositions.empty() && m.pickIndices.size() >= 3;
+    if (m.instanceCount() > 0 || (!hasFullTriangles && !hasCompactTriangles) ||
+        gpuDeformed)
       continue;
 
     light3d::Mat4 W;
     for (int k = 0; k < 16; ++k) W.m[k] = m.world[k];
-    for (size_t i = 0; i + 2 < m.indices.size(); i += 3) {
-      const DrawVertex& va = m.vertices[m.indices[i + 0]];
-      const DrawVertex& vb = m.vertices[m.indices[i + 1]];
-      const DrawVertex& vc = m.vertices[m.indices[i + 2]];
-      const light3d::Vec3 a = light3d::transformPoint(W, {va.px, va.py, va.pz});
-      const light3d::Vec3 b = light3d::transformPoint(W, {vb.px, vb.py, vb.pz});
-      const light3d::Vec3 c = light3d::transformPoint(W, {vc.px, vc.py, vc.pz});
+    const std::vector<uint32_t>& pi =
+        hasFullTriangles ? m.indices : m.pickIndices;
+    const size_t pointCount =
+        hasFullTriangles ? m.vertices.size() : m.pickPositions.size() / 3;
+    auto point = [&](uint32_t i) {
+      return hasFullTriangles
+                 ? light3d::Vec3{m.vertices[i].px, m.vertices[i].py,
+                                 m.vertices[i].pz}
+                 : compactPoint(m, i);
+    };
+    for (size_t i = 0; i + 2 < pi.size(); i += 3) {
+      if (pi[i] >= pointCount || pi[i + 1] >= pointCount ||
+          pi[i + 2] >= pointCount)
+        continue;
+      const light3d::Vec3 a = light3d::transformPoint(W, point(pi[i]));
+      const light3d::Vec3 b = light3d::transformPoint(W, point(pi[i + 1]));
+      const light3d::Vec3 c = light3d::transformPoint(W, point(pi[i + 2]));
       float t;
       if (rayTri(a, b, c, t) && t < bestT) {
         bestT = t;

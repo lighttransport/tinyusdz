@@ -189,6 +189,15 @@ struct DrawMeshCPU {
   int influenceTexHeight{0};
   int maxInfluencesPerVertex{0};
   std::vector<uint32_t> indices;  // triangulated, grouped by submesh/material
+  // Compact static triangle copy retained after the full CPU vertex/index data
+  // is released. Viewport picking decodes these positions and intersects the
+  // clicked pixel ray with actual triangles instead of treating the AABB as a
+  // solid object. Positions are UNORM16 within pickQuantMin/Extent: 6 bytes per
+  // vertex versus the complete DrawVertex, while indices retain exact topology.
+  std::vector<uint16_t> pickPositions;
+  std::vector<uint32_t> pickIndices;
+  float pickQuantMin[3]{0, 0, 0};
+  float pickQuantExtent[3]{0, 0, 0};
   std::vector<DrawSubmesh> submeshes;
   // Generated asynchronously after the authored mesh has been uploaded. LOD0
   // is the authored indices/submeshes above; entries here are LOD1..LOD3.

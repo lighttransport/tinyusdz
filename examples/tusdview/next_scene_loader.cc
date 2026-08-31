@@ -7306,6 +7306,22 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     matAlphaVariants[{base, key}] = idx;
     return idx;
   };
+  std::unordered_map<int, int> opaqueCoverageVariants;
+  auto materialWithoutOpacityMap = [&](int base) -> int {
+    auto found = opaqueCoverageVariants.find(base);
+    if (found != opaqueCoverageVariants.end()) return found->second;
+    DrawMaterialCPU variant = draw->materials[static_cast<size_t>(base)];
+    variant.opacityTex = -1;
+    variant.opacitySample.tex = -1;
+    variant.alpha = 1.0f;
+    variant.alphaMode = static_cast<int>(AlphaMode::Opaque);
+    variant.alphaMaskHeuristic = false;
+    if (variant.hasLightRtOpenPBR) variant.lightRtOpenPBR.opacity = 1.0f;
+    const int idx = static_cast<int>(draw->materials.size());
+    draw->materials.push_back(std::move(variant));
+    opaqueCoverageVariants[base] = idx;
+    return idx;
+  };
 
   // GeomSubset per-face materials: when a mesh has `face` GeomSubset children
   // bound to materials, produce a per-triangle material id (else leave *triMat
@@ -8351,6 +8367,56 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         wholeMat = materialWithAlpha(wholeMat, 1.0f);
         if (wholeBackMat >= 0)
           wholeBackMat = materialWithAlpha(wholeBackMat, 1.0f);
+      }
+    }
+
+    // Preview-baked assets often bind one JPEG opacity atlas to an entire model.
+    // Keep genuinely translucent UV islands in Blend, but promote a mesh whose
+    // vertices and triangle interiors all sample the white JPEG plateau to an
+    // opaque material variant. Otherwise compression noise (254 instead of 255)
+    // puts solid parts such as frames and buckles in the transparent pass.
+    if (wholeMat > 0 && static_cast<size_t>(wholeMat) < draw->materials.size()) {
+      const DrawMaterialCPU& dm = draw->materials[static_cast<size_t>(wholeMat)];
+      if (dm.alphaMode == static_cast<int>(AlphaMode::Blend) && dm.alpha >= 0.999f &&
+          dm.opacityTex >= 0 &&
+          static_cast<size_t>(dm.opacityTex) < draw->textures.size() &&
+          dm.opacitySample.uvSet == 0) {
+        const DrawTextureCPU& tex =
+            draw->textures[static_cast<size_t>(dm.opacityTex)];
+        std::string asset = tex.assetIdentifier;
+        std::transform(asset.begin(), asset.end(), asset.begin(),
+                       [](unsigned char c) { return char(std::tolower(c)); });
+        const bool jpeg = asset.size() >= 4 &&
+                          (asset.compare(asset.size() - 4, 4, ".jpg") == 0 ||
+                           (asset.size() >= 5 &&
+                            asset.compare(asset.size() - 5, 5, ".jpeg") == 0));
+        const light3d::Image& image = tex.image;
+        auto opaqueAt = [&](float u, float v) {
+          u -= std::floor(u);
+          v -= std::floor(v);
+          const int x = std::min(image.width - 1, int(u * image.width));
+          const int y = std::min(image.height - 1, int(v * image.height));
+          const int channel = std::max(0, std::min(dm.opacityChannel,
+                                                   image.channels - 1));
+          const float value =
+              image.data[(static_cast<size_t>(y) * image.width + size_t(x)) *
+                             image.channels + size_t(channel)] /
+                  255.0f * dm.opacityTexScale +
+              dm.opacityTexBias;
+          return value >= 250.0f / 255.0f;
+        };
+        bool opaqueCoverage = jpeg && image.width > 0 && image.height > 0 &&
+                              image.channels > 0 && !image.data.empty();
+        for (const DrawVertex& v : loc.vertices)
+          opaqueCoverage = opaqueCoverage && opaqueAt(v.u, v.v);
+        for (size_t i = 0; opaqueCoverage && i + 2 < loc.indices.size(); i += 3) {
+          const DrawVertex& a = loc.vertices[loc.indices[i]];
+          const DrawVertex& b = loc.vertices[loc.indices[i + 1]];
+          const DrawVertex& c = loc.vertices[loc.indices[i + 2]];
+          opaqueCoverage = opaqueAt((a.u + b.u + c.u) / 3.0f,
+                                    (a.v + b.v + c.v) / 3.0f);
+        }
+        if (opaqueCoverage) wholeMat = materialWithoutOpacityMap(wholeMat);
       }
     }
 

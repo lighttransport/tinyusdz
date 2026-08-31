@@ -1875,6 +1875,37 @@ static bool MeshIsDeformable(const DrawMeshCPU& m) {
 }
 
 static void FreeMeshSurfaceCPU(DrawMeshCPU& m) {
+  // Preserve enough geometry for pixel-accurate picking before dropping the
+  // much wider render vertices. Static meshes never change shape, so a UNORM16
+  // position copy is both stable and substantially smaller than DrawVertex.
+  if (m.pickPositions.empty() && !m.vertices.empty() && m.indices.size() >= 3) {
+    float mn[3] = {m.vertices[0].px, m.vertices[0].py, m.vertices[0].pz};
+    float mx[3] = {mn[0], mn[1], mn[2]};
+    for (const DrawVertex& v : m.vertices) {
+      const float p[3] = {v.px, v.py, v.pz};
+      for (int c = 0; c < 3; ++c) {
+        mn[c] = std::min(mn[c], p[c]);
+        mx[c] = std::max(mx[c], p[c]);
+      }
+    }
+    for (int c = 0; c < 3; ++c) {
+      m.pickQuantMin[c] = mn[c];
+      m.pickQuantExtent[c] = mx[c] - mn[c];
+    }
+    m.pickPositions.resize(m.vertices.size() * 3);
+    for (size_t i = 0; i < m.vertices.size(); ++i) {
+      const float p[3] = {m.vertices[i].px, m.vertices[i].py, m.vertices[i].pz};
+      for (int c = 0; c < 3; ++c) {
+        const float u = m.pickQuantExtent[c] > 0.0f
+                            ? (p[c] - mn[c]) / m.pickQuantExtent[c]
+                            : 0.0f;
+        m.pickPositions[i * 3 + static_cast<size_t>(c)] =
+            static_cast<uint16_t>(std::lround(
+                std::max(0.0f, std::min(1.0f, u)) * 65535.0f));
+      }
+    }
+    m.pickIndices = m.indices;
+  }
   std::vector<DrawVertex>().swap(m.vertices);
   std::vector<float>().swap(m.vertexColors);
   std::vector<float>().swap(m.vertexAlpha);
