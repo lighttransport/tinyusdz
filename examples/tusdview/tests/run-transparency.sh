@@ -77,23 +77,29 @@ for spec in "gl:--backend gl" \
   fi
   if [ "$tag" = "vk-weighted" ] &&
      grep -q 'weighted OIT capability: available' "$OUT/$tag.log" &&
-     ! grep -q 'Vulkan transparency active: weighted' "$OUT/$tag.log"; then
+     ! grep -q 'Vulkan weighted OIT resources ready' "$OUT/$tag.log"; then
     echo "FAIL: weighted OIT was supported and requested but did not activate"
     fail=1
     continue
   fi
   if [ ! -s "$img" ]; then echo "FAIL: $tag produced no image"; fail=1; continue; fi
   if [ "$tag" != "gl" ]; then
-    if ! python3 - "$OUT/$tag.json" <<'PY'
+    if ! python3 - "$OUT/$tag.json" "$tag" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as f:
     backend = json.load(f).get("backend", {})
+tag = sys.argv[2]
 for name in ("pipeline_binds", "descriptor_set_binds"):
     value = backend.get(name)
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise SystemExit(f"invalid backend.{name}: {value!r}")
+expected_weighted = tag in ("vk-auto", "vk-weighted")
+if backend.get("weighted_oit_active") is not expected_weighted:
+    raise SystemExit(
+        f"invalid backend.weighted_oit_active for {tag}: "
+        f"{backend.get('weighted_oit_active')!r}")
 PY
     then
       echo "FAIL: $tag render report has invalid Vulkan bind counters"
@@ -115,7 +121,7 @@ done
 # Weighted OIT must not change when the two equal-opacity transparent layers
 # exchange depth order. The sorted reference intentionally may change.
 if [ -s "$OUT/transp_vk-weighted.ppm" ] &&
-   grep -q 'Vulkan transparency active: weighted' "$OUT/vk-weighted.log"; then
+   grep -q 'Vulkan weighted OIT resources ready' "$OUT/vk-weighted.log"; then
   REVERSED="$OUT/transparency-reversed.usda"
   sed -e 's/0\.05)/0.075)/g' \
       -e 's/0\.025)/0.05)/g' \

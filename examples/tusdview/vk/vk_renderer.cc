@@ -12486,8 +12486,8 @@ void VulkanRenderer::resizeViewport(int width, int height) {
         caps_.oitAttachmentBytes =
             static_cast<uint64_t>(vpW_) * static_cast<uint64_t>(vpH_) *
             (8u + 2u);  // RGBA16F accumulation + R16F revealage
-        LOGI("Vulkan transparency active: %s (%llu attachment bytes)",
-             caps_.usesWeightedOit ? "weighted" : "sorted",
+        LOGI("Vulkan weighted OIT resources ready (%llu attachment bytes; "
+             "per-frame activity is reported separately)",
              static_cast<unsigned long long>(caps_.oitAttachmentBytes));
       }
     }

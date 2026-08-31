@@ -98,7 +98,7 @@ for mode in weighted sorted; do
     exit 1
   fi
   if [ "$mode" = weighted ] &&
-     ! grep -q 'Vulkan transparency active: weighted' "$log"; then
+     ! grep -q 'Vulkan weighted OIT resources ready' "$log"; then
     echo "SKIP: weighted OIT is unavailable on the selected Vulkan device"
     exit "$SKIP"
   fi

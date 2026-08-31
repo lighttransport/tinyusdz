@@ -71,7 +71,7 @@ if grep -Eqi 'VUID-|Validation Error|validation error|UNASSIGNED-' "$log"; then
   echo "FAIL: Vulkan validation reported an OIT-path error" >&2
   exit 1
 fi
-if ! grep -q 'Vulkan transparency active: weighted' "$log"; then
+if ! grep -q 'Vulkan weighted OIT resources ready' "$log"; then
   cat "$log" >&2
   echo "SKIP: weighted OIT unavailable on the selected Vulkan device"
   exit "$SKIP"
