@@ -10,6 +10,23 @@ a bounded memory budget.
 tusdrender scene.usd out.png -rtPreview -w 960 -height 540 -autoframe
 ```
 
+### Build and link time
+
+On Linux, `tusdrender` automatically uses the first available fast linker in
+the order mold, LLD, then gold. This is target-local—the rest of TinyUSDZ keeps
+the linker selected by the parent build—and primarily avoids long final links
+in `RelWithDebInfo`, where the executable combines several large static
+archives and their DWARF data. CMake prints the selected linker while
+configuring. Versioned LLD installations are supported even when the system's
+unversioned alternative is absent.
+
+Disable the target-local selection when diagnosing a linker/toolchain issue:
+
+```sh
+cmake -S . -B build_ninja -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DTUSDRENDER_USE_FAST_LINKER=OFF
+```
+
 Common flags:
 
 | flag | meaning |

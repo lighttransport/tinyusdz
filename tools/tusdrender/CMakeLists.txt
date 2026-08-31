@@ -5,6 +5,14 @@ cmake_minimum_required(VERSION 3.16)
 
 include(CheckCCompilerFlag)
 
+# tusdrender pulls several large static archives into one executable. GNU
+# ld.bfd spends most of a RelWithDebInfo relink rescanning symbols and merging
+# DWARF; prefer an installed parallel linker for this target without changing
+# the linker used by the rest of TinyUSDZ. Set this OFF when diagnosing a
+# platform linker issue or when a toolchain already selects its own linker.
+option(TUSDRENDER_USE_FAST_LINKER
+       "Use mold, LLD, or gold for tusdrender when available" ON)
+
 # Build the shared GPU RT implementation even in tools-only/headless
 # configurations. When tusdview was configured first this target already
 # exists; otherwise define the identical GUI-free source set here.
@@ -162,6 +170,46 @@ add_executable(tusdrender
   tusdr_hip.cc
   tusdr_cuda.cc
 )
+
+if(TUSDRENDER_USE_FAST_LINKER AND UNIX AND NOT APPLE AND
+   CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND
+   NOT CMAKE_EXE_LINKER_FLAGS MATCHES "(^| )-fuse-ld=")
+  set(_tusdrender_fast_linker "")
+  find_program(TUSDRENDER_MOLD_EXECUTABLE NAMES mold)
+  find_program(TUSDRENDER_LLD_EXECUTABLE
+               NAMES ld.lld lld ld.lld-21 lld-21 ld.lld-22 lld-22
+                     ld.lld-20 lld-20 ld.lld-19 lld-19 ld.lld-18 lld-18
+                     ld.lld-17 lld-17)
+  find_program(TUSDRENDER_GOLD_EXECUTABLE NAMES ld.gold gold)
+  if(TUSDRENDER_MOLD_EXECUTABLE)
+    set(_tusdrender_fast_linker mold)
+  elseif(TUSDRENDER_LLD_EXECUTABLE)
+    set(_tusdrender_fast_linker lld)
+  elseif(TUSDRENDER_GOLD_EXECUTABLE)
+    set(_tusdrender_fast_linker gold)
+  endif()
+  if(_tusdrender_fast_linker)
+    if(_tusdrender_fast_linker STREQUAL "lld")
+      # Versioned distro installs may intentionally lack a working unversioned
+      # ld.lld alternative. GCC's -fuse-ld=lld honors -B, so point it at the
+      # real LLVM bin directory selected above.
+      get_filename_component(_tusdrender_lld_real
+                             "${TUSDRENDER_LLD_EXECUTABLE}" REALPATH)
+      get_filename_component(_tusdrender_lld_dir
+                             "${_tusdrender_lld_real}" DIRECTORY)
+      target_link_options(tusdrender PRIVATE "-B${_tusdrender_lld_dir}")
+    endif()
+    target_link_options(tusdrender PRIVATE
+                        "-fuse-ld=${_tusdrender_fast_linker}")
+    message(STATUS
+            "tusdrender: using ${_tusdrender_fast_linker} for faster links")
+  endif()
+  mark_as_advanced(TUSDRENDER_MOLD_EXECUTABLE TUSDRENDER_LLD_EXECUTABLE
+                   TUSDRENDER_GOLD_EXECUTABLE)
+  unset(_tusdrender_fast_linker)
+  unset(_tusdrender_lld_real)
+  unset(_tusdrender_lld_dir)
+endif()
 
 target_link_libraries(tusdrender
   ${TINYUSDZ_TARGET_STATIC}
