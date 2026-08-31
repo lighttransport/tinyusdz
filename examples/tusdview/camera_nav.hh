@@ -77,6 +77,9 @@ class OrbitCamera {
   void setDollySensitivity(float s) {
     if (s > 0.0f) dollySensitivity_ = s;
   }
+  void setNavigationScale(float s) {
+    if (std::isfinite(s) && s > 0.0f) navigationScale_ = s;
+  }
   void setInvertYaw(bool on) { invertYaw_ = on; }
   void setInvertDolly(bool on) { invertDolly_ = on; }
 
@@ -114,6 +117,7 @@ class OrbitCamera {
   float orbitSensitivity() const { return orbitSensitivity_; }
   float panSensitivity() const { return panSensitivity_; }
   float dollySensitivity() const { return dollySensitivity_; }
+  float navigationScale() const { return navigationScale_; }
   bool invertYaw() const { return invertYaw_; }
   bool invertDolly() const { return invertDolly_; }
 
@@ -148,6 +152,10 @@ class OrbitCamera {
   float orbitSensitivity_{1.0f};
   float panSensitivity_{1.0f};
   float dollySensitivity_{1.0f};
+  // Master interactive-motion multiplier. The 0.65 base below makes the
+  // historical 1.0 setting less twitchy; this remains a user-facing relative
+  // scale with convenient 0.25/0.5/1/1.5 presets.
+  float navigationScale_{1.0f};
   bool invertYaw_{true};
   bool invertDolly_{false};
 };

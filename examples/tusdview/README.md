@@ -84,6 +84,9 @@ displays it with an ImGui docking UI.
     right-handed mouse navigation; `Up` / `Down` are aliases and `Shift`
     increases the step.
   - `V` cycles shaded, wireframe-only, and wireframe-with-shading views.
+  - `N` cycles the master navigation sensitivity through `0.25x`, `0.5x`,
+    `1x`, and `1.5x`; the Camera panel also accepts a precise numeric scale.
+    Mouse orbit, pan, and dolly use a calmer 65% base response.
   - **Navigation HUD** — an in-viewport cheatsheet/status overlay is shown by
     default and can be toggled with `F1`.
   - **Click to pick** — a plain left click selects the nearest mesh under the

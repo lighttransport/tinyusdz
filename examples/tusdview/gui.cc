@@ -682,10 +682,20 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-      if (ImGui::MenuItem("Shaded", nullptr, mode_ == RenderMode::Shaded))
+      if (ImGui::MenuItem("Shaded", nullptr,
+                          mode_ == RenderMode::Shaded && wireCycle_ == 0)) {
         mode_ = RenderMode::Shaded;
-      if (ImGui::MenuItem("Wireframe", nullptr, mode_ == RenderMode::Wireframe))
-        mode_ = RenderMode::Wireframe;
+        wireCycle_ = 0;
+      }
+      if (ImGui::MenuItem("Wireframe", "V",
+                          mode_ == RenderMode::Wireframe || wireCycle_ == 1)) {
+        mode_ = RenderMode::Shaded;
+        wireCycle_ = 1;
+      }
+      if (ImGui::MenuItem("Wireframe on shaded", nullptr, wireCycle_ == 2)) {
+        mode_ = RenderMode::Shaded;
+        wireCycle_ = 2;
+      }
       ImGui::Separator();
       if (ImGui::BeginMenu("Selection display")) {
         static const char* labels[] = {"Off", "Bounds only",
@@ -2788,6 +2798,25 @@ void Gui::drawCameraPanel() {
     ImGui::Text("Clip: %.5g / %.5g", cam_->nearPlane(), cam_->farPlane());
 
     ImGui::Separator();
+    ImGui::TextDisabled("Navigation sensitivity (N cycles presets)");
+    static const float kNavScales[] = {0.25f, 0.5f, 1.0f, 1.5f};
+    for (size_t i = 0; i < 4; ++i) {
+      if (i) ImGui::SameLine();
+      char label[16];
+      std::snprintf(label, sizeof(label), "%gx", kNavScales[i]);
+      if (ImGui::RadioButton(label,
+                             std::fabs(cam_->navigationScale() -
+                                       kNavScales[i]) < 1.0e-4f)) {
+        cam_->setNavigationScale(kNavScales[i]);
+      }
+    }
+    float navScale = cam_->navigationScale();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    if (ImGui::InputFloat("Scale", &navScale, 0.05f, 0.25f, "%.3gx")) {
+      cam_->setNavigationScale(std::max(0.01f, std::min(10.0f, navScale)));
+    }
+
+    ImGui::Separator();
     ImGui::TextDisabled("Views");
     if (ImGui::Button("Home")) homeView();
     ImGui::SameLine();
@@ -4098,6 +4127,20 @@ void Gui::handleNavigation() {
     // forward/backward movement with a right-handed mouse.
     if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
       wireCycle_ = (wireCycle_ + 1) % 3;
+      if (mode_ == RenderMode::Wireframe) mode_ = RenderMode::Shaded;
+    }
+    if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N)) {
+      static const float kScales[] = {0.25f, 0.5f, 1.0f, 1.5f};
+      const float current = cam_->navigationScale();
+      size_t next = 0;
+      for (size_t i = 0; i < 4; ++i) {
+        if (std::fabs(current - kScales[i]) < 1.0e-4f) {
+          next = (i + 1) % 4;
+          break;
+        }
+        if (current < kScales[i]) { next = i; break; }
+      }
+      cam_->setNavigationScale(kScales[next]);
     }
     // CPU RT: dedicated keybinding, toggles on/off (App restores whichever
     // technique was active before).
@@ -6140,7 +6183,8 @@ void Gui::renderViewportScene(FramePacket* packet) {
   const bool pickingAov = mode_ == RenderMode::MeshId;
   // A picking-buffer view must contain only pickable, depth-tested carriers.
   // Wireframe and helper/highlight overlays have no selection ID.
-  p.wireMode = pickingAov ? 0 : wireCycle_;
+  p.wireMode = pickingAov ? 0
+                          : (mode_ == RenderMode::Wireframe ? 1 : wireCycle_);
   p.displacement = displacementEnabled_;
   p.displacementScale = displacementScale_;
   p.maxTessLevel = maxTessLevel_;

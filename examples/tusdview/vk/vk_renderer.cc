@@ -2217,6 +2217,21 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   VkResult r = vkCreateGraphicsPipelines(device_, pipelineCache, 1, &ci, nullptr,
                                          &pipeline_);
   reportPipeline("opaque");
+  if (r == VK_SUCCESS) {
+    VkPipelineInputAssemblyStateCreateInfo wireIa = ia;
+    wireIa.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    VkPipelineDepthStencilStateCreateInfo wireDs = ds;
+    wireDs.depthWriteEnable = VK_FALSE;
+    wireDs.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkGraphicsPipelineCreateInfo wireCi = ci;
+    wireCi.pInputAssemblyState = &wireIa;
+    wireCi.pDepthStencilState = &wireDs;
+    if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &wireCi, nullptr,
+                                  &wirePipeline_) != VK_SUCCESS) {
+      wirePipeline_ = VK_NULL_HANDLE;
+    }
+    reportPipeline("original-cage wire");
+  }
   // Translucent variant: same shaders/state, but premultiplied "over" blend
   // (mesh.frag premultiplies for Blend materials) and depth-write-off so
   // transparent surfaces composite over the opaque geometry behind them.
@@ -6333,6 +6348,8 @@ void VulkanRenderer::destroyScene() {
     if (m.influenceDataMem) vkFreeMemory(device_, m.influenceDataMem, nullptr);
     if (m.ebo) vkDestroyBuffer(device_, m.ebo, nullptr);
     if (m.eboMem) vkFreeMemory(device_, m.eboMem, nullptr);
+    if (m.wireEbo) vkDestroyBuffer(device_, m.wireEbo, nullptr);
+    if (m.wireEboMem) vkFreeMemory(device_, m.wireEboMem, nullptr);
     for (auto& lod : m.prototypeLods) {
       if (lod.ebo) vkDestroyBuffer(device_, lod.ebo, nullptr);
       if (lod.eboMem) vkFreeMemory(device_, lod.eboMem, nullptr);
@@ -8100,6 +8117,13 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     meshes_.push_back(VkMeshGPU{});
     return;
   }
+  if (!sm.wireframeIndices.empty() &&
+      createHostBuffer(sm.wireframeIndices.size() * sizeof(uint32_t),
+                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                       sm.wireframeIndices.data(), &gm.wireEbo,
+                       &gm.wireEboMem, false, poolStatic)) {
+    gm.wireIndexCount = static_cast<uint32_t>(sm.wireframeIndices.size());
+  }
 
   // Per-triangle source USD face id buffer (source-face-id AOV). Always created so
   // the raster path can bind it at set 3; the raster FS reads it by gl_PrimitiveID
@@ -8875,6 +8899,18 @@ void VulkanRenderer::installPrototypeLods(
     lod.triangleRatio = src.triangleRatio;
     lod.level = src.level;
     m.prototypeLods.push_back(std::move(lod));
+  }
+}
+
+void VulkanRenderer::uploadMeshAux(size_t meshIndex, const DrawMeshCPU& mesh) {
+  if (meshIndex >= meshes_.size() || mesh.wireframeIndices.empty()) return;
+  VkMeshGPU& gpu = meshes_[meshIndex];
+  if (gpu.wireEbo != VK_NULL_HANDLE) return;
+  if (createHostBuffer(mesh.wireframeIndices.size() * sizeof(uint32_t),
+                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                       mesh.wireframeIndices.data(), &gpu.wireEbo,
+                       &gpu.wireEboMem, false, true)) {
+    gpu.wireIndexCount = static_cast<uint32_t>(mesh.wireframeIndices.size());
   }
 }
 
@@ -12807,6 +12843,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   for (int i = 0; i < 4; ++i) clear_[i] = params.clearColor[i];
   hasParams_ = (params.view && params.proj);
   rtMode_ = static_cast<int>(params.mode);
+  wireMode_ = params.wireMode;
   depthScale_ = params.depthScale;
   displacement_ = params.displacement;
   displacementScale_ = params.displacementScale;
@@ -14375,10 +14412,62 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         weightedOitSupported_ && oitFb_ && oitMeshPipeline_ &&
         oitCompositePipeline_ && oitCompositeSet_ && rtMode_ == 0;
     caps_.usesWeightedOit = useWeightedOit;
-    drawMeshPass(/*apass=*/0, pipeline_);
+    if (wireMode_ != 1) drawMeshPass(/*apass=*/0, pipeline_);
     if (!useWeightedOit && translucentPipeline_ != VK_NULL_HANDLE &&
         rtMode_ == 0) {
       drawMeshPass(/*apass=*/1, translucentPipeline_);
+    }
+
+    // Storm-style surface wire: draw the authored polygon cage through its own
+    // line-list EBO. This deliberately does not use the tessellation pipeline or
+    // triangle EBO, so subdivision/displacement detail never invents extra wires.
+    if (wireMode_ != 0 && wirePipeline_ != VK_NULL_HANDLE) {
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, wirePipeline_);
+      if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_NONE);
+      if (!materialSets_.empty() && materialSets_[0]) {
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 0, 1, &materialSets_[0], 0,
+                                nullptr);
+      }
+      if (dispParamsSet_) {
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 2, 1, &dispParamsSet_, 0,
+                                nullptr);
+      }
+      if (dispMatSet_) {
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 3, 1, &dispMatSet_, 0,
+                                nullptr);
+      }
+      for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+        if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
+        const VkMeshGPU& mesh = meshes_[mi];
+        if (!mesh.vbo || !mesh.wireEbo || mesh.wireIndexCount == 0 ||
+            mesh.instanceCount > 0)
+          continue;
+        VkDescriptorSet deform =
+            mesh.deformDesc ? mesh.deformDesc : dummyDeformDesc_;
+        if (deform) {
+          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  pipelineLayout_, 1, 1, &deform, 0, nullptr);
+        }
+        VkBuffer bufs[7] = {mesh.vbo,          mesh.jointVbo,   mesh.weightVbo,
+                            mesh.influenceVbo, mesh.uv1Vbo,     mesh.morphInflVbo,
+                            mesh.morphOffsetVbo};
+        VkDeviceSize offsets[7]{};
+        vkCmdBindVertexBuffers(cb, 0, 7, bufs, offsets);
+        vkCmdBindIndexBuffer(cb, mesh.wireEbo, 0, VK_INDEX_TYPE_UINT32);
+        PushC pc{};
+        std::memcpy(pc.model, mesh.world, sizeof(pc.model));
+        pc.baseColor[0] = pc.baseColor[1] = pc.baseColor[2] = 0.18f;
+        pc.baseColor[3] = 1.0f;
+        pc.ids[0] = 0;
+        pc.ids[1] = (mesh.geometricNormal ? 1 : 0);
+        pc.ids[2] = static_cast<int>(mi);
+        pc.ids[3] = 0x40000000;  // authored-cage wire pass
+        vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(pc), &pc);
+        vkCmdDrawIndexed(cb, mesh.wireIndexCount, 1, 0, 0, 0);
+      }
     }
 
     // ---- Instanced pass: flat-shaded GPU-instanced prototypes (--next path) ----
@@ -15267,6 +15356,7 @@ void VulkanRenderer::shutdown() {
     materialSampler = VK_NULL_HANDLE;
   }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
+  if (wirePipeline_) { vkDestroyPipeline(device_, wirePipeline_, nullptr); wirePipeline_ = VK_NULL_HANDLE; }
   if (shadowPipeline_) { vkDestroyPipeline(device_, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
   if (instShadowPipeline_) { vkDestroyPipeline(device_, instShadowPipeline_, nullptr); instShadowPipeline_ = VK_NULL_HANDLE; }
   if (translucentPipeline_) { vkDestroyPipeline(device_, translucentPipeline_, nullptr); translucentPipeline_ = VK_NULL_HANDLE; }

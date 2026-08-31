@@ -182,7 +182,7 @@ void OrbitCamera::setClipPlanes(float nearPlaneValue, float farPlaneValue) {
 }
 
 void OrbitCamera::orbit(float dxPix, float dyPix) {
-  const float k = 0.008f * orbitSensitivity_;
+  const float k = 0.008f * 0.65f * navigationScale_ * orbitSensitivity_;
   if (!std::isfinite(dxPix) || !std::isfinite(dyPix)) return;
 
   light3d::Vec3 viewFromTarget = eye() - target_;
@@ -231,7 +231,8 @@ void OrbitCamera::pan(float dxPix, float dyPix) {
   light3d::Vec3 fwd = light3d::normalize(target_ - eye());
   light3d::Vec3 right = light3d::normalize(light3d::cross(fwd, worldUp()));
   light3d::Vec3 up = light3d::cross(right, fwd);
-  const float scale = moveRefDistance() * 0.0015f * panSensitivity_;
+  const float scale = moveRefDistance() * 0.0015f * 0.65f * navigationScale_ *
+                      panSensitivity_;
   target_ = target_ - right * (dxPix * scale) + up * (dyPix * scale);
 }
 
@@ -240,7 +241,8 @@ void OrbitCamera::moveForward(float amount) {
   // Symmetric exponential response bounds a single large mouse delta while
   // retaining fine control for wheel notches/key repeats.
   const float magnitude =
-      1.0f - std::exp(-std::abs(amount) * 0.12f * dollySensitivity_);
+      1.0f - std::exp(-std::abs(amount) * 0.12f * 0.65f * navigationScale_ *
+                      dollySensitivity_);
   const float signedMagnitude = amount > 0.0f ? magnitude : -magnitude;
   const light3d::Vec3 forward = light3d::normalize(target_ - eye());
   target_ = target_ + forward * (moveRefDistance() * signedMagnitude);

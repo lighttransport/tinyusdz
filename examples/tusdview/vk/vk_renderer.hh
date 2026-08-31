@@ -95,6 +95,7 @@ class VulkanRenderer final : public Renderer {
   bool updatePtexFaceRect(int slot, uint32_t face,
                           const DrawPtexFaceRectCPU& rect) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
+  void uploadMeshAux(size_t meshIndex, const DrawMeshCPU& mesh) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
   bool updateMeshSkinningGpu(int meshIndex, const float* mats, int jointCount,
@@ -221,6 +222,9 @@ class VulkanRenderer final : public Renderer {
     bool hasMorph{false};
     VkBuffer ebo{VK_NULL_HANDLE};
     VkDeviceMemory eboMem{VK_NULL_HANDLE};
+    VkBuffer wireEbo{VK_NULL_HANDLE};
+    VkDeviceMemory wireEboMem{VK_NULL_HANDLE};
+    uint32_t wireIndexCount{0};
     std::vector<DrawSubmesh> submeshes;
     float world[16];
     float localCentroid[3]{0, 0, 0};  // mesh-space bbox center (translucency sort)
@@ -672,6 +676,7 @@ class VulkanRenderer final : public Renderer {
   // Pipeline
   VkPipelineLayout pipelineLayout_{VK_NULL_HANDLE};
   VkPipeline pipeline_{VK_NULL_HANDLE};
+  VkPipeline wirePipeline_{VK_NULL_HANDLE};
   VkPipeline shadowPipeline_{VK_NULL_HANDLE};
   // GPU tessellation displacement pipeline (shares pipelineLayout_; PATCH_LIST
   // topology + tesc/tese). Created only when the device supports the
@@ -1118,6 +1123,7 @@ class VulkanRenderer final : public Renderer {
   bool rtActive_{false};      // RT technique currently selected
   uint32_t rtMaxInstanceCount_{0};  // VK acceleration-structure limit
   int rtMode_{0};             // RenderMode (wireframe/matId/AOV) for RT + raster
+  int wireMode_{0};           // 0 shaded, 1 wire only, 2 wire over shaded
   float depthScale_{1.0f};    // depth-AOV normalizer (scene extent)
   bool displacement_{true};   // apply UsdPreviewSurface displacement (coarse)
   float displacementScale_{1.0f};  // global displacement multiplier
