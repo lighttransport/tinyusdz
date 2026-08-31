@@ -199,6 +199,7 @@ class App
   void setDevicePreference(const RendererDevicePreference& preference) {
     devicePreference_ = preference;
   }
+  void setTransparencyMode(TransparencyMode mode) { transparencyMode_ = mode; }
   void setSkinningMode(SkinningMode mode) { skinningRequested_ = mode; }
   void setPlayAnimation(bool on) { playRequested_ = on; }
 
@@ -526,6 +527,7 @@ class App
   Backend backend_;
   bool allowBackendFallback_{false};
   RendererDevicePreference devicePreference_;
+  TransparencyMode transparencyMode_{TransparencyMode::Auto};
   GLFWwindow* window_{nullptr};
   std::unique_ptr<Renderer> renderer_;
 

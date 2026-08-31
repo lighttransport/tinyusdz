@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "gpu_scene.hh"
 
@@ -15,8 +16,23 @@ uint64_t DrawMaterialRenderHash(const DrawMaterialCPU& material);
 bool DrawMaterialsRenderEquivalent(const DrawMaterialCPU& a,
                                    const DrawMaterialCPU& b);
 
-// Deduplicate a complete, non-streaming DrawScene and remap all live bindings.
-// Returns the number of removed material records.
+struct DrawMaterialTable {
+  // One entry per logical DrawScene::materials record.
+  std::vector<int> logicalToCanonical;
+  // Logical material id used as the payload source for each canonical entry.
+  std::vector<int> canonicalRepresentatives;
+};
+
+// Build an identity-preserving table for renderer-side resource sharing.
+DrawMaterialTable BuildDrawMaterialTable(
+    const std::vector<DrawMaterialCPU>& materials);
+
+// Refresh material optimization counters without changing materials or any
+// authored binding. Returns the number of shared logical payloads.
+size_t CanonicalizeDrawMaterials(DrawScene* scene);
+
+// Compatibility spelling. This no longer removes authored records; it returns
+// the number of logical records sharing canonical raster payloads.
 size_t DeduplicateDrawMaterials(DrawScene* scene);
 
 }  // namespace tusdview

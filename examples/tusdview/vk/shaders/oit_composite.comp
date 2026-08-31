@@ -1,0 +1,40 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, rgba8) uniform image2D opaqueColor;
+layout(set = 0, binding = 1, rgba16f) readonly uniform image2D accumulation;
+layout(set = 0, binding = 2, r16f) readonly uniform image2D revealage;
+
+vec3 srgbToLinear(vec3 c) {
+  bvec3 lo = lessThanEqual(c, vec3(0.04045));
+  vec3 low = c / 12.92;
+  vec3 high = pow((c + 0.055) / 1.055, vec3(2.4));
+  return mix(high, low, lo);
+}
+
+vec3 linearToSrgb(vec3 c) {
+  c = max(c, vec3(0.0));
+  bvec3 lo = lessThanEqual(c, vec3(0.0031308));
+  vec3 low = c * 12.92;
+  vec3 high = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+  return mix(high, low, lo);
+}
+
+void main() {
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 extent = imageSize(opaqueColor);
+  if (any(greaterThanEqual(pixel, extent))) return;
+
+  vec4 accum = imageLoad(accumulation, pixel);
+  float reveal = clamp(imageLoad(revealage, pixel).r, 0.0, 1.0);
+  float alpha = 1.0 - reveal;
+  if (alpha <= 1.0e-5 || accum.a <= 1.0e-5) return;
+
+  vec4 encodedOpaque = imageLoad(opaqueColor, pixel);
+  vec3 opaque = srgbToLinear(encodedOpaque.rgb);
+  vec3 transparent = accum.rgb / max(accum.a, 1.0e-5);
+  vec3 composed = transparent * alpha + opaque * reveal;
+  imageStore(opaqueColor, pixel,
+             vec4(linearToSrgb(composed),
+                  alpha + encodedOpaque.a * reveal));
+}

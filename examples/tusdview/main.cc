@@ -317,6 +317,9 @@ int main(int argc, char** argv) {
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
   tusdview::RendererDevicePreference devicePreference;
+  tusdview::TransparencyMode transparencyMode =
+      tusdview::TransparencyMode::Auto;
+  bool transparencyExplicit = false;
   bool vkDeviceExplicit = false;
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   std::string cudaCacheDir;   // --cuda-cache-dir: override compiled PTX cache
@@ -445,6 +448,32 @@ int main(int argc, char** argv) {
       vkDeviceExplicit = true;
       backend = tusdview::Backend::Vulkan;
       backendExplicit = true;
+    } if (std::strcmp(argv[i], "--transparency") == 0 && (i + 1) < argc) {
+      const char* mode = argv[++i];
+      if (std::strcmp(mode, "auto") == 0) {
+        transparencyMode = tusdview::TransparencyMode::Auto;
+      } else if (std::strcmp(mode, "weighted") == 0) {
+        transparencyMode = tusdview::TransparencyMode::Weighted;
+      } else if (std::strcmp(mode, "sorted") == 0) {
+        transparencyMode = tusdview::TransparencyMode::Sorted;
+      } else {
+        LOGE("--transparency must be auto, weighted, or sorted");
+        return 1;
+      }
+      transparencyExplicit = true;
+    } if (std::strncmp(argv[i], "--transparency=", 15) == 0) {
+      const char* mode = argv[i] + 15;
+      if (std::strcmp(mode, "auto") == 0) {
+        transparencyMode = tusdview::TransparencyMode::Auto;
+      } else if (std::strcmp(mode, "weighted") == 0) {
+        transparencyMode = tusdview::TransparencyMode::Weighted;
+      } else if (std::strcmp(mode, "sorted") == 0) {
+        transparencyMode = tusdview::TransparencyMode::Sorted;
+      } else {
+        LOGE("--transparency must be auto, weighted, or sorted");
+        return 1;
+      }
+      transparencyExplicit = true;
     } if (std::strcmp(argv[i], "--frames") == 0 && (i + 1) < argc) {
       maxFrames = std::atoi(argv[++i]);
     } if (std::strcmp(argv[i], "--size") == 0) {
@@ -1122,6 +1151,8 @@ int main(int argc, char** argv) {
           "Also available in config as vulkan_device.\n"
           "  --rt          Use Vulkan ray tracing (ray query) when supported "
           "(implies --backend vk).\n"
+          "  --transparency auto|weighted|sorted  Select Vulkan raster "
+          "transparency (default: auto).\n"
           "  --path-trace  Use the production multi-bounce integrator. Select "
           "Vulkan by default, or combine with --cuda/--hip.\n"
           "  --pt-quality interactive|final  Select 6-bounce interactive or "
@@ -1691,6 +1722,15 @@ int main(int argc, char** argv) {
       targetRenderFps = *config.config.targetRenderFps;
     if (config.config.minRenderScale && !minRenderScaleExplicit)
       minRenderScale = *config.config.minRenderScale;
+    if (config.config.transparency && !transparencyExplicit) {
+      if (*config.config.transparency == "weighted") {
+        transparencyMode = tusdview::TransparencyMode::Weighted;
+      } else if (*config.config.transparency == "sorted") {
+        transparencyMode = tusdview::TransparencyMode::Sorted;
+      } else {
+        transparencyMode = tusdview::TransparencyMode::Auto;
+      }
+    }
     if (config.config.materialXVulkanShaderMaxKiB &&
         !materialXVulkanShaderMaxExplicit) {
       materialXVulkanShaderMaxKiB = static_cast<size_t>(
@@ -1931,6 +1971,7 @@ int main(int argc, char** argv) {
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
   app.setDevicePreference(devicePreference);
+  app.setTransparencyMode(transparencyMode);
   app.setAllowBackendFallback(!backendExplicit && backend == tusdview::Backend::Vulkan);
   app.setSkinningMode(skinningMode);
   app.setPlayAnimation(playAnim);

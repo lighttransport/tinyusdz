@@ -3,6 +3,7 @@
 #include "scene_validation.hh"
 
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -46,16 +47,40 @@ int main() {
   Check(tusdview::DrawMaterialsRenderEquivalent(scene.materials[0],
                                                  scene.materials[1]),
         "names and paths must not prevent render-content deduplication");
-  Check(tusdview::DeduplicateDrawMaterials(&scene) == 1,
-        "duplicate material was not removed");
-  Check(scene.materials.size() == 1 &&
-            scene.meshes[0].submeshes[0].materialId == 0,
-        "material bindings were not remapped");
+  Check(tusdview::CanonicalizeDrawMaterials(&scene) == 1,
+        "duplicate material payload was not canonicalized");
+  const tusdview::DrawMaterialTable materialTable =
+      tusdview::BuildDrawMaterialTable(scene.materials);
+  Check(scene.materials.size() == 2 &&
+            scene.meshes[0].submeshes[0].materialId == 1 &&
+            materialTable.logicalToCanonical.size() == 2 &&
+            materialTable.logicalToCanonical[0] ==
+                materialTable.logicalToCanonical[1],
+        "canonicalization changed authored material identity");
 
   tusdview::DrawMaterialCPU distinct = scene.materials[0];
   distinct.roughness = 0.25f;
   Check(!tusdview::DrawMaterialsRenderEquivalent(scene.materials[0], distinct),
         "render-affecting material difference was deduplicated");
+
+  tusdview::DrawMaterialCPU heuristic = scene.materials[0];
+  heuristic.alphaMaskHeuristic = true;
+  Check(!tusdview::DrawMaterialsRenderEquivalent(scene.materials[0], heuristic),
+        "alpha classification heuristic was omitted from the render key");
+
+  tusdview::DrawMaterialCPU graphTexture = scene.materials[0];
+  graphTexture.materialXGraph.valid = true;
+  tusdview::MaterialXGraphNodeCPU imageNode;
+  imageNode.op = tusdview::MaterialXGraphOpCPU::Image;
+  imageNode.textureId = 7;
+  graphTexture.materialXGraph.nodes.push_back(imageNode);
+  Check(!tusdview::DrawMaterialsRenderEquivalent(scene.materials[0], graphTexture),
+        "MaterialX graph texture was omitted from the render key");
+
+  tusdview::DrawMaterialCPU nonFinite = scene.materials[0];
+  nonFinite.roughness = std::numeric_limits<float>::quiet_NaN();
+  Check(!tusdview::DrawMaterialsRenderEquivalent(nonFinite, nonFinite),
+        "non-finite material payload was shared");
 
   tusdview::DrawMeshCPU badIndex = Triangle(0);
   badIndex.indices[2] = 3;

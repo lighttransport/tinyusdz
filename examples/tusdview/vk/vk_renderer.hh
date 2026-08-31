@@ -41,6 +41,9 @@ class VulkanRenderer final : public Renderer {
   void setDevicePreference(const RendererDevicePreference& preference) override {
     devicePreference_ = preference;
   }
+  void setTransparencyMode(TransparencyMode mode) override {
+    transparencyMode_ = mode;
+  }
   bool init(GLFWwindow* window, std::string* err) override;
   void setHeadlessSize(int w, int h) override {
     if (w > 0) headlessW_ = w;
@@ -221,6 +224,7 @@ class VulkanRenderer final : public Renderer {
     std::vector<DrawSubmesh> submeshes;
     float world[16];
     float localCentroid[3]{0, 0, 0};  // mesh-space bbox center (translucency sort)
+    float instanceWorldCentroid[3]{0, 0, 0};
     // Ray tracing (built when RT is supported): a BLAS over this mesh's
     // triangles plus device addresses + counts for the shader.
     VkAccelerationStructureKHR blas{VK_NULL_HANDLE};
@@ -326,6 +330,8 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory instVtxColorMem{VK_NULL_HANDLE};
     uint32_t instanceCount{0};
     uint32_t drawInstanceCount{0};
+    uint32_t opaqueInstanceCount{0};
+    uint32_t translucentInstanceCount{0};
     struct PrototypeLodGPU {
       VkBuffer ebo{VK_NULL_HANDLE};
       VkDeviceMemory eboMem{VK_NULL_HANDLE};
@@ -376,6 +382,8 @@ class VulkanRenderer final : public Renderer {
   // its image count) is (re)created. Requires the device to be idle.
   bool createPerImageSync(std::string* err);
   bool createOffscreenRenderPass(std::string* err);
+  bool createOitRenderPass(std::string* err);
+  bool createOitCompositePipeline(std::string* err);
   bool createOverlayLoadPass(std::string* err);  // LOAD pass for overlays over RT
   struct NonMeshChunkUpload {
     VkBuffer buf{VK_NULL_HANDLE};
@@ -392,7 +400,8 @@ class VulkanRenderer final : public Renderer {
   bool createLinePipeline(std::string* err);
   bool createNativeCarrierPipeline(std::string* err);
   bool rebuildNativeCarrierBuffer(int curveSegments);
-  void drawNativeCarriers(VkCommandBuffer cb);
+  void drawNativeCarriers(VkCommandBuffer cb, VkPipeline pipeline,
+                          int transparencyClass = -1);
   void drawNativeCarrierShadows(VkCommandBuffer cb, bool point, int face);
   void destroyNativeCarrierResources();
   bool createSampler(std::string* err);
@@ -617,6 +626,8 @@ class VulkanRenderer final : public Renderer {
 
   // Offscreen target (3D scene)
   VkRenderPass offscreenPass_{VK_NULL_HANDLE};
+  VkRenderPass oitPass_{VK_NULL_HANDLE};
+  VkRenderPass oitOverlayPass_{VK_NULL_HANDLE};
   VkRenderPass shadowPass_{VK_NULL_HANDLE};
   VkRenderPass overlayLoadPass_{VK_NULL_HANDLE};  // draw overlays over the RT image
   VkImage colorImg_{VK_NULL_HANDLE};
@@ -625,6 +636,12 @@ class VulkanRenderer final : public Renderer {
   VkImage depthImg_{VK_NULL_HANDLE};
   VkDeviceMemory depthMem_{VK_NULL_HANDLE};
   VkImageView depthView_{VK_NULL_HANDLE};
+  VkImage oitAccumImg_{VK_NULL_HANDLE};
+  VkDeviceMemory oitAccumMem_{VK_NULL_HANDLE};
+  VkImageView oitAccumView_{VK_NULL_HANDLE};
+  VkImage oitRevealImg_{VK_NULL_HANDLE};
+  VkDeviceMemory oitRevealMem_{VK_NULL_HANDLE};
+  VkImageView oitRevealView_{VK_NULL_HANDLE};
   VkImage shadowColorImg_{VK_NULL_HANDLE}, shadowDepthImg_{VK_NULL_HANDLE};
   VkDeviceMemory shadowColorMem_{VK_NULL_HANDLE}, shadowDepthMem_{VK_NULL_HANDLE};
   VkImageView shadowColorView_{VK_NULL_HANDLE}, shadowDepthView_{VK_NULL_HANDLE};
@@ -637,6 +654,12 @@ class VulkanRenderer final : public Renderer {
   std::array<VkFramebuffer, 6> pointShadowFbs_{};
   RasterPointShadowCameras pointShadowCameras_;
   VkFramebuffer offscreenFb_{VK_NULL_HANDLE};
+  VkFramebuffer oitFb_{VK_NULL_HANDLE};
+  VkDescriptorSetLayout oitCompositeSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool oitCompositePool_{VK_NULL_HANDLE};
+  VkDescriptorSet oitCompositeSet_{VK_NULL_HANDLE};
+  VkPipelineLayout oitCompositeLayout_{VK_NULL_HANDLE};
+  VkPipeline oitCompositePipeline_{VK_NULL_HANDLE};
   VkSampler sampler_{VK_NULL_HANDLE};
   // Material samplers are keyed by DrawTextureCPU wrapS/wrapT (4x4). Scene
   // helpers keep using `sampler_`; material descriptors select from this cache.
@@ -655,6 +678,8 @@ class VulkanRenderer final : public Renderer {
   // tessellationShader feature; otherwise displaced meshes stay coarse.
   bool tessSupported_{false};
   bool samplerAnisotropySupported_{false};
+  bool weightedOitSupported_{false};
+  TransparencyMode transparencyMode_{TransparencyMode::Auto};
   float maxSamplerAnisotropy_{1.0f};
   // VK_EXT_extended_dynamic_state: per-draw cull mode, so single-sided meshes
   // back-face-cull like the GL backend. Optional; false = no culling (legacy).
@@ -667,12 +692,14 @@ class VulkanRenderer final : public Renderer {
   // Translucent (Blend-material) variant of the main mesh pipeline: premultiplied
   // "over" blend + depth-write-off. Drawn back-to-front after the opaque pass.
   VkPipeline translucentPipeline_{VK_NULL_HANDLE};
+  VkPipeline oitMeshPipeline_{VK_NULL_HANDLE};
   VkPipeline tessPipeline_{VK_NULL_HANDLE};
   VkShaderStageFlags pushStages_{VK_SHADER_STAGE_VERTEX_BIT |
                                  VK_SHADER_STAGE_FRAGMENT_BIT};
   VkPipelineLayout instPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline instPipeline_{VK_NULL_HANDLE};
   VkPipeline instTranslucentPipeline_{VK_NULL_HANDLE};
+  VkPipeline oitInstPipeline_{VK_NULL_HANDLE};
   VkPipeline instShadowPipeline_{VK_NULL_HANDLE};
 
   // Unlit line pipeline for debug helpers (grid/axes/bbox). Per-frame host
@@ -715,8 +742,10 @@ class VulkanRenderer final : public Renderer {
     int purpose{0};
     uint32_t lightMask{0xffffffffu};
     uint32_t shadowMask{0xffffffffu};
+    bool translucent{false};
   };
   VkPipeline nativeCarrierPipeline_{VK_NULL_HANDLE};
+  VkPipeline oitNativeCarrierPipeline_{VK_NULL_HANDLE};
   VkPipeline nativeCarrierShadowPipeline_{VK_NULL_HANDLE};
   VkBuffer nativeCarrierBuf_{VK_NULL_HANDLE};
   VkDeviceMemory nativeCarrierMem_{VK_NULL_HANDLE};
@@ -752,6 +781,7 @@ class VulkanRenderer final : public Renderer {
   void recordVolumePass(VkCommandBuffer cb, VkPipeline pipe);
   VkPipelineLayout volumeLayout_{VK_NULL_HANDLE};
   VkPipeline volumePipeline_{VK_NULL_HANDLE};
+  VkPipeline oitVolumePipeline_{VK_NULL_HANDLE};
   VkPipeline volumePipelineNoDepth_{VK_NULL_HANDLE};  // RT overlay (no depth)
   VkDescriptorSetLayout volumeSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool volumePool_{VK_NULL_HANDLE};
@@ -774,6 +804,9 @@ class VulkanRenderer final : public Renderer {
   std::vector<HelperVertex> highlightLineCopy_;
   bool highlightXray_{false};
   std::vector<uint8_t> meshVisible_;  // per-mesh visibility mask (raster), copied in renderFrame
+  // Reused each frame; avoids allocating the alpha-pass mesh order vector in
+  // the render loop. Camera-dependent sorted fallback only permutes it.
+  std::vector<size_t> rasterMeshOrder_;
   std::vector<uint8_t> rtMeshVisible_;  // persistent user hide/isolate mask for TLAS
 
   // Textures (base color). One combined-image-sampler descriptor per texture,
@@ -785,6 +818,10 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSetLayout materialSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool materialPool_{VK_NULL_HANDLE};
   std::vector<VkDescriptorSet> materialSets_;
+  // Raster resources are canonicalized independently of RT materials. Logical
+  // ids remain stable in DrawScene and RT tables; raster draws translate here.
+  std::vector<int> rasterLogicalToCanonical_;
+  std::vector<int> rasterCanonicalRepresentatives_;
   std::unordered_map<std::string, VkDescriptorSet> materialSetCache_;
   VkDescriptorSetLayout deformSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool deformPool_{VK_NULL_HANDLE};

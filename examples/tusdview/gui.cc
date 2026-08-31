@@ -443,6 +443,9 @@ void Gui::drawAboutModal() {
   ImGui::Text("Ray tracing: %s%s",
               (caps && caps->supportsRayTracing) ? "available" : "unavailable",
               (renderer_ && renderer_->rayTracingActive()) ? ", active" : "");
+  ImGui::Text("Weighted OIT: %s",
+              (caps && caps->supportsWeightedOit) ? "available"
+                                                  : "sorted fallback");
   ImGui::Separator();
   ImGui::Text("CPU: %s", cpuInfo.c_str());
   ImGui::Text("OS: %s", OperatingSystemString());

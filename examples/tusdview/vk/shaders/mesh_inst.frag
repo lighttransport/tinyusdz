@@ -47,7 +47,13 @@ layout(set = 2, binding = 0) uniform Frame {
 } fr;
 layout(push_constant) uniform InstPushC { ivec4 draw; } pc;  // .x = baseDraw (unused here)
 
+#ifdef TUSDVIEW_OIT
+layout(location = 0) out vec4 outAccum;
+layout(location = 1) out float outReveal;
+vec4 outColor;
+#else
 layout(location = 0) out vec4 outColor;
+#endif
 
 vec3 idColor(int id) {
   if (id < 0) return vec3(0.45);
@@ -91,7 +97,7 @@ vec3 kindColor(int k) {
   return vec3(0.35);
 }
 
-void main() {
+void shadeFragment() {
   vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
   // Face the geometric normal toward the camera (winding-independent). Using the
   // view vector instead of gl_FrontFacing avoids the VK Y-flipped-viewport
@@ -242,5 +248,25 @@ void main() {
     direct = (diff + spec) * lightColor * nl;
   }
   vec3 col = ambient + direct;
-  outColor = vec4(linearToSrgb(col * exp2(fr.iblParams.y)), vOpacity);  // no selection emissive here
+  vec3 display = col * exp2(fr.iblParams.y);
+#ifndef TUSDVIEW_OIT
+  display = linearToSrgb(display);
+#endif
+  outColor = vec4(display, vOpacity);  // no selection emissive here
 }
+
+#ifdef TUSDVIEW_OIT
+void main() {
+  shadeFragment();
+  float alpha = clamp(outColor.a, 0.0, 1.0);
+  if (alpha <= 1.0e-4) discard;
+  float weight = clamp(
+      pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1.0e8 *
+          pow(1.0 - gl_FragCoord.z * 0.9, 3.0),
+      1.0e-2, 3.0e3);
+  outAccum = vec4(outColor.rgb * alpha, alpha) * weight;
+  outReveal = alpha;
+}
+#else
+void main() { shadeFragment(); }
+#endif

@@ -121,7 +121,7 @@ void main() {
   vec2 dsb = pc.ids.x >= 0 ? mtp.p[mid].scalar1.zw : vec2(1.0, 0.0);
   float dispRow = mtp.p[mid].semanticUdimSlots2.y;
   float disp = 0.0;
-  if (pc.emissive.w > 0.5) {
+  if ((floatBitsToUint(pc.emissive.w) & 1u) != 0u) {
     float height = dispRow >= 0.0
         ? sampleDisplacement(duv, dispRow).r
         : textureLod(uDisplacementTex, duv, 0.0).r;

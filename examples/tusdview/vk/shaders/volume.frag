@@ -6,7 +6,12 @@
 // ONE_MINUS_SRC_ALPHA).
 
 layout(location = 0) in vec3 vWorld;
+#ifdef TUSDVIEW_OIT
+layout(location = 0) out vec4 outAccum;
+layout(location = 1) out float outReveal;
+#else
 layout(location = 0) out vec4 fragColor;
+#endif
 
 layout(set = 0, binding = 0, std140) uniform VolumeUBO {
   mat4 vp;
@@ -91,5 +96,15 @@ void main() {
   }
   float alpha = 1.0 - T;
   if (alpha <= 0.001) discard;
+#ifdef TUSDVIEW_OIT
+  vec3 color = L / max(alpha, 1.0e-5);
+  float weight = clamp(
+      pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1.0e8 *
+          pow(1.0 - gl_FragCoord.z * 0.9, 3.0),
+      1.0e-2, 3.0e3);
+  outAccum = vec4(color * alpha, alpha) * weight;
+  outReveal = alpha;
+#else
   fragColor = vec4(L, alpha);  // premultiplied
+#endif
 }

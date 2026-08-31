@@ -506,6 +506,11 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
     report["backend"]["api"] = caps.api_info;
     report["backend"]["device_type"] =
         (cudaRt_ || hipRt_) ? "gpu" : caps.device_type;
+    report["backend"]["weighted_oit"] = caps.supportsWeightedOit;
+    report["backend"]["weighted_oit_active"] = caps.usesWeightedOit;
+    report["backend"]["transparency"] = caps.transparencyMode;
+    report["backend"]["oit_attachment_bytes"] = caps.oitAttachmentBytes;
+    report["backend"]["oit_draw_calls"] = caps.oitDrawCalls;
   }
   uint64_t residentTextureBytes = 0;
   uint64_t residentTextureSlots = 0;
@@ -609,6 +614,7 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"materials", draw_.materials.size()},
       {"source_materials", draw_.optimization.sourceMaterials},
       {"unique_materials", draw_.optimization.uniqueMaterials},
+      {"canonical_materials", draw_.optimization.canonicalMaterials},
       {"deduplicated_materials",
        draw_.optimization.deduplicatedMaterials},
       {"textures", draw_.textures.size()},
@@ -4956,6 +4962,7 @@ bool App::createAndInitRenderer(Backend backend, std::string* err) {
   }
   ++rendererGeneration_;
   renderer_->setDevicePreference(devicePreference_);
+  renderer_->setTransparencyMode(transparencyMode_);
   renderer_->setMaterialXVulkanShaderLimits(
       materialXVulkanShaderMaxSourceBytes_,
       materialXVulkanCompileTimeoutSec_);
@@ -6184,6 +6191,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     }
     ++rendererGeneration_;
     renderer_->setDevicePreference(devicePreference_);
+    renderer_->setTransparencyMode(transparencyMode_);
     renderer_->setMaterialXVulkanShaderLimits(
         materialXVulkanShaderMaxSourceBytes_,
         materialXVulkanCompileTimeoutSec_);

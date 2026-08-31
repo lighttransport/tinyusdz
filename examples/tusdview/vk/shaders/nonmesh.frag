@@ -42,7 +42,13 @@ layout(push_constant) uniform Push {
   vec4 shadowEye;
 } pc;
 
+#ifdef TUSDVIEW_OIT
+layout(location = 0) out vec4 outAccum;
+layout(location = 1) out float outReveal;
+vec4 fragColor;
+#else
 layout(location = 0) out vec4 fragColor;
+#endif
 
 vec3 idColor(int id) {
   uint h = (uint(max(id, 0)) + 1u) * 2654435761u;
@@ -87,7 +93,7 @@ float hairLobe(vec3 T, vec3 V, vec3 L, float shift, float width) {
   return pow(longitudinal, max(2.0, 2.0 / max(width * width, 1e-3)));
 }
 
-void main() {
+void shadeFragment() {
   vec3 N;
   float edgeCoverage = 1.0;
   if (pc.ids.x == 0 || pc.ids.x == 2) {
@@ -245,6 +251,26 @@ void main() {
   float ambientWeight = pc.ids.x == 1 ? 0.35 : 0.20;
   vec3 col = vColor.rgb * ambientWeight + direct;
   float alpha = clamp(vColor.a * edgeCoverage, 0.0, 1.0);
-  vec3 display = linearToSrgb(col * exp2(fr.camPos.w));
-  fragColor = vec4(display * alpha, alpha);
+  vec3 display = col * exp2(fr.camPos.w);
+#ifndef TUSDVIEW_OIT
+  display = linearToSrgb(display);
+  display *= alpha;
+#endif
+  fragColor = vec4(display, alpha);
 }
+
+#ifdef TUSDVIEW_OIT
+void main() {
+  shadeFragment();
+  float alpha = clamp(fragColor.a, 0.0, 1.0);
+  if (alpha <= 1.0e-4) discard;
+  float weight = clamp(
+      pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1.0e8 *
+          pow(1.0 - gl_FragCoord.z * 0.9, 3.0),
+      1.0e-2, 3.0e3);
+  outAccum = vec4(fragColor.rgb * alpha, alpha) * weight;
+  outReveal = alpha;
+}
+#else
+void main() { shadeFragment(); }
+#endif

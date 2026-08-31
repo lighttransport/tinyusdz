@@ -1084,6 +1084,10 @@ struct DrawScene {
   struct OptimizationStats {
     size_t sourceMaterials{0};
     size_t uniqueMaterials{0};
+    // Number of distinct raster payloads after identity-preserving
+    // canonicalization. `materials` itself retains every logical authored
+    // material so picking, diagnostics and live edits keep stable ids.
+    size_t canonicalMaterials{0};
     size_t deduplicatedMaterials{0};
   } optimization;
   std::vector<DrawMeshCPU> meshes;

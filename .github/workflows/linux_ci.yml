@@ -223,7 +223,7 @@ jobs:
           --target tusdview_camera_nav_test
     - name: tests
       run: |
-        cd build_tusdview && ctest --output-on-failure -R "tusdview_lighting|tusdview_lightrt_bridge|tusdview_openpbr|tusdview_texture_pipeline|tusdview_lightrt_mtlx|tusdview_geometry|tusdview_camera_nav"
+        cd build_tusdview && ctest --output-on-failure -R "tusdview_lighting|tusdview_lightrt_bridge|tusdview_openpbr|tusdview_texture_pipeline|tusdview_lightrt_mtlx|tusdview_geometry|tusdview_camera_nav|tusdview-vk-oit-validation"
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
   # The default build and the rest of CI do NOT compile src/next/ — it is gated

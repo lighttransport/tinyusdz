@@ -172,12 +172,22 @@ layout(push_constant) uniform PushConstants {
   ivec4 ids;        // .x matId, .y flags, .z meshId
 } pc;
 
+#ifdef TUSDVIEW_OIT
+layout(location = 0) out vec4 outAccum;
+layout(location = 1) out float outReveal;
+vec4 outColor;
+#else
 layout(location = 0) out vec4 outColor;
+#endif
 
 vec3 idColor(int id) {
   if (id < 0) return vec3(0.45);
   uint h = (uint(id) + 1u) * 2654435761u;
   return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+int logicalMaterialId() {
+  return int(floatBitsToUint(pc.emissive.w) >> 1u) - 1;
 }
 
 // Linear -> sRGB OETF for the final shaded output. The scene is lit in linear
@@ -620,7 +630,7 @@ vec3 applyNormalMap(vec3 n) {
   return applyTangentNormal(n, sampleNormal(vUV).xyz, normalUv);
 }
 
-void main() {
+void shadeFragment() {
   // Shading normal, with the tangent-space normal map applied up front so the
   // Normals AOV (mode 2) shows the same perturbed normal the lit path uses --
   // matching the GL backend, which also maps before its AOV branch.
@@ -654,7 +664,10 @@ void main() {
     vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
     if (fr.mode.x == 2) { outColor = vec4(N * 0.5 + 0.5, 1.0); return; }
     if (fr.mode.x == 35) { outColor = vec4(coatN * 0.5 + 0.5, 1.0); return; }
-    if (fr.mode.x == 3) { outColor = vec4(idColor(pc.ids.x), 1.0); return; }
+    if (fr.mode.x == 3) {
+      outColor = vec4(idColor(logicalMaterialId()), 1.0);
+      return;
+    }
     if (fr.mode.x == 4) { outColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }
     if (fr.mode.x == 6) {
       float d = clamp(length(fr.camPos.xyz - vWorldPos) / max(fr.camPos.w, 1e-3), 0.0, 1.0);
@@ -1056,9 +1069,28 @@ void main() {
     ambient = base * 0.20;
   }
   ambient *= clamp(pbr.coatParams.w, 0.0, 1.0) * sampleOcclusion(vUV);
-  vec3 c = linearToSrgb((ambient + direct + emissive) * exp2(fr.iblParams.y));
+  vec3 c = (ambient + direct + emissive) * exp2(fr.iblParams.y);
+#ifndef TUSDVIEW_OIT
+  c = linearToSrgb(c);
   if (pc.matAux.z > 1.5 && opacity < 1.0) {
     c *= opacity;  // pipeline uses premultiplied alpha blending
   }
+#endif
   outColor = vec4(c, opacity);
 }
+
+#ifdef TUSDVIEW_OIT
+void main() {
+  shadeFragment();
+  float alpha = clamp(outColor.a, 0.0, 1.0);
+  if (alpha <= 1.0e-4) discard;
+  float weight = clamp(
+      pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1.0e8 *
+          pow(1.0 - gl_FragCoord.z * 0.9, 3.0),
+      1.0e-2, 3.0e3);
+  outAccum = vec4(outColor.rgb * alpha, alpha) * weight;
+  outReveal = alpha;
+}
+#else
+void main() { shadeFragment(); }
+#endif

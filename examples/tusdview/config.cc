@@ -211,6 +211,19 @@ bool ParseConfigFile(const fs::path& path, StartupConfig* cfg,
       }
       cfg->minRenderScale = value;
     }
+    if (const json* transparency =
+            FindMember(*render, {"transparency"})) {
+      if (!transparency->is_string()) {
+        *err = "render.transparency must be auto, weighted, or sorted";
+        return false;
+      }
+      const std::string value = transparency->get<std::string>();
+      if (value != "auto" && value != "weighted" && value != "sorted") {
+        *err = "render.transparency must be auto, weighted, or sorted";
+        return false;
+      }
+      cfg->transparency = value;
+    }
     if (const json* maxShader = FindMember(
             *render, {"materialx_vulkan_shader_max_kib",
                       "materialx-vulkan-shader-max-kib"})) {

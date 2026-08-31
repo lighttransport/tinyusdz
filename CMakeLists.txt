@@ -3673,6 +3673,21 @@ if(TINYUSDZ_BUILD_TESTS)
       )
     set_tests_properties(tusdview-transparency PROPERTIES SKIP_RETURN_CODE 77)
 
+    # Optional Khronos ValidationLayers smoke for the weighted-OIT command path.
+    # Local developers can build the layer with
+    # scripts/setup-vulkan-validation-linux.sh. CI may provide a distro package
+    # or prebuilt VK_LAYER_PATH; otherwise this test deliberately skips (77)
+    # rather than downloading/building ValidationLayers during the test job.
+    add_test(
+      NAME tusdview-vk-oit-validation
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-oit-validation.sh"
+      )
+    set_tests_properties(tusdview-vk-oit-validation PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 150)
+
     # The CPU tracer must own headless screenshots, including its bounded
     # stacked-alpha compositor, rather than silently capturing Vulkan raster.
     add_test(

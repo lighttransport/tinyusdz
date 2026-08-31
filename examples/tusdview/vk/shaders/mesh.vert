@@ -136,12 +136,14 @@ void main() {
                   dot(vec3(aUV, 1.0), mtp.p[mid].dispUv1.xyz));
   vec2 dsb = pc.ids.x >= 0 ? mtp.p[mid].scalar1.zw : vec2(1.0, 0.0);
   float dispRow = mtp.p[mid].semanticUdimSlots2.y;
-  // emissive.w is a per-draw displacement enable.  Do not rely on the black
+  // emissive.w bit 0 is a per-draw displacement enable; the remaining bits
+  // preserve the logical material id while ids.x addresses a canonical raster
+  // payload. Do not rely on the black
   // fallback descriptor here: every material descriptor contains binding 16,
   // and a stale/reused fallback image must never be able to deform an unrelated
   // mesh.  GL has always gated this sample with uHasDisplacement.
   float disp = 0.0;
-  if (pc.emissive.w > 0.5) {
+  if ((floatBitsToUint(pc.emissive.w) & 1u) != 0u) {
     float height = dispRow >= 0.0
         ? sampleDisplacement(duv, dispRow).r
         : textureLod(uDisplacementTex, duv, 0.0).r;

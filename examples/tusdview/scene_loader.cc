@@ -543,7 +543,7 @@ bool ConvertStageToScene(const std::string& path, double timecode,
     DeformSkinnedMeshes(out->stage, out->render, timecode);
     BuildDrawScene(out->render, draw, ctrl, &out->stage, textureOptions);
     ApplyMeshPurposes(out->stage, draw);
-    if (draw) DeduplicateDrawMaterials(draw);
+    if (draw) CanonicalizeDrawMaterials(draw);
     out->ok = true;
     return true;
   }
@@ -558,7 +558,7 @@ bool ConvertStageToScene(const std::string& path, double timecode,
   }
   if (draw) {
     ApplyMeshPurposes(out->stage, draw);
-    DeduplicateDrawMaterials(draw);
+    CanonicalizeDrawMaterials(draw);
   }
   out->ok = true;
   return true;
@@ -677,7 +677,7 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
   DeformSkinnedMeshes(src.stage, scratch, timecode, blendOverride);
   BuildDrawScene(scratch, draw, ctrl, &src.stage);
   ApplyMeshPurposes(src.stage, draw);
-  DeduplicateDrawMaterials(draw);
+  CanonicalizeDrawMaterials(draw);
   return true;
 }
 

@@ -6014,6 +6014,30 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   draw->optimization.uniqueMaterials = draw->materials.size();
   std::unordered_map<std::string, int> matIndexByPath;
   std::unordered_map<uint64_t, std::vector<int>> matIndexByContent;
+  std::vector<int> materialCanonicalIds;
+  auto canonicalMaterialId = [&](int materialId) -> int {
+    if (materialId < 0) return -1;
+    while (materialCanonicalIds.size() < draw->materials.size()) {
+      const int logical = static_cast<int>(materialCanonicalIds.size());
+      const DrawMaterialCPU& material =
+          draw->materials[static_cast<size_t>(logical)];
+      const uint64_t hash = DrawMaterialRenderHash(material);
+      int representative = logical;
+      auto& candidates = matIndexByContent[hash];
+      for (int candidate : candidates) {
+        if (DrawMaterialsRenderEquivalent(
+                material, draw->materials[static_cast<size_t>(candidate)])) {
+          representative = candidate;
+          break;
+        }
+      }
+      if (representative == logical) candidates.push_back(logical);
+      materialCanonicalIds.push_back(representative);
+    }
+    return static_cast<size_t>(materialId) < materialCanonicalIds.size()
+               ? materialCanonicalIds[static_cast<size_t>(materialId)]
+               : materialId;
+  };
   // Texture UV routing is mesh-dependent: a shared USD material can request
   // `perfuv`, while different bound meshes may extract that primvar into different
   // DrawVertex slots. Cache the converted GPU material by both its USD path and
@@ -6033,22 +6057,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                                 : -1;
     if (idx > 0 && static_cast<size_t>(idx) + 1 == draw->materials.size()) {
       ++draw->optimization.sourceMaterials;
-      const DrawMaterialCPU& built = draw->materials.back();
-      const uint64_t hash = DrawMaterialRenderHash(built);
-      auto& candidates = matIndexByContent[hash];
-      for (int candidate : candidates) {
-        if (candidate >= 0 && static_cast<size_t>(candidate) < draw->materials.size() &&
-            DrawMaterialsRenderEquivalent(
-                built, draw->materials[static_cast<size_t>(candidate)])) {
-          draw->materials.pop_back();
-          ++draw->optimization.deduplicatedMaterials;
-          idx = candidate;
-          break;
-        }
-      }
-      if (static_cast<size_t>(idx) == draw->materials.size() - 1) {
-        candidates.push_back(idx);
-      }
+      (void)canonicalMaterialId(idx);
     }
     draw->optimization.uniqueMaterials = draw->materials.size();
     if (idx < 0) idx = 0;
@@ -7154,6 +7163,22 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     int matId = 0;
     int backMatId = -1;
   };
+  auto appendLogicalSubmesh = [](Batch* batch, uint32_t indexOffset,
+                                 uint32_t indexCount, int materialId,
+                                 int backMaterialId) {
+    if (!batch || indexCount == 0) return;
+    if (!batch->dm.submeshes.empty()) {
+      DrawSubmesh& tail = batch->dm.submeshes.back();
+      if (tail.materialId == materialId &&
+          tail.backfaceMaterialId == backMaterialId &&
+          tail.indexOffset + tail.indexCount == indexOffset) {
+        tail.indexCount += indexCount;
+        return;
+      }
+    }
+    batch->dm.submeshes.push_back(
+        DrawSubmesh{indexOffset, indexCount, materialId, backMaterialId});
+  };
   // key = (purpose, geometricNormal, doubleSided, front/back material, morphId)
   // -> current
   // batch. Keying by material keeps per-material draws distinct so each batch can
@@ -7486,9 +7511,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         }
       }
     }
-    b.dm.submeshes.push_back(
-        DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId,
-                    b.backMatId});
+    if (b.dm.submeshes.empty()) {
+      b.dm.submeshes.push_back(
+          DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId,
+                      b.backMatId});
+    }
     if (!b.animatedWorld) {
       std::memset(b.dm.world, 0, sizeof(b.dm.world));
       b.dm.world[0] = b.dm.world[5] = b.dm.world[10] = b.dm.world[15] = 1.0f;
@@ -8456,15 +8483,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           morphBatchId != 0
               ? morphBatchId
               : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
-      Batch& b = getBatch({purpose, loc.geometricNormal, m.double_sided, wholeMat,
-                           wholeBackMat, batchIsolationId, lightLinkBatchId,
-                           animatedWorldBatchId});
-      b.matId = wholeMat;
-      b.backMatId = wholeBackMat;
+      Batch& b = getBatch({purpose, loc.geometricNormal, m.double_sided,
+                           canonicalMaterialId(wholeMat),
+                           canonicalMaterialId(wholeBackMat), batchIsolationId,
+                           lightLinkBatchId, animatedWorldBatchId});
       if (!b.dm.vertices.empty() &&
           b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
         flushBatch(b);  // resets b in the map slot
       }
+      b.matId = wholeMat;
+      b.backMatId = wholeBackMat;
       if (hasGeomProps && b.dm.vertices.empty())
         b.dm.geomProps = loc.geomProps;
       b.dm.purpose = purpose;
@@ -8548,7 +8576,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           }
         }
       }
+      const uint32_t logicalIndexOffset =
+          static_cast<uint32_t>(b.dm.indices.size());
       for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
+      appendLogicalSubmesh(
+          &b, logicalIndexOffset,
+          static_cast<uint32_t>(b.dm.indices.size()) - logicalIndexOffset,
+          wholeMat, wholeBackMat);
       const uint32_t faceBase = needsPtex ? 0u : b.nextFaceId;
       for (uint32_t face : loc.sourceFaceId)
         b.dm.sourceFaceId.push_back(faceBase + face);
@@ -8568,15 +8602,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             morphBatchId != 0
                 ? morphBatchId
                 : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
-        Batch& b = getBatch({purpose, loc.geometricNormal, m.double_sided, gm.first,
-                             gm.second, batchIsolationId, lightLinkBatchId,
-                             animatedWorldBatchId});
-        b.matId = gm.first;
-        b.backMatId = gm.second;
+        Batch& b = getBatch({purpose, loc.geometricNormal, m.double_sided,
+                             canonicalMaterialId(gm.first),
+                             canonicalMaterialId(gm.second), batchIsolationId,
+                             lightLinkBatchId, animatedWorldBatchId});
         if (!b.dm.vertices.empty() &&
             b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
           flushBatch(b);
         }
+        b.matId = gm.first;
+        b.backMatId = gm.second;
         b.dm.purpose = purpose;
         b.dm.geometricNormal = loc.geometricNormal;
         b.dm.doubleSided = m.double_sided;
@@ -8652,6 +8687,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           }
           return static_cast<uint32_t>(remap[vi]);
         };
+        const uint32_t logicalIndexOffset =
+            static_cast<uint32_t>(b.dm.indices.size());
         for (size_t t = 0; t < numTris; ++t) {
           if (triMat[t] != gm) continue;
           b.dm.indices.push_back(vtx(loc.indices[3 * t + 0]));
@@ -8662,6 +8699,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                               ? loc.sourceFaceId[t]
                               : static_cast<uint32_t>(t)));
         }
+        appendLogicalSubmesh(
+            &b, logicalIndexOffset,
+            static_cast<uint32_t>(b.dm.indices.size()) - logicalIndexOffset,
+            gm.first, gm.second);
         // Attach the mesh's wireframe once (to the first group's batch, mapped
         // through vtx so its vertices exist there) -- avoids cross-batch dupes.
         if (firstGroup) {
@@ -9072,9 +9113,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 static_cast<long long>(draw->textures.size()));
   }
   BakeRTDisplacement(draw);
-  draw->optimization.uniqueMaterials = draw->materials.size();
-  draw->optimization.sourceMaterials =
-      draw->materials.size() + draw->optimization.deduplicatedMaterials;
+  CanonicalizeDrawMaterials(draw);
   publishAvailableTextures();
   if (!streamOk) {
     if (err) *err = "next: progressive load cancelled";

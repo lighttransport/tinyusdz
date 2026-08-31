@@ -1357,6 +1357,26 @@ enables GPU-Assisted Validation (set `VK_LAYER_SETTINGS_PATH` to it).
 
 ### Linux (build from source)
 
+For an idempotent local developer setup, run the repository helper. It selects
+the Vulkan SDK tag from `pkg-config vulkan` (override with `VVL_TAG` or
+`VVL_VERSION`), fetches dependencies, installs under the ignored
+`build_vulkan_validation/` directory, and writes an activation script:
+
+```sh
+./scripts/setup-vulkan-validation-linux.sh
+source build_vulkan_validation/activate-vulkan-validation.sh
+ctest --test-dir build_ninja -R tusdview-vk-oit-validation --output-on-failure
+# Optional GPU-assisted descriptor/OOB instrumentation:
+TUSDVIEW_VK_GPU_ASSISTED=1 \
+  ctest --test-dir build_ninja -R tusdview-vk-oit-validation --output-on-failure
+```
+
+This setup is optional and Linux-only for now. CI should use a distribution
+package or cached/prebuilt ValidationLayers artifact when one is already
+available. The registered validation tests return skip code 77 when neither a
+package nor a prebuilt layer manifest exists; CI must not build ValidationLayers
+from source as part of an ordinary test run.
+
 Run tusdview under it by pointing the loader at the built layer directory:
 
 ```sh

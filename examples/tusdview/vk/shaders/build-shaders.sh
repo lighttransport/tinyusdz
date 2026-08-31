@@ -50,6 +50,19 @@ for sh in mesh.vert mesh.frag shadow.frag mesh_tess.vert mesh_tess.tesc mesh_tes
   "$GLSLANG" -V --vn "${sym}_spv" -o "$OUT/${sym}.spv.h" "$HERE/$sh"
 done
 
+echo "==> mesh.frag (weighted OIT) -> embedded/mesh_oit_frag.spv.h"
+"$GLSLANG" -V -DTUSDVIEW_OIT=1 --vn mesh_oit_frag_spv \
+  -o "$OUT/mesh_oit_frag.spv.h" "$HERE/mesh.frag"
+for sh in mesh_inst.frag nonmesh.frag volume.frag; do
+  sym="${sh/./_}"
+  echo "==> $sh (weighted OIT) -> embedded/${sym}_oit.spv.h"
+  "$GLSLANG" -V -DTUSDVIEW_OIT=1 --vn "${sym}_oit_spv" \
+    -o "$OUT/${sym}_oit.spv.h" "$HERE/$sh"
+done
+echo "==> oit_composite.comp -> embedded/oit_composite_comp.spv.h"
+"$GLSLANG" -V --vn oit_composite_comp_spv \
+  -o "$OUT/oit_composite_comp.spv.h" "$HERE/oit_composite.comp"
+
 # --- ray-query compute shader (optional) -----------------------------------
 # Needs a glslang new enough for GL_EXT_ray_query (SPIR-V 1.4 / vulkan1.2).
 # If this glslang can't compile it, drop the header so the build compiles the

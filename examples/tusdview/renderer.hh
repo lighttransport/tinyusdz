@@ -29,6 +29,7 @@ struct ImDrawData;
 namespace tusdview {
 
 enum class Backend { GL, Vulkan };
+enum class TransparencyMode { Auto, Weighted, Sorted };
 
 // Return the logical dimensions addressed by a streamed texture-region update
 // at mipLevel. Keeping this calculation in the renderer ABI makes the Vulkan
@@ -194,6 +195,11 @@ struct RendererCaps {
   bool supportsRayTracing{false};  // device has the RT extensions (Vulkan only)
   bool supportsGpuSkinning{false};
   bool supportsExtendedGpuSkinning{false};  // texture-backed >4 influences
+  bool supportsWeightedOit{false};  // independent blending + FP OIT attachments
+  bool usesWeightedOit{false};
+  std::string transparencyMode{"sorted"};
+  uint64_t oitAttachmentBytes{0};
+  uint64_t oitDrawCalls{0};
 
   // GPU compressed-texture format support (queried at init). Used to cap-gate
   // the `--texture-compress` mode: a requested format the device can't sample is
@@ -317,6 +323,7 @@ class Renderer {
 
   virtual void setDevicePreference(
       const RendererDevicePreference& /*preference*/) {}
+  virtual void setTransparencyMode(TransparencyMode /*mode*/) {}
 
   // Resize the headless composite at runtime (recreate the offscreen swap images
   // + framebuffers). Returns false if unsupported / not headless. The caller must

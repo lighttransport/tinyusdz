@@ -24,6 +24,7 @@ struct StartupConfig {
   std::optional<bool> adaptiveQuality;
   std::optional<float> targetRenderFps;
   std::optional<float> minRenderScale;
+  std::optional<std::string> transparency;  // auto | weighted | sorted
   // Limits for runtime MaterialX Vulkan shader compilation. The source-size
   // guard is measured in KiB and the compiler deadline in seconds.
   std::optional<int> materialXVulkanShaderMaxKiB;
