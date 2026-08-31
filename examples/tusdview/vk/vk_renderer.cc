@@ -13445,6 +13445,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   caps_.pipelineBinds = 0;
   caps_.descriptorSetBinds = 0;
   caps_.oitDrawCalls = 0;
+  caps_.usesWeightedOit = false;
   const BindCounterScope bindCounterScope(&caps_.pipelineBinds,
                                           &caps_.descriptorSetBinds);
   if (!device_) return;
@@ -14275,6 +14276,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         transparencyMode_ != TransparencyMode::Sorted &&
         weightedOitSupported_ && oitFb_ && oitMeshPipeline_ &&
         oitCompositePipeline_ && oitCompositeSet_ && rtMode_ == 0;
+    caps_.usesWeightedOit = useWeightedOit;
     drawMeshPass(/*apass=*/0, pipeline_);
     if (!useWeightedOit && translucentPipeline_ != VK_NULL_HANDLE &&
         rtMode_ == 0) {
