@@ -13444,6 +13444,7 @@ void VulkanRenderer::presentThreaded(ImDrawData* drawData, int fbW, int fbH) {
 void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   caps_.pipelineBinds = 0;
   caps_.descriptorSetBinds = 0;
+  caps_.oitDrawCalls = 0;
   const BindCounterScope bindCounterScope(&caps_.pipelineBinds,
                                           &caps_.descriptorSetBinds);
   if (!device_) return;
