@@ -49,7 +49,41 @@ Gaussians, and volumes without changing ray-tracing behavior.
   downloading or compiling the layer.
 - Completed: per-frame OIT draw-call and attachment-memory counters in render
   reports.
-- In progress: descriptor/pipeline bind counters and the performance matrix.
+- Fixed and verified: Vulkan's unlit/ambient fallback now matches the OpenGL
+  material shader (`baseColor * 0.12`) when no direct light contributes. This
+  restores the multi-light backend-parity fixture without changing weighted
+  transparency behavior. The GL/Vulkan parity, opacity-material,
+  transparency, Vulkan render, stacked-glass, shadow-alpha-instance,
+  double-sided, plain validation, and GPU-assisted validation checks pass.
+- Hardened: the full backend-parity test timeout is 180 seconds so software or
+  cold-start CI runs are not killed by the previous 60-second harness limit.
+- Completed: exact per-present-frame Vulkan pipeline and descriptor-set bind
+  counters cover raster, shadow, OIT, compute, native-carrier, volume, RT, and
+  overlay command recording and are exposed in render reports. Transparency
+  regression coverage requires both counters to be present and nonzero.
+- Completed: a reproducible synthetic material/OIT performance matrix preserves
+  32 authored material identities plus the fallback while collapsing them to
+  three canonical raster payloads. The benchmark enforces deduplication, bind
+  observability, weighted OIT draws, and zero sorted-mode OIT allocation/work.
+
+### Synthetic Vulkan Performance Matrix
+
+Run `examples/tusdview/tests/run-vk-material-oit-benchmark.sh`. The defaults use
+32 authored materials, eight frames, and a 512x512 viewport; `MATERIALS`,
+`FRAMES`, `SIZE`, and `TUSDVIEW` are overridable. On PRIME systems, use the
+NVIDIA offload environment documented in `doc/tusdview.md`, or select another
+available Vulkan device through the normal viewer environment/configuration.
+
+The initial NVIDIA hardware run at 256x256 and four frames produced:
+
+| Mode | Logical | Canonical | Deduplicated | Pipeline binds | Descriptor binds | OIT draws | OIT bytes | Elapsed seconds |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| weighted | 33 | 3 | 30 | 5 | 14 | 16 | 655360 | 17.9832 |
+| sorted | 33 | 3 | 30 | 3 | 10 | 0 | 0 | 18.0715 |
+
+Elapsed time includes process, scene-conversion, pipeline-startup, and frame
+time, so it is informational rather than a pass threshold. Structural metrics
+are asserted exactly and are suitable for regression testing across machines.
 
 ## Transparency
 

@@ -1063,10 +1063,10 @@ void shadeFragment() {
     ambient = (baseIbl * (1.0 - coatWeight * coatF0) + coatIbl) *
               fr.iblColor.rgb;
   } else {
-    // Match the neutral fill supplied by Storm's default material-lighting
-    // environment when the stage has no authored DomeLight. The old 12% floor
-    // left correctly gamma-encoded midtones looking nearly black.
-    ambient = base * 0.20;
+    // Match the full OpenGL material shader's no-IBL preview floor. Keeping
+    // this backend-neutral is especially important for light-linked meshes:
+    // channels excluded from a light expose the ambient term directly.
+    ambient = base * 0.12;
   }
   ambient *= clamp(pbr.coatParams.w, 0.0, 1.0) * sampleOcclusion(vUV);
   vec3 c = (ambient + direct + emissive) * exp2(fr.iblParams.y);

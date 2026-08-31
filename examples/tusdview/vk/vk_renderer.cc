@@ -77,6 +77,56 @@ namespace tusdview {
 
 namespace {
 
+// Count Vulkan state submissions made while recording a presentation frame.
+// Thread-local sinks keep multiple viewer/render threads independent, while
+// calls made during resource setup remain uncounted. Keeping the interception
+// here also covers the mesh, instance, carrier, volume, shadow, RT, and overlay
+// recording helpers without duplicating counter plumbing through each helper.
+thread_local uint64_t* gPipelineBindCounter = nullptr;
+thread_local uint64_t* gDescriptorSetBindCounter = nullptr;
+
+void CountedCmdBindPipeline(VkCommandBuffer commandBuffer,
+                            VkPipelineBindPoint pipelineBindPoint,
+                            VkPipeline pipeline) {
+  if (gPipelineBindCounter) ++*gPipelineBindCounter;
+  ::vkCmdBindPipeline(commandBuffer, pipelineBindPoint, pipeline);
+}
+
+void CountedCmdBindDescriptorSets(
+    VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint,
+    VkPipelineLayout layout, uint32_t firstSet, uint32_t descriptorSetCount,
+    const VkDescriptorSet* descriptorSets, uint32_t dynamicOffsetCount,
+    const uint32_t* dynamicOffsets) {
+  if (gDescriptorSetBindCounter) ++*gDescriptorSetBindCounter;
+  ::vkCmdBindDescriptorSets(commandBuffer, pipelineBindPoint, layout, firstSet,
+                            descriptorSetCount, descriptorSets,
+                            dynamicOffsetCount, dynamicOffsets);
+}
+
+class BindCounterScope {
+ public:
+  BindCounterScope(uint64_t* pipelineBinds, uint64_t* descriptorSetBinds)
+      : previousPipeline_(gPipelineBindCounter),
+        previousDescriptor_(gDescriptorSetBindCounter) {
+    gPipelineBindCounter = pipelineBinds;
+    gDescriptorSetBindCounter = descriptorSetBinds;
+  }
+  ~BindCounterScope() {
+    gPipelineBindCounter = previousPipeline_;
+    gDescriptorSetBindCounter = previousDescriptor_;
+  }
+
+  BindCounterScope(const BindCounterScope&) = delete;
+  BindCounterScope& operator=(const BindCounterScope&) = delete;
+
+ private:
+  uint64_t* previousPipeline_{nullptr};
+  uint64_t* previousDescriptor_{nullptr};
+};
+
+#define vkCmdBindPipeline CountedCmdBindPipeline
+#define vkCmdBindDescriptorSets CountedCmdBindDescriptorSets
+
 size_t CanonicalRasterMaterialIndex(const std::vector<int>& logicalToCanonical,
                                     int logicalId, size_t canonicalCount) {
   if (logicalId >= 0 &&
@@ -13389,6 +13439,10 @@ void VulkanRenderer::presentThreaded(ImDrawData* drawData, int fbW, int fbH) {
 #endif
 
 void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
+  caps_.pipelineBinds = 0;
+  caps_.descriptorSetBinds = 0;
+  const BindCounterScope bindCounterScope(&caps_.pipelineBinds,
+                                          &caps_.descriptorSetBinds);
   if (!device_) return;
   // Remember the main-thread framebuffer size so a swapchain recreate on the render
   // thread needs no glfwGetFramebufferSize. 0 on the single-threaded path.

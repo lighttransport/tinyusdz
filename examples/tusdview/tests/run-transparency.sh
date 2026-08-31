@@ -65,9 +65,13 @@ for spec in "gl:--backend gl" \
             "vk-sorted:--backend vk --transparency sorted"; do
   tag="${spec%%:*}"; args="${spec#*:}"
   img="$OUT/transp_$tag.ppm"
+  report_args=""
+  if [ "$tag" != "gl" ]; then
+    report_args="--render-report $OUT/$tag.json"
+  fi
   # shellcheck disable=SC2086
   $XVFB "$BIN" --headless $args --frames 2 --view-dir 0,0,-1 --size 256x256 \
-      --screenshot "$img" "$ASSET" >"$OUT/$tag.log" 2>&1
+      --screenshot "$img" $report_args "$ASSET" >"$OUT/$tag.log" 2>&1
   if ! grep -q 'render stats' "$OUT/$tag.log"; then
     echo "SKIP: $tag backend unavailable"; continue
   fi
@@ -79,6 +83,24 @@ for spec in "gl:--backend gl" \
     continue
   fi
   if [ ! -s "$img" ]; then echo "FAIL: $tag produced no image"; fail=1; continue; fi
+  if [ "$tag" != "gl" ]; then
+    if ! python3 - "$OUT/$tag.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    backend = json.load(f).get("backend", {})
+for name in ("pipeline_binds", "descriptor_set_binds"):
+    value = backend.get(name)
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise SystemExit(f"invalid backend.{name}: {value!r}")
+PY
+    then
+      echo "FAIL: $tag render report has invalid Vulkan bind counters"
+      fail=1
+      continue
+    fi
+  fi
   read -r R G B < <(center_rgb "$img") || { echo "FAIL: $tag PPM parse"; fail=1; continue; }
   echo "$tag center RGB = $R $G $B"
   # Blended overlap must carry red, green and blue contributions. Opaque-blue

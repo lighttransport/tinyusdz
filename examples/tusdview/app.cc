@@ -511,6 +511,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
     report["backend"]["transparency"] = caps.transparencyMode;
     report["backend"]["oit_attachment_bytes"] = caps.oitAttachmentBytes;
     report["backend"]["oit_draw_calls"] = caps.oitDrawCalls;
+    report["backend"]["pipeline_binds"] = caps.pipelineBinds;
+    report["backend"]["descriptor_set_binds"] = caps.descriptorSetBinds;
   }
   uint64_t residentTextureBytes = 0;
   uint64_t residentTextureSlots = 0;

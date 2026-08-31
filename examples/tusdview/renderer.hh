@@ -200,6 +200,8 @@ struct RendererCaps {
   std::string transparencyMode{"sorted"};
   uint64_t oitAttachmentBytes{0};
   uint64_t oitDrawCalls{0};
+  uint64_t pipelineBinds{0};
+  uint64_t descriptorSetBinds{0};
 
   // GPU compressed-texture format support (queried at init). Used to cap-gate
   // the `--texture-compress` mode: a requested format the device can't sample is
