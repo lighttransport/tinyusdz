@@ -375,6 +375,8 @@ class App
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;
   void openFileDialog();
+  void openDomeFileDialog();
+  void applyDomeLightRequest(const Gui::DomeLightRequest& request);
   void writeRenderReport(const std::string& scenePath, int exitCode) const;
 
   // Synchronous load (used for headless --frames runs so screenshots are
@@ -533,6 +535,11 @@ class App
 
   LoadedScene loaded_;
   DrawScene draw_;
+  std::vector<DrawLightCPU> authoredLights_;
+  DrawLightCPU runtimeDomeBase_;
+  bool runtimeDomeValid_{false};
+  std::string runtimeDomeKey_;
+  std::string droppedEnvmapPath_;
   LoadOptions loadOpts_;
   double uploadBudgetMs_{8.0};
   bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview

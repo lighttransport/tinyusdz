@@ -62,6 +62,7 @@ set(TUSDVIEW_SOURCES
     next_scene_loader.cc
     preview_cache.cc
     texture_residency_policy.cc
+    dome_light.cc
     mesh_build.cc
     gpu_budget_lod.cc
     rt_lod.cc
@@ -355,6 +356,7 @@ if(TINYUSDZ_BUILD_TESTS)
 
   add_executable(tusdview_lighting_test
       tests/lighting_test.cc
+      dome_light.cc
       lighting_ies.cc
       mesh_build.cc
       texture_tools.cc

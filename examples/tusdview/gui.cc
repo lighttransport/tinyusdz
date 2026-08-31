@@ -309,6 +309,29 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   lastCullValid_ = false;  // force a re-cull for the new scene
   loaded_ = loaded;
   draw_ = draw;
+  authoredDomes_.clear();
+  if (draw_) {
+    for (const DrawLightCPU& light : draw_->lights) {
+      if (light.type != DrawLightCPU::Type::Dome) continue;
+      DomeInfo info;
+      info.label = !light.displayName.empty()
+                       ? light.displayName
+                       : (!light.name.empty() ? light.name : light.absPath);
+      if (info.label.empty()) info.label = "DomeLight";
+      info.format = light.domeTextureFormat;
+      authoredDomes_.push_back(std::move(info));
+    }
+  }
+  domeRequest_.source = !authoredDomes_.empty() ? DomeSource::Authored
+                                                : DomeSource::Off;
+  domeRequest_.authoredIndex = 0;
+  domeRequest_.format = authoredDomes_.empty()
+                            ? DrawLightCPU::DomeTextureFormat::Automatic
+                            : authoredDomes_[0].format;
+  domeRequest_.intensity = 1.0f;
+  domeRequest_.rotationDegrees = 0.0f;
+  domeRequest_.browse = false;
+  domeStatus_.clear();
   selPrim_ = nullptr;
   selPath_.clear();
   selMeshIndex_ = -1;
@@ -349,6 +372,7 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   if (virtualHumanProfile_) drawVirtualHumanPanel();
   drawSelectionList();
   drawCameraPanel();
+  drawDomeLightPanel();
   drawStageMeta();
   drawStats();
   drawPayloads();
@@ -586,6 +610,7 @@ void Gui::buildDefaultLayout(unsigned int dockId) {
   ImGui::DockBuilderDockWindow("Inspector", right);
   ImGui::DockBuilderDockWindow("Selection", right);
   ImGui::DockBuilderDockWindow("Camera", right);
+  ImGui::DockBuilderDockWindow("Dome Light", right);
   ImGui::DockBuilderDockWindow("Stage", rightBottom);
   ImGui::DockBuilderDockWindow("Composition Graph", rightBottom);
   ImGui::DockBuilderDockWindow("Materials", rightBottom);
@@ -977,6 +1002,7 @@ void Gui::drawDockspaceAndMenu() {
       }
       ImGui::Separator();
       ImGui::MenuItem("Lights", nullptr, &showLights_);
+      ImGui::MenuItem("Dome Light panel", nullptr, &showDomeLight_);
       ImGui::MenuItem("Cameras", nullptr, &showCameras_);
       ImGui::MenuItem("Extent attribute", nullptr, &showExtent_);
       ImGui::MenuItem("Prim labels", nullptr, &showPrimLabels_);
@@ -3078,6 +3104,83 @@ void Gui::drawCameraPanel() {
     ImGui::TextDisabled("Persist via config.json if desired.");
   } else {
     HintWrapped("Camera controls appear here once the viewer is initialized.");
+  }
+  ImGui::End();
+}
+
+void Gui::drawDomeLightPanel() {
+  if (!showDomeLight_) return;
+  if (!ImGui::Begin("Dome Light", &showDomeLight_)) {
+    ImGui::End();
+    return;
+  }
+
+  const char* sources[] = {"Off", "USD authored", "File", "White furnace",
+                           "Sun and sky"};
+  int source = static_cast<int>(domeRequest_.source);
+  if (ImGui::Combo("Source", &source, sources, 5)) {
+    domeRequest_.source = static_cast<DomeSource>(source);
+    domeDirty_ = true;
+  }
+
+  if (domeRequest_.source == DomeSource::Authored) {
+    if (authoredDomes_.empty()) {
+      ImGui::TextDisabled("This USD has no authored DomeLight.");
+    } else {
+      domeRequest_.authoredIndex = std::max(
+          0, std::min(domeRequest_.authoredIndex,
+                      int(authoredDomes_.size()) - 1));
+      if (ImGui::BeginCombo(
+              "Authored light",
+              authoredDomes_[size_t(domeRequest_.authoredIndex)].label.c_str())) {
+        for (size_t i = 0; i < authoredDomes_.size(); ++i) {
+          if (ImGui::Selectable(authoredDomes_[i].label.c_str(),
+                                int(i) == domeRequest_.authoredIndex)) {
+            domeRequest_.authoredIndex = int(i);
+            domeRequest_.format = authoredDomes_[i].format;
+            domeDirty_ = true;
+          }
+        }
+        ImGui::EndCombo();
+      }
+    }
+  }
+
+  if (domeRequest_.source == DomeSource::File) {
+    ImGui::TextWrapped("%s", domeRequest_.filePath.empty()
+                                  ? "No environment map selected"
+                                  : domeRequest_.filePath.c_str());
+    if (ImGui::Button("Load environment map...")) {
+      domeRequest_.browse = true;
+      domeDirty_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("or drop an image on the window");
+  }
+
+  const char* mappings[] = {"Automatic", "Latitude-longitude", "Mirrored ball",
+                            "Angular probe"};
+  int mapping = static_cast<int>(domeRequest_.format);
+  const bool mappingRelevant = domeRequest_.source == DomeSource::Authored ||
+                               domeRequest_.source == DomeSource::File;
+  ImGui::BeginDisabled(!mappingRelevant);
+  if (ImGui::Combo("Coordinates", &mapping, mappings, 4)) {
+    domeRequest_.format = static_cast<DrawLightCPU::DomeTextureFormat>(mapping);
+    domeDirty_ = true;
+  }
+  ImGui::EndDisabled();
+  if (ImGui::DragFloat("Intensity", &domeRequest_.intensity, 0.02f, 0.0f,
+                       1000.0f, "%.3f")) {
+    domeRequest_.intensity = std::max(0.0f, domeRequest_.intensity);
+    domeDirty_ = true;
+  }
+  if (ImGui::SliderFloat("Rotation", &domeRequest_.rotationDegrees, -180.0f,
+                         180.0f, "%.1f deg")) {
+    domeDirty_ = true;
+  }
+  if (!domeStatus_.empty()) {
+    ImGui::Separator();
+    ImGui::TextWrapped("%s", domeStatus_.c_str());
   }
   ImGui::End();
 }

@@ -440,6 +440,14 @@ cmake --build build-llvm-mingw -j16 --target tusdview
 
 ## Texture pipeline + DomeLight IBL (vendored textools)
 
+The interactive **Dome Light** panel can select among authored USD DomeLights,
+load an HDR/EXR or ordinary image, or generate white-furnace and sun-and-sky
+presets. Image files may also be dropped onto the viewer window (dropping a USD
+file continues to open it as a scene). The panel exposes intensity, yaw rotation,
+and automatic/latlong/mirrored-ball/angular coordinate mapping. When a stage
+authors multiple DomeLights, tusdview sends only the selected dome to every
+backend so raster and ray-traced results agree.
+
 With `TINYUSDZ_WITH_TEXTOOLS=ON` (default; see
 `src/external/textools/README.tinyusdz.md`) tusdview uses the vendored
 tir/texcomp/texpipe/envmap libraries:

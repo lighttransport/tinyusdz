@@ -83,7 +83,33 @@ class Gui {
     std::string reason;
   };
 
+  enum class DomeSource : int { Off = 0, Authored = 1, File = 2,
+                                WhiteFurnace = 3, SunSky = 4 };
+  struct DomeLightRequest {
+    DomeSource source{DomeSource::Off};
+    int authoredIndex{0};
+    DrawLightCPU::DomeTextureFormat format{
+        DrawLightCPU::DomeTextureFormat::Automatic};
+    float intensity{1.0f};
+    float rotationDegrees{0.0f};
+    std::string filePath;
+    bool browse{false};
+  };
+
   void setScene(const LoadedScene* loaded, const DrawScene* draw);
+  bool consumeDomeLightRequest(DomeLightRequest* request) {
+    if (!domeDirty_ || !request) return false;
+    *request = domeRequest_;
+    domeDirty_ = false;
+    return true;
+  }
+  void setDomeFilePath(const std::string& path) {
+    domeRequest_.filePath = path;
+    domeRequest_.source = DomeSource::File;
+    domeRequest_.browse = false;
+    domeDirty_ = true;
+  }
+  void setDomeStatus(const std::string& status) { domeStatus_ = status; }
   void setNextStage(const tinyusdz::next::Stage* stage) { nextStage_ = stage; }
   // StageSession owns the authoritative deferred set. The composed next Stage
   // may no longer expose payload metadata for arcs deliberately left unloaded.
@@ -438,6 +464,7 @@ class Gui {
   void drawVirtualHumanPanel();
   void drawSelectionList();
   void drawCameraPanel();
+  void drawDomeLightPanel();
   void drawStats();
   void drawPayloads();
   void drawTimeline();
@@ -495,6 +522,16 @@ class Gui {
   PathTraceSettings pathTrace_;
   const LoadedScene* loaded_{nullptr};
   const DrawScene* draw_{nullptr};
+  DomeLightRequest domeRequest_;
+  struct DomeInfo {
+    std::string label;
+    DrawLightCPU::DomeTextureFormat format{
+        DrawLightCPU::DomeTextureFormat::Automatic};
+  };
+  std::vector<DomeInfo> authoredDomes_;
+  bool domeDirty_{false};
+  bool showDomeLight_{true};
+  std::string domeStatus_;
 
   struct CameraBookmark {
     bool valid{false};

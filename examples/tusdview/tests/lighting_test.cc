@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "mesh_build.hh"
+#include "dome_light.hh"
 #include "lighting_eval.hh"
 #include "lighting_ies.hh"
 #include "raster_lighting.hh"
@@ -53,6 +54,35 @@ int AddImage(tydra::RenderScene* scene) {
 }  // namespace
 
 int main() {
+  {
+    tusdview::DrawLightCPU base;
+    base.type = tusdview::DrawLightCPU::Type::Dome;
+    base.effectiveColor[0] = 1.0f;
+    base.effectiveColor[1] = 2.0f;
+    base.effectiveColor[2] = 3.0f;
+    base.normalizedColor[0] = 1.0f;
+    base.normalizedColor[1] = 2.0f;
+    base.normalizedColor[2] = 3.0f;
+    base.effectiveIntensity = 2.0f;
+    Identity(base.transform);
+    tusdview::DrawLightCPU edited;
+    tusdview::ApplyDomeLightControls(0.5f, 90.0f, base, &edited);
+    if (std::fabs(edited.effectiveColor[2] - 1.5f) > 1.0e-5f ||
+        std::fabs(edited.effectiveIntensity - 1.0f) > 1.0e-5f ||
+        std::fabs(edited.transform[2] + 1.0f) > 1.0e-5f ||
+        std::fabs(edited.transform[8] - 1.0f) > 1.0e-5f) {
+      std::fprintf(stderr, "runtime dome controls are incorrect\n");
+      return 1;
+    }
+    std::string presetError;
+    tusdview::DrawLightCPU furnace;
+    if (!tusdview::BuildWhiteFurnaceDome(false, &furnace, &presetError) ||
+        !furnace.ibl.valid || furnace.ibl.envCube.empty()) {
+      std::fprintf(stderr, "white-furnace preset failed: %s\n",
+                   presetError.c_str());
+      return 1;
+    }
+  }
   tydra::RenderScene scene;
 
   tydra::RenderLight rect;

@@ -31,6 +31,7 @@
 
 #include "cascadia_mono.h"  // CascadiaMono_compressed_data / _size
 #include "config.hh"
+#include "dome_light.hh"
 #include "gpu_budget_lod.hh"
 #include "lod_stream.hh"
 #include "gui_style.hh"
@@ -1690,6 +1691,27 @@ bool App::initWindow(std::string* err) {
     *err = "glfwCreateWindow failed";
     return false;
   }
+  glfwSetWindowUserPointer(window_, this);
+  glfwSetDropCallback(window_, [](GLFWwindow* window, int count,
+                                 const char** paths) {
+    App* app = static_cast<App*>(glfwGetWindowUserPointer(window));
+    if (!app || count <= 0 || !paths || !paths[0]) return;
+    const std::filesystem::path path(paths[0]);
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return char(std::tolower(c)); });
+    if (ext == ".usd" || ext == ".usda" || ext == ".usdc" ||
+        ext == ".usdz") {
+      app->startLoadAsync(path.string());
+    } else if (ext == ".hdr" || ext == ".exr" || ext == ".png" ||
+               ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" ||
+               ext == ".tif" || ext == ".tiff") {
+      app->droppedEnvmapPath_ = path.string();
+    } else {
+      LOGW("dropped file is neither USD nor a supported environment image: %s",
+           path.string().c_str());
+    }
+  });
 
   if (!hasWindowSizeOverride_ && iniWindowPositionValid_) {
     int x = iniWindowX_;
@@ -2844,6 +2866,9 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       }
     }
   }
+  authoredLights_ = draw_.lights;
+  runtimeDomeValid_ = false;
+  runtimeDomeKey_.clear();
   gui_.setScene(&loaded_, &draw_);
   gui_.setFacialControls(ReadVcharControls(loaded_.stage));
   if (lensFocusOverride_ > 0.0f)
@@ -4807,6 +4832,118 @@ void App::openFileDialog() {
 #endif
 }
 
+void App::openDomeFileDialog() {
+#if defined(HAVE_NFD)
+  NFD_Init();
+  nfdu8char_t* outPath = nullptr;
+  nfdu8filteritem_t filters[1] = {
+      {"Environment image", "hdr,exr,png,jpg,jpeg,bmp,tif,tiff"}};
+  const nfdresult_t result = NFD_OpenDialogU8(&outPath, filters, 1, nullptr);
+  if (result == NFD_OKAY && outPath) {
+    gui_.setDomeFilePath(outPath);
+    NFD_FreePathU8(outPath);
+  }
+  NFD_Quit();
+#else
+  gui_.setDomeStatus(
+      "File dialog unavailable in this build; drop an image on the window.");
+#endif
+}
+
+void App::applyDomeLightRequest(const Gui::DomeLightRequest& request) {
+  if (request.browse) {
+    openDomeFileDialog();
+    return;
+  }
+  std::vector<DrawLightCPU> lights;
+  for (const DrawLightCPU& light : authoredLights_)
+    if (light.type != DrawLightCPU::Type::Dome) lights.push_back(light);
+
+  DrawLightCPU selected;
+  bool haveDome = false;
+  std::string status;
+  if (request.source == Gui::DomeSource::Authored) {
+    int ordinal = 0;
+    for (const DrawLightCPU& light : authoredLights_) {
+      if (light.type != DrawLightCPU::Type::Dome) continue;
+      if (ordinal++ == request.authoredIndex) {
+        selected = light;
+        haveDome = true;
+        if (request.format != light.domeTextureFormat &&
+            !light.textureFile.empty()) {
+          std::filesystem::path texturePath(light.textureFile);
+          if (texturePath.is_relative() && !loaded_.filepath.empty()) {
+            texturePath = std::filesystem::path(loaded_.filepath).parent_path() /
+                          texturePath;
+          }
+          DrawLightCPU remapped;
+          std::string remapError;
+          if (BuildDomeLightFromFile(texturePath.string(), request.format,
+                                    loadOpts_.textureOptions.domeIbl >= 2,
+                                    &remapped, &remapError)) {
+            selected = light;
+            selected.ibl = std::move(remapped.ibl);
+            selected.domeTextureFormat = request.format;
+          } else {
+            status = "Coordinate remap unavailable: " + remapError;
+          }
+        }
+        break;
+      }
+    }
+    if (!haveDome) status = "The selected USD DomeLight is unavailable.";
+  } else if (request.source != Gui::DomeSource::Off) {
+    std::string key;
+    if (request.source == Gui::DomeSource::File)
+      key = "file:" + request.filePath + ":" +
+            std::to_string(static_cast<int>(request.format));
+    else if (request.source == Gui::DomeSource::WhiteFurnace)
+      key = "white";
+    else
+      key = "sunsky";
+    if (!runtimeDomeValid_ || key != runtimeDomeKey_) {
+      std::string error;
+      bool ok = false;
+      if (request.source == Gui::DomeSource::File && !request.filePath.empty())
+        ok = BuildDomeLightFromFile(request.filePath, request.format,
+                                    loadOpts_.textureOptions.domeIbl >= 2,
+                                    &runtimeDomeBase_, &error);
+      else if (request.source == Gui::DomeSource::WhiteFurnace)
+        ok = BuildWhiteFurnaceDome(loadOpts_.textureOptions.domeIbl >= 2,
+                                   &runtimeDomeBase_, &error);
+      else if (request.source == Gui::DomeSource::SunSky)
+        ok = BuildSunSkyDome(loadOpts_.textureOptions.domeIbl >= 2,
+                             &runtimeDomeBase_, &error);
+      else
+        error = "Choose or drop an environment-map image.";
+      runtimeDomeValid_ = ok;
+      runtimeDomeKey_ = ok ? key : std::string();
+      if (!ok) status = error;
+    }
+    if (runtimeDomeValid_) {
+      selected = runtimeDomeBase_;
+      haveDome = true;
+    }
+  }
+  if (haveDome) {
+    DrawLightCPU controlled;
+    ApplyDomeLightControls(request.intensity, request.rotationDegrees, selected,
+                           &controlled);
+    lights.push_back(std::move(controlled));
+    const std::string active = "Active: " + lights.back().displayName;
+    status = status.empty() ? active : active + ". " + status;
+  } else if (request.source == Gui::DomeSource::Off) {
+    status = "Environment lighting disabled.";
+  }
+  draw_.lights = std::move(lights);
+  std::vector<DrawLightCPU> gpuLights = draw_.lights;
+  const size_t meshCount = draw_.meshes.size();
+  postGpu([this, lights = std::move(gpuLights), meshCount]() {
+    renderer_->setLights(lights, meshCount);
+  });
+  gui_.setDomeStatus(status);
+}
+
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
 // --- Experimental threaded GL rendering: the render thread owns the GL context ---
 
@@ -6347,6 +6484,9 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
   logCapabilities();
 
+  authoredLights_ = draw_.lights;
+  runtimeDomeValid_ = false;
+  runtimeDomeKey_.clear();
   gui_.setScene(&loaded_, &draw_);
   gui_.setNextStage(nextStageSnapshot_.get());
   gui_.setFacialControls(nextStageSnapshot_ ? ReadVcharControls(*nextStageSnapshot_)
@@ -6692,6 +6832,14 @@ int App::run(const std::string& initialFile, int maxFrames,
         mcpHttpRunning_, mcpHttpHost_, mcpHttpPort_ > 0 ? mcpHttpPort_ : 8080,
         mcpHttpStatus_);
     gui_.frame(renderer_.get(), &camera_);
+    if (!droppedEnvmapPath_.empty()) {
+      gui_.setDomeFilePath(droppedEnvmapPath_);
+      droppedEnvmapPath_.clear();
+    }
+    Gui::DomeLightRequest domeRequest;
+    if (gui_.consumeDomeLightRequest(&domeRequest)) {
+      applyDomeLightRequest(domeRequest);
+    }
 #if defined(TUSDVIEW_HAVE_MCP)
     std::string requestedMcpHost;
     int requestedMcpPort = 0;
