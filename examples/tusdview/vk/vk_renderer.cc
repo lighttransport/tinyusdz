@@ -192,7 +192,7 @@ void BakeCurveWorld(DrawCurvesCPU* curves) {
 }
 
 // ---------------------------------------------------------------------------
-// Persistent VkPipelineCache for the ray-query compute pipeline.
+// Persistent VkPipelineCache shared by raster and ray-query pipelines.
 //
 // The driver compiles that shader on every launch, and on recent NVIDIA parts
 // it can be pathologically slow (tens of seconds, and substantially longer
@@ -241,7 +241,7 @@ uint64_t RtHashBytes(uint64_t hash, const void* data, size_t size) {
   return hash;
 }
 
-// Keyed by the device and driver it was compiled for, so all RT shader
+// Keyed by the device and driver it was compiled for, so raster and RT shader
 // variants share one cache and can reuse driver-internal code generation.
 // Vulkan pipeline caches are not tied to one shader module; hashing SPIR-V here
 // needlessly split the graph-free and full MaterialX pipelines into cold,
@@ -2017,9 +2017,48 @@ VkShaderModule VulkanRenderer::createShader(const void* code, size_t bytes) {
 }
 
 bool VulkanRenderer::createPipeline(std::string* err) {
+  const bool startupTiming = std::getenv("TUSDVIEW_STARTUP_TIMING") != nullptr;
+  auto pipelineStart = std::chrono::steady_clock::now();
+  auto reportPipeline = [&](const char* name) {
+    if (!startupTiming) return;
+    const auto now = std::chrono::steady_clock::now();
+    LOGI("Vulkan startup timing: mesh/%-19s %.3f s", name,
+         std::chrono::duration<double>(now - pipelineStart).count());
+    pipelineStart = now;
+  };
+  VkPhysicalDeviceProperties cacheProps{};
+  vkGetPhysicalDeviceProperties(phys_, &cacheProps);
+  const std::string pipelineCachePath =
+      RtPipelineCachePath(cacheProps, nullptr, 0);
+  std::vector<uint8_t> pipelineCacheBlob;
+  if (!pipelineCachePath.empty()) {
+    std::ifstream in(pipelineCachePath, std::ios::binary);
+    if (in) {
+      in.seekg(0, std::ios::end);
+      const std::streamoff size = in.tellg();
+      if (size > 0) {
+        in.seekg(0, std::ios::beg);
+        pipelineCacheBlob.resize(static_cast<size_t>(size));
+        if (!in.read(reinterpret_cast<char*>(pipelineCacheBlob.data()), size))
+          pipelineCacheBlob.clear();
+      }
+    }
+  }
+  VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+  VkPipelineCacheCreateInfo cacheInfo{};
+  cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+  cacheInfo.initialDataSize = pipelineCacheBlob.size();
+  cacheInfo.pInitialData = pipelineCacheBlob.empty()
+                               ? nullptr
+                               : pipelineCacheBlob.data();
+  if (vkCreatePipelineCache(device_, &cacheInfo, nullptr, &pipelineCache) !=
+      VK_SUCCESS) {
+    pipelineCache = VK_NULL_HANDLE;
+  }
   VkPhysicalDeviceProperties deviceProps{};
   vkGetPhysicalDeviceProperties(phys_, &deviceProps);
   if (deviceProps.limits.maxBoundDescriptorSets < kRasterDescriptorSetCount) {
+    if (pipelineCache) vkDestroyPipelineCache(device_, pipelineCache, nullptr);
     if (err) {
       *err = "Vulkan device supports only " +
              std::to_string(deviceProps.limits.maxBoundDescriptorSets) +
@@ -2059,6 +2098,9 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   VkShaderModule vs = createShader(mesh_vert_spv, sizeof(mesh_vert_spv));
   VkShaderModule fs = createShader(mesh_frag_spv, sizeof(mesh_frag_spv));
   if (!vs || !fs) {
+    if (vs) vkDestroyShaderModule(device_, vs, nullptr);
+    if (fs) vkDestroyShaderModule(device_, fs, nullptr);
+    if (pipelineCache) vkDestroyPipelineCache(device_, pipelineCache, nullptr);
     if (err) *err = "shader module creation failed";
     return false;
   }
@@ -2172,8 +2214,9 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   ci.layout = pipelineLayout_;
   ci.renderPass = offscreenPass_;
   ci.subpass = 0;
-  VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
+  VkResult r = vkCreateGraphicsPipelines(device_, pipelineCache, 1, &ci, nullptr,
                                          &pipeline_);
+  reportPipeline("opaque");
   // Translucent variant: same shaders/state, but premultiplied "over" blend
   // (mesh.frag premultiplies for Blend materials) and depth-write-off so
   // transparent surfaces composite over the opaque geometry behind them.
@@ -2199,8 +2242,9 @@ bool VulkanRenderer::createPipeline(std::string* err) {
     VkGraphicsPipelineCreateInfo ciT = ci;
     ciT.pDepthStencilState = &dsT;
     ciT.pColorBlendState = &cbT;
-    VkResult rt = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ciT,
+    VkResult rt = vkCreateGraphicsPipelines(device_, pipelineCache, 1, &ciT,
                                             nullptr, &translucentPipeline_);
+    reportPipeline("sorted transparent");
     if (rt != VK_SUCCESS) translucentPipeline_ = VK_NULL_HANDLE;  // opaque-only fallback
   }
   if (r == VK_SUCCESS && weightedOitSupported_ && oitPass_) {
@@ -2240,13 +2284,14 @@ bool VulkanRenderer::createPipeline(std::string* err) {
       oitCi.pDepthStencilState = &oitDs;
       oitCi.pColorBlendState = &oitCb;
       oitCi.renderPass = oitPass_;
-      if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &oitCi,
+      if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &oitCi,
                                     nullptr, &oitMeshPipeline_) != VK_SUCCESS) {
         oitMeshPipeline_ = VK_NULL_HANDLE;
         weightedOitSupported_ = false;
         caps_.supportsWeightedOit = false;
         LOGW("Vulkan weighted OIT disabled: mesh pipeline creation failed");
       }
+      reportPipeline("weighted OIT");
       vkDestroyShaderModule(device_, oitFs, nullptr);
     } else {
       weightedOitSupported_ = false;
@@ -2267,19 +2312,52 @@ bool VulkanRenderer::createPipeline(std::string* err) {
       shadowCi.pStages = shadowStages;
       shadowCi.pColorBlendState = &shadowCb;
       shadowCi.renderPass = shadowPass_;
-      if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &shadowCi,
+      if (vkCreateGraphicsPipelines(device_, pipelineCache, 1, &shadowCi,
                                     nullptr, &shadowPipeline_) != VK_SUCCESS)
         shadowPipeline_ = VK_NULL_HANDLE;
+      reportPipeline("shadow");
       vkDestroyShaderModule(device_, shadowFs, nullptr);
     }
   }
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
   if (r != VK_SUCCESS) {
+    if (pipelineCache) vkDestroyPipelineCache(device_, pipelineCache, nullptr);
     if (err) *err = "vkCreateGraphicsPipelines failed";
     return false;
   }
   createTessPipeline();  // best-effort; coarse displacement still works without it
+  reportPipeline("tessellation");
+  if (pipelineCache) {
+    if (!pipelineCachePath.empty()) {
+      size_t size = 0;
+      if (vkGetPipelineCacheData(device_, pipelineCache, &size, nullptr) ==
+              VK_SUCCESS &&
+          size > 0 && size != pipelineCacheBlob.size()) {
+        std::vector<uint8_t> data(size);
+        if (vkGetPipelineCacheData(device_, pipelineCache, &size, data.data()) ==
+            VK_SUCCESS) {
+          std::error_code ec;
+          std::filesystem::create_directories(
+              std::filesystem::path(pipelineCachePath).parent_path(), ec);
+          const std::string tmp =
+              pipelineCachePath + ".tmp" + std::to_string(
+                  static_cast<unsigned long long>(
+                      std::chrono::steady_clock::now().time_since_epoch().count()));
+          {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (out) {
+              out.write(reinterpret_cast<const char*>(data.data()),
+                        static_cast<std::streamsize>(size));
+            }
+          }
+          std::filesystem::rename(tmp, pipelineCachePath, ec);
+          if (ec) std::filesystem::remove(tmp, ec);
+        }
+      }
+    }
+    vkDestroyPipelineCache(device_, pipelineCache, nullptr);
+  }
   return true;
 }
 
@@ -5559,6 +5637,19 @@ void VulkanRenderer::destroyIblImages() {
 }
 
 bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
+  const bool startupTiming = std::getenv("TUSDVIEW_STARTUP_TIMING") != nullptr;
+  const auto initStart = std::chrono::steady_clock::now();
+  auto timed = [&](const char* name, auto&& fn) {
+    const auto start = std::chrono::steady_clock::now();
+    const bool ok = fn();
+    if (startupTiming) {
+      const double seconds =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+              .count();
+      LOGI("Vulkan startup timing: %-24s %.3f s", name, seconds);
+    }
+    return ok;
+  };
   nativeCarrierCpuForced_ =
       std::getenv("TUSDVIEW_VK_CPU_CARRIERS") != nullptr;
   if (nativeCarrierCpuForced_) {
@@ -5581,20 +5672,20 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
     return false;
   }
 
-  if (!createInstance(err)) return false;
+  if (!timed("instance", [&] { return createInstance(err); })) return false;
   // Load instance-level entrypoints now that we have a VkInstance.
   volkLoadInstance(instance_);
-  if (!headless_ && !createSurface(err)) return false;
-  if (!pickPhysicalDevice(err)) return false;
-  if (!createDevice(err)) return false;
+  if (!headless_ && !timed("surface", [&] { return createSurface(err); })) return false;
+  if (!timed("physical device", [&] { return pickPhysicalDevice(err); })) return false;
+  if (!timed("logical device", [&] { return createDevice(err); })) return false;
   // Re-resolve device-level entrypoints through the device for direct dispatch
   // (skips the loader trampoline).
   volkLoadDevice(device_);
   if (headless_) {
-    if (!createHeadlessSwapchain(err)) return false;  // owns images + views
+    if (!timed("headless images", [&] { return createHeadlessSwapchain(err); })) return false;
   } else {
-    if (!createSwapchain(err)) return false;
-    if (!createSwapchainViews(err)) return false;
+    if (!timed("swapchain", [&] { return createSwapchain(err); })) return false;
+    if (!timed("swapchain views", [&] { return createSwapchainViews(err); })) return false;
   }
   if (!createSwapchainRenderPass(err)) return false;
   if (!createSwapchainFramebuffers(err)) return false;
@@ -5605,20 +5696,21 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   if (!createSync(err)) return false;
   if (!createSampler(err)) return false;
   if (!createDescriptorInfra(err)) return false;
-  if (!createOitCompositePipeline(err)) return false;
-  if (!createPipeline(err)) return false;       // needs texSetLayout_
-  if (!createInstPipeline(err)) return false;   // instanced flat prototypes
+  if (!timed("OIT composite pipeline", [&] { return createOitCompositePipeline(err); })) return false;
+  if (!timed("mesh pipelines", [&] { return createPipeline(err); })) return false;
+  if (!timed("instance pipelines", [&] { return createInstPipeline(err); })) return false;
   initBoxProxyRaster();                          // raster LOD box-proxy geometry
-  if (!createLinePipeline(err)) return false;   // needs offscreenPass_
+  if (!timed("line pipelines", [&] { return createLinePipeline(err); })) return false;
   {
     std::string carrierErr;
-    if (!createNativeCarrierPipeline(&carrierErr)) {
+    if (!timed("native-carrier pipelines",
+               [&] { return createNativeCarrierPipeline(&carrierErr); })) {
       LOGW("Vulkan native-carrier pipeline unavailable: %s; using CPU fallback",
            carrierErr.c_str());
     }
   }
-  if (!createVolumePipeline(err)) return false; // UsdVol volume raymarch
-  if (!createWhiteTexture(err)) return false;   // needs commandPool_ + texPool_
+  if (!timed("volume pipelines", [&] { return createVolumePipeline(err); })) return false;
+  if (!timed("fallback textures", [&] { return createWhiteTexture(err); })) return false;
   {
     SkinningFrameCPU ident;
     ident.enabled = false;
@@ -5630,6 +5722,12 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
   techniqueLabel_ = rtSupported_ ? "Vulkan (raster)" : "Vulkan";
   caps_.backend_name = techniqueLabel_.c_str();
   caps_.supportsRayTracing = rtSupported_;
+  if (startupTiming) {
+    const double seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - initStart)
+            .count();
+    LOGI("Vulkan startup timing: %-24s %.3f s", "total", seconds);
+  }
   return true;
 }
 

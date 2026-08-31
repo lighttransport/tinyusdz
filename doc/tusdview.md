@@ -866,9 +866,12 @@ Keep
 `TUSDVIEW_RT_TIMING=1` enabled when diagnosing startup. A measured cold compile
 can take minutes on some NVIDIA driver/shader combinations, while the same
 pipeline loaded from tusdview's persistent cache is typically sub-second. The
-cache is shared by the compact and full MaterialX
-variants and keyed by the Vulkan device/driver UUID, so subsequent launches
-and a later MaterialX upgrade can reuse driver-internal compilation state.
+cache is shared by the raster pipelines and the compact/full MaterialX RT
+variants and keyed by the Vulkan device/driver UUID. This matters even without
+a loaded USD file: on NVIDIA, the three large mesh raster variants can otherwise
+each repeat roughly the same shader compilation. The first launch after a
+driver or shader change populates the cache; subsequent launches reuse it.
+Set `TUSDVIEW_STARTUP_TIMING=1` to print per-phase Vulkan initialization times.
 For isolated cold-cache measurements, set `TUSDVIEW_VK_PIPELINE_CACHE_DIR` to
 an explicit writable directory; this changes only the cache location and does
 not affect physical-device selection.
