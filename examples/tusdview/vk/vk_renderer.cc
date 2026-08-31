@@ -8575,12 +8575,13 @@ bool VulkanRenderer::rebuildNativeCarrierBuffer(int curveSegments) {
   return true;
 }
 
-void VulkanRenderer::drawNativeCarriers(VkCommandBuffer cb,
-                                        VkPipeline pipeline,
-                                        int transparencyClass) {
+uint64_t VulkanRenderer::drawNativeCarriers(VkCommandBuffer cb,
+                                            VkPipeline pipeline,
+                                            int transparencyClass) {
   if (!pipeline || !nativeCarrierBuf_ ||
       nativeCarrierSegments_ != nativeCarrierRequestedSegments_)
-    return;
+    return 0;
+  uint64_t drawCalls = 0;
   vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     pipeline);
   if (dispParamsSet_) {
@@ -8615,7 +8616,9 @@ void VulkanRenderer::drawNativeCarriers(VkCommandBuffer cb,
     push.lightMask[0] = range.lightMask;
     vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(push), &push);
     vkCmdDraw(cb, 4, range.count, 0, range.first);
+    ++drawCalls;
   }
+  return drawCalls;
 }
 
 void VulkanRenderer::drawNativeCarrierShadows(VkCommandBuffer cb,
@@ -14560,16 +14563,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           }
         }
       }
-      drawNativeCarriers(cb, oitNativeCarrierPipeline_, 1);
-      for (const NativeCarrierRange& range : nativeCarrierRanges_) {
-        const size_t visibleIndex = static_cast<size_t>(range.carrierId);
-        if (range.translucent && range.count > 0 &&
-            (nativeCarrierPurposeMask_ & (1u << range.purpose)) != 0u &&
-            !(visibleIndex < nativeCarrierVisible_.size() &&
-              !nativeCarrierVisible_[visibleIndex])) {
-          ++oitDrawCalls;
-        }
-      }
+      oitDrawCalls += drawNativeCarriers(cb, oitNativeCarrierPipeline_, 1);
       recordVolumePass(cb, oitVolumePipeline_);
       oitDrawCalls += volumes_.size();
       vkCmdEndRenderPass(cb);

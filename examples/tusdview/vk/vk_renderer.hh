@@ -400,8 +400,8 @@ class VulkanRenderer final : public Renderer {
   bool createLinePipeline(std::string* err);
   bool createNativeCarrierPipeline(std::string* err);
   bool rebuildNativeCarrierBuffer(int curveSegments);
-  void drawNativeCarriers(VkCommandBuffer cb, VkPipeline pipeline,
-                          int transparencyClass = -1);
+  uint64_t drawNativeCarriers(VkCommandBuffer cb, VkPipeline pipeline,
+                              int transparencyClass = -1);
   void drawNativeCarrierShadows(VkCommandBuffer cb, bool point, int face);
   void destroyNativeCarrierResources();
   bool createSampler(std::string* err);
