@@ -243,7 +243,7 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "vchar_deformer",
       "Inspect deformer adapters, run the configured auto-rigger, or inspect/evaluate MetaHuman DNA.",
-      {{"op", strProp("status | autorig | apply-overlay | dna-inspect | dna-evaluate")},
+      {{"op", strProp("status | autorig | apply-overlay | body-playback | dna-inspect | dna-evaluate")},
        {"path", strProp("source asset for autorig or USDA/USDC overlay for apply-overlay")},
        {"dna_path", strProp("MetaHuman DNA file for DNA operations")},
        {"lod", {{"type", "integer"}, {"minimum", 0}, {"maximum", 65535}}},
@@ -251,6 +251,10 @@ json MCPServer::buildToolsList() const {
        {"controls", {{"type", "array"}, {"items", {{"type", "number"}}},
                      {"maxItems", 65536}}},
        {"output", strProp("optional autorig output overlay path")},
+       {"rig_layer", strProp("body animation rig layer; defaults to loaded asset")},
+       {"joints_path", strProp("canonical body joint list for body-playback")},
+       {"track_path", strProp("canonical body track for body-playback")},
+       {"autoplay", {{"type", "boolean"}, {"description", "start timeline after body layer loads"}}},
        {"timeout_ms", {{"type", "integer"}, {"minimum", 100}, {"maximum", 600000}}}},
       json::array({"op"})));
 

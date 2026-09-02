@@ -333,6 +333,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                        {"capabilities", json::array({"skinning", "blendshapes", "inbetweens"})}},
                   json{{"name", "usd-overlay"}, {"active", true},
                        {"capabilities", json::array({"controls", "correctives", "physics-metadata"})}},
+                  json{{"name", "body-playback"}, {"active", !autoriggerExecutable_.empty()},
+                       {"capabilities", json::array({"usdskel-animation", "timeline", "contacts"})}},
                   json{{"name", "external-jsonrpc"}, {"active", !autoriggerExecutable_.empty()},
                        {"state", autoriggerExecutable_.empty() ? "not-configured" : "ready"}}})},
               {"evaluation_order", json::array({"overlay", "blendshape", "skinning", "physics"})}};
@@ -359,6 +361,45 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
     }
     if (op == "apply-overlay") {
       return mcpVirtualHuman("apply_rig_overlay", args, err);
+    }
+    if (op == "body-playback") {
+      if (autoriggerExecutable_.empty() || loaded_.filepath.empty()) {
+        err = "vchar_deformer body-playback requires --autorigger and a loaded asset";
+        return json::object();
+      }
+      const std::string jointsPath = args.value("joints_path", std::string());
+      const std::string trackPath = args.value("track_path", std::string());
+      const std::string rigLayer = args.value("rig_layer", loaded_.filepath);
+      if (jointsPath.empty() || trackPath.empty() || rigLayer.empty()) {
+        err = "body-playback requires joints_path, track_path, and rig_layer";
+        return json::object();
+      }
+      const int timeoutMs = std::max(100, args.value("timeout_ms", 30000));
+      std::filesystem::path output = args.value("output", std::string());
+      if (output.empty()) output = std::filesystem::temp_directory_path() /
+          ("vchar-lightrig-body-" + std::to_string(sceneGen_) + ".usda");
+      const json request = { {"jsonrpc", "2.0"}, {"id", "body-playback"},
+        {"method", "body.animate"}, {"params", {
+          {"rig_layer", rigLayer}, {"joints_path", jointsPath},
+          {"track_path", trackPath}, {"output_layer", output.string()}}} };
+      const vchar::AutoriggerResult result = vchar::RunWorkerRequest(
+          autoriggerExecutable_, request.dump(), std::chrono::milliseconds(timeoutMs));
+      if (!result.ok) { err = result.timedOut ? "body playback worker timed out" : result.error; return json::object(); }
+      const json response = json::parse(result.response, nullptr, false);
+      if (response.is_discarded() || !response.contains("result") ||
+          !response["result"].contains("output_layer")) {
+        err = "body playback worker returned malformed response";
+        return json::object();
+      }
+      const std::string animation = response["result"].value("output_layer", output.string());
+      json applied = mcpVirtualHuman("apply_rig_overlay", {{"path", animation}}, err);
+      if (!err.empty()) return json::object();
+      playRequested_ = args.value("autoplay", false);
+      applied["animation_layer"] = animation;
+      applied["playback"] = { {"autoplay_requested", playRequested_},
+                               {"state", playRequested_ ? "pending" : "paused"} };
+      applied["worker_response"] = response["result"];
+      return applied;
     }
     if (op == "dna-inspect" || op == "dna-evaluate") {
       if (autoriggerExecutable_.empty()) {
@@ -399,7 +440,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       }
       return resultPayload;
     }
-    err = "vchar_deformer op must be status, autorig, apply-overlay, dna-inspect, or dna-evaluate";
+    err = "vchar_deformer op must be status, autorig, apply-overlay, body-playback, dna-inspect, or dna-evaluate";
     return json::object();
   }
 
