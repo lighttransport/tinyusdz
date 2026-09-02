@@ -407,6 +407,9 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       applied["playback"] = { {"autoplay_requested", playRequested_},
                                {"state", playRequested_ ? "pending" : "paused"} };
       applied["worker_response"] = response["result"];
+      for (const char* key : {"frame_count", "start_time", "end_time", "fps"}) {
+        if (response["result"].contains(key)) applied[key] = response["result"][key];
+      }
       return applied;
     }
     if (op == "dna-inspect" || op == "dna-evaluate") {
