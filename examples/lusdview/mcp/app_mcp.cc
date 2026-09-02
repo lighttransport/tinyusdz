@@ -392,7 +392,14 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         return json::object();
       }
       const std::string animation = response["result"].value("output_layer", output.string());
-      json applied = mcpVirtualHuman("apply_rig_overlay", {{"path", animation}}, err);
+      json applyArgs = {{"path", animation}};
+      if (response["result"].contains("start_time"))
+        applyArgs["animation_start"] = response["result"]["start_time"];
+      if (response["result"].contains("end_time"))
+        applyArgs["animation_end"] = response["result"]["end_time"];
+      if (response["result"].contains("fps"))
+        applyArgs["animation_fps"] = response["result"]["fps"];
+      json applied = mcpVirtualHuman("apply_rig_overlay", applyArgs, err);
       if (!err.empty()) return json::object();
       playRequested_ = args.value("autoplay", false);
       applied["animation_layer"] = animation;
@@ -464,7 +471,14 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         std::filesystem::temp_directory_path() /
         ("vchar-rig-session-" + std::to_string(++serial) + ".usda");
     std::ofstream stream(root, std::ios::binary | std::ios::trunc);
-    stream << "#usda 1.0\n(\n    subLayers = [\n        @" << overlay
+    stream << "#usda 1.0\n(\n";
+    if (args.contains("animation_start") && args.contains("animation_end")) {
+      stream << "    timeCodesPerSecond = "
+             << args.value("animation_fps", 1.0) << "\n"
+             << "    startTimeCode = " << args["animation_start"] << "\n"
+             << "    endTimeCode = " << args["animation_end"] << "\n";
+    }
+    stream << "    subLayers = [\n        @" << overlay
            << "@,\n        @" << loaded_.filepath << "@\n    ]\n)\n";
     if (!stream) {
       err = "apply_rig_overlay: could not create session root";
