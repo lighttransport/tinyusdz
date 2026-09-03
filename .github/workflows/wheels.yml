@@ -84,7 +84,7 @@ jobs:
     # GitHub-issued OIDC token is exchanged for a short-lived upload token by
     # PyPI. The pypi.org project must have a matching publisher registered:
     #   owner:    lighttransport
-    #   repo:     lightusd
+    #   repo:     LightUSD
     #   workflow: wheels.yml
     #   env:      pypi
     environment:

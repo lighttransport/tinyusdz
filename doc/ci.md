@@ -103,7 +103,7 @@ What this triggers in `wheels.yml`:
 3. `publish` job (only on `push` of `refs/tags/v*`):
    - Uses **PyPI Trusted Publishing (OIDC)** — no API token in repo secrets.
    - The pypi.org project must have a matching publisher registered:
-     - owner: `lighttransport`, repo: `lightusd`, workflow: `wheels.yml`, environment: `pypi`.
+     - owner: `lighttransport`, repo: `LightUSD`, workflow: `wheels.yml`, environment: `pypi`.
    - GitHub environment `pypi` must exist on the repo with `id-token: write` allowed.
    - Emits PEP 740 attestations.
 
