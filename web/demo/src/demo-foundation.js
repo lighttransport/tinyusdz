@@ -149,7 +149,7 @@ class DemoApp {
             <div id="viewport" class="viewport"></div>
             <div id="drop-hint" class="drop-hint">Drop USDA, USDC, USD, or USDZ</div>
               <div id="status" class="status">Initializing...</div>
-              <div id="tusd-loader" class="tusd-loader hidden">
+              <div id="lightusd-loader" class="lightusd-loader hidden">
                 <div class="loader-progress"><div class="loader-bar" style="width:10%"></div></div>
                 <div class="loader-text">Loading LightUSD WASM…</div>
               </div>

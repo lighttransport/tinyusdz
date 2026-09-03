@@ -2,7 +2,7 @@
 
 namespace light3d {
 
-// NOTE: tusdview does NOT load image files through light3d. Texture pixels come
+// NOTE: lusdview does NOT load image files through light3d. Texture pixels come
 // already-decoded from the lightusd Tydra RenderScene (TextureImage / BufferData),
 // so the original stb_image-based loadImage was removed to avoid duplicating
 // lightusd's own STB_IMAGE_IMPLEMENTATION (which would clash at link time).

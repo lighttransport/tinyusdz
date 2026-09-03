@@ -6,7 +6,7 @@
 // `requires_capability(!m)`). The `!m` in the attribute is parsed as a
 // regular C++ expression, so std::mutex cannot be used directly (it has no
 // operator!); use lightusd::Mutex/MutexLockGuard instead and annotate the
-// locking function with TUSDZ_REQUIRES_NOT(m).
+// locking function with LIGHTUSD_REQUIRES_NOT(m).
 #pragma once
 
 #include <mutex>
@@ -21,28 +21,28 @@
 #endif
 
 #if defined(__clang__)
-#define TUSDZ_TSA(x) __attribute__((x))
+#define LIGHTUSD_TSA(x) __attribute__((x))
 #else
-#define TUSDZ_TSA(x)
+#define LIGHTUSD_TSA(x)
 #endif
 
-#define TUSDZ_TSA_CAPABILITY(x) TUSDZ_TSA(capability(x))
-#define TUSDZ_TSA_SCOPED_CAPABILITY TUSDZ_TSA(scoped_lockable)
-#define TUSDZ_TSA_ACQUIRE(...) TUSDZ_TSA(acquire_capability(__VA_ARGS__))
-#define TUSDZ_TSA_RELEASE(...) TUSDZ_TSA(release_capability(__VA_ARGS__))
-#define TUSDZ_TSA_GUARDED_BY(x) TUSDZ_TSA(guarded_by(x))
-#define TUSDZ_REQUIRES_NOT(x) TUSDZ_TSA(requires_capability(!x))
+#define LIGHTUSD_TSA_CAPABILITY(x) LIGHTUSD_TSA(capability(x))
+#define LIGHTUSD_TSA_SCOPED_CAPABILITY LIGHTUSD_TSA(scoped_lockable)
+#define LIGHTUSD_TSA_ACQUIRE(...) LIGHTUSD_TSA(acquire_capability(__VA_ARGS__))
+#define LIGHTUSD_TSA_RELEASE(...) LIGHTUSD_TSA(release_capability(__VA_ARGS__))
+#define LIGHTUSD_TSA_GUARDED_BY(x) LIGHTUSD_TSA(guarded_by(x))
+#define LIGHTUSD_REQUIRES_NOT(x) LIGHTUSD_TSA(requires_capability(!x))
 
 namespace lightusd {
 
 // std::mutex wrapper visible to clang thread-safety analysis.
-class TUSDZ_TSA_CAPABILITY("mutex") Mutex {
+class LIGHTUSD_TSA_CAPABILITY("mutex") Mutex {
 #if defined(__APPLE__)
   os_unfair_lock m_ = OS_UNFAIR_LOCK_INIT;
 
  public:
-  void lock() TUSDZ_TSA_ACQUIRE() { os_unfair_lock_lock(&m_); }
-  void unlock() TUSDZ_TSA_RELEASE() { os_unfair_lock_unlock(&m_); }
+  void lock() LIGHTUSD_TSA_ACQUIRE() { os_unfair_lock_lock(&m_); }
+  void unlock() LIGHTUSD_TSA_RELEASE() { os_unfair_lock_unlock(&m_); }
 
   Mutex() = default;
   Mutex(const Mutex&) = delete;
@@ -51,8 +51,8 @@ class TUSDZ_TSA_CAPABILITY("mutex") Mutex {
   std::mutex m_;
 
  public:
-  void lock() TUSDZ_TSA_ACQUIRE() { m_.lock(); }
-  void unlock() TUSDZ_TSA_RELEASE() { m_.unlock(); }
+  void lock() LIGHTUSD_TSA_ACQUIRE() { m_.lock(); }
+  void unlock() LIGHTUSD_TSA_RELEASE() { m_.unlock(); }
 #endif
   // Required so `!m` is a valid expression in negative capability
   // annotations.
@@ -60,14 +60,14 @@ class TUSDZ_TSA_CAPABILITY("mutex") Mutex {
 };
 
 // std::lock_guard equivalent for Mutex.
-class TUSDZ_TSA_SCOPED_CAPABILITY MutexLockGuard {
+class LIGHTUSD_TSA_SCOPED_CAPABILITY MutexLockGuard {
   Mutex& m_;
 
  public:
-  explicit MutexLockGuard(Mutex& m) TUSDZ_TSA_ACQUIRE(m) : m_(m) {
+  explicit MutexLockGuard(Mutex& m) LIGHTUSD_TSA_ACQUIRE(m) : m_(m) {
     m_.lock();
   }
-  ~MutexLockGuard() TUSDZ_TSA_RELEASE() { m_.unlock(); }
+  ~MutexLockGuard() LIGHTUSD_TSA_RELEASE() { m_.unlock(); }
 
   MutexLockGuard(const MutexLockGuard&) = delete;
   MutexLockGuard& operator=(const MutexLockGuard&) = delete;

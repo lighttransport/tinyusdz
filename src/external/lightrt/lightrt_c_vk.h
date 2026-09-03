@@ -230,7 +230,7 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
 /* Descriptor-backed MaterialX/OpenPBR preview and production path tracing.
  * The resident TLAS in `s` must describe the same indexed triangles. Vertices
  * are interleaved pos.xyz,nrm.xyz,uv.xy (8 floats). Graph blocks use the
- * canonical tusdview PackMaterialXGraphRuntime layout. Textures are packed
+ * canonical lusdview PackMaterialXGraphRuntime layout. Textures are packed
  * RGBA8 uint32 texels with 8-int descriptors: offset,width,height,wrapS,wrapT,
  * srgb,0,0. Materials use the canonical packed OpenPBR block whose stride is
  * supplied in `material_stride_floats`. Lights use 16 floats:

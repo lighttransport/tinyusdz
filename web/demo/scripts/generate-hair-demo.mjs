@@ -127,9 +127,9 @@ if (checkOnly) {
   try {
     const source = path.join(temp, 'hair-fur-demo.usda');
     await writeFile(source, makeUSDA());
-    const tusdcat = process.env.TUSDCAT || path.join(repoRoot, 'build_ninja/tusdcat');
-    const result = spawnSync(tusdcat, ['--output-format', 'usdc', '--compress-float-arrays', '-o', output, source], { stdio: 'inherit' });
-    if (result.status !== 0) throw new Error(`${tusdcat} failed with exit code ${result.status}`);
+    const lusdcat = process.env.LUSDCAT || path.join(repoRoot, 'build_ninja/lusdcat');
+    const result = spawnSync(lusdcat, ['--output-format', 'usdc', '--compress-float-arrays', '-o', output, source], { stdio: 'inherit' });
+    if (result.status !== 0) throw new Error(`${lusdcat} failed with exit code ${result.status}`);
     await validate();
   } finally { await rm(temp, { recursive: true, force: true }); }
 }

@@ -42,7 +42,7 @@ Standalone corpus runners accept explicit executable paths and return non-zero
 when any input fails:
 
 ```bash
-python3 tests/parse_usd/runner.py tests/usda --app build/tusdcat
+python3 tests/parse_usd/runner.py tests/usda --app build/lusdcat
 python3 tests/tydra_to_renderscene/runner.py models --app build/tydra_to_renderscene
 ```
 
@@ -114,14 +114,14 @@ The full regression pass has two parts:
 1. All CMake/CTest-registered tests, including parser corpus tests, roundtrip
    corpus tests, registered feature tests, benchmarks in quick mode, MCP tests,
    and the main Acutest unit suite.
-2. The Node.js `tusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
+2. The Node.js `lusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
    checks LightUSD output against `usdcat` over the USDA and USDC fixture
    corpora.
 
 Recommended command sequence from the repository root:
 
 ```bash
-# Build all configured tests and examples, including tusdcat.
+# Build all configured tests and examples, including lusdcat.
 cmake --build build
 
 # 1. Run all CTest-registered tests.
@@ -138,7 +138,7 @@ ctest --test-dir build-next --output-on-failure
 #    Build it once with: scripts/build-openusd-usdcat.sh
 #    For headless environments lacking PySide, `--full` will retry with a reduced
 #    full-core profile unless OPENUSD_RETRY_NO_PYSIDE=0 is set.
-TUSDCAT_PATH=./build/tusdcat \
+LUSDCAT_PATH=./build/lusdcat \
 USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 ```
@@ -172,29 +172,29 @@ cmake -S . -B build_ninja -G Ninja \
   -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_BUILD_EXAMPLES=ON \
   -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
-  -DLIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON
+  -DLIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD=ON
 cmake --build build_ninja -j16
 
 # Viewer-only hardware/display coverage:
 xvfb-run -a -s "-screen 0 1280x800x24" \
-  ctest --test-dir build_ninja -R '^tusdview' --output-on-failure
+  ctest --test-dir build_ninja -R '^lusdview' --output-on-failure
 
 # Full native CTest matrix, including the viewer tests:
 xvfb-run -a -s "-screen 0 1280x800x24" \
   ctest --test-dir build_ninja --output-on-failure
 ```
 
-`LIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON` is evaluated during CMake configure. If
+`LIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD=ON` is evaluated during CMake configure. If
 the NVIDIA kernel device, GLVND vendor file, and an NVIDIA Vulkan physical
-device are visible, CMake injects the following into `tusdview-*` tests:
+device are visible, CMake injects the following into `lusdview-*` tests:
 
 ```text
 __NV_PRIME_RENDER_OFFLOAD=1
 __GLX_VENDOR_LIBRARY_NAME=nvidia
 __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
-TUSDVIEW_NVIDIA_OFFLOAD=1
-TUSDVIEW_XVFB=1
-TUSDVIEW_VK_DEVICE=nvidia
+LUSDVIEW_NVIDIA_OFFLOAD=1
+LUSDVIEW_XVFB=1
+LUSDVIEW_VK_DEVICE=nvidia
 ```
 
 The Vulkan selector is added only when `vulkaninfo --summary` confirms an
@@ -203,24 +203,24 @@ Vulkan ICD or `/dev/nvidia0`, CMake leaves Vulkan selection automatic so the
 tests can use another device or return their normal skip code. Check the
 configure message before interpreting a Vulkan result.
 
-The `tusdview-cpu-rt-*` tests are intentionally exempt from the NVIDIA GL
+The `lusdview-cpu-rt-*` tests are intentionally exempt from the NVIDIA GL
 shader-cache warmup and PRIME environment. They use Vulkan only as a windowless
 presentation shell and must remain runnable on the automatically selected
 device if an Xvfb display or NVIDIA driver disappears after configuration.
 
-The `tool-tusdrender-materialx-openpbr-parity` test also compares a fixed
+The `tool-lusdrender-materialx-openpbr-parity` test also compares a fixed
 six-panel OpenPBR lobe scene against committed 192x140, 16-sample PNG references.
 Vulkan has its own reference and CUDA/HIP share one because their common kernel
 is byte-identical for this deterministic scene. The 1% normalized-RMSE allowance
 covers minor driver/compiler variation without accepting a flattened or missing
 lobe.
 
-The three GLVND variables route OpenGL only. `TUSDVIEW_VK_DEVICE=nvidia` is a
+The three GLVND variables route OpenGL only. `LUSDVIEW_VK_DEVICE=nvidia` is a
 test-harness variable that forwards `--vk-device nvidia`; direct viewer runs
 should use the command-line option. True headless Vulkan/CUDA/HIP tests do not
 need Xvfb. For the complete variable reference, direct commands, AMD behavior,
 and recovery from a broken sandbox X socket, see
-[`doc/tusdview.md`](tusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb).
+[`doc/lusdview.md`](lusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb).
 
 If `xvfb-run` cannot create `/tmp/.X11-unix` sockets in a container or managed
 sandbox, start Xvfb externally with Unix sockets disabled and use its TCP
@@ -228,11 +228,11 @@ display instead:
 
 ```bash
 Xvfb :88 -screen 0 1280x720x24 -ac -nolisten unix -nolisten local -listen tcp
-DISPLAY=localhost:88 ctest --test-dir build_ninja -R '^tusdview' --output-on-failure
+DISPLAY=localhost:88 ctest --test-dir build_ninja -R '^lusdview' --output-on-failure
 ```
 
-For USD-assets smoke runs, use `TUSDVIEW_XVFB=external` with the same `DISPLAY`
-and set `TUSDVIEW_NVIDIA_OFFLOAD=1 TUSDVIEW_VK_DEVICE=nvidia` only after the
+For USD-assets smoke runs, use `LUSDVIEW_XVFB=external` with the same `DISPLAY`
+and set `LUSDVIEW_NVIDIA_OFFLOAD=1 LUSDVIEW_VK_DEVICE=nvidia` only after the
 Vulkan device probe succeeds.
 
 Useful variants:
@@ -240,19 +240,19 @@ Useful variants:
 ```bash
 # Quieter comparison logs.
 SHOW_DETAILED_DIFF=false \
-TUSDCAT_PATH=./build/tusdcat \
+LUSDCAT_PATH=./build/lusdcat \
 USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 
 # Longer per-file timeout for slow debug/ASan builds.
 TIMEOUT_MS=120000 \
-TUSDCAT_PATH=./build/tusdcat \
+LUSDCAT_PATH=./build/lusdcat \
 USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 
 # Single-file comparison through the Node.js runner.
 node tests/compare-usda.js \
-  --tusdcat ./build/tusdcat \
+  --lusdcat ./build/lusdcat \
   --usdcat ref/dist/bin/usdcat \
   --detailed-diff \
   tests/usda/somefile.usda
@@ -283,50 +283,50 @@ CMake registers these tests when the corresponding targets are built (most in th
 
 `usdc-parser-unit-test` is set to run after `unit-test-lightusd` (it globs `*-runtime.usdc` fixtures the unit suite generates).
 
-The `ctest` labels in use today are `benchmark`, `osd-verify`, and `tusdview`;
+The `ctest` labels in use today are `benchmark`, `osd-verify`, and `lusdview`;
 the `textools` label exists only when the vendored textools upstream self-tests
 are explicitly enabled (`-DLIGHTUSD_BUILD_TEXTOOLS_TESTS=ON`, default OFF):
 
 ```bash
 ctest --print-labels
-# benchmark, osd-verify, tusdview
+# benchmark, osd-verify, lusdview
 ```
 
-The tusdview viewer example registers GPU-dependent tests under the `tusdview` ctest label:
+The lusdview viewer example registers GPU-dependent tests under the `lusdview` ctest label:
 
 | Name | What it tests | Skip condition |
 |------|---------------|----------------|
-| `tusdview_lighting_test` | Non-mesh RT proxy topology + opacity | None (compiled unit) |
-| `tusdview_lightrt_bridge_test` | LightRT/OpenPBR material packing ABI | None (compiled unit) |
-| `tusdview_openpbr_material_test` | OpenPBR material extraction | None (compiled unit) |
-| `tusdview_texture_pipeline_test` | Image decode/mip/descriptor pipeline | None (compiled unit) |
-| `tusdview_lightrt_mtlx_eval_test` | MaterialX ND_image evaluation | None (compiled unit) |
-| `tusdview_lightrt_mtlx_graph_connection_test` | MaterialX graph edge resolution, forward references, graph outputs, selectors, and surface binding | None (compiled unit) |
-| `tusdview_lightrt_mtlx_graph_evaluation_test` | Numerical evaluation of connected arithmetic, vector, conditional, blend, and UV-spatial MaterialX nodes | None (compiled unit) |
-| `tool-tusdrender-materialx-cpu-graph` | Default CPU tusdrender evaluation of deep connected MaterialX graphs without fallback | None (headless CLI) |
-| `tusdview_geometry_primvar_test` | Geometry primvar reconstruction | None (compiled unit) |
-| `tusdview_camera_nav_test` | Camera navigation | None (compiled unit) |
-| `tusdview-next-nonmesh-extraction` | Default-loader Points/Curves records | Vulkan backend |
-| `tusdview-gl-nonmesh-render` | GL carrier-render for Points/Curves | No GL context |
-| `tusdview-vk-nonmesh-render` | VK carrier-render for Points/Curves | No Vulkan backend |
-| `tusdview-dome-orientation` | DomeLight IBL orientation | No GPU |
-| `tusdview-light-record-equivalence` | Next/legacy light record parity | `xvfb-run` |
-| `tusdview-camera-record-equivalence` | Next/legacy camera record parity | `xvfb-run` |
-| `tusdview-shadow-alpha-inst` | Alpha-cutout + PointInstancer shadow | No GPU |
-| `tusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
-| `tusdview-gl-vk-parity` | GL/VK raster image agreement | No GPU |
-| `tusdview-raster-shadow-map` | Raster shadow map regression | No GPU |
+| `lusdview_lighting_test` | Non-mesh RT proxy topology + opacity | None (compiled unit) |
+| `lusdview_lightrt_bridge_test` | LightRT/OpenPBR material packing ABI | None (compiled unit) |
+| `lusdview_openpbr_material_test` | OpenPBR material extraction | None (compiled unit) |
+| `lusdview_texture_pipeline_test` | Image decode/mip/descriptor pipeline | None (compiled unit) |
+| `lusdview_lightrt_mtlx_eval_test` | MaterialX ND_image evaluation | None (compiled unit) |
+| `lusdview_lightrt_mtlx_graph_connection_test` | MaterialX graph edge resolution, forward references, graph outputs, selectors, and surface binding | None (compiled unit) |
+| `lusdview_lightrt_mtlx_graph_evaluation_test` | Numerical evaluation of connected arithmetic, vector, conditional, blend, and UV-spatial MaterialX nodes | None (compiled unit) |
+| `tool-lusdrender-materialx-cpu-graph` | Default CPU lusdrender evaluation of deep connected MaterialX graphs without fallback | None (headless CLI) |
+| `lusdview_geometry_primvar_test` | Geometry primvar reconstruction | None (compiled unit) |
+| `lusdview_camera_nav_test` | Camera navigation | None (compiled unit) |
+| `lusdview-next-nonmesh-extraction` | Default-loader Points/Curves records | Vulkan backend |
+| `lusdview-gl-nonmesh-render` | GL carrier-render for Points/Curves | No GL context |
+| `lusdview-vk-nonmesh-render` | VK carrier-render for Points/Curves | No Vulkan backend |
+| `lusdview-dome-orientation` | DomeLight IBL orientation | No GPU |
+| `lusdview-light-record-equivalence` | Next/legacy light record parity | `xvfb-run` |
+| `lusdview-camera-record-equivalence` | Next/legacy camera record parity | `xvfb-run` |
+| `lusdview-shadow-alpha-inst` | Alpha-cutout + PointInstancer shadow | No GPU |
+| `lusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
+| `lusdview-gl-vk-parity` | GL/VK raster image agreement | No GPU |
+| `lusdview-raster-shadow-map` | Raster shadow map regression | No GPU |
 
 ```bash
-# Run every test whose name belongs to the tusdview matrix. The name filter
-# includes tests that do not carry the tusdview label.
-ctest -R '^tusdview' --output-on-failure
+# Run every test whose name belongs to the lusdview matrix. The name filter
+# includes tests that do not carry the lusdview label.
+ctest -R '^lusdview' --output-on-failure
 
-# Run only the tests explicitly tagged with the tusdview label.
-ctest -L tusdview --output-on-failure
+# Run only the tests explicitly tagged with the lusdview label.
+ctest -L lusdview --output-on-failure
 
 # Run individual test
-ctest -R tusdview-camera-record-equivalence --output-on-failure
+ctest -R lusdview-camera-record-equivalence --output-on-failure
 ```
 
 Useful commands:
@@ -403,12 +403,12 @@ These checks catch cross-version serialization or compatibility drift:
 
 ```bash
 # Batch script for broad coverage
-USDCAT_PATH=ref/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=ref/dist/bin/usdcat LUSDCAT_PATH=./build/lusdcat \
   bash tests/run-usdcat-compare.sh
 
 # Per-file diff for regression investigation
 node tests/compare-usda.js --detailed-diff \
-  --tusdcat ./build/tusdcat --usdcat ref/dist/bin/usdcat \
+  --lusdcat ./build/lusdcat --usdcat ref/dist/bin/usdcat \
   tests/usda/somefile.usda
 ```
 
@@ -550,7 +550,7 @@ The parser runners above use `test_lightusd`, built from `tests/test-main.cc`.
 - dispatches by extension to `LoadUSDAFromFile`, `LoadUSDCFromFile`, `LoadUSDZFromFile`, or `LoadUSDFromFile`
 - returns success/failure based on the parser result
 - supports an optional `--verbose`
-- is marked in source as a candidate for future deprecation in favor of `tusdcat`
+- is marked in source as a candidate for future deprecation in favor of `lusdcat`
 
 ## Roundtrip Runners
 
@@ -589,9 +589,9 @@ python3 tests/usda/usdc-roundtrip-runner.py \
 
 Pipeline per file:
 
-1. `tusdcat input.usda -o temp.usdc` — LightUSD writes USDC
-2. `tusdcat temp.usdc -o temp_rt.usda` — LightUSD reads USDC back as USDA
-3. `tusddiff input.usda temp_rt.usda` — Layer-level diff of original vs roundtripped USDA
+1. `lusdcat input.usda -o temp.usdc` — LightUSD writes USDC
+2. `lusdcat temp.usdc -o temp_rt.usda` — LightUSD reads USDC back as USDA
+3. `lusddiff input.usda temp_rt.usda` — Layer-level diff of original vs roundtripped USDA
 
 The `ctest` target runs in `--report-only` mode (informational — always exits 0) because the USDC writer does not yet preserve all property and metadata details.
 
@@ -599,25 +599,25 @@ For strict validation:
 
 ```bash
 python3 tests/usdc-writer/usdc-writer-runner.py \
-  --tusdcat ./build/tusdcat \
-  --tusddiff ./build/tusddiff \
+  --lusdcat ./build/lusdcat \
+  --lusddiff ./build/lusddiff \
   --basedir tests/usda \
   --verbose
 ```
 
-### tusddiff
+### lusddiff
 
-`tusddiff` is the Layer-level diff tool built from `tools/tusddiff/` (requires `-DLIGHTUSD_BUILD_TOOLS=ON`). It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
+`lusddiff` is the Layer-level diff tool built from `tools/lusddiff/` (requires `-DLIGHTUSD_BUILD_TOOLS=ON`). It loads both files via `LoadLayerFromFile` (PrimSpec tree) and reports added, deleted, and modified prims and properties.
 
 ```bash
 # Text diff
-./build/tusddiff file1.usda file2.usda
+./build/lusddiff file1.usda file2.usda
 
 # JSON diff
-./build/tusddiff --json file1.usda file2.usda
+./build/lusddiff --json file1.usda file2.usda
 
 # Quiet mode (exit code only: 0 = identical, 1 = different, 2 = error)
-./build/tusddiff --quiet file1.usda file2.usda
+./build/lusddiff --quiet file1.usda file2.usda
 ```
 
 ## Feature Tests
@@ -810,9 +810,9 @@ only via its local Makefile, e.g. `test_nodegraph_export.cc`,
 
 Important current behavior:
 
-- it looks for `build_release/tusdcat`, not `build/test_lightusd`
+- it looks for `build_release/lusdcat`, not `build/test_lightusd`
 - it recursively scans a target tree for `.usd`, `.usda`, `.usdc`, and `.usdz`
-- it invokes `tusdcat -l <file>`
+- it invokes `lusdcat -l <file>`
 - it supports `--timeout`
 - it prints failures but does not currently return a failing process exit code based on the failure list
 
@@ -832,7 +832,7 @@ fixtures under `tests/usdc/`.
 Short form:
 
 ```bash
-TUSDCAT_PATH=./build/tusdcat \
+LUSDCAT_PATH=./build/lusdcat \
 USDCAT_PATH=ref/dist/bin/usdcat \
   bash tests/run-usdcat-compare.sh
 ```
@@ -841,7 +841,7 @@ Single-file mode through the Node.js comparator:
 
 ```bash
 node tests/compare-usda.js \
-  --tusdcat ./build/tusdcat \
+  --lusdcat ./build/lusdcat \
   --usdcat ref/dist/bin/usdcat \
   --detailed-diff \
   tests/usda/somefile.usda

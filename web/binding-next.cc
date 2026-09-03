@@ -5757,7 +5757,7 @@ static std::string validateFromBinary(const emscripten::val& data,
 //         format?:"text"|"json"|"both", ulps?, eps?, compareMetadata?,
 //         fuzzyAssetPaths? }
 // Pre-composition layer diff over next::Layer, mirroring the legacy module's
-// usddiff / native tusddiff contract.
+// usddiff / native lusddiff contract.
 static emscripten::val usddiff(const emscripten::val& opts) {
   emscripten::val result = emscripten::val::object();
 

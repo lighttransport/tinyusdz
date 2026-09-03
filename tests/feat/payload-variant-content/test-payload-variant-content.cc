@@ -59,7 +59,7 @@ const PrimSpec *findChild(const PrimSpec &ps, const std::string &name) {
 }
 
 // Iteratively compose references -> payload -> variants, deferring variant
-// resolution until references & payloads settle (mirrors the tusdcat driver and
+// resolution until references & payloads settle (mirrors the lusdcat driver and
 // the feat-variant-payload-chain helper).
 bool flatten(AssetResolutionResolver &resolver, Layer layer, Layer *out,
              std::string *warn, std::string *err) {

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { showLoader, hideLoader } from '../tusd-loader.js';
+import { showLoader, hideLoader } from '../lightusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { GUI } from 'lil-gui';

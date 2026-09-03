@@ -18,10 +18,10 @@
 
 #if defined(_WIN32)
 #include <direct.h>
-#define TUSDZ_TEST_MKDIR(p) _mkdir(p)
+#define LIGHTUSD_TEST_MKDIR(p) _mkdir(p)
 #else
 #include <sys/stat.h>
-#define TUSDZ_TEST_MKDIR(p) mkdir((p), 0755)
+#define LIGHTUSD_TEST_MKDIR(p) mkdir((p), 0755)
 #endif
 
 #include "unit-materialx.h"
@@ -576,8 +576,8 @@ void materialx_include_path_traversal_test(void) {
   const std::string kBaseDir = "unit_mtlx_traversal_tmp/base";
 
   // Fixture setup (cwd is the build dir per CTest WORKING_DIRECTORY).
-  TUSDZ_TEST_MKDIR(kTmpRoot.c_str());
-  TUSDZ_TEST_MKDIR(kBaseDir.c_str());  // EEXIST from a prior run is harmless.
+  LIGHTUSD_TEST_MKDIR(kTmpRoot.c_str());
+  LIGHTUSD_TEST_MKDIR(kBaseDir.c_str());  // EEXIST from a prior run is harmless.
 
   // A "secret" file living OUTSIDE the base dir (in the parent) — the target an
   // attacker would try to reach via "../".

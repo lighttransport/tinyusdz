@@ -3,7 +3,7 @@
 //
 // Diff two USD files at the Layer / PrimSpec / Attribute level. Files are loaded
 // as Layers (pre-composition), so the full prim/attribute tree is compared.
-// Mirrors the native `tusddiff` tool (tools/tusddiff/tusddiff.cc).
+// Mirrors the native `lusddiff` tool (tools/lusddiff/lusddiff.cc).
 //
 // Usage:
 //   node cli/usddiff.js [OPTIONS] <file1> <file2>

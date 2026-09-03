@@ -41,11 +41,11 @@ sudo make install
 **Usage:**
 ```c
 #include <lightusd_c.h>
-tusdz_init();
-tusdz_stage stage = NULL;
-tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
-tusdz_stage_free(stage);
-tusdz_shutdown();
+lightusd_init();
+lightusd_stage stage = NULL;
+lightusd_load_from_file("model.usd", NULL, &stage, NULL, 0);
+lightusd_stage_free(stage);
+lightusd_shutdown();
 ```
 
 **API Coverage:** 100% - All functions implemented
@@ -325,7 +325,7 @@ module LightUSD
   extend FFI::Library
   ffi_lib 'lightusd_c'
 
-  attach_function :tusdz_init, [], :int
+  attach_function :lightusd_init, [], :int
   # ...
 end
 ```
@@ -493,13 +493,13 @@ make test
 ```python
 # Blender addon
 import bpy
-import lightusd_complete as tusdz
+import lightusd_complete as lightusd
 
 def import_usd(filename):
-    tusdz.init()
-    stage = tusdz.load_from_file(filename)
+    lightusd.init()
+    stage = lightusd.load_from_file(filename)
     # ... create Blender objects ...
-    tusdz.shutdown()
+    lightusd.shutdown()
 ```
 
 ### Rust + Tauri (Desktop App)

@@ -152,9 +152,9 @@ async function runNodeTests(results) {
   for (const [label, relative] of OPTIONAL_NODE_TESTS) {
     if (!exists(relative)) continue;
     if (label === 'validation parity' &&
-        !fs.existsSync(process.env.TUSDCAT_PATH || path.join(REPO_ROOT, 'build', 'tusdcat'))) {
-      console.log(`\n>>> ${label}: SKIP (native tusdcat is not built)`);
-      results.push({ label, ok: true, skipped: true, reason: 'native tusdcat is not built' });
+        !fs.existsSync(process.env.LUSDCAT_PATH || path.join(REPO_ROOT, 'build', 'lusdcat'))) {
+      console.log(`\n>>> ${label}: SKIP (native lusdcat is not built)`);
+      results.push({ label, ok: true, skipped: true, reason: 'native lusdcat is not built' });
       continue;
     }
     results.push(await run(label, NODE, [relative], {}));

@@ -12,7 +12,7 @@
 //
 // The text and JSON renderers produce the same output shape as the legacy
 // tydra::DiffToText / DiffToJSON, so consumers (web/js/usddiff.js, the
-// `tusddiff` CLI conventions) work unchanged.
+// `lusddiff` CLI conventions) work unchanged.
 
 #pragma once
 

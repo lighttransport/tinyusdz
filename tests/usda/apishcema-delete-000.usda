@@ -7,7 +7,7 @@
 # Regression test: `delete apiSchemas` list-op (issue #271).
 # A child prim subtracts a previously-prepended schema from the
 # resolved set. Pattern emitted by Omniverse Kit on newton-assets.
-# tusdcat preserves the authored `delete`/`prepend` apiSchemas list-ops verbatim
+# lusdcat preserves the authored `delete`/`prepend` apiSchemas list-ops verbatim
 # (matches pxrUSD usdcat); the resolved view still subtracts the deletes.
 
 def Xform "world"

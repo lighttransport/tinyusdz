@@ -73,7 +73,7 @@ bool hasDescendantOfType(const PrimSpec &ps, const std::string &typeName) {
 
 bool flatten(AssetResolutionResolver &resolver, Layer layer, Layer *out,
              std::string *warn, std::string *err) {
-  // ALab authors parent-relative (`../`) arcs, so enable them (as the tusdcat
+  // ALab authors parent-relative (`../`) arcs, so enable them (as the lusdcat
   // driver does).
   ReferencesCompositionOptions ref_opts;
   ref_opts.allow_parent_relative_paths = true;

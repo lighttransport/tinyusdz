@@ -10,7 +10,7 @@
 #include "cache-utils.hh"
 #include "../composition/composition.hh"  // reuse ParseReference / ParsePayload / CopyLocalOpinions
 #include "../strfmt.hh"                    // IntToStr / UIntToStr
-#include "../../logger.hh"                 // lightusd::logging TUSDZ_LOG_*
+#include "../../logger.hh"                 // lightusd::logging LIGHTUSD_LOG_*
 
 #include <algorithm>
 #include <cmath>
@@ -1006,7 +1006,7 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
   bool ok = cache.BuildStage(out_stage, warn, err);
   const auto t2 = Clock::now();
   if (timing) {
-    TUSDZ_LOG_I("[next_compose] open=" + FormatMilliseconds(ms(t1 - t0)) +
+    LIGHTUSD_LOG_I("[next_compose] open=" + FormatMilliseconds(ms(t1 - t0)) +
                 "ms build_stage=" + FormatMilliseconds(ms(t2 - t1)) + "ms");
   }
   return ok;

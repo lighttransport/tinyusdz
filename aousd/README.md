@@ -200,7 +200,7 @@ for prim in stage.Traverse():
 **LightUSD:**
 ```bash
 # From lightusd root
-./build/tusdcat models/suzanne.usda > lightusd_output.txt
+./build/lusdcat models/suzanne.usda > lightusd_output.txt
 ```
 
 **OpenUSD:**
@@ -225,8 +225,8 @@ usdchecker ../models/suzanne.usda
 
 **LightUSD:**
 ```bash
-# Use tusdview or custom tool to display hierarchy
-./build/tusdview models/suzanne.usda
+# Use lusdview or custom tool to display hierarchy
+./build/lusdview models/suzanne.usda
 ```
 
 **OpenUSD:**
@@ -389,7 +389,7 @@ usdchecker "$USD_FILE" > openusd_check.txt 2>&1
 
 # LightUSD outputs (adjust paths as needed)
 echo "Generating LightUSD outputs..."
-../../build/tusdcat "$USD_FILE" > lightusd_cat.txt
+../../build/lusdcat "$USD_FILE" > lightusd_cat.txt
 
 echo "Outputs saved in comparisons/"
 echo "Use 'diff' or 'vimdiff' to compare files"

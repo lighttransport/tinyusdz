@@ -12,7 +12,7 @@ history, measurement procedures, and benchmark results.
 
 **Test model:** `suzanne-subd-lv6.usdc` (180 MB on disk, 12M triangulated vertices, 4M faces)
 
-### tusdcat (Stage loading only, parse-only with `-l`)
+### lusdcat (Stage loading only, parse-only with `-l`)
 
 | Metric | Value |
 |--------|-------|
@@ -27,13 +27,13 @@ reported vs 281 MB massif). In lazy mode (default), the reported 92.3 MB is the 
 concurrent high-water mark — lower than the cumulative massif peak because the scratch
 buffer releases between specs.
 
-**Peak breakdown (tusdcat `-l`, parse only, 281 MB):**
+**Peak breakdown (lusdcat `-l`, parse only, 281 MB):**
 - 41% (~121 MB) — `UnpackValueRep` float3 array allocation via `DecodeFieldSet`
 - 23% (~69 MB) — `ReadCompressedInts<int>` decompression buffers (2 sites, ~34 MB each)
 - 35% (~104 MB) — `ReadIntArray<int>` output vectors + other allocations
 - All through: `DecodeFieldSet` → `ResolveFieldValuePairs` → `BuildPropertyMap` → `ReconstructPrim<GeomMesh>`
 
-Without `-l`, tusdcat serializes the whole Stage to stdout as USDA, pushing peak to
+Without `-l`, lusdcat serializes the whole Stage to stdout as USDA, pushing peak to
 2.46 GB (the extra ~2.2 GB is string formatting of 12M vertices). Parse-only (`-l`)
 isolates the parser footprint at 281 MB.
 
@@ -101,7 +101,7 @@ File on Disk (.usdc / .usda / .usdz)
 | `MMapFile()` | ~0 | OS page-maps file, no heap copy |
 | `ReadWholeFile()` | file size | `std::vector<uint8_t>` allocation |
 
-Used in `tusdcat/main.cc` and `lightusd.cc`. For a 188 MB USDC, mmap avoids 188 MB of
+Used in `lusdcat/main.cc` and `lightusd.cc`. For a 188 MB USDC, mmap avoids 188 MB of
 heap entirely. Fallback to `ReadWholeFile` when mmap is unavailable.
 
 Limits (`USDLoadOptions`, `lightusd.hh`): `max_memory_limit_in_mb` 16384 (16 GB);
@@ -112,7 +112,7 @@ Limits (`USDLoadOptions`, `lightusd.hh`): `max_memory_limit_in_mb` 16384 (16 GB)
 `MemoryBudgetManager` (RAII, `src/memory-budget.hh`) wraps every crate-reader allocation
 (`CheckAndReserve(bytes)` / `Release(bytes)`). Every array read, string allocation, and
 decompression buffer goes through it. Tracked via `USDCMemoryUsageReport`
-(`current/peak/max_budget/remaining`). CLI: `tusdcat --memstat model.usdc`.
+(`current/peak/max_budget/remaining`). CLI: `lusdcat --memstat model.usdc`.
 
 Major CrateReader hotspots: the token array (up to 64M tokens), field array (up to 256M),
 spec/fieldset array (up to 256M), reused decompression buffers, and the live fieldsets map
@@ -256,7 +256,7 @@ estimated peak ~600–700 MB (V1 hybrid) → ~400–450 MB (V2 deferred).
 | Dynamic work distribution (tydra-next) | removes fixed-batch wave stalls on mixed-size meshes (~3.5x vs serial when `LIGHTUSD_NEXT_ENABLE_THREAD=ON`) | `tydra/next/render-converter.cc` |
 | Instance-registry descendant lookup | O(instances × meshes) → O(log meshes) | `render-data.cc` |
 | MikkTSpace Fast/Hybrid zero-copy inputs | one full vertex-array copy per mesh | `render-data-mesh.cc`, `fast-mikktspace.hh` |
-| mmap file loading | ~file size heap | `tusdcat`, `lightusd.cc` |
+| mmap file loading | ~file size heap | `lusdcat`, `lightusd.cc` |
 | MMap zero-copy V2 (deferred reads) | ~120+ MB on large meshes; Stage arrays → sentinels | `mmap-array-ref.hh`, `crate-reader.cc`, `usdc-reader.cc`, `stage.cc`, `render-data.cc` |
 | Tangent quantization (10_10_10_2 / Fp16x4) | 83% / 67% tangent storage | `render-data.cc`, `tangent-quantize.hh` |
 | Normal quantization (SNorm8 default) | 75% normal storage | `render-data.cc`, `tangent-quantize.hh` |
@@ -274,7 +274,7 @@ estimated peak ~600–700 MB (V1 hybrid) → ~400–450 MB (V2 deferred).
 | Consolidate 22 dedup caches → 1 unified | less hash-map overhead, simpler code | `crate-reader.hh`, `crate-reader-timesamples.cc` |
 | Remove `TypedArrayPtr` dead code | ~290 lines; eliminates ownership confusion | `typed-array.hh`, `timesamples.hh`, `timesamples-pprint.cc` |
 | TimeSamples move-in (lazy mode) | eliminates deep copy in lazy property construction | `usdc-reader.cc` |
-| Fix MemoryBudgetManager tracking | 49 KB → 282.7 MB reported (matches massif) | `crate-reader.cc`, `usdc-reader.cc`, `tusdcat/main.cc` |
+| Fix MemoryBudgetManager tracking | 49 KB → 282.7 MB reported (matches massif) | `crate-reader.cc`, `usdc-reader.cc`, `lusdcat/main.cc` |
 | Fix Stage `estimate_memory_usage()` | 4 KB → 217 MB (full recursive Prim-tree walk) | `stage.cc`, `prim-types.cc`, `value-types.cc` |
 | Complete RenderMesh / RenderScene / Layer estimation | JointAndWeight, ShapeTarget, MaterialSubset, Node tree, Material, AnimationClip, SkelHierarchy, VariantSetSpec | `render-data.cc`, `layer.cc` |
 | Connection resolve cache shrink_to_fit | swap-with-empty releases hash buckets | `render-data.cc` |
@@ -323,7 +323,7 @@ Zero collisions for both at 1M unique random inputs.
 
 ```bash
 # USDC parser current/peak/budget + Stage estimate
-./build/examples/tusdcat/tusdcat --memstat model.usdc
+./build/examples/lusdcat/lusdcat --memstat model.usdc
 
 # Stage estimate after load + RenderScene estimate after Tydra conversion
 # (--nodump suppresses USDA output; per-mesh and per-buffer breakdown)
@@ -340,7 +340,7 @@ ms_print massif.out.<pid>
 
 # Leak detection
 valgrind --leak-check=full --show-leak-kinds=all \
-  ./build/examples/tusdcat/tusdcat model.usdc
+  ./build/examples/lusdcat/lusdcat model.usdc
 ```
 
 WASM: Chrome DevTools → Memory → heap snapshot before/after USD load; Performance tab →
@@ -424,7 +424,7 @@ intended for refcounts / type tags / cache-coherency flags.
 | `src/tydra/render-data.cc` | RenderMesh/RenderScene estimation, tangent quantization |
 | `src/tydra/tangent-quantize.hh` | packed tangent/normal formats |
 | `web/binding.cc` | WASM memory config, tangent cache, deferred computation |
-| `examples/tusdcat/main.cc` | mmap loading, `--memstat` |
+| `examples/lusdcat/main.cc` | mmap loading, `--memstat` |
 | `examples/tydra_to_renderscene/to-renderscene-main.cc` | per-mesh/-buffer `--memstat` |
 | `tests/feat/tangent/bench_tangent.cc` | tangent memory/quality benchmark |
 | `tests/feat/hash/hash_bench.cc` | XXH3 vs FNV-1a hash benchmark |

@@ -18,7 +18,7 @@ static std::string str_tolower(std::string s) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Read USD file and check if reading is working well(TODO: use tusdcat and deprecate this test_lightusd program)\n" << std::endl;
+    std::cout << "Read USD file and check if reading is working well(TODO: use lusdcat and deprecate this test_lightusd program)\n" << std::endl;
     std::cout << "Usage input.[usd|usda|usdc|usdz] (--verbose)\n" << std::endl;
     return EXIT_FAILURE;
   }

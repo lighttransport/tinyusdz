@@ -107,7 +107,7 @@ inline bool BuildRealtimePbrMaterial(
   return true;
 }
 
-// Compatibility entry point for tusdrender and downstream callers. New code
+// Compatibility entry point for lusdrender and downstream callers. New code
 // should use BuildRealtimePbrMaterial to avoid coupling Tydra extraction to a
 // particular evaluator.
 inline bool BuildLightRtOpenPBRParams(

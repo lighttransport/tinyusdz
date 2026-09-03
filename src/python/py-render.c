@@ -5,37 +5,37 @@
 #include "py-internal.h"
 #include "lightusd-render-c.h"
 
-/* Additional state fields live in tusd_state (see py-internal.h). */
+/* Additional state fields live in lightusd_state (see py-internal.h). */
 
 typedef struct {
   PyObject_HEAD
-  tusd_render_scene* scene; /* owned */
-} TusdRenderScene;
+  lightusd_render_scene* scene; /* owned */
+} LightUSDRenderScene;
 
 typedef struct {
   PyObject_HEAD
-  PyObject* scene; /* strong ref to TusdRenderScene */
+  PyObject* scene; /* strong ref to LightUSDRenderScene */
   int32_t id;
-} TusdRenderItem; /* shared shape for all per-id facades */
+} LightUSDRenderItem; /* shared shape for all per-id facades */
 
-static tusd_render_scene* item_scene(TusdRenderItem* it) {
-  return ((TusdRenderScene*)it->scene)->scene;
+static lightusd_render_scene* item_scene(LightUSDRenderItem* it) {
+  return ((LightUSDRenderScene*)it->scene)->scene;
 }
 
 /* Wrap a render buffer view as a zero-copy Array anchored to the scene. */
-static PyObject* wrap_buffer(tusd_state* st, PyObject* scene_obj,
-                             const tusd_buffer_view* buf) {
+static PyObject* wrap_buffer(lightusd_state* st, PyObject* scene_obj,
+                             const lightusd_buffer_view* buf) {
   if (!buf->data || buf->count == 0) Py_RETURN_NONE;
-  tusd_value_view view;
+  lightusd_value_view view;
   memset(&view, 0, sizeof(view));
-  view.type = TUSD_TYPE_INVALID;
+  view.type = LIGHTUSD_TYPE_INVALID;
   view.is_array = 1;
   view.storage = buf->component_type;
   view.components = buf->components;
   view.count = buf->count;
   view.data = buf->data;
   view.nbytes = buf->nbytes;
-  return tusd_wrap_array_borrowed(st, scene_obj, &view);
+  return lightusd_wrap_array_borrowed(st, scene_obj, &view);
 }
 
 static PyObject* matrix16f_to_python(const float m[16]) {
@@ -55,12 +55,12 @@ static PyObject* matrix16f_to_python(const float m[16]) {
 }
 
 /* Generic item alloc */
-static PyObject* item_new(tusd_state* st, PyObject* type_obj,
+static PyObject* item_new(lightusd_state* st, PyObject* type_obj,
                           PyObject* scene_obj, int32_t id) {
   (void)st;
-  PyObject* obj = tusd_alloc(type_obj);
+  PyObject* obj = lightusd_alloc(type_obj);
   if (!obj) return NULL;
-  TusdRenderItem* it = (TusdRenderItem*)obj;
+  LightUSDRenderItem* it = (LightUSDRenderItem*)obj;
   it->scene = scene_obj;
   Py_INCREF(scene_obj);
   it->id = id;
@@ -68,7 +68,7 @@ static PyObject* item_new(tusd_state* st, PyObject* type_obj,
 }
 
 static void item_dealloc(PyObject* self) {
-  TusdRenderItem* it = (TusdRenderItem*)self;
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
   PyTypeObject* tp = Py_TYPE(self);
   Py_CLEAR(it->scene);
   freefunc free_fn = (freefunc)PyType_GetSlot(tp, Py_tp_free);
@@ -80,26 +80,26 @@ static void item_dealloc(PyObject* self) {
  * RenderMesh
  * ============================================================ */
 
-static int mesh_info(TusdRenderItem* it, tusd_render_mesh_info* info) {
-  tusd_state* st = tusd_state_from_obj((PyObject*)it);
+static int mesh_info(LightUSDRenderItem* it, lightusd_render_mesh_info* info) {
+  lightusd_state* st = lightusd_state_from_obj((PyObject*)it);
   if (!st) return -1;
-  tusd_status s = tusd_render_mesh_get_info(item_scene(it), it->id, info);
-  if (s != TUSD_OK) {
-    tusd_raise(st, s, "render mesh");
+  lightusd_status s = lightusd_render_mesh_get_info(item_scene(it), it->id, info);
+  if (s != LIGHTUSD_OK) {
+    lightusd_raise(st, s, "render mesh");
     return -1;
   }
   return 0;
 }
 
 static PyObject* RMesh_get_str(PyObject* self, void* closure) {
-  tusd_render_mesh_info info;
-  if (mesh_info((TusdRenderItem*)self, &info) != 0) return NULL;
-  return tusd_sv_to_str((uintptr_t)closure == 0 ? info.name : info.prim_path);
+  lightusd_render_mesh_info info;
+  if (mesh_info((LightUSDRenderItem*)self, &info) != 0) return NULL;
+  return lightusd_sv_to_str((uintptr_t)closure == 0 ? info.name : info.prim_path);
 }
 
 static PyObject* RMesh_get_int(PyObject* self, void* closure) {
-  tusd_render_mesh_info info;
-  if (mesh_info((TusdRenderItem*)self, &info) != 0) return NULL;
+  lightusd_render_mesh_info info;
+  if (mesh_info((LightUSDRenderItem*)self, &info) != 0) return NULL;
   switch ((uintptr_t)closure) {
     case 0:
       return PyLong_FromUnsignedLongLong(info.point_count);
@@ -119,8 +119,8 @@ static PyObject* RMesh_get_int(PyObject* self, void* closure) {
 }
 
 static PyObject* RMesh_get_bool(PyObject* self, void* closure) {
-  tusd_render_mesh_info info;
-  if (mesh_info((TusdRenderItem*)self, &info) != 0) return NULL;
+  lightusd_render_mesh_info info;
+  if (mesh_info((LightUSDRenderItem*)self, &info) != 0) return NULL;
   switch ((uintptr_t)closure) {
     case 0:
       return PyBool_FromLong(info.is_triangulated);
@@ -132,21 +132,21 @@ static PyObject* RMesh_get_bool(PyObject* self, void* closure) {
 }
 
 static PyObject* RMesh_get_buffer(PyObject* self, void* closure) {
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_buffer_view buf;
-  tusd_status s = tusd_render_mesh_buffer(item_scene(it), it->id,
+  lightusd_buffer_view buf;
+  lightusd_status s = lightusd_render_mesh_buffer(item_scene(it), it->id,
                                           (uint8_t)(uintptr_t)closure, &buf);
-  if (s == TUSD_ERR_NOT_FOUND) Py_RETURN_NONE;
-  if (s != TUSD_OK) return tusd_raise(st, s, "mesh buffer");
+  if (s == LIGHTUSD_ERR_NOT_FOUND) Py_RETURN_NONE;
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "mesh buffer");
   return wrap_buffer(st, it->scene, &buf);
 }
 
 static PyObject* RMesh_get_bbox(PyObject* self, void* closure) {
   (void)closure;
-  tusd_render_mesh_info info;
-  if (mesh_info((TusdRenderItem*)self, &info) != 0) return NULL;
+  lightusd_render_mesh_info info;
+  if (mesh_info((LightUSDRenderItem*)self, &info) != 0) return NULL;
   if (!info.has_bbox) Py_RETURN_NONE;
   return Py_BuildValue(
       "((fff)(fff))", info.bbox_min[0], info.bbox_min[1], info.bbox_min[2],
@@ -155,15 +155,15 @@ static PyObject* RMesh_get_bbox(PyObject* self, void* closure) {
 
 static PyObject* RMesh_get_subsets(PyObject* self, void* closure) {
   (void)closure;
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_render_mesh_info info;
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_render_mesh_info info;
   if (mesh_info(it, &info) != 0) return NULL;
   PyObject* list = PyList_New((Py_ssize_t)info.subset_count);
   if (!list) return NULL;
   for (uint32_t i = 0; i < info.subset_count; ++i) {
     uint32_t start = 0, count = 0;
     int32_t mat = -1;
-    tusd_render_mesh_subset(item_scene(it), it->id, i, &start, &count, &mat);
+    lightusd_render_mesh_subset(item_scene(it), it->id, i, &start, &count, &mat);
     PyObject* t = Py_BuildValue("(IIi)", start, count, mat);
     if (!t) {
       Py_DECREF(list);
@@ -177,29 +177,29 @@ static PyObject* RMesh_get_subsets(PyObject* self, void* closure) {
 static PyObject* RMesh_primvar(PyObject* self, PyObject* args) {
   Py_ssize_t index;
   if (!PyArg_ParseTuple(args, "n:primvar", &index)) return NULL;
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
 
-  tusd_render_primvar_info info;
-  tusd_status s = tusd_render_mesh_primvar_info(item_scene(it), it->id,
+  lightusd_render_primvar_info info;
+  lightusd_status s = lightusd_render_mesh_primvar_info(item_scene(it), it->id,
                                                 (size_t)index, &info);
-  if (s != TUSD_OK) return tusd_raise(st, s, "primvar");
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "primvar");
 
-  tusd_buffer_view data_buf;
-  s = tusd_render_mesh_primvar_buffer(item_scene(it), it->id, (size_t)index,
+  lightusd_buffer_view data_buf;
+  s = lightusd_render_mesh_primvar_buffer(item_scene(it), it->id, (size_t)index,
                                       0, &data_buf);
-  if (s != TUSD_OK) return tusd_raise(st, s, "primvar data");
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "primvar data");
   PyObject* data = wrap_buffer(st, it->scene, &data_buf);
   if (!data) return NULL;
 
   PyObject* indices = Py_None;
   Py_INCREF(Py_None);
   if (info.has_indices) {
-    tusd_buffer_view idx_buf;
-    if (tusd_render_mesh_primvar_buffer(item_scene(it), it->id,
+    lightusd_buffer_view idx_buf;
+    if (lightusd_render_mesh_primvar_buffer(item_scene(it), it->id,
                                         (size_t)index, 1,
-                                        &idx_buf) == TUSD_OK) {
+                                        &idx_buf) == LIGHTUSD_OK) {
       Py_DECREF(indices);
       indices = wrap_buffer(st, it->scene, &idx_buf);
       if (!indices) {
@@ -212,7 +212,7 @@ static PyObject* RMesh_primvar(PyObject* self, PyObject* args) {
                                        "facevarying", "varying"};
   const char* interp =
       info.interpolation <= 4 ? interp_names[info.interpolation] : "vertex";
-  PyObject* name = tusd_sv_to_str(info.name);
+  PyObject* name = lightusd_sv_to_str(info.name);
   if (!name) {
     Py_DECREF(data);
     Py_DECREF(indices);
@@ -225,22 +225,22 @@ static PyObject* RMesh_primvar(PyObject* self, PyObject* args) {
 static PyObject* RMesh_blend_shape(PyObject* self, PyObject* args) {
   Py_ssize_t index;
   if (!PyArg_ParseTuple(args, "n:blend_shape", &index)) return NULL;
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_sv name;
+  lightusd_sv name;
   float weight = 0.0f;
-  tusd_buffer_view points_buf;
-  tusd_status s = tusd_render_mesh_blendshape(
+  lightusd_buffer_view points_buf;
+  lightusd_status s = lightusd_render_mesh_blendshape(
       item_scene(it), it->id, (size_t)index, 0, &name, &weight, &points_buf);
-  if (s != TUSD_OK) return tusd_raise(st, s, "blend shape");
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "blend shape");
   PyObject* points = wrap_buffer(st, it->scene, &points_buf);
   if (!points) return NULL;
-  tusd_buffer_view normals_buf;
+  lightusd_buffer_view normals_buf;
   PyObject* normals = Py_None;
   Py_INCREF(Py_None);
-  if (tusd_render_mesh_blendshape(item_scene(it), it->id, (size_t)index, 1,
-                                  NULL, NULL, &normals_buf) == TUSD_OK) {
+  if (lightusd_render_mesh_blendshape(item_scene(it), it->id, (size_t)index, 1,
+                                  NULL, NULL, &normals_buf) == LIGHTUSD_OK) {
     Py_DECREF(normals);
     normals = wrap_buffer(st, it->scene, &normals_buf);
     if (!normals) {
@@ -248,7 +248,7 @@ static PyObject* RMesh_blend_shape(PyObject* self, PyObject* args) {
       return NULL;
     }
   }
-  PyObject* pyname = tusd_sv_to_str(name);
+  PyObject* pyname = lightusd_sv_to_str(name);
   if (!pyname) {
     Py_DECREF(points);
     Py_DECREF(normals);
@@ -259,8 +259,8 @@ static PyObject* RMesh_blend_shape(PyObject* self, PyObject* args) {
 }
 
 static PyObject* RMesh_repr(PyObject* self) {
-  tusd_render_mesh_info info;
-  if (mesh_info((TusdRenderItem*)self, &info) != 0) {
+  lightusd_render_mesh_info info;
+  if (mesh_info((LightUSDRenderItem*)self, &info) != 0) {
     PyErr_Clear();
     return PyUnicode_FromString("RenderMesh(<invalid>)");
   }
@@ -290,30 +290,30 @@ static PyGetSetDef RMesh_getset[] = {
     {"is_triangulated", RMesh_get_bool, NULL, NULL, (void*)(uintptr_t)0},
     {"has_skin", RMesh_get_bool, NULL, NULL, (void*)(uintptr_t)1},
     {"points", RMesh_get_buffer, NULL, "float32 (N,3)",
-     (void*)(uintptr_t)TUSD_MESH_BUF_POINTS},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_POINTS},
     {"face_vertex_counts", RMesh_get_buffer, NULL, "uint32 (F,)",
-     (void*)(uintptr_t)TUSD_MESH_BUF_FACE_COUNTS},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_FACE_COUNTS},
     {"face_vertex_indices", RMesh_get_buffer, NULL, "uint32 (I,)",
-     (void*)(uintptr_t)TUSD_MESH_BUF_FACE_INDICES},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_FACE_INDICES},
     {"triangulated_indices", RMesh_get_buffer, NULL, "uint32 (T,)",
-     (void*)(uintptr_t)TUSD_MESH_BUF_TRI_INDICES},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_TRI_INDICES},
     {"triangulated_face_vertex_indices", RMesh_get_buffer, NULL,
      "uint32 (T,) faceVarying corner remap or None",
-     (void*)(uintptr_t)TUSD_MESH_BUF_TRI_FACEVARYING_INDICES},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_TRI_FACEVARYING_INDICES},
     {"normals", RMesh_get_buffer, NULL, "float32 (N,3) or None",
-     (void*)(uintptr_t)TUSD_MESH_BUF_NORMALS},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_NORMALS},
     {"tangents", RMesh_get_buffer, NULL, "float32 (N,4) or None",
-     (void*)(uintptr_t)TUSD_MESH_BUF_TANGENTS},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_TANGENTS},
     {"texcoords0", RMesh_get_buffer, NULL, "float32 (N,2) or None",
-     (void*)(uintptr_t)TUSD_MESH_BUF_TEXCOORDS0},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_TEXCOORDS0},
     {"texcoords1", RMesh_get_buffer, NULL, "float32 (N,2) or None",
-     (void*)(uintptr_t)TUSD_MESH_BUF_TEXCOORDS1},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_TEXCOORDS1},
     {"colors", RMesh_get_buffer, NULL, "float32 (N,3) or None",
-     (void*)(uintptr_t)TUSD_MESH_BUF_COLORS},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_COLORS},
     {"joint_indices", RMesh_get_buffer, NULL, "uint16 (N,4) or None",
-     (void*)(uintptr_t)TUSD_MESH_BUF_JOINT_INDICES},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_JOINT_INDICES},
     {"joint_weights", RMesh_get_buffer, NULL, "float32 (N,4) or None",
-     (void*)(uintptr_t)TUSD_MESH_BUF_JOINT_WEIGHTS},
+     (void*)(uintptr_t)LIGHTUSD_MESH_BUF_JOINT_WEIGHTS},
     {"bbox", RMesh_get_bbox, NULL, "((min),(max)) or None", NULL},
     {"subsets", RMesh_get_subsets, NULL,
      "GeomSubset list of (face_start, face_count, material_id)", NULL},
@@ -325,17 +325,17 @@ static PyGetSetDef RMesh_getset[] = {
  * ============================================================ */
 
 static PyObject* RMat_get(PyObject* self, void* closure) {
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_render_material_info info;
-  tusd_status s = tusd_render_material_get_info(item_scene(it), it->id, &info);
-  if (s != TUSD_OK) return tusd_raise(st, s, "render material");
+  lightusd_render_material_info info;
+  lightusd_status s = lightusd_render_material_get_info(item_scene(it), it->id, &info);
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "render material");
   switch ((uintptr_t)closure) {
     case 0:
-      return tusd_sv_to_str(info.name);
+      return lightusd_sv_to_str(info.name);
     case 1:
-      return tusd_sv_to_str(info.prim_path);
+      return lightusd_sv_to_str(info.prim_path);
     case 2: {
       static const char* names[] = {NULL, "preview_surface", "openpbr"};
       if (info.shader_type == 0 || info.shader_type > 2) Py_RETURN_NONE;
@@ -357,21 +357,21 @@ static PyObject* RMat_get(PyObject* self, void* closure) {
 }
 
 /* Forward decl: texture wrapping needs the scene facade below. */
-static PyObject* render_item_for(tusd_state* st, PyObject* scene_obj,
+static PyObject* render_item_for(lightusd_state* st, PyObject* scene_obj,
                                  PyObject* type_obj, int32_t id);
 
 static PyObject* RMat_param(PyObject* self, PyObject* args) {
   const char* name;
   if (!PyArg_ParseTuple(args, "s:param", &name)) return NULL;
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
   int32_t texture_id = -1;
   float value[4];
-  tusd_status s = tusd_render_material_param(item_scene(it), it->id, name,
+  lightusd_status s = lightusd_render_material_param(item_scene(it), it->id, name,
                                              &texture_id, value);
-  if (s == TUSD_ERR_NOT_FOUND) Py_RETURN_NONE;
-  if (s != TUSD_OK) return tusd_raise(st, s, name);
+  if (s == LIGHTUSD_ERR_NOT_FOUND) Py_RETURN_NONE;
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, name);
   if (texture_id >= 0) {
     return render_item_for(st, it->scene, st->RenderTextureType, texture_id);
   }
@@ -412,18 +412,18 @@ static PyGetSetDef RMat_getset[] = {
  * ============================================================ */
 
 static PyObject* RTex_get(PyObject* self, void* closure) {
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_render_texture_info info;
-  tusd_status s = tusd_render_texture_get_info(item_scene(it), it->id, &info);
-  if (s != TUSD_OK) return tusd_raise(st, s, "render texture");
+  lightusd_render_texture_info info;
+  lightusd_status s = lightusd_render_texture_get_info(item_scene(it), it->id, &info);
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "render texture");
   static const char* wrap_names[] = {"repeat", "clamp", "mirror", "black"};
   switch ((uintptr_t)closure) {
     case 0:
-      return tusd_sv_to_str(info.name);
+      return lightusd_sv_to_str(info.name);
     case 1:
-      return tusd_sv_to_str(info.asset_path);
+      return lightusd_sv_to_str(info.asset_path);
     case 2:
       return PyLong_FromLong(info.image_id);
     case 3:
@@ -445,12 +445,12 @@ static PyObject* RTex_get(PyObject* self, void* closure) {
 
 static PyObject* RTex_get_image(PyObject* self, void* closure) {
   (void)closure;
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_render_texture_info info;
-  tusd_status s = tusd_render_texture_get_info(item_scene(it), it->id, &info);
-  if (s != TUSD_OK) return tusd_raise(st, s, "render texture");
+  lightusd_render_texture_info info;
+  lightusd_status s = lightusd_render_texture_get_info(item_scene(it), it->id, &info);
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "render texture");
   if (info.image_id < 0) Py_RETURN_NONE;
   return render_item_for(st, it->scene, st->RenderImageType, info.image_id);
 }
@@ -480,17 +480,17 @@ static PyGetSetDef RTex_getset[] = {
 };
 
 static PyObject* RImg_get(PyObject* self, void* closure) {
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_render_image_info info;
-  tusd_status s = tusd_render_image_get_info(item_scene(it), it->id, &info);
-  if (s != TUSD_OK) return tusd_raise(st, s, "render image");
+  lightusd_render_image_info info;
+  lightusd_status s = lightusd_render_image_get_info(item_scene(it), it->id, &info);
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "render image");
   switch ((uintptr_t)closure) {
     case 0:
-      return tusd_sv_to_str(info.name);
+      return lightusd_sv_to_str(info.name);
     case 1:
-      return tusd_sv_to_str(info.resolved_path);
+      return lightusd_sv_to_str(info.resolved_path);
     case 2:
       return PyLong_FromUnsignedLong(info.width);
     case 3:
@@ -506,19 +506,19 @@ static PyObject* RImg_get(PyObject* self, void* closure) {
 
 static PyObject* RImg_get_data(PyObject* self, void* closure) {
   (void)closure;
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_buffer_view buf;
-  tusd_status s = tusd_render_image_buffer(item_scene(it), it->id, &buf);
-  if (s != TUSD_OK) return tusd_raise(st, s, "image data");
+  lightusd_buffer_view buf;
+  lightusd_status s = lightusd_render_image_buffer(item_scene(it), it->id, &buf);
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "image data");
   return wrap_buffer(st, it->scene, &buf);
 }
 
 static PyObject* RImg_repr(PyObject* self) {
-  tusd_render_image_info info;
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  if (tusd_render_image_get_info(item_scene(it), it->id, &info) != TUSD_OK) {
+  lightusd_render_image_info info;
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  if (lightusd_render_image_get_info(item_scene(it), it->id, &info) != LIGHTUSD_OK) {
     return PyUnicode_FromString("RenderImage(<invalid>)");
   }
   return PyUnicode_FromFormat("RenderImage(%ux%ux%u)", info.width,
@@ -542,21 +542,21 @@ static PyGetSetDef RImg_getset[] = {
  * ============================================================ */
 
 static PyObject* RNode_get(PyObject* self, void* closure) {
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_render_node_info info;
-  tusd_status s = tusd_render_node_get_info(item_scene(it), it->id, &info);
-  if (s != TUSD_OK) return tusd_raise(st, s, "render node");
+  lightusd_render_node_info info;
+  lightusd_status s = lightusd_render_node_get_info(item_scene(it), it->id, &info);
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "render node");
   static const char* type_names[] = {
       "xform", "mesh", "point_instancer", "camera",
       "point_light", "directional_light", "spot_light", "rect_light",
       "disk_light", "dome_light", "sphere_light", "skeleton"};
   switch ((uintptr_t)closure) {
     case 0:
-      return tusd_sv_to_str(info.name);
+      return lightusd_sv_to_str(info.name);
     case 1:
-      return tusd_sv_to_str(info.prim_path);
+      return lightusd_sv_to_str(info.prim_path);
     case 2:
       return PyUnicode_FromString(info.type <= 11 ? type_names[info.type]
                                                   : "xform");
@@ -577,15 +577,15 @@ static PyObject* RNode_get(PyObject* self, void* closure) {
 
 static PyObject* RNode_get_children(PyObject* self, void* closure) {
   (void)closure;
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  size_t n = tusd_render_node_children(item_scene(it), it->id, NULL, 0);
+  size_t n = lightusd_render_node_children(item_scene(it), it->id, NULL, 0);
   size_t ids_n = n ? n : 1;
   if (ids_n > SIZE_MAX / sizeof(int32_t)) return PyErr_NoMemory();
   int32_t* ids = (int32_t*)PyMem_Malloc(ids_n * sizeof(int32_t));
   if (!ids) return PyErr_NoMemory();
-  tusd_render_node_children(item_scene(it), it->id, ids, n);
+  lightusd_render_node_children(item_scene(it), it->id, ids, n);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
   if (!tup) {
     PyMem_Free(ids);
@@ -635,20 +635,20 @@ static PyGetSetDef RNode_getset[] = {
 };
 
 static PyObject* RLight_get(PyObject* self, void* closure) {
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_render_light_info info;
-  tusd_status s = tusd_render_light_get_info(item_scene(it), it->id, &info);
-  if (s != TUSD_OK) return tusd_raise(st, s, "render light");
+  lightusd_render_light_info info;
+  lightusd_status s = lightusd_render_light_get_info(item_scene(it), it->id, &info);
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "render light");
   static const char* type_names[] = {"point", "directional", "spot", "rect",
                                      "disk", "dome", "sphere", "cylinder",
                                      "geometry"};
   switch ((uintptr_t)closure) {
     case 0:
-      return tusd_sv_to_str(info.name);
+      return lightusd_sv_to_str(info.name);
     case 1:
-      return tusd_sv_to_str(info.prim_path);
+      return lightusd_sv_to_str(info.prim_path);
     case 2:
       return PyUnicode_FromString(info.type <= 8 ? type_names[info.type]
                                                  : "point");
@@ -678,17 +678,17 @@ static PyGetSetDef RLight_getset[] = {
 };
 
 static PyObject* RCam_get(PyObject* self, void* closure) {
-  TusdRenderItem* it = (TusdRenderItem*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderItem* it = (LightUSDRenderItem*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_render_camera_info info;
-  tusd_status s = tusd_render_camera_get_info(item_scene(it), it->id, &info);
-  if (s != TUSD_OK) return tusd_raise(st, s, "render camera");
+  lightusd_render_camera_info info;
+  lightusd_status s = lightusd_render_camera_get_info(item_scene(it), it->id, &info);
+  if (s != LIGHTUSD_OK) return lightusd_raise(st, s, "render camera");
   switch ((uintptr_t)closure) {
     case 0:
-      return tusd_sv_to_str(info.name);
+      return lightusd_sv_to_str(info.name);
     case 1:
-      return tusd_sv_to_str(info.prim_path);
+      return lightusd_sv_to_str(info.prim_path);
     case 2:
       return PyUnicode_FromString(info.type == 1 ? "orthographic"
                                                  : "perspective");
@@ -732,16 +732,16 @@ static PyGetSetDef RCam_getset[] = {
  * RenderScene
  * ============================================================ */
 
-static PyObject* render_item_for(tusd_state* st, PyObject* scene_obj,
+static PyObject* render_item_for(lightusd_state* st, PyObject* scene_obj,
                                  PyObject* type_obj, int32_t id) {
   return item_new(st, type_obj, scene_obj, id);
 }
 
 static void RScene_dealloc(PyObject* self) {
-  TusdRenderScene* s = (TusdRenderScene*)self;
+  LightUSDRenderScene* s = (LightUSDRenderScene*)self;
   PyTypeObject* tp = Py_TYPE(self);
   if (s->scene) {
-    tusd_render_scene_destroy(s->scene);
+    lightusd_render_scene_destroy(s->scene);
     s->scene = NULL;
   }
   freefunc free_fn = (freefunc)PyType_GetSlot(tp, Py_tp_free);
@@ -751,38 +751,38 @@ static void RScene_dealloc(PyObject* self) {
 
 /* closure encodes (render kind << 8) | type-slot selector */
 static PyObject* RScene_get_items(PyObject* self, void* closure) {
-  TusdRenderScene* s = (TusdRenderScene*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderScene* s = (LightUSDRenderScene*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
   const uintptr_t sel = (uintptr_t)closure;
   const uint8_t kind = (uint8_t)(sel & 0xFF);
   PyObject* type_obj = NULL;
   switch (kind) {
-    case TUSD_RENDER_MESH:
+    case LIGHTUSD_RENDER_MESH:
       type_obj = st->RenderMeshType;
       break;
-    case TUSD_RENDER_MATERIAL:
+    case LIGHTUSD_RENDER_MATERIAL:
       type_obj = st->RenderMaterialType;
       break;
-    case TUSD_RENDER_TEXTURE:
+    case LIGHTUSD_RENDER_TEXTURE:
       type_obj = st->RenderTextureType;
       break;
-    case TUSD_RENDER_IMAGE:
+    case LIGHTUSD_RENDER_IMAGE:
       type_obj = st->RenderImageType;
       break;
-    case TUSD_RENDER_NODE:
+    case LIGHTUSD_RENDER_NODE:
       type_obj = st->RenderNodeType;
       break;
-    case TUSD_RENDER_LIGHT:
+    case LIGHTUSD_RENDER_LIGHT:
       type_obj = st->RenderLightType;
       break;
-    case TUSD_RENDER_CAMERA:
+    case LIGHTUSD_RENDER_CAMERA:
       type_obj = st->RenderCameraType;
       break;
     default:
       Py_RETURN_NONE;
   }
-  size_t n = tusd_render_count(s->scene, kind);
+  size_t n = lightusd_render_count(s->scene, kind);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
   if (!tup) return NULL;
   for (size_t i = 0; i < n; ++i) {
@@ -798,14 +798,14 @@ static PyObject* RScene_get_items(PyObject* self, void* closure) {
 
 static PyObject* RScene_get_root_nodes(PyObject* self, void* closure) {
   (void)closure;
-  TusdRenderScene* s = (TusdRenderScene*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderScene* s = (LightUSDRenderScene*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  size_t n = tusd_render_count(s->scene, TUSD_RENDER_ROOT_NODE);
+  size_t n = lightusd_render_count(s->scene, LIGHTUSD_RENDER_ROOT_NODE);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
   if (!tup) return NULL;
   for (size_t i = 0; i < n; ++i) {
-    int32_t id = tusd_render_root_node(s->scene, i);
+    int32_t id = lightusd_render_root_node(s->scene, i);
     PyObject* item = render_item_for(st, self, st->RenderNodeType, id);
     if (!item) {
       Py_DECREF(tup);
@@ -817,15 +817,15 @@ static PyObject* RScene_get_root_nodes(PyObject* self, void* closure) {
 }
 
 static PyObject* RScene_get_meta(PyObject* self, void* closure) {
-  TusdRenderScene* s = (TusdRenderScene*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderScene* s = (LightUSDRenderScene*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_render_scene_info info;
-  tusd_status status = tusd_render_scene_get_info(s->scene, &info);
-  if (status != TUSD_OK) return tusd_raise(st, status, "render scene");
+  lightusd_render_scene_info info;
+  lightusd_status status = lightusd_render_scene_get_info(s->scene, &info);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "render scene");
   switch ((uintptr_t)closure) {
     case 0:
-      return tusd_sv_to_str(info.default_prim);
+      return lightusd_sv_to_str(info.default_prim);
     case 1:
       return PyUnicode_FromString(info.up_axis == 1 ? "Z" : "Y");
     case 2:
@@ -842,10 +842,10 @@ static PyObject* RScene_get_meta(PyObject* self, void* closure) {
 static PyObject* RScene_mesh_by_path(PyObject* self, PyObject* args) {
   const char* path;
   if (!PyArg_ParseTuple(args, "s:mesh_by_path", &path)) return NULL;
-  TusdRenderScene* s = (TusdRenderScene*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderScene* s = (LightUSDRenderScene*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  int32_t id = tusd_render_lookup(s->scene, TUSD_RENDER_MESH, path);
+  int32_t id = lightusd_render_lookup(s->scene, LIGHTUSD_RENDER_MESH, path);
   if (id < 0) Py_RETURN_NONE;
   return render_item_for(st, self, st->RenderMeshType, id);
 }
@@ -853,49 +853,49 @@ static PyObject* RScene_mesh_by_path(PyObject* self, PyObject* args) {
 static PyObject* RScene_material_by_path(PyObject* self, PyObject* args) {
   const char* path;
   if (!PyArg_ParseTuple(args, "s:material_by_path", &path)) return NULL;
-  TusdRenderScene* s = (TusdRenderScene*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderScene* s = (LightUSDRenderScene*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  int32_t id = tusd_render_lookup(s->scene, TUSD_RENDER_MATERIAL, path);
+  int32_t id = lightusd_render_lookup(s->scene, LIGHTUSD_RENDER_MATERIAL, path);
   if (id < 0) Py_RETURN_NONE;
   return render_item_for(st, self, st->RenderMaterialType, id);
 }
 
 static PyObject* RScene_warnings(PyObject* self, PyObject* noargs) {
   (void)noargs;
-  TusdRenderScene* s = (TusdRenderScene*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDRenderScene* s = (LightUSDRenderScene*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  tusd_strlist* warns = NULL;
-  if (tusd_render_scene_warnings(s->scene, &warns) != TUSD_OK) {
-    return tusd_raise(st, TUSD_ERR_INTERNAL, "warnings");
+  lightusd_strlist* warns = NULL;
+  if (lightusd_render_scene_warnings(s->scene, &warns) != LIGHTUSD_OK) {
+    return lightusd_raise(st, LIGHTUSD_ERR_INTERNAL, "warnings");
   }
-  size_t n = tusd_strlist_size(warns);
+  size_t n = lightusd_strlist_size(warns);
   PyObject* list = PyList_New((Py_ssize_t)n);
   if (!list) {
-    tusd_strlist_destroy(warns);
+    lightusd_strlist_destroy(warns);
     return NULL;
   }
   for (size_t i = 0; i < n; ++i) {
-    PyObject* w = tusd_sv_to_str(tusd_strlist_get(warns, i));
+    PyObject* w = lightusd_sv_to_str(lightusd_strlist_get(warns, i));
     if (!w) {
       Py_DECREF(list);
-      tusd_strlist_destroy(warns);
+      lightusd_strlist_destroy(warns);
       return NULL;
     }
     PyList_SetItem(list, (Py_ssize_t)i, w);
   }
-  tusd_strlist_destroy(warns);
+  lightusd_strlist_destroy(warns);
   return list;
 }
 
 static PyObject* RScene_repr(PyObject* self) {
-  TusdRenderScene* s = (TusdRenderScene*)self;
+  LightUSDRenderScene* s = (LightUSDRenderScene*)self;
   return PyUnicode_FromFormat(
       "RenderScene(meshes=%zu, materials=%zu, images=%zu)",
-      tusd_render_count(s->scene, TUSD_RENDER_MESH),
-      tusd_render_count(s->scene, TUSD_RENDER_MATERIAL),
-      tusd_render_count(s->scene, TUSD_RENDER_IMAGE));
+      lightusd_render_count(s->scene, LIGHTUSD_RENDER_MESH),
+      lightusd_render_count(s->scene, LIGHTUSD_RENDER_MATERIAL),
+      lightusd_render_count(s->scene, LIGHTUSD_RENDER_IMAGE));
 }
 
 static PyMethodDef RScene_methods[] = {
@@ -910,19 +910,19 @@ static PyMethodDef RScene_methods[] = {
 
 static PyGetSetDef RScene_getset[] = {
     {"meshes", RScene_get_items, NULL, NULL,
-     (void*)(uintptr_t)TUSD_RENDER_MESH},
+     (void*)(uintptr_t)LIGHTUSD_RENDER_MESH},
     {"materials", RScene_get_items, NULL, NULL,
-     (void*)(uintptr_t)TUSD_RENDER_MATERIAL},
+     (void*)(uintptr_t)LIGHTUSD_RENDER_MATERIAL},
     {"textures", RScene_get_items, NULL, NULL,
-     (void*)(uintptr_t)TUSD_RENDER_TEXTURE},
+     (void*)(uintptr_t)LIGHTUSD_RENDER_TEXTURE},
     {"images", RScene_get_items, NULL, NULL,
-     (void*)(uintptr_t)TUSD_RENDER_IMAGE},
+     (void*)(uintptr_t)LIGHTUSD_RENDER_IMAGE},
     {"nodes", RScene_get_items, NULL, NULL,
-     (void*)(uintptr_t)TUSD_RENDER_NODE},
+     (void*)(uintptr_t)LIGHTUSD_RENDER_NODE},
     {"lights", RScene_get_items, NULL, NULL,
-     (void*)(uintptr_t)TUSD_RENDER_LIGHT},
+     (void*)(uintptr_t)LIGHTUSD_RENDER_LIGHT},
     {"cameras", RScene_get_items, NULL, NULL,
-     (void*)(uintptr_t)TUSD_RENDER_CAMERA},
+     (void*)(uintptr_t)LIGHTUSD_RENDER_CAMERA},
     {"root_nodes", RScene_get_root_nodes, NULL, NULL, NULL},
     {"default_prim", RScene_get_meta, NULL, NULL, (void*)(uintptr_t)0},
     {"up_axis", RScene_get_meta, NULL, NULL, (void*)(uintptr_t)1},
@@ -937,12 +937,12 @@ static PyGetSetDef RScene_getset[] = {
  * ============================================================ */
 
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
-#define TUSD_ITEM_FLAGS (Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE)
+#define LIGHTUSD_ITEM_FLAGS (Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE)
 #else
-#define TUSD_ITEM_FLAGS Py_TPFLAGS_DEFAULT
+#define LIGHTUSD_ITEM_FLAGS Py_TPFLAGS_DEFAULT
 #endif
 
-#define TUSD_ITEM_SPEC(pyname, methods_, getset_, repr_)          \
+#define LIGHTUSD_ITEM_SPEC(pyname, methods_, getset_, repr_)          \
   static PyType_Slot pyname##_slots[] = {                         \
       {Py_tp_dealloc, (void*)item_dealloc},                       \
       {Py_tp_repr, (void*)repr_},                                 \
@@ -952,8 +952,8 @@ static PyGetSetDef RScene_getset[] = {
   };                                                              \
   static PyType_Spec pyname##_spec = {                            \
       .name = "lightusd._core." #pyname,                          \
-      .basicsize = sizeof(TusdRenderItem),                        \
-      .flags = TUSD_ITEM_FLAGS,                                   \
+      .basicsize = sizeof(LightUSDRenderItem),                        \
+      .flags = LIGHTUSD_ITEM_FLAGS,                                   \
       .slots = pyname##_slots,                                    \
   }
 
@@ -961,16 +961,16 @@ static PyMethodDef no_methods[] = {{NULL, NULL, 0, NULL}};
 
 static PyObject* generic_item_repr(PyObject* self) {
   return PyUnicode_FromFormat("%s(id=%d)", "RenderItem",
-                              ((TusdRenderItem*)self)->id);
+                              ((LightUSDRenderItem*)self)->id);
 }
 
-TUSD_ITEM_SPEC(RenderMesh, RMesh_methods, RMesh_getset, RMesh_repr);
-TUSD_ITEM_SPEC(RenderMaterial, RMat_methods, RMat_getset, RMat_repr);
-TUSD_ITEM_SPEC(RenderTexture, no_methods, RTex_getset, RTex_repr);
-TUSD_ITEM_SPEC(RenderImage, no_methods, RImg_getset, RImg_repr);
-TUSD_ITEM_SPEC(RenderNode, no_methods, RNode_getset, RNode_repr);
-TUSD_ITEM_SPEC(RenderLight, no_methods, RLight_getset, generic_item_repr);
-TUSD_ITEM_SPEC(RenderCamera, no_methods, RCam_getset, generic_item_repr);
+LIGHTUSD_ITEM_SPEC(RenderMesh, RMesh_methods, RMesh_getset, RMesh_repr);
+LIGHTUSD_ITEM_SPEC(RenderMaterial, RMat_methods, RMat_getset, RMat_repr);
+LIGHTUSD_ITEM_SPEC(RenderTexture, no_methods, RTex_getset, RTex_repr);
+LIGHTUSD_ITEM_SPEC(RenderImage, no_methods, RImg_getset, RImg_repr);
+LIGHTUSD_ITEM_SPEC(RenderNode, no_methods, RNode_getset, RNode_repr);
+LIGHTUSD_ITEM_SPEC(RenderLight, no_methods, RLight_getset, generic_item_repr);
+LIGHTUSD_ITEM_SPEC(RenderCamera, no_methods, RCam_getset, generic_item_repr);
 
 static PyType_Slot RScene_slots[] = {
     {Py_tp_dealloc, (void*)RScene_dealloc},
@@ -982,12 +982,12 @@ static PyType_Slot RScene_slots[] = {
 
 static PyType_Spec RScene_spec = {
     .name = "lightusd._core.RenderScene",
-    .basicsize = sizeof(TusdRenderScene),
-    .flags = TUSD_ITEM_FLAGS,
+    .basicsize = sizeof(LightUSDRenderScene),
+    .flags = LIGHTUSD_ITEM_FLAGS,
     .slots = RScene_slots,
 };
 
-PyObject* tusd_to_render_scene(PyObject* module, PyObject* args,
+PyObject* lightusd_to_render_scene(PyObject* module, PyObject* args,
                                PyObject* kwargs) {
   static char* kwlist[] = {"stage",
                            "triangulate",
@@ -1010,20 +1010,20 @@ PyObject* tusd_to_render_scene(PyObject* module, PyObject* args,
                                    &load_textures, &time, &duplicate)) {
     return NULL;
   }
-  tusd_state* st = tusd_state_from_module(module);
+  lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
   if (!PyObject_TypeCheck(stage_obj, (PyTypeObject*)st->StageType)) {
     PyErr_SetString(PyExc_TypeError, "expected a lightusd.Stage");
     return NULL;
   }
-  tusd_stage* stage = tusd_stage_handle(stage_obj);
+  lightusd_stage* stage = lightusd_stage_handle(stage_obj);
   if (!stage) {
     PyErr_SetString(st->UsdError, "Stage is closed");
     return NULL;
   }
 
-  tusd_render_config cfg;
-  tusd_render_config_init(&cfg);
+  lightusd_render_config cfg;
+  lightusd_render_config_init(&cfg);
   cfg.triangulate = triangulate ? 1 : 0;
   cfg.compute_normals = compute_normals ? 1 : 0;
   cfg.compute_tangents = compute_tangents ? 1 : 0;
@@ -1031,23 +1031,23 @@ PyObject* tusd_to_render_scene(PyObject* module, PyObject* args,
   cfg.duplicate_instance_meshes = duplicate ? 1 : 0;
   cfg.time_code = time;
 
-  tusd_render_scene* scene = NULL;
-  tusd_status status;
+  lightusd_render_scene* scene = NULL;
+  lightusd_status status;
   Py_BEGIN_ALLOW_THREADS
-  status = tusd_render_convert(stage, &cfg, &scene);
+  status = lightusd_render_convert(stage, &cfg, &scene);
   Py_END_ALLOW_THREADS
-  if (status != TUSD_OK) return tusd_raise(st, status, "to_render_scene");
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "to_render_scene");
 
-  PyObject* obj = tusd_alloc(st->RenderSceneType);
+  PyObject* obj = lightusd_alloc(st->RenderSceneType);
   if (!obj) {
-    tusd_render_scene_destroy(scene);
+    lightusd_render_scene_destroy(scene);
     return NULL;
   }
-  ((TusdRenderScene*)obj)->scene = scene;
+  ((LightUSDRenderScene*)obj)->scene = scene;
   return obj;
 }
 
-int tusd_register_render_types(PyObject* module, tusd_state* st) {
+int lightusd_register_render_types(PyObject* module, lightusd_state* st) {
 #define REG(field, spec, exported)                                     \
   do {                                                                 \
     st->field = PyType_FromModuleAndSpec(module, &spec, NULL);         \

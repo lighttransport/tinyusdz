@@ -295,7 +295,7 @@ class Value:
     @property
     def type(self) -> ValueType:
         """Get value type"""
-        result = _FFI.call("tusdz_value_get_type", self._handle, restype=ctypes.c_int)
+        result = _FFI.call("lightusd_value_get_type", self._handle, restype=ctypes.c_int)
         return ValueType(result)
 
     @property
@@ -306,17 +306,17 @@ class Value:
     @property
     def is_array(self) -> bool:
         """Check if value is array"""
-        return _FFI.call("tusdz_value_is_array", self._handle, restype=ctypes.c_int) != 0
+        return _FFI.call("lightusd_value_is_array", self._handle, restype=ctypes.c_int) != 0
 
     @property
     def array_size(self) -> int:
         """Get array size"""
-        return _FFI.call("tusdz_value_get_array_size", self._handle, restype=ctypes.c_size_t)
+        return _FFI.call("lightusd_value_get_array_size", self._handle, restype=ctypes.c_size_t)
 
     @property
     def is_animated(self) -> bool:
         """Check if value is animated"""
-        return _FFI.call("tusdz_value_is_animated", self._handle, restype=ctypes.c_int) != 0
+        return _FFI.call("lightusd_value_is_animated", self._handle, restype=ctypes.c_int) != 0
 
     def get(self) -> Any:
         """Get value as appropriate Python type"""
@@ -341,42 +341,42 @@ class Value:
     def get_bool(self) -> Optional[bool]:
         """Extract as boolean"""
         val = ctypes.c_int()
-        if _FFI.call("tusdz_value_get_bool", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
+        if _FFI.call("lightusd_value_get_bool", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
             return bool(val.value)
         return None
 
     def get_int(self) -> Optional[int]:
         """Extract as integer"""
         val = ctypes.c_int()
-        if _FFI.call("tusdz_value_get_int", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
+        if _FFI.call("lightusd_value_get_int", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
             return int(val.value)
         return None
 
     def get_float(self) -> Optional[float]:
         """Extract as float"""
         val = ctypes.c_float()
-        if _FFI.call("tusdz_value_get_float", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
+        if _FFI.call("lightusd_value_get_float", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
             return float(val.value)
         return None
 
     def get_double(self) -> Optional[float]:
         """Extract as double"""
         val = ctypes.c_double()
-        if _FFI.call("tusdz_value_get_double", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
+        if _FFI.call("lightusd_value_get_double", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
             return float(val.value)
         return None
 
     def get_string(self) -> Optional[str]:
         """Extract as string"""
         val = ctypes.c_char_p()
-        if _FFI.call("tusdz_value_get_string", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
+        if _FFI.call("lightusd_value_get_string", self._handle, ctypes.byref(val), restype=ctypes.c_int) == 0:
             return val.value.decode('utf-8') if val.value else None
         return None
 
     def get_float3(self) -> Optional[Tuple[float, float, float]]:
         """Extract as float3 tuple"""
         vals = (ctypes.c_float * 3)()
-        if _FFI.call("tusdz_value_get_float3", self._handle, vals, restype=ctypes.c_int) == 0:
+        if _FFI.call("lightusd_value_get_float3", self._handle, vals, restype=ctypes.c_int) == 0:
             return tuple(float(v) for v in vals)
         return None
 
@@ -389,13 +389,13 @@ class Value:
             return None
 
         vals = (ctypes.c_double * 16)()
-        if _FFI.call("tusdz_value_get_matrix4d", self._handle, vals, restype=ctypes.c_int) == 0:
+        if _FFI.call("lightusd_value_get_matrix4d", self._handle, vals, restype=ctypes.c_int) == 0:
             return np.array(vals, dtype=np.float64).reshape(4, 4)
         return None
 
     def __del__(self):
         if hasattr(self, '_handle') and self._handle:
-            _FFI.call("tusdz_value_free", self._handle)
+            _FFI.call("lightusd_value_free", self._handle)
 
     def __repr__(self) -> str:
         return f"Value(type={self.type_name})"
@@ -417,38 +417,38 @@ class Prim:
     @property
     def name(self) -> str:
         """Get prim name"""
-        return _FFI.string("tusdz_prim_get_name", self._handle)
+        return _FFI.string("lightusd_prim_get_name", self._handle)
 
     @property
     def path(self) -> str:
         """Get full path"""
-        return _FFI.string("tusdz_prim_get_path", self._handle)
+        return _FFI.string("lightusd_prim_get_path", self._handle)
 
     @property
     def type(self) -> PrimType:
         """Get prim type"""
-        return PrimType(_FFI.call("tusdz_prim_get_type", self._handle, restype=ctypes.c_int))
+        return PrimType(_FFI.call("lightusd_prim_get_type", self._handle, restype=ctypes.c_int))
 
     @property
     def type_name(self) -> str:
         """Get type name"""
-        return _FFI.string("tusdz_prim_get_type_name", self._handle)
+        return _FFI.string("lightusd_prim_get_type_name", self._handle)
 
     @property
     def child_count(self) -> int:
         """Number of children"""
-        return _FFI.call("tusdz_prim_get_child_count", self._handle, restype=ctypes.c_size_t)
+        return _FFI.call("lightusd_prim_get_child_count", self._handle, restype=ctypes.c_size_t)
 
     @property
     def property_count(self) -> int:
         """Number of properties"""
-        return _FFI.call("tusdz_prim_get_property_count", self._handle, restype=ctypes.c_size_t)
+        return _FFI.call("lightusd_prim_get_property_count", self._handle, restype=ctypes.c_size_t)
 
     # ---- Type Checking ----
 
     def is_type(self, prim_type: PrimType) -> bool:
         """Check if specific type"""
-        return _FFI.call("tusdz_prim_is_type", self._handle, int(prim_type), restype=ctypes.c_int) != 0
+        return _FFI.call("lightusd_prim_is_type", self._handle, int(prim_type), restype=ctypes.c_int) != 0
 
     @property
     def is_mesh(self) -> bool:
@@ -478,7 +478,7 @@ class Prim:
 
     def get_child(self, index: int) -> Optional['Prim']:
         """Get child by index"""
-        handle = _FFI.call("tusdz_prim_get_child_at", self._handle, index, restype=ctypes.c_void_p)
+        handle = _FFI.call("lightusd_prim_get_child_at", self._handle, index, restype=ctypes.c_void_p)
         return Prim(handle, self._stage) if handle else None
 
     def children(self) -> Iterator['Prim']:
@@ -513,7 +513,7 @@ class Prim:
 
     def get_property(self, name: str) -> Optional[Value]:
         """Get property by name"""
-        handle = _FFI.call("tusdz_prim_get_property", self._handle, name.encode('utf-8'),
+        handle = _FFI.call("lightusd_prim_get_property", self._handle, name.encode('utf-8'),
                           restype=ctypes.c_void_p)
         return Value(handle) if handle else None
 
@@ -521,7 +521,7 @@ class Prim:
         """Get all properties as dict"""
         result = {}
         for i in range(self.property_count):
-            name = _FFI.string("tusdz_prim_get_property_name_at", self._handle, i)
+            name = _FFI.string("lightusd_prim_get_property_name_at", self._handle, i)
             prop = self.get_property(name)
             if prop:
                 result[name] = prop
@@ -530,7 +530,7 @@ class Prim:
     def iter_properties(self) -> Iterator[Tuple[str, Value]]:
         """Iterate over properties"""
         for i in range(self.property_count):
-            name = _FFI.string("tusdz_prim_get_property_name_at", self._handle, i)
+            name = _FFI.string("lightusd_prim_get_property_name_at", self._handle, i)
             prop = self.get_property(name)
             if prop:
                 yield (name, prop)
@@ -554,7 +554,7 @@ class Prim:
         # Points
         pts_ptr = ctypes.POINTER(ctypes.c_float)()
         pt_count = ctypes.c_size_t()
-        if _FFI.call("tusdz_mesh_get_points", self._handle, ctypes.byref(pts_ptr),
+        if _FFI.call("lightusd_mesh_get_points", self._handle, ctypes.byref(pts_ptr),
                     ctypes.byref(pt_count), restype=ctypes.c_int) == 0 and pt_count.value > 0:
             mesh_data.points = np.ctypeslib.as_array(pts_ptr, shape=(pt_count.value,)).copy()
             mesh_data.vertex_count = pt_count.value // 3
@@ -562,7 +562,7 @@ class Prim:
         # Face counts
         cnt_ptr = ctypes.POINTER(ctypes.c_int)()
         cnt_count = ctypes.c_size_t()
-        if _FFI.call("tusdz_mesh_get_face_counts", self._handle, ctypes.byref(cnt_ptr),
+        if _FFI.call("lightusd_mesh_get_face_counts", self._handle, ctypes.byref(cnt_ptr),
                     ctypes.byref(cnt_count), restype=ctypes.c_int) == 0 and cnt_count.value > 0:
             mesh_data.face_counts = np.ctypeslib.as_array(cnt_ptr, shape=(cnt_count.value,)).copy()
             mesh_data.face_count = cnt_count.value
@@ -570,7 +570,7 @@ class Prim:
         # Indices
         idx_ptr = ctypes.POINTER(ctypes.c_int)()
         idx_count = ctypes.c_size_t()
-        if _FFI.call("tusdz_mesh_get_indices", self._handle, ctypes.byref(idx_ptr),
+        if _FFI.call("lightusd_mesh_get_indices", self._handle, ctypes.byref(idx_ptr),
                     ctypes.byref(idx_count), restype=ctypes.c_int) == 0 and idx_count.value > 0:
             mesh_data.indices = np.ctypeslib.as_array(idx_ptr, shape=(idx_count.value,)).copy()
             mesh_data.index_count = idx_count.value
@@ -578,14 +578,14 @@ class Prim:
         # Normals
         norm_ptr = ctypes.POINTER(ctypes.c_float)()
         norm_count = ctypes.c_size_t()
-        if _FFI.call("tusdz_mesh_get_normals", self._handle, ctypes.byref(norm_ptr),
+        if _FFI.call("lightusd_mesh_get_normals", self._handle, ctypes.byref(norm_ptr),
                     ctypes.byref(norm_count), restype=ctypes.c_int) == 0 and norm_count.value > 0:
             mesh_data.normals = np.ctypeslib.as_array(norm_ptr, shape=(norm_count.value,)).copy()
 
         # UVs
         uv_ptr = ctypes.POINTER(ctypes.c_float)()
         uv_count = ctypes.c_size_t()
-        if _FFI.call("tusdz_mesh_get_uvs", self._handle, ctypes.byref(uv_ptr),
+        if _FFI.call("lightusd_mesh_get_uvs", self._handle, ctypes.byref(uv_ptr),
                     ctypes.byref(uv_count), 0, restype=ctypes.c_int) == 0 and uv_count.value > 0:
             mesh_data.uvs = np.ctypeslib.as_array(uv_ptr, shape=(uv_count.value,)).copy()
 
@@ -604,7 +604,7 @@ class Prim:
             return None
 
         matrix = (ctypes.c_double * 16)()
-        if _FFI.call("tusdz_xform_get_local_matrix", self._handle, time, matrix,
+        if _FFI.call("lightusd_xform_get_local_matrix", self._handle, time, matrix,
                     restype=ctypes.c_int) == 0:
             mat_array = np.array(matrix, dtype=np.float64).reshape(4, 4)
             return Transform(matrix=mat_array)
@@ -614,23 +614,23 @@ class Prim:
 
     def get_bound_material(self) -> Optional['Prim']:
         """Get bound material"""
-        handle = _FFI.call("tusdz_prim_get_bound_material", self._handle, restype=ctypes.c_void_p)
+        handle = _FFI.call("lightusd_prim_get_bound_material", self._handle, restype=ctypes.c_void_p)
         return Prim(handle, self._stage) if handle else None
 
     def get_surface_shader(self) -> Optional['Prim']:
         """Get surface shader (for Material prims)"""
-        handle = _FFI.call("tusdz_material_get_surface_shader", self._handle, restype=ctypes.c_void_p)
+        handle = _FFI.call("lightusd_material_get_surface_shader", self._handle, restype=ctypes.c_void_p)
         return Prim(handle, self._stage) if handle else None
 
     def get_shader_input(self, name: str) -> Optional[Value]:
         """Get shader input"""
-        handle = _FFI.call("tusdz_shader_get_input", self._handle, name.encode('utf-8'),
+        handle = _FFI.call("lightusd_shader_get_input", self._handle, name.encode('utf-8'),
                           restype=ctypes.c_void_p)
         return Value(handle) if handle else None
 
     def get_shader_type(self) -> Optional[str]:
         """Get shader type ID"""
-        return _FFI.string("tusdz_shader_get_type_id", self._handle) or None
+        return _FFI.string("lightusd_shader_get_type_id", self._handle) or None
 
     # ---- Info ----
 
@@ -666,27 +666,27 @@ class Stage:
     @property
     def root_prim(self) -> Optional[Prim]:
         """Get root prim"""
-        handle = _FFI.call("tusdz_stage_get_root_prim", self._handle, restype=ctypes.c_void_p)
+        handle = _FFI.call("lightusd_stage_get_root_prim", self._handle, restype=ctypes.c_void_p)
         return Prim(handle, self) if handle else None
 
     @property
     def has_animation(self) -> bool:
         """Check if stage has animation"""
-        return _FFI.call("tusdz_stage_has_animation", self._handle, restype=ctypes.c_int) != 0
+        return _FFI.call("lightusd_stage_has_animation", self._handle, restype=ctypes.c_int) != 0
 
     def get_time_range(self) -> Optional[TimeRange]:
         """Get animation time range"""
         start = ctypes.c_double()
         end = ctypes.c_double()
         fps = ctypes.c_double()
-        if _FFI.call("tusdz_stage_get_time_range", self._handle, ctypes.byref(start),
+        if _FFI.call("lightusd_stage_get_time_range", self._handle, ctypes.byref(start),
                     ctypes.byref(end), ctypes.byref(fps), restype=ctypes.c_int) == 0:
             return TimeRange(float(start.value), float(end.value), float(fps.value))
         return None
 
     def get_prim_at_path(self, path: str) -> Optional[Prim]:
         """Find prim by path"""
-        handle = _FFI.call("tusdz_stage_get_prim_at_path", self._handle, path.encode('utf-8'),
+        handle = _FFI.call("lightusd_stage_get_prim_at_path", self._handle, path.encode('utf-8'),
                           restype=ctypes.c_void_p)
         return Prim(handle, self) if handle else None
 
@@ -795,7 +795,7 @@ class Stage:
 
     def __del__(self):
         if hasattr(self, '_handle') and self._handle:
-            _FFI.call("tusdz_stage_free", self._handle)
+            _FFI.call("lightusd_stage_free", self._handle)
 
     def __repr__(self) -> str:
         root = self.root_prim
@@ -813,7 +813,7 @@ class LightUSD:
         if enable_logging:
             logging.basicConfig(level=logging.DEBUG)
 
-        result = _FFI.call("tusdz_init", restype=ctypes.c_int)
+        result = _FFI.call("lightusd_init", restype=ctypes.c_int)
         if result != 0:
             raise LightUSDError("Failed to initialize LightUSD")
         logger.debug("LightUSD initialized")
@@ -821,7 +821,7 @@ class LightUSD:
     @staticmethod
     def get_version() -> str:
         """Get library version"""
-        return _FFI.string("tusdz_get_version")
+        return _FFI.string("lightusd_get_version")
 
     def load_file(self, filepath: Union[str, Path], max_memory_mb: int = 0) -> Stage:
         """Load USD file"""
@@ -831,7 +831,7 @@ class LightUSD:
         error_buf = ctypes.create_string_buffer(1024)
         stage_ptr = ctypes.c_void_p()
 
-        result = _FFI.call("tusdz_load_from_file",
+        result = _FFI.call("lightusd_load_from_file",
                           filepath.encode('utf-8'),
                           None,
                           ctypes.byref(stage_ptr),
@@ -853,7 +853,7 @@ class LightUSD:
         error_buf = ctypes.create_string_buffer(1024)
         stage_ptr = ctypes.c_void_p()
 
-        result = _FFI.call("tusdz_load_from_memory",
+        result = _FFI.call("lightusd_load_from_memory",
                           ctypes.c_char_p(data),
                           len(data),
                           int(format),
@@ -871,7 +871,7 @@ class LightUSD:
 
     def detect_format(self, filepath: str) -> Format:
         """Detect USD format"""
-        result = _FFI.call("tusdz_detect_format", filepath.encode('utf-8'), restype=ctypes.c_int)
+        result = _FFI.call("lightusd_detect_format", filepath.encode('utf-8'), restype=ctypes.c_int)
         return Format(result)
 
     # ---- Context Manager ----
@@ -884,7 +884,7 @@ class LightUSD:
 
     def shutdown(self):
         """Shutdown LightUSD"""
-        _FFI.call("tusdz_shutdown")
+        _FFI.call("lightusd_shutdown")
         logger.debug("LightUSD shutdown")
 
     def __repr__(self) -> str:
@@ -894,8 +894,8 @@ class LightUSD:
 # Type String Methods
 # ============================================================================
 
-PrimType.to_string = lambda self: _FFI.string("tusdz_prim_type_to_string", int(self))
-ValueType.to_string = lambda self: _FFI.string("tusdz_value_type_to_string", int(self))
+PrimType.to_string = lambda self: _FFI.string("lightusd_prim_type_to_string", int(self))
+ValueType.to_string = lambda self: _FFI.string("lightusd_value_type_to_string", int(self))
 
 # ============================================================================
 # Auto-initialization on import (disabled by default)

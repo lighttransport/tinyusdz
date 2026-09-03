@@ -20,9 +20,9 @@ rg -q 'inputs:subsurface_weight' "$scene"
 rg -q 'lightusd:referenceBsdf = "chiang_hair_bsdf"' "$scene"
 rg -q 'unreal:deformerFormat = "MetaHuman DNA / RigLogic"' "$script_dir/output/MetaHuman_Deformers.usda"
 rg -q 'unreal:usdPhysicsStatus' "$script_dir/output/MetaHuman_Physics.usda"
-"$repo_root/build_ninja/tusdcat" "$scene" -o /tmp/lightusd-metahuman-smoke.usda
-"$repo_root/build_ninja/tusdcat" "$script_dir/output/LightUSD_DefaultHuman_Head.usdc" -o /tmp/lightusd-metahuman-head.usda
-"$repo_root/build_ninja/tusdcat" "$script_dir/output/LightUSD_DefaultHuman_Body.usdc" -o /tmp/lightusd-metahuman-body.usda
+"$repo_root/build_ninja/lusdcat" "$scene" -o /tmp/lightusd-metahuman-smoke.usda
+"$repo_root/build_ninja/lusdcat" "$script_dir/output/LightUSD_DefaultHuman_Head.usdc" -o /tmp/lightusd-metahuman-head.usda
+"$repo_root/build_ninja/lusdcat" "$script_dir/output/LightUSD_DefaultHuman_Body.usdc" -o /tmp/lightusd-metahuman-body.usda
 rg -q 'def Skeleton "Skel"' /tmp/lightusd-metahuman-head.usda
 rg -q 'primvars:skel:jointIndices' /tmp/lightusd-metahuman-head.usda
 rg -q 'primvars:skel:jointWeights' /tmp/lightusd-metahuman-head.usda

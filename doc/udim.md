@@ -99,7 +99,7 @@ When converting to `.usdz`, `ExpandAndPackUDIM()` (`src/usdz-convert.cc`) expand
 Example:
 
 ```
-$ tusdzconvert scene.usda out.usdz
+$ lusdzconvert scene.usda out.usdz
 Wrote: out.usdz
   textures: 3, resized: 0, reencoded: 3, passthrough: 0
 

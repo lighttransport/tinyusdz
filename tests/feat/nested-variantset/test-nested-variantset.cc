@@ -73,7 +73,7 @@ bool getPurpose(const PrimSpec &ps, std::string *out) {
 }
 
 // Iteratively resolve variantSets, deferring until refs/payloads settle
-// (mirrors the tusdcat driver). This fixture has no refs/payloads.
+// (mirrors the lusdcat driver). This fixture has no refs/payloads.
 bool flatten(Layer layer, Layer *out, std::string *warn, std::string *err) {
   Layer cur = std::move(layer);
   const int kMaxIter = 64;

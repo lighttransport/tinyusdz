@@ -28,7 +28,7 @@ bool IsAbsoluteDir(const std::string& p) {
 }
 
 // An anchor must be unambiguous: consumers re-anchor a path they consider
-// relative against their OWN base (tusdview's texture decoder uses the scene
+// relative against their OWN base (lusdview's texture decoder uses the scene
 // file's directory), so handing them a CWD-relative anchor would double-prefix
 // it. Absolutize once, here, and every consumer gets a path it can just open.
 std::string AbsolutizeDir(const std::string& dir) {

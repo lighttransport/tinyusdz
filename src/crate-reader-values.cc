@@ -2443,8 +2443,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("float2[] = " << value::print_array_snipped(v));
-        //TUSDZ_LOG_D("float2[] = " << value::print_array_snipped(v));
-        //TUSDZ_LOG_I("float2[].size" << v.size());
+        //LIGHTUSD_LOG_D("float2[] = " << value::print_array_snipped(v));
+        //LIGHTUSD_LOG_I("float2[].size" << v.size());
 
         value->Set(std::move(v));
         return true;
@@ -3300,9 +3300,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       // value::TimeSamples::update().
       ts.update();
 
-      //TUSDZ_LOG_I("Set TimeSamples begin\n");
+      //LIGHTUSD_LOG_I("Set TimeSamples begin\n");
       value->Set(std::move(ts));
-      //TUSDZ_LOG_I("Set TimeSamples end\n");
+      //LIGHTUSD_LOG_I("Set TimeSamples end\n");
 
       return true;
     }

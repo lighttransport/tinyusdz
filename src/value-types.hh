@@ -1990,17 +1990,17 @@ inline T* any_value_raw_cast(any_value* av) noexcept {
 class Value {
  public:
   Value() {
-    //TUSDZ_LOG_I("Value default constructor called");
+    //LIGHTUSD_LOG_I("Value default constructor called");
   }
 
   // Copy constructor
   Value(const Value& rhs) : v_(rhs.v_) {
-    //TUSDZ_LOG_I("Value copy constructor called");
+    //LIGHTUSD_LOG_I("Value copy constructor called");
   }
 
   // Move constructor
   Value(Value&& rhs) noexcept : v_(std::move(rhs.v_)) {
-    //TUSDZ_LOG_I("Value move constructor called");
+    //LIGHTUSD_LOG_I("Value move constructor called");
   }
 
   template <class T>
@@ -2225,7 +2225,7 @@ class Value {
 
   // Copy assignment operator
   Value& operator=(const Value& rhs) {
-    //TUSDZ_LOG_I("Value copy assignment operator called");
+    //LIGHTUSD_LOG_I("Value copy assignment operator called");
     if (this != &rhs) {
       v_ = rhs.v_;
     }
@@ -2234,7 +2234,7 @@ class Value {
 
   // Move assignment operator
   Value& operator=(Value&& rhs) noexcept {
-    //TUSDZ_LOG_I("Value move assignment operator called");
+    //LIGHTUSD_LOG_I("Value move assignment operator called");
     if (this != &rhs) {
       v_ = std::move(rhs.v_);
     }

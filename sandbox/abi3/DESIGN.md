@@ -79,7 +79,7 @@ Python objects wrap C API pointers and use reference counting:
 
 ```python
 # Python side - automatic via ref counting
-stage = tusd.Stage()  # Creates C++ object, refcount = 1
+stage = lightusd.Stage()  # Creates C++ object, refcount = 1
 # ... use stage ...
 # When refcount reaches 0, __del__ is called
 # which calls c_lightusd_stage_free()
@@ -110,8 +110,8 @@ For objects with parent-child relationships:
 
 ```python
 # Parent holds strong reference to children
-stage = tusd.Stage()
-prim = tusd.Prim("Mesh")
+stage = lightusd.Stage()
+prim = lightusd.Prim("Mesh")
 stage.add_prim(prim)  # stage holds reference
 
 # prim can still be used independently
@@ -286,7 +286,7 @@ target_compile_definitions(lightusd_abi3 PRIVATE
 
 ```python
 # Python -> C -> C++
-val = tusd.Value.from_int(42)
+val = lightusd.Value.from_int(42)
 # → PyLong_AsLong(42)
 # → c_lightusd_value_new_int(42)
 # → new Value(42)
@@ -354,7 +354,7 @@ LightUSDStage_load_from_file(PyTypeObject *type, PyObject *args)
 
 ```python
 try:
-    stage = tusd.Stage.load_from_file("invalid.usd")
+    stage = lightusd.Stage.load_from_file("invalid.usd")
 except RuntimeError as e:
     print(f"Failed to load: {e}")
 ```
@@ -443,7 +443,7 @@ class Stage:
 ```python
 # Async loading for large files
 async def load_scene():
-    stage = await tusd.Stage.load_from_file_async("huge.usd")
+    stage = await lightusd.Stage.load_from_file_async("huge.usd")
     return stage
 ```
 

@@ -18,7 +18,7 @@ src/                       Core library sources (~250 .cc/.hh files)
   crate-writer.{hh,cc}       USDC binary writer (experimental but
                              increasingly fidelity-locked)
   crate-format.{hh,cc}       Crate binary layout, ValueRep, indices
-  crate-dump.{hh,cc}         Low-level crate inspection (`tusdcat
+  crate-dump.{hh,cc}         Low-level crate inspection (`lusdcat
                              --dump-crate-fields`)
   crate-path-utils/          Path encoding helpers shared by reader/
                              writer
@@ -106,11 +106,11 @@ tests/                     C++ tests + roundtrip + Python harness
   tydra_to_renderscene/      Tydra conversion tests
   feat/                      Feature-specific test miniprograms
   fuzzer/                    libFuzzer corpora + harness sources
-  compare-usda.js            Roundtrip comparison (tusdcat vs usdcat)
+  compare-usda.js            Roundtrip comparison (lusdcat vs usdcat)
   run-usdcat-compare.sh      Batch roundtrip test runner
 
 examples/                  Standalone example apps (separate builds):
-                           tusdcat, api_tutorial, asset_resolution,
+                           lusdcat, api_tutorial, asset_resolution,
                            c_api_example, mcp_server, file_format,
                            js-script, progressive_composition, etc.
 models/                    Test USD files for development
@@ -173,38 +173,38 @@ cd python && python3 -m pytest tests/ -q
 - `LIGHTUSD_WITH_EXR=ON` - EXR/HDR texture support
 - `LIGHTUSD_WITH_AUDIO=ON` - Audio file loading (mp3/wav)
 - `LIGHTUSD_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
-- `LIGHTUSD_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `tusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
-  - `TUSDVIEW_ENABLE_GL_THREAD=ON` (sub-option) builds the experimental `--threaded` render-thread path (default OFF; no-op flag when off).
+- `LIGHTUSD_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `lusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
+  - `LUSDVIEW_ENABLE_GL_THREAD=ON` (sub-option) builds the experimental `--threaded` render-thread path (default OFF; no-op flag when off).
 
-### GUI viewer (`tusdview`) + Vulkan debugging
+### GUI viewer (`lusdview`) + Vulkan debugging
 
-Build, headless-screenshot, and Vulkan-debugging notes for the `tusdview` example
-live in **[doc/tusdview.md](doc/tusdview.md)**. In particular, when debugging the
+Build, headless-screenshot, and Vulkan-debugging notes for the `lusdview` example
+live in **[doc/lusdview.md](doc/lusdview.md)**. In particular, when debugging the
 Vulkan backend (raster / ray query / `--threaded`), build the Khronos
 **validation layers** from source (matching the installed loader version) and run
-tusdview under them — including **GPU-Assisted Validation** for shader
+lusdview under them — including **GPU-Assisted Validation** for shader
 descriptor-OOB / `VK_ERROR_DEVICE_LOST` faults that plain validation can't see.
 The procedure is in that doc; the threaded VK-RT case study is in
-[examples/tusdview/doc/threading-stage2.md](examples/tusdview/doc/threading-stage2.md).
+[examples/lusdview/doc/threading-stage2.md](examples/lusdview/doc/threading-stage2.md).
 For NVIDIA hardware viewer regression under a headless display, use the
-documented `xvfb-run` + `LIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON` procedure in
+documented `xvfb-run` + `LIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD=ON` procedure in
 [doc/testing-cpp.md](doc/testing-cpp.md#headless-nvidia-viewer-regression); do
-not force `TUSDVIEW_VK_DEVICE=nvidia` unless the configure-time Vulkan probe
+not force `LUSDVIEW_VK_DEVICE=nvidia` unless the configure-time Vulkan probe
 confirms an NVIDIA physical device.
 
 #### Verified NVIDIA hardware run recipe
 
-Use the procedure in [doc/tusdview.md](doc/tusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb)
+Use the procedure in [doc/lusdview.md](doc/lusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb)
 for GPU-backed verification. Configure with NVIDIA offload enabled, then run
 the viewer tests under a real Xvfb screen:
 
 ```sh
 cmake -S . -B build_ninja -G Ninja \
   -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
-  -DLIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD=ON
+  -DLIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD=ON
 cmake --build build_ninja -j16
 xvfb-run -a -s "-screen 0 1280x800x24" \
-  ctest --test-dir build_ninja -R '^tusdview' --output-on-failure
+  ctest --test-dir build_ninja -R '^lusdview' --output-on-failure
 ```
 
 For a direct Vulkan ray-query run on PRIME/offload systems, use the NVIDIA
@@ -215,8 +215,8 @@ xvfb-run -a env \
   __NV_PRIME_RENDER_OFFLOAD=1 \
   __GLX_VENDOR_LIBRARY_NAME=nvidia \
   __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
-  ./build_ninja/tusdview --headless --backend vk --vk-device nvidia --rt \
-  --frames 1 --screenshot /tmp/tusdview-vk.ppm tests/usda/anytype-001.usda
+  ./build_ninja/lusdview --headless --backend vk --vk-device nvidia --rt \
+  --frames 1 --screenshot /tmp/lusdview-vk.ppm tests/usda/anytype-001.usda
 ```
 
 Verify the startup capability line reports `device=discrete rt=hardware` and
@@ -227,7 +227,7 @@ not require X11; Xvfb is needed for OpenGL and the full mixed viewer suite.
 
 For elevated GPU execution, AMD/RADV or NVIDIA PRIME/offload selection, and
 `/dev/kfd`/`/dev/dri` passthrough requirements, see the authoritative
-[tusdview GPU device passthrough documentation](doc/tusdview.md#gpu-device-passthrough-and-elevated-execution).
+[lusdview GPU device passthrough documentation](doc/lusdview.md#gpu-device-passthrough-and-elevated-execution).
 
 ## Testing
 
@@ -280,7 +280,7 @@ WASM builds, focused profiles, browser modes, and CTest integration.
 4. Run Pixar compatibility regression if available
 
 ```bash
-USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=~/local/USD/dist/bin/usdcat LUSDCAT_PATH=./build/lusdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
@@ -322,8 +322,8 @@ npm test
 
 if [ -x "$ROOT_DIR/tests/run-usdcat-compare.sh" ]; then
   USDCAT_PATH="${USDCAT_PATH:-$HOME/local/USD/dist/bin/usdcat}"
-  TUSDCAT_PATH="${TUSDCAT_PATH:-$ROOT_DIR/build/tusdcat}"
-  USDCAT_PATH="$USDCAT_PATH" TUSDCAT_PATH="$TUSDCAT_PATH" \
+  LUSDCAT_PATH="${LUSDCAT_PATH:-$ROOT_DIR/build/lusdcat}"
+  USDCAT_PATH="$USDCAT_PATH" LUSDCAT_PATH="$LUSDCAT_PATH" \
     bash "$ROOT_DIR/tests/run-usdcat-compare.sh"
 fi
 ```
@@ -341,13 +341,13 @@ ctest -R roundtrip --output-on-failure
 # Run a single Acutest unit test by name
 ./build/unit-test-lightusd crate_writer_cone_test
 
-# Roundtrip comparison: tusdcat vs pxrUSD usdcat
-USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+# Roundtrip comparison: lusdcat vs pxrUSD usdcat
+USDCAT_PATH=~/local/USD/dist/bin/usdcat LUSDCAT_PATH=./build/lusdcat \
   bash tests/run-usdcat-compare.sh
 
 # Compare individual file
 node tests/compare-usda.js --detailed-diff \
-  --tusdcat ./build/tusdcat --usdcat ~/local/USD/dist/bin/usdcat \
+  --lusdcat ./build/lusdcat --usdcat ~/local/USD/dist/bin/usdcat \
   tests/usda/somefile.usda
 ```
 
@@ -475,7 +475,7 @@ git add "$ROOT_DIR/src/lightusd.hh" "$ROOT_DIR/web/npm/package.json" "$ROOT_DIR/
 echo "Version bump prepared for $VERSION"
 
 USDCAT_PATH="${USDCAT_PATH:-$HOME/local/USD/dist/bin/usdcat}" \
-TUSDCAT_PATH="${TUSDCAT_PATH:-$ROOT_DIR/build/tusdcat}" \
+LUSDCAT_PATH="${LUSDCAT_PATH:-$ROOT_DIR/build/lusdcat}" \
   bash "$ROOT_DIR/tests/run-usdcat-compare.sh"
 
 git commit -m "Bump version to $VERSION"

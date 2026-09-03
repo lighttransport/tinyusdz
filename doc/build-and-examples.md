@@ -101,7 +101,7 @@ For package build details, see [python_binding.md](python_binding.md).
 
 ## Tools And Examples
 
-- [../examples/tusdcat](../examples/tusdcat): parse USDA/USDC/USDZ, print USDA,
+- [../examples/lusdcat](../examples/lusdcat): parse USDA/USDC/USDZ, print USDA,
   inspect crate fields, flatten composition, and convert USDA to USDC or USDA.
 - [../examples/api_tutorial](../examples/api_tutorial): C++ API tutorial for
   constructing and inspecting USD stage data.
@@ -113,7 +113,7 @@ For package build details, see [python_binding.md](python_binding.md).
   handler tutorial.
 - [../examples/progressive_composition](../examples/progressive_composition):
   progressive composition example.
-- [../tools/tusddiff](../tools/tusddiff): USD diff utility (Tydra diff-and-compare API).
+- [../tools/lusddiff](../tools/lusddiff): USD diff utility (Tydra diff-and-compare API).
 - [../examples/usd_to_gltf](../examples/usd_to_gltf): USD to glTF example.
 
 Not every directory under `examples/` is built by the top-level CMake build, and

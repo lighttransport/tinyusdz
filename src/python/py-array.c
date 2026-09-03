@@ -44,34 +44,34 @@ typedef struct {
 
 static int comp_info_for(uint8_t storage, comp_info* out) {
   switch (storage) {
-    case TUSD_COMP_UINT8:
+    case LIGHTUSD_COMP_UINT8:
       *out = (comp_info){'B', "|u1", 1};
       return 0;
-    case TUSD_COMP_INT32:
+    case LIGHTUSD_COMP_INT32:
       *out = (comp_info){'i', "<i4", 4};
       return 0;
-    case TUSD_COMP_UINT32:
+    case LIGHTUSD_COMP_UINT32:
       *out = (comp_info){'I', "<u4", 4};
       return 0;
-    case TUSD_COMP_INT64:
+    case LIGHTUSD_COMP_INT64:
       *out = (comp_info){'q', "<i8", 8};
       return 0;
-    case TUSD_COMP_UINT64:
+    case LIGHTUSD_COMP_UINT64:
       *out = (comp_info){'Q', "<u8", 8};
       return 0;
-    case TUSD_COMP_FLOAT16:
+    case LIGHTUSD_COMP_FLOAT16:
       *out = (comp_info){'e', "<f2", 2};
       return 0;
-    case TUSD_COMP_FLOAT32:
+    case LIGHTUSD_COMP_FLOAT32:
       *out = (comp_info){'f', "<f4", 4};
       return 0;
-    case TUSD_COMP_FLOAT64:
+    case LIGHTUSD_COMP_FLOAT64:
       *out = (comp_info){'d', "<f8", 8};
       return 0;
-    case TUSD_COMP_UINT16:
+    case LIGHTUSD_COMP_UINT16:
       *out = (comp_info){'H', "<u2", 2};
       return 0;
-    case TUSD_COMP_INT16:
+    case LIGHTUSD_COMP_INT16:
       *out = (comp_info){'h', "<i2", 2};
       return 0;
     default:
@@ -83,29 +83,29 @@ static int comp_info_for(uint8_t storage, comp_info* out) {
 static PyObject* component_to_python(const void* data, uint8_t storage,
                                      size_t i, int as_bool) {
   switch (storage) {
-    case TUSD_COMP_UINT8: {
+    case LIGHTUSD_COMP_UINT8: {
       uint8_t v = ((const uint8_t*)data)[i];
       if (as_bool) return PyBool_FromLong(v != 0);
       return PyLong_FromLong(v);
     }
-    case TUSD_COMP_INT32:
+    case LIGHTUSD_COMP_INT32:
       return PyLong_FromLong(((const int32_t*)data)[i]);
-    case TUSD_COMP_UINT32:
+    case LIGHTUSD_COMP_UINT32:
       return PyLong_FromUnsignedLong(((const uint32_t*)data)[i]);
-    case TUSD_COMP_INT64:
+    case LIGHTUSD_COMP_INT64:
       return PyLong_FromLongLong(((const int64_t*)data)[i]);
-    case TUSD_COMP_UINT64:
+    case LIGHTUSD_COMP_UINT64:
       return PyLong_FromUnsignedLongLong(((const uint64_t*)data)[i]);
-    case TUSD_COMP_FLOAT16:
+    case LIGHTUSD_COMP_FLOAT16:
       return PyFloat_FromDouble(
           (double)half_to_float(((const uint16_t*)data)[i]));
-    case TUSD_COMP_FLOAT32:
+    case LIGHTUSD_COMP_FLOAT32:
       return PyFloat_FromDouble((double)((const float*)data)[i]);
-    case TUSD_COMP_FLOAT64:
+    case LIGHTUSD_COMP_FLOAT64:
       return PyFloat_FromDouble(((const double*)data)[i]);
-    case TUSD_COMP_UINT16:
+    case LIGHTUSD_COMP_UINT16:
       return PyLong_FromLong(((const uint16_t*)data)[i]);
-    case TUSD_COMP_INT16:
+    case LIGHTUSD_COMP_INT16:
       return PyLong_FromLong(((const int16_t*)data)[i]);
     default:
       PyErr_SetString(PyExc_TypeError, "unsupported component storage");
@@ -114,9 +114,9 @@ static PyObject* component_to_python(const void* data, uint8_t storage,
 }
 
 /* Build a Python object for element `idx` of a view (scalar or tuple). */
-static PyObject* element_to_python(const tusd_value_view* view,
+static PyObject* element_to_python(const lightusd_value_view* view,
                                    Py_ssize_t idx) {
-  const int as_bool = (view->type == TUSD_TYPE_BOOL);
+  const int as_bool = (view->type == LIGHTUSD_TYPE_BOOL);
   const size_t comps = view->components ? view->components : 1;
   if (idx < 0) {
     return NULL;
@@ -150,11 +150,11 @@ static PyObject* element_to_python(const tusd_value_view* view,
  * ============================================================ */
 
 static void Array_dealloc(PyObject* self) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   PyTypeObject* tp = Py_TYPE(self);
   Py_CLEAR(a->owner);
   if (a->owned) {
-    tusd_value_destroy(a->owned);
+    lightusd_value_destroy(a->owned);
     a->owned = NULL;
   }
   freefunc free_fn = (freefunc)PyType_GetSlot(tp, Py_tp_free);
@@ -163,11 +163,11 @@ static void Array_dealloc(PyObject* self) {
 }
 
 static Py_ssize_t Array_length(PyObject* self) {
-  return (Py_ssize_t)((TusdArray*)self)->view.count;
+  return (Py_ssize_t)((LightUSDArray*)self)->view.count;
 }
 
 static PyObject* Array_getitem(PyObject* self, Py_ssize_t idx) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   Py_ssize_t n = (Py_ssize_t)a->view.count;
   if (idx < 0) idx += n;
   if (idx < 0 || idx >= n) {
@@ -178,7 +178,7 @@ static PyObject* Array_getitem(PyObject* self, Py_ssize_t idx) {
 }
 
 static PyObject* Array_get_shape(PyObject* self, void* closure) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   (void)closure;
   if (a->ndim == 2) {
     return Py_BuildValue("(nn)", a->shape[0], a->shape[1]);
@@ -187,28 +187,28 @@ static PyObject* Array_get_shape(PyObject* self, void* closure) {
 }
 
 static PyObject* Array_get_dtype(PyObject* self, void* closure) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   (void)closure;
   switch (a->view.storage) {
-    case TUSD_COMP_UINT8:
+    case LIGHTUSD_COMP_UINT8:
       return PyUnicode_FromString("uint8");
-    case TUSD_COMP_INT32:
+    case LIGHTUSD_COMP_INT32:
       return PyUnicode_FromString("int32");
-    case TUSD_COMP_UINT32:
+    case LIGHTUSD_COMP_UINT32:
       return PyUnicode_FromString("uint32");
-    case TUSD_COMP_INT64:
+    case LIGHTUSD_COMP_INT64:
       return PyUnicode_FromString("int64");
-    case TUSD_COMP_UINT64:
+    case LIGHTUSD_COMP_UINT64:
       return PyUnicode_FromString("uint64");
-    case TUSD_COMP_FLOAT16:
+    case LIGHTUSD_COMP_FLOAT16:
       return PyUnicode_FromString("float16");
-    case TUSD_COMP_FLOAT32:
+    case LIGHTUSD_COMP_FLOAT32:
       return PyUnicode_FromString("float32");
-    case TUSD_COMP_FLOAT64:
+    case LIGHTUSD_COMP_FLOAT64:
       return PyUnicode_FromString("float64");
-    case TUSD_COMP_UINT16:
+    case LIGHTUSD_COMP_UINT16:
       return PyUnicode_FromString("uint16");
-    case TUSD_COMP_INT16:
+    case LIGHTUSD_COMP_INT16:
       return PyUnicode_FromString("int16");
     default:
       return PyUnicode_FromString("void");
@@ -216,20 +216,20 @@ static PyObject* Array_get_dtype(PyObject* self, void* closure) {
 }
 
 static PyObject* Array_get_type_name(PyObject* self, void* closure) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   (void)closure;
-  return PyUnicode_FromString(tusd_type_name(a->view.type));
+  return PyUnicode_FromString(lightusd_type_name(a->view.type));
 }
 
 static PyObject* Array_get_nbytes(PyObject* self, void* closure) {
   (void)closure;
-  return PyLong_FromSize_t(((TusdArray*)self)->view.nbytes);
+  return PyLong_FromSize_t(((LightUSDArray*)self)->view.nbytes);
 }
 
 /* numpy zero-copy interop that works on the abi3 (3.10) build. numpy keeps a
  * reference to this Array when wrapping, so the memory stays alive. */
 static PyObject* Array_get_array_interface(PyObject* self, void* closure) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   (void)closure;
   PyObject* shape = Array_get_shape(self, NULL);
   if (!shape) return NULL;
@@ -247,7 +247,7 @@ static PyObject* Array_get_array_interface(PyObject* self, void* closure) {
 }
 
 static PyObject* Array_memoryview(PyObject* self, PyObject* noargs) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   (void)noargs;
   /* Raw read-only byte view (format 'B'); pair with .dtype/.shape or use
    * numpy's __array_interface__ path for typed access. The caller must keep
@@ -258,7 +258,7 @@ static PyObject* Array_memoryview(PyObject* self, PyObject* noargs) {
 }
 
 static PyObject* Array_tolist(PyObject* self, PyObject* noargs) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   (void)noargs;
   Py_ssize_t n = (Py_ssize_t)a->view.count;
   PyObject* list = PyList_New(n);
@@ -275,7 +275,7 @@ static PyObject* Array_tolist(PyObject* self, PyObject* noargs) {
 }
 
 static PyObject* Array_repr(PyObject* self) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   PyObject* dtype = Array_get_dtype(self, NULL);
   if (!dtype) return NULL;
   PyObject* res;
@@ -294,7 +294,7 @@ static PyObject* Array_repr(PyObject* self) {
  * and memoryview(arr) work natively with dtype + 2-D shape. All fields are
  * immutable after creation, so no locking is needed. */
 static int Array_getbuffer(PyObject* self, Py_buffer* buf, int flags) {
-  TusdArray* a = (TusdArray*)self;
+  LightUSDArray* a = (LightUSDArray*)self;
   if ((flags & PyBUF_WRITABLE) == PyBUF_WRITABLE) {
     PyErr_SetString(PyExc_BufferError, "Array is read-only");
     return -1;
@@ -353,7 +353,7 @@ static PyType_Slot Array_slots[] = {
 
 static PyType_Spec Array_spec = {
     .name = "lightusd._core.Array",
-    .basicsize = sizeof(TusdArray),
+    .basicsize = sizeof(LightUSDArray),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
              | Py_TPFLAGS_IMMUTABLETYPE
@@ -362,7 +362,7 @@ static PyType_Spec Array_spec = {
     .slots = Array_slots,
 };
 
-int tusd_register_array_type(PyObject* module, tusd_state* st) {
+int lightusd_register_array_type(PyObject* module, lightusd_state* st) {
   st->ArrayType = PyType_FromModuleAndSpec(module, &Array_spec, NULL);
   if (!st->ArrayType) return -1;
   return PyModule_AddObjectRef(module, "Array", st->ArrayType);
@@ -372,17 +372,17 @@ int tusd_register_array_type(PyObject* module, tusd_state* st) {
  * Array construction
  * ============================================================ */
 
-static PyObject* array_new_common(tusd_state* st, PyObject* owner,
-                                  tusd_value* owned,
-                                  const tusd_value_view* view) {
+static PyObject* array_new_common(lightusd_state* st, PyObject* owner,
+                                  lightusd_value* owned,
+                                  const lightusd_value_view* view) {
   comp_info info;
   if (comp_info_for(view->storage, &info) != 0) {
     PyErr_SetString(st->UsdError, "array has unsupported storage type");
     return NULL;
   }
-  PyObject* obj = tusd_alloc(st->ArrayType);
+  PyObject* obj = lightusd_alloc(st->ArrayType);
   if (!obj) return NULL;
-  TusdArray* a = (TusdArray*)obj;
+  LightUSDArray* a = (LightUSDArray*)obj;
   a->owner = owner;
   Py_XINCREF(owner);
   a->owned = owned;
@@ -404,13 +404,13 @@ static PyObject* array_new_common(tusd_state* st, PyObject* owner,
   return obj;
 }
 
-PyObject* tusd_wrap_array_borrowed(tusd_state* st, PyObject* owner,
-                                   const tusd_value_view* view) {
+PyObject* lightusd_wrap_array_borrowed(lightusd_state* st, PyObject* owner,
+                                   const lightusd_value_view* view) {
   return array_new_common(st, owner, NULL, view);
 }
 
-PyObject* tusd_wrap_array_owned(tusd_state* st, tusd_value* owned,
-                                const tusd_value_view* view) {
+PyObject* lightusd_wrap_array_owned(lightusd_state* st, lightusd_value* owned,
+                                const lightusd_value_view* view) {
   return array_new_common(st, NULL, owned, view);
 }
 
@@ -418,102 +418,102 @@ PyObject* tusd_wrap_array_owned(tusd_state* st, tusd_value* owned,
  * View / value conversion
  * ============================================================ */
 
-PyObject* tusd_view_to_python(tusd_state* st, PyObject* owner,
-                              tusd_value* owned, const tusd_value_view* view) {
+PyObject* lightusd_view_to_python(lightusd_state* st, PyObject* owner,
+                              lightusd_value* owned, const lightusd_value_view* view) {
   if (view->is_block) {
-    if (owned) tusd_value_destroy(owned);
+    if (owned) lightusd_value_destroy(owned);
     Py_INCREF(st->ValueBlock);
     return st->ValueBlock;
   }
   if (view->is_array) {
     if (!view->data && view->count > 0) {
-      if (owned) tusd_value_destroy(owned);
+      if (owned) lightusd_value_destroy(owned);
       PyErr_Format(st->UsdError, "array value of type '%s' is not viewable",
-                   tusd_type_name(view->type));
+                   lightusd_type_name(view->type));
       return NULL;
     }
     if (owned) {
-      return tusd_wrap_array_owned(st, owned, view);
+      return lightusd_wrap_array_owned(st, owned, view);
     }
-    return tusd_wrap_array_borrowed(st, owner, view);
+    return lightusd_wrap_array_borrowed(st, owner, view);
   }
 
   /* Scalar */
   if (!view->data) {
-    if (owned) tusd_value_destroy(owned);
+    if (owned) lightusd_value_destroy(owned);
     PyErr_Format(st->UsdError, "value of type '%s' has no data",
-                 tusd_type_name(view->type));
+                 lightusd_type_name(view->type));
     return NULL;
   }
   PyObject* res = element_to_python(view, 0);
-  if (owned) tusd_value_destroy(owned);
+  if (owned) lightusd_value_destroy(owned);
   return res;
 }
 
-PyObject* tusd_value_to_python(tusd_state* st, tusd_value* val) {
+PyObject* lightusd_value_to_python(lightusd_state* st, lightusd_value* val) {
   /* Try string family first. */
-  tusd_sv sv;
-  if (tusd_value_get_string(val, &sv) == TUSD_OK) {
-    PyObject* s = tusd_sv_to_str(sv);
-    tusd_value_destroy(val);
+  lightusd_sv sv;
+  if (lightusd_value_get_string(val, &sv) == LIGHTUSD_OK) {
+    PyObject* s = lightusd_sv_to_str(sv);
+    lightusd_value_destroy(val);
     return s;
   }
-  tusd_strlist* tokens = NULL;
-  if (tusd_value_get_token_array(val, &tokens) == TUSD_OK) {
-    size_t n = tusd_strlist_size(tokens);
+  lightusd_strlist* tokens = NULL;
+  if (lightusd_value_get_token_array(val, &tokens) == LIGHTUSD_OK) {
+    size_t n = lightusd_strlist_size(tokens);
     PyObject* tup = PyTuple_New((Py_ssize_t)n);
     if (!tup) {
-      tusd_strlist_destroy(tokens);
-      tusd_value_destroy(val);
+      lightusd_strlist_destroy(tokens);
+      lightusd_value_destroy(val);
       return NULL;
     }
     for (size_t i = 0; i < n; ++i) {
-      PyObject* item = tusd_sv_to_str(tusd_strlist_get(tokens, i));
+      PyObject* item = lightusd_sv_to_str(lightusd_strlist_get(tokens, i));
       if (!item) {
         Py_DECREF(tup);
-        tusd_strlist_destroy(tokens);
-        tusd_value_destroy(val);
+        lightusd_strlist_destroy(tokens);
+        lightusd_value_destroy(val);
         return NULL;
       }
       PyTuple_SetItem(tup, (Py_ssize_t)i, item);
     }
-    tusd_strlist_destroy(tokens);
-    tusd_value_destroy(val);
+    lightusd_strlist_destroy(tokens);
+    lightusd_value_destroy(val);
     return tup;
   }
 
-  tusd_value_view view;
-  tusd_status status = tusd_value_get_view(val, &view);
-  if (status != TUSD_OK) {
-    tusd_value_destroy(val);
-    return tusd_raise(st, status, "value view");
+  lightusd_value_view view;
+  lightusd_status status = lightusd_value_get_view(val, &view);
+  if (status != LIGHTUSD_OK) {
+    lightusd_value_destroy(val);
+    return lightusd_raise(st, status, "value view");
   }
-  return tusd_view_to_python(st, NULL, val, &view);
+  return lightusd_view_to_python(st, NULL, val, &view);
 }
 
-PyObject* tusd_dict_to_python(tusd_state* st, tusd_dict_ref dict) {
+PyObject* lightusd_dict_to_python(lightusd_state* st, lightusd_dict_ref dict) {
   PyObject* out = PyDict_New();
   if (!out) return NULL;
-  if (!tusd_dict_is_valid(dict)) return out;
+  if (!lightusd_dict_is_valid(dict)) return out;
 
-  size_t n = tusd_dict_size(dict);
+  size_t n = lightusd_dict_size(dict);
   for (size_t i = 0; i < n; ++i) {
-    tusd_sv key, sval;
-    tusd_value_view view;
-    tusd_dict_ref sub;
-    if (tusd_dict_entry(dict, i, &key, &view, &sval, &sub) != TUSD_OK) {
+    lightusd_sv key, sval;
+    lightusd_value_view view;
+    lightusd_dict_ref sub;
+    if (lightusd_dict_entry(dict, i, &key, &view, &sval, &sub) != LIGHTUSD_OK) {
       continue;
     }
-    PyObject* pykey = tusd_sv_to_str(key);
+    PyObject* pykey = lightusd_sv_to_str(key);
     if (!pykey) goto fail;
     PyObject* pyval = NULL;
-    if (tusd_dict_is_valid(sub)) {
-      pyval = tusd_dict_to_python(st, sub);
+    if (lightusd_dict_is_valid(sub)) {
+      pyval = lightusd_dict_to_python(st, sub);
     } else if (sval.len > 0 || (view.data == NULL && !view.is_array &&
-                                (view.type == TUSD_TYPE_STRING ||
-                                 view.type == TUSD_TYPE_TOKEN ||
-                                 view.type == TUSD_TYPE_ASSET_PATH))) {
-      pyval = tusd_sv_to_str(sval);
+                                (view.type == LIGHTUSD_TYPE_STRING ||
+                                 view.type == LIGHTUSD_TYPE_TOKEN ||
+                                 view.type == LIGHTUSD_TYPE_ASSET_PATH))) {
+      pyval = lightusd_sv_to_str(sval);
     } else if (view.data) {
       /* Copy PODs out of the dict (dict values are small metadata). Arrays
        * become lists here rather than zero-copy views. */
@@ -553,51 +553,51 @@ fail:
   return NULL;
 }
 
-PyObject* tusd_attr_value_to_python(tusd_state* st, PyObject* stage_obj,
-                                    tusd_prim prim, const char* name) {
-  tusd_value_view view;
-  tusd_status status = tusd_attr_get(prim, name, &view);
-  if (status != TUSD_OK) {
-    if (status == TUSD_ERR_NOT_FOUND) {
+PyObject* lightusd_attr_value_to_python(lightusd_state* st, PyObject* stage_obj,
+                                    lightusd_prim prim, const char* name) {
+  lightusd_value_view view;
+  lightusd_status status = lightusd_attr_get(prim, name, &view);
+  if (status != LIGHTUSD_OK) {
+    if (status == LIGHTUSD_ERR_NOT_FOUND) {
       PyErr_Format(PyExc_KeyError, "%s", name);
       return NULL;
     }
-    return tusd_raise(st, status, name);
+    return lightusd_raise(st, status, name);
   }
 
-  if (!view.is_array && (view.type == TUSD_TYPE_STRING ||
-                         view.type == TUSD_TYPE_TOKEN ||
-                         view.type == TUSD_TYPE_ASSET_PATH)) {
-    tusd_sv sv;
-    status = tusd_attr_get_string(prim, name, &sv);
-    if (status != TUSD_OK) return tusd_raise(st, status, name);
-    return tusd_sv_to_str(sv);
+  if (!view.is_array && (view.type == LIGHTUSD_TYPE_STRING ||
+                         view.type == LIGHTUSD_TYPE_TOKEN ||
+                         view.type == LIGHTUSD_TYPE_ASSET_PATH)) {
+    lightusd_sv sv;
+    status = lightusd_attr_get_string(prim, name, &sv);
+    if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
+    return lightusd_sv_to_str(sv);
   }
 
-  if (view.is_array && (view.type == TUSD_TYPE_TOKEN ||
-                        view.type == TUSD_TYPE_STRING ||
-                        view.type == TUSD_TYPE_ASSET_PATH)) {
-    tusd_strlist* tokens = NULL;
-    status = tusd_attr_get_token_array(prim, name, &tokens);
-    if (status != TUSD_OK) return tusd_raise(st, status, name);
-    size_t n = tusd_strlist_size(tokens);
+  if (view.is_array && (view.type == LIGHTUSD_TYPE_TOKEN ||
+                        view.type == LIGHTUSD_TYPE_STRING ||
+                        view.type == LIGHTUSD_TYPE_ASSET_PATH)) {
+    lightusd_strlist* tokens = NULL;
+    status = lightusd_attr_get_token_array(prim, name, &tokens);
+    if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
+    size_t n = lightusd_strlist_size(tokens);
     PyObject* tup = PyTuple_New((Py_ssize_t)n);
     if (!tup) {
-      tusd_strlist_destroy(tokens);
+      lightusd_strlist_destroy(tokens);
       return NULL;
     }
     for (size_t i = 0; i < n; ++i) {
-      PyObject* item = tusd_sv_to_str(tusd_strlist_get(tokens, i));
+      PyObject* item = lightusd_sv_to_str(lightusd_strlist_get(tokens, i));
       if (!item) {
         Py_DECREF(tup);
-        tusd_strlist_destroy(tokens);
+        lightusd_strlist_destroy(tokens);
         return NULL;
       }
       PyTuple_SetItem(tup, (Py_ssize_t)i, item);
     }
-    tusd_strlist_destroy(tokens);
+    lightusd_strlist_destroy(tokens);
     return tup;
   }
 
-  return tusd_view_to_python(st, stage_obj, NULL, &view);
+  return lightusd_view_to_python(st, stage_obj, NULL, &view);
 }

@@ -421,18 +421,18 @@ CMakeUserPresets.json
 !tests/next/fixtures/vr-edge/**/*.usda
 !tests/usda/validation/valid/*.usda
 !models/concave_ngon.usda
-!examples/tusdview/tests/deform-skin-animation.usda
+!examples/lusdview/tests/deform-skin-animation.usda
 # Small authored MaterialX closure/volume fixtures used by the Vulkan RT smoke.
-!examples/tusdview/tests/authored-nested-closures.usda
-!examples/tusdview/tests/authored-volume-material.usda
+!examples/lusdview/tests/authored-nested-closures.usda
+!examples/lusdview/tests/authored-volume-material.usda
 !tests/usdc/aousd-unknown-property-metadata.usdc
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).
 !tests/usda/composition/listop-xlayer-*.usda
-# tusdview material regression fixtures (tusdview-material-binding-inheritance /
-# tusdview-asset-path-anchoring). Listed explicitly rather than un-ignoring all of
+# lusdview material regression fixtures (lusdview-material-binding-inheritance /
+# lusdview-asset-path-anchoring). Listed explicitly rather than un-ignoring all of
 # models/*.usda, which would also catch scratch scenes dropped in that directory.
-!models/tusdview-material-binding-inheritance.usda
+!models/lusdview-material-binding-inheritance.usda
 !models/skintest-instanced.usda
 !models/multi-uv-quad.usda
 !models/nested-look-texture/root.usda
@@ -440,10 +440,10 @@ CMakeUserPresets.json
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
-!models/tusdview-curves-ribbons.usda
-!models/tusdview-nurbs-patch.usda
-!models/tusdview-transparency.usda
-!models/tusdquicklook-alpha-modes.usda
+!models/lusdview-curves-ribbons.usda
+!models/lusdview-nurbs-patch.usda
+!models/lusdview-transparency.usda
+!models/lusdquicklook-alpha-modes.usda
 !models/日本語ファイル名テスト.usda
 !tests/usdc/dedup-global-001.usdc
 !aousd/validation_*.usda
@@ -525,22 +525,22 @@ python/lightusd/_version.py
 # Private notes / scratch docs (may reference proprietary asset names) — never commit
 priv/
 resume.md
-# Root-level scratch notes only -- doc/resume-tusdview.md is tracked.
-/resume-tusdview.md
+# Root-level scratch notes only -- doc/resume-lusdview.md is tracked.
+/resume-lusdview.md
 gpu-task.md
 python/lightusd.egg-info/
 python/lightusd/_core.*.so
 
-# tusdchecker composition regression fixtures
-!tools/tusdchecker/testdata/type-mismatch-root.usda
-!tools/tusdchecker/testdata/type-mismatch-weak.usda
-!tools/tusdchecker/testdata/invalid-variant-body.usda
-!tools/tusdchecker/testdata/unknown-api-schema.usda
-!tools/tusdchecker/testdata/varying-relationship.usda
+# lusdchecker composition regression fixtures
+!tools/lusdchecker/testdata/type-mismatch-root.usda
+!tools/lusdchecker/testdata/type-mismatch-weak.usda
+!tools/lusdchecker/testdata/invalid-variant-body.usda
+!tools/lusdchecker/testdata/unknown-api-schema.usda
+!tools/lusdchecker/testdata/varying-relationship.usda
 
-# tusdchecker ARKit profile fixtures
-!tools/tusdchecker/testdata/arkit-clean.usda
-!tools/tusdchecker/testdata/arkit-violations.usda
+# lusdchecker ARKit profile fixtures
+!tools/lusdchecker/testdata/arkit-clean.usda
+!tools/lusdchecker/testdata/arkit-violations.usda
 .xmake/
 
 # Local per-machine work notes (resume hub); intentionally untracked --

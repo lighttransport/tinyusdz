@@ -98,7 +98,7 @@ examples have moved to [doc/build-and-examples.md](doc/build-and-examples.md).
 
 Useful entry points:
 
-- `examples/tusdcat`: parse, inspect, compose, and convert USD files.
+- `examples/lusdcat`: parse, inspect, compose, and convert USD files.
 - `examples/api_tutorial`: author and inspect USD data with the C++ API.
 - `examples/tydra_api`: query and convert USD data through Tydra.
 - `examples/asset_resolution`: load USD data through custom I/O.

@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Script to run batch comparisons of tusdcat vs usdcat output with detailed diffs
+# Script to run batch comparisons of lusdcat vs usdcat output with detailed diffs
 # Tests both USDA and USDC formats
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPARE_SCRIPT="$SCRIPT_DIR/compare-usda.js"
-TUSDCAT_PATH="${TUSDCAT_PATH:-./build/tusdcat}"
+LUSDCAT_PATH="${LUSDCAT_PATH:-./build/lusdcat}"
 # Prefer the repo-local OpenUSD helper install, then a sibling OpenUSD checkout,
 # External paths are intentionally never guessed from a developer's home
 # directory. Prepare the repo-local oracle with scripts/build-openusd-usdcat.sh
@@ -83,7 +83,7 @@ run_folder_comparison() {
   fi
 
   node "$COMPARE_SCRIPT" \
-    --tusdcat "$TUSDCAT_PATH" \
+    --lusdcat "$LUSDCAT_PATH" \
     --usdcat "$USDCAT_PATH" \
     --timeout "$TIMEOUT_MS" \
     --continue-on-error \
@@ -154,7 +154,7 @@ print_failure_summary() {
 # ---------------------------------------------------------------------------
 # usdchecker validation pass (differential).
 #
-# For every tests/usda fixture, write a .usdc with tusdcat and require that
+# For every tests/usda fixture, write a .usdc with lusdcat and require that
 # OpenUSD's usdchecker reports EXACTLY the same set of validator rules on our
 # crate as on the source .usda. The fixtures intentionally trip content lints
 # (MissingUpAxisMetadata, MissingMetersPerUnitMetadata, unresolvable refs, ...),
@@ -205,9 +205,9 @@ run_usdchecker_pass() {
   for f in "$SCRIPT_DIR"/usda/*.usda; do
     base=$(basename "$f")
 
-    if ! "$TUSDCAT_PATH" --output-format usdc -o "$tmpdir/$base.usdc" "$f" >/dev/null 2>&1; then
-      skipped=$((skipped+1))   # fixture tusdcat cannot write standalone
-      echo -e "${YELLOW}- usdchecker skip: $base (tusdcat cannot write standalone)${NC}"
+    if ! "$LUSDCAT_PATH" --output-format usdc -o "$tmpdir/$base.usdc" "$f" >/dev/null 2>&1; then
+      skipped=$((skipped+1))   # fixture lusdcat cannot write standalone
+      echo -e "${YELLOW}- usdchecker skip: $base (lusdcat cannot write standalone)${NC}"
       continue
     fi
 
@@ -239,13 +239,13 @@ run_usdchecker_pass() {
 # Main execution
 main() {
   # Expand tilde in paths
-  TUSDCAT_PATH="${TUSDCAT_PATH/#\~/$HOME}"
+  LUSDCAT_PATH="${LUSDCAT_PATH/#\~/$HOME}"
   USDCAT_PATH="${USDCAT_PATH/#\~/$HOME}"
 
   print_header "USD File Format Comparison Suite"
   echo "Configuration:"
   echo "  Comparison Script: $COMPARE_SCRIPT"
-  echo "  tusdcat Path: $TUSDCAT_PATH"
+  echo "  lusdcat Path: $LUSDCAT_PATH"
   echo "  usdcat Path: $USDCAT_PATH"
   echo "  Timeout: ${TIMEOUT_MS}ms"
   echo "  Detailed Diff: $SHOW_DETAILED_DIFF"
@@ -265,7 +265,7 @@ main() {
     exit 2
   fi
 
-  if ! check_executable "$TUSDCAT_PATH" "tusdcat"; then
+  if ! check_executable "$LUSDCAT_PATH" "lusdcat"; then
     exit 1
   fi
 
@@ -333,9 +333,9 @@ main() {
   echo "  # Test specific USDA file with detailed diff"
   echo "  SHOW_DETAILED_DIFF=true node $COMPARE_SCRIPT --detailed-diff tests/usda/cube.usda"
   echo ""
-  echo "  # Test specific files with tusdcat/usdcat"
-  echo "  TUSDCAT_PATH=./build_gcc/tusdcat USDCAT_PATH=ref/dist/bin/usdcat \\"
-  echo "    node $COMPARE_SCRIPT --detailed-diff --tusdcat ./build_gcc/tusdcat --usdcat ref/dist/bin/usdcat tests/usda/cube.usda"
+  echo "  # Test specific files with lusdcat/usdcat"
+  echo "  LUSDCAT_PATH=./build_gcc/lusdcat USDCAT_PATH=ref/dist/bin/usdcat \\"
+  echo "    node $COMPARE_SCRIPT --detailed-diff --lusdcat ./build_gcc/lusdcat --usdcat ref/dist/bin/usdcat tests/usda/cube.usda"
   echo ""
 }
 
@@ -344,19 +344,19 @@ show_help() {
   cat << EOF
 Usage: $0 [OPTIONS]
 
-Run comprehensive batch comparisons of tusdcat vs usdcat outputs with detailed diffs.
+Run comprehensive batch comparisons of lusdcat vs usdcat outputs with detailed diffs.
 Tests both USDA (ASCII) and USDC (Binary/Crate) file formats.
 
 OPTIONS:
   -h, --help              Show this help message
-  --tusdcat PATH          Path to tusdcat executable (default: ./build_gcc/tusdcat)
+  --lusdcat PATH          Path to lusdcat executable (default: ./build_gcc/lusdcat)
   --usdcat PATH           Path to usdcat executable (default: ref/dist/bin/usdcat when present)
   --timeout MS            Timeout per file in milliseconds (default: 60000)
   --no-detailed-diff      Disable detailed diff output (shows summary only)
   --no-failure-summary    Disable failure/warning summary at the end
 
 ENVIRONMENT VARIABLES:
-  TUSDCAT_PATH            Override tusdcat path
+  LUSDCAT_PATH            Override lusdcat path
   USDCAT_PATH             Override usdcat path
   TIMEOUT_MS              Override timeout
   SHOW_DETAILED_DIFF      Set to 'false' to disable detailed diffs (default: true)
@@ -370,7 +370,7 @@ EXAMPLES:
   $0 --no-detailed-diff
 
   # Run with custom tool paths
-  TUSDCAT_PATH=./build_asan/tusdcat USDCAT_PATH=ref/dist/bin/usdcat $0
+  LUSDCAT_PATH=./build_asan/lusdcat USDCAT_PATH=ref/dist/bin/usdcat $0
 
   # Run with longer timeout for slow systems
   $0 --timeout 120000
@@ -385,8 +385,8 @@ while [[ $# -gt 0 ]]; do
       show_help
       exit 0
       ;;
-    --tusdcat)
-      TUSDCAT_PATH="$2"
+    --lusdcat)
+      LUSDCAT_PATH="$2"
       shift 2
       ;;
     --usdcat)

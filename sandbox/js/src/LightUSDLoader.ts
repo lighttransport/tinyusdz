@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 export class LightUSDLoader {
 
-  //private tusdzModule:
+  //private lightusdModule:
 
   //constructor(
 }

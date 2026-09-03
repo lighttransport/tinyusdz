@@ -105,7 +105,7 @@ Added: `get_data()`, `get_data_offsets()`, `element_size()`, `BLOCKED_OFFSET`.
 cd build && make -j16        # zero warnings with -Werror
 ctest --output-on-failure    # all 5 tests pass
 bash tests/run-usdcat-compare.sh  # 0 USDA failures, 41 pre-existing USDC failures
-./build/tusdcat tests/usda/timesamples-array-token-001.usda  # token[] preserved
+./build/lusdcat tests/usda/timesamples-array-token-001.usda  # token[] preserved
 ```
 
 Net result: −1544 lines across 9 files.

@@ -43,7 +43,7 @@ list(APPEND LIGHTUI_SOURCES
     src/image.c            # pulls in third_party/wuffs-v0.4.c
 )
 
-# ---- widgets tusdquicklook uses ---------------------------------------------
+# ---- widgets lusdquicklook uses ---------------------------------------------
 # Kept deliberately short. Adding a widget = add its .c here; the headers for
 # every upstream widget are present under include/lightui/ regardless.
 list(APPEND LIGHTUI_SOURCES
@@ -125,7 +125,7 @@ target_compile_definitions(lightui
         LVG_ENABLE_JPEG)
 
 # Optional SIMD for the software rasterizer. Scalar is the portable default;
-# enable the arch-appropriate one since tusdquicklook blits every frame.
+# enable the arch-appropriate one since lusdquicklook blits every frame.
 if(NOT DEFINED LVG_SIMD_DEF)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64|amd64)")
     set(LVG_SIMD_DEF LVG_USE_SSE2=1)

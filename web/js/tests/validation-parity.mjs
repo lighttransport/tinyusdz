@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
-const tusdcat = process.env.TUSDCAT_PATH || path.join(repoRoot, 'build', 'tusdcat');
+const lusdcat = process.env.LUSDCAT_PATH || path.join(repoRoot, 'build', 'lusdcat');
 const wasmDir = process.env.LIGHTUSD_WASM_DIR ||
   path.join(repoRoot, 'web', 'js', 'src', 'lightusd');
 const wasmEntry = path.join(wasmDir, 'lightusd.js');
@@ -101,8 +101,8 @@ function parseNativeIssues(stdout) {
 }
 
 async function runNative(filePath) {
-  const stdout = await spawnCommand(tusdcat, ['--validate-all', filePath]);
-  assert.notEqual(stdout, '', `tusdcat produced no validation report for ${filePath}`);
+  const stdout = await spawnCommand(lusdcat, ['--validate-all', filePath]);
+  assert.notEqual(stdout, '', `lusdcat produced no validation report for ${filePath}`);
   return parseNativeIssues(stdout);
 }
 
@@ -122,11 +122,11 @@ function compareIssues(filePath, nativeIssues, webIssues) {
   assert.deepEqual(
     webIssues,
     nativeIssues,
-    `web validation issues differ from tusdcat --validate-all for ${filePath}`,
+    `web validation issues differ from lusdcat --validate-all for ${filePath}`,
   );
 }
 
-requireFile(tusdcat, 'tusdcat');
+requireFile(lusdcat, 'lusdcat');
 requireFile(wasmEntry, 'WASM JS module');
 requireFile(path.join(wasmDir, 'lightusd.wasm'), 'WASM binary');
 skipIfStaleWasm();

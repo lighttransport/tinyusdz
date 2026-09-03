@@ -30,13 +30,13 @@ A pure C99 implementation of JSON parsing, serialization, and USD Layer ↔ JSON
 ## Files
 
 ### Core Implementation
-- `tusd_json.h` - Complete API header with USD conversion functions
-- `tusd_json_core.c` - Pure JSON implementation without USD dependencies
-- `tusd_json.c` - Full implementation including USD conversion (requires type fixes)
+- `lightusd_json.h` - Complete API header with USD conversion functions
+- `lightusd_json_core.c` - Pure JSON implementation without USD dependencies
+- `lightusd_json.c` - Full implementation including USD conversion (requires type fixes)
 
 ### Test Suites
-- `test_tusd_json_simple.c` - Core JSON functionality tests (8 test cases)
-- `test_tusd_json.c` - Complete test suite including USD conversion (12 test cases)
+- `test_lightusd_json_simple.c` - Core JSON functionality tests (8 test cases)
+- `test_lightusd_json.c` - Complete test suite including USD conversion (12 test cases)
 
 ### Demonstrations
 - `demo_usd_json.c` - Interactive demo showing USD ↔ JSON conversion
@@ -45,49 +45,49 @@ A pure C99 implementation of JSON parsing, serialization, and USD Layer ↔ JSON
 
 ### JSON Value Creation
 ```c
-tusd_json_value_t *tusd_json_value_create_null(void);
-tusd_json_value_t *tusd_json_value_create_bool(int value);
-tusd_json_value_t *tusd_json_value_create_number(double value);
-tusd_json_value_t *tusd_json_value_create_string(const char *value);
-tusd_json_value_t *tusd_json_value_create_array(void);
-tusd_json_value_t *tusd_json_value_create_object(void);
-void tusd_json_value_destroy(tusd_json_value_t *value);
+lightusd_json_value_t *lightusd_json_value_create_null(void);
+lightusd_json_value_t *lightusd_json_value_create_bool(int value);
+lightusd_json_value_t *lightusd_json_value_create_number(double value);
+lightusd_json_value_t *lightusd_json_value_create_string(const char *value);
+lightusd_json_value_t *lightusd_json_value_create_array(void);
+lightusd_json_value_t *lightusd_json_value_create_object(void);
+void lightusd_json_value_destroy(lightusd_json_value_t *value);
 ```
 
 ### JSON Parsing
 ```c
-tusd_json_value_t *tusd_json_parse(const char *json_string);
-tusd_json_value_t *tusd_json_parse_length(const char *json_string, size_t length);
-const char *tusd_json_get_error_message(void);
+lightusd_json_value_t *lightusd_json_parse(const char *json_string);
+lightusd_json_value_t *lightusd_json_parse_length(const char *json_string, size_t length);
+const char *lightusd_json_get_error_message(void);
 ```
 
 ### JSON Serialization
 ```c
-char *tusd_json_serialize(const tusd_json_value_t *value);
-char *tusd_json_serialize_pretty(const tusd_json_value_t *value, int indent_size);
-int tusd_json_write_file(const tusd_json_value_t *value, const char *filename);
-int tusd_json_write_file_pretty(const tusd_json_value_t *value, const char *filename, int indent_size);
+char *lightusd_json_serialize(const lightusd_json_value_t *value);
+char *lightusd_json_serialize_pretty(const lightusd_json_value_t *value, int indent_size);
+int lightusd_json_write_file(const lightusd_json_value_t *value, const char *filename);
+int lightusd_json_write_file_pretty(const lightusd_json_value_t *value, const char *filename, int indent_size);
 ```
 
 ### USD Conversion (Planned)
 ```c
-tusd_json_value_t *tusd_layer_to_json(const tusd_layer_t *layer);
-tusd_layer_t *tusd_json_to_layer(const tusd_json_value_t *json);
-char *tusd_layer_to_json_string(const tusd_layer_t *layer);
-char *tusd_layer_to_json_string_pretty(const tusd_layer_t *layer, int indent_size);
-tusd_layer_t *tusd_layer_from_json_string(const char *json_string);
+lightusd_json_value_t *lightusd_layer_to_json(const lightusd_layer_t *layer);
+lightusd_layer_t *lightusd_json_to_layer(const lightusd_json_value_t *json);
+char *lightusd_layer_to_json_string(const lightusd_layer_t *layer);
+char *lightusd_layer_to_json_string_pretty(const lightusd_layer_t *layer, int indent_size);
+lightusd_layer_t *lightusd_layer_from_json_string(const char *json_string);
 ```
 
 ## Building
 
 ### Core JSON Library
 ```bash
-gcc -std=c99 -Wall -Wextra -o test_json test_tusd_json_simple.c tusd_json_core.c -lm
+gcc -std=c99 -Wall -Wextra -o test_json test_lightusd_json_simple.c lightusd_json_core.c -lm
 ```
 
 ### USD-JSON Demo
 ```bash
-gcc -std=c99 -Wall -Wextra -o demo_usd_json demo_usd_json.c tusd_layer.c -lm
+gcc -std=c99 -Wall -Wextra -o demo_usd_json demo_usd_json.c lightusd_layer.c -lm
 ```
 
 ## Test Results

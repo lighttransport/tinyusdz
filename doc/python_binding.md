@@ -27,7 +27,7 @@ This page is for source builds and maintainer notes.
 python/lightusd/__init__.py   pure-python facade (pathlib, value normalizer)
 python/lightusd/tydra.py      render-scene shim
 src/python/py-*.c             raw CPython C-API extension (lightusd._core)
-src/c-api/lightusd-c.*        core C API (tusd_*): stage/prim/attr/authoring
+src/c-api/lightusd-c.*        core C API (lightusd_*): stage/prim/attr/authoring
 src/c-api/lightusd-render-c.* tydra render C API (buffers, materials, nodes)
 src/next/                     next core (parser, crate, composition, writers)
 src/tydra/next/               render-scene converter
@@ -63,7 +63,7 @@ Publishing (OIDC), unchanged.
 ## C API notes
 
 `src/c-api/lightusd-c.h` is a standalone C11 FFI surface usable from any
-language (Rust/C#/Deno/...): opaque owning handles + by-value `tusd_prim`
-handles, thread-local `tusd_last_error()`, zero-copy `tusd_value_view` /
-`tusd_buffer_view` views, batched authoring calls. Smoke-tested from pure C
+language (Rust/C#/Deno/...): opaque owning handles + by-value `lightusd_prim`
+handles, thread-local `lightusd_last_error()`, zero-copy `lightusd_value_view` /
+`lightusd_buffer_view` views, batched authoring calls. Smoke-tested from pure C
 by `tests/c-api/test_lightusd_c.c` (ctest: `next_test_c_api`).

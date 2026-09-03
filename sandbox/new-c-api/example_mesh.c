@@ -14,16 +14,16 @@
 /**
  * Extract and print mesh data
  */
-static void process_mesh(tusdz_prim mesh, const char* mesh_name) {
+static void process_mesh(lightusd_prim mesh, const char* mesh_name) {
     printf("\nMesh: %s\n", mesh_name);
     printf("----------------------------------------\n");
 
     // Get vertex positions
     const float* points = NULL;
     size_t point_count = 0;
-    tusdz_result result = tusdz_mesh_get_points(mesh, &points, &point_count);
+    lightusd_result result = lightusd_mesh_get_points(mesh, &points, &point_count);
 
-    if (result == TUSDZ_SUCCESS && points) {
+    if (result == LIGHTUSD_SUCCESS && points) {
         size_t vertex_count = point_count / 3;  // Each point is 3 floats
         printf("Vertices: %zu\n", vertex_count);
 
@@ -66,9 +66,9 @@ static void process_mesh(tusdz_prim mesh, const char* mesh_name) {
     // Get face information
     const int* face_counts = NULL;
     size_t face_count = 0;
-    result = tusdz_mesh_get_face_counts(mesh, &face_counts, &face_count);
+    result = lightusd_mesh_get_face_counts(mesh, &face_counts, &face_count);
 
-    if (result == TUSDZ_SUCCESS && face_counts) {
+    if (result == LIGHTUSD_SUCCESS && face_counts) {
         printf("\nFaces: %zu\n", face_count);
 
         // Count face types
@@ -100,9 +100,9 @@ static void process_mesh(tusdz_prim mesh, const char* mesh_name) {
     // Get vertex indices
     const int* indices = NULL;
     size_t index_count = 0;
-    result = tusdz_mesh_get_indices(mesh, &indices, &index_count);
+    result = lightusd_mesh_get_indices(mesh, &indices, &index_count);
 
-    if (result == TUSDZ_SUCCESS && indices) {
+    if (result == LIGHTUSD_SUCCESS && indices) {
         printf("\nIndices: %zu\n", index_count);
 
         // Find min/max indices
@@ -136,9 +136,9 @@ static void process_mesh(tusdz_prim mesh, const char* mesh_name) {
     // Get normals
     const float* normals = NULL;
     size_t normal_count = 0;
-    result = tusdz_mesh_get_normals(mesh, &normals, &normal_count);
+    result = lightusd_mesh_get_normals(mesh, &normals, &normal_count);
 
-    if (result == TUSDZ_SUCCESS && normals) {
+    if (result == LIGHTUSD_SUCCESS && normals) {
         printf("\nNormals: %zu\n", normal_count / 3);
 
         // Check if normals are normalized
@@ -162,9 +162,9 @@ static void process_mesh(tusdz_prim mesh, const char* mesh_name) {
     // Get UVs
     const float* uvs = NULL;
     size_t uv_count = 0;
-    result = tusdz_mesh_get_uvs(mesh, &uvs, &uv_count, 0);  // Primary UV set
+    result = lightusd_mesh_get_uvs(mesh, &uvs, &uv_count, 0);  // Primary UV set
 
-    if (result == TUSDZ_SUCCESS && uvs) {
+    if (result == LIGHTUSD_SUCCESS && uvs) {
         printf("\nUV Coordinates: %zu\n", uv_count / 2);
 
         // Check UV range
@@ -192,20 +192,20 @@ static void process_mesh(tusdz_prim mesh, const char* mesh_name) {
     }
 
     // Get subdivision scheme
-    const char* subdiv = tusdz_mesh_get_subdivision_scheme(mesh);
+    const char* subdiv = lightusd_mesh_get_subdivision_scheme(mesh);
     if (subdiv && strcmp(subdiv, "none") != 0) {
         printf("\nSubdivision: %s\n", subdiv);
     }
 
     // Get material binding
-    tusdz_prim material = tusdz_prim_get_bound_material(mesh);
+    lightusd_prim material = lightusd_prim_get_bound_material(mesh);
     if (material) {
-        printf("\nMaterial: %s\n", tusdz_prim_get_name(material));
+        printf("\nMaterial: %s\n", lightusd_prim_get_name(material));
 
         // Get surface shader
-        tusdz_prim shader = tusdz_material_get_surface_shader(material);
+        lightusd_prim shader = lightusd_material_get_surface_shader(material);
         if (shader) {
-            const char* shader_type = tusdz_shader_get_type_id(shader);
+            const char* shader_type = lightusd_shader_get_type_id(shader);
             printf("  Shader Type: %s\n", shader_type);
 
             // Get some common shader inputs
@@ -214,31 +214,31 @@ static void process_mesh(tusdz_prim mesh, const char* mesh_name) {
             };
 
             for (int i = 0; i < 4; i++) {
-                tusdz_value input = tusdz_shader_get_input(shader, common_inputs[i]);
+                lightusd_value input = lightusd_shader_get_input(shader, common_inputs[i]);
                 if (input) {
                     printf("  %s: ", common_inputs[i]);
 
-                    tusdz_value_type type = tusdz_value_get_type(input);
-                    if (type == TUSDZ_VALUE_FLOAT3 || type == TUSDZ_VALUE_COLOR3F) {
+                    lightusd_value_type type = lightusd_value_get_type(input);
+                    if (type == LIGHTUSD_VALUE_FLOAT3 || type == LIGHTUSD_VALUE_COLOR3F) {
                         float color[3];
-                        if (tusdz_value_get_float3(input, color) == TUSDZ_SUCCESS) {
+                        if (lightusd_value_get_float3(input, color) == LIGHTUSD_SUCCESS) {
                             printf("(%f, %f, %f)\n", color[0], color[1], color[2]);
                         }
-                    } else if (type == TUSDZ_VALUE_FLOAT) {
+                    } else if (type == LIGHTUSD_VALUE_FLOAT) {
                         float val;
-                        if (tusdz_value_get_float(input, &val) == TUSDZ_SUCCESS) {
+                        if (lightusd_value_get_float(input, &val) == LIGHTUSD_SUCCESS) {
                             printf("%f\n", val);
                         }
-                    } else if (type == TUSDZ_VALUE_ASSET_PATH) {
+                    } else if (type == LIGHTUSD_VALUE_ASSET_PATH) {
                         const char* path;
-                        if (tusdz_value_get_asset_path(input, &path) == TUSDZ_SUCCESS) {
+                        if (lightusd_value_get_asset_path(input, &path) == LIGHTUSD_SUCCESS) {
                             printf("%s\n", path);
                         }
                     } else {
-                        printf("<%s>\n", tusdz_value_type_to_string(type));
+                        printf("<%s>\n", lightusd_value_type_to_string(type));
                     }
 
-                    tusdz_value_free(input);
+                    lightusd_value_free(input);
                 }
             }
         }
@@ -248,21 +248,21 @@ static void process_mesh(tusdz_prim mesh, const char* mesh_name) {
 /**
  * Find and process all meshes in hierarchy
  */
-static void find_meshes(tusdz_prim prim, int* mesh_count) {
+static void find_meshes(lightusd_prim prim, int* mesh_count) {
     if (!prim) return;
 
     // Check if this is a mesh
-    if (tusdz_prim_is_type(prim, TUSDZ_PRIM_MESH)) {
+    if (lightusd_prim_is_type(prim, LIGHTUSD_PRIM_MESH)) {
         (*mesh_count)++;
-        const char* name = tusdz_prim_get_name(prim);
-        const char* path = tusdz_prim_get_path(prim);
+        const char* name = lightusd_prim_get_name(prim);
+        const char* path = lightusd_prim_get_path(prim);
         process_mesh(prim, path);
     }
 
     // Recursively check children
-    size_t child_count = tusdz_prim_get_child_count(prim);
+    size_t child_count = lightusd_prim_get_child_count(prim);
     for (size_t i = 0; i < child_count; i++) {
-        tusdz_prim child = tusdz_prim_get_child_at(prim, i);
+        lightusd_prim child = lightusd_prim_get_child_at(prim, i);
         find_meshes(child, mesh_count);
     }
 }
@@ -281,7 +281,7 @@ int main(int argc, char* argv[]) {
     const char* filepath = argv[1];
 
     // Initialize
-    if (tusdz_init() != TUSDZ_SUCCESS) {
+    if (lightusd_init() != LIGHTUSD_SUCCESS) {
         fprintf(stderr, "Failed to initialize LightUSD\n");
         return 1;
     }
@@ -289,14 +289,14 @@ int main(int argc, char* argv[]) {
     printf("Loading: %s\n", filepath);
 
     // Load file
-    tusdz_stage stage = NULL;
+    lightusd_stage stage = NULL;
     char error_buf[1024] = {0};
-    tusdz_result result = tusdz_load_from_file(filepath, NULL, &stage,
+    lightusd_result result = lightusd_load_from_file(filepath, NULL, &stage,
                                                error_buf, sizeof(error_buf));
 
-    if (result != TUSDZ_SUCCESS) {
+    if (result != LIGHTUSD_SUCCESS) {
         fprintf(stderr, "Failed to load file: %s\n", error_buf);
-        tusdz_shutdown();
+        lightusd_shutdown();
         return 1;
     }
 
@@ -305,7 +305,7 @@ int main(int argc, char* argv[]) {
 
     // Find and process all meshes
     int mesh_count = 0;
-    tusdz_prim root = tusdz_stage_get_root_prim(stage);
+    lightusd_prim root = lightusd_stage_get_root_prim(stage);
     find_meshes(root, &mesh_count);
 
     if (mesh_count == 0) {
@@ -316,8 +316,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Cleanup
-    tusdz_stage_free(stage);
-    tusdz_shutdown();
+    lightusd_stage_free(stage);
+    lightusd_shutdown();
 
     return 0;
 }

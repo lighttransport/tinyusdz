@@ -173,10 +173,10 @@ The exporter should:
 
 ### 6. Validate the Export
 
-Use `tusdcat` to inspect the final USDZ:
+Use `lusdcat` to inspect the final USDZ:
 
 ```bash
-./build/tusdcat fruit-stand.usdz \
+./build/lusdcat fruit-stand.usdz \
   | rg 'purpose|visibility|PhysicsCollisionAPI|PhysicsMeshCollisionAPI|extent|material:binding'
 ```
 

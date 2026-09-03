@@ -22,7 +22,7 @@ documents live in [archive/](archive/).
   (type inference rules) in OpenUSD vs LightUSD.
 - [signed-zero.md](signed-zero.md) — IEEE-754 signed-zero handling in OpenUSD,
   AOUSD Core requirements and ambiguities, and bit-exact round-trip guidance.
-- [ousd-vs-tusdz.md](ousd-vs-tusdz.md) — AOUSD Core 1.0.1 / OpenUSD review of
+- [ousd-vs-lightusd.md](ousd-vs-lightusd.md) — AOUSD Core 1.0.1 / OpenUSD review of
   LightUSD `next` and Tydra-next, with remediation status.
 
 ## Schema Domains
@@ -43,10 +43,10 @@ documents live in [archive/](archive/).
 
 ## Rendering, GPU, and Assets
 
-- [tusdview.md](tusdview.md) — `tusdview` build & GPU debugging notes.
-- [tusdview-tasks.md](tusdview-tasks.md) — `tusdview`/`tusdrender` open tasks
+- [lusdview.md](lusdview.md) — `lusdview` build & GPU debugging notes.
+- [lusdview-tasks.md](lusdview-tasks.md) — `lusdview`/`lusdrender` open tasks
   and working notes (incl. the external usd-assets run log).
-- [tusdrender.md](tusdrender.md) — `tusdrender` GPU backend testing.
+- [lusdrender.md](lusdrender.md) — `lusdrender` GPU backend testing.
 - [tydra-tangent.md](tydra-tangent.md) — Tangent/normal computation and
   quantization.
 - [threejs.md](threejs.md) — Three.js integration notes.
@@ -54,7 +54,7 @@ documents live in [archive/](archive/).
 - [udim.md](udim.md) — UDIM texture support.
 - [openusd-usdz.md](openusd-usdz.md) — USDZ creation and `usdchecker --arkit`
   validation.
-- [tusdzconvert.md](tusdzconvert.md) — `tusdzconvert` native USD → USDZ
+- [lusdzconvert.md](lusdzconvert.md) — `lusdzconvert` native USD → USDZ
   converter.
 
 ## Performance and Memory

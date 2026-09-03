@@ -10,7 +10,7 @@
 //   udim = 1001 + floor(u) + 10*floor(v);  layer = LUT[udim];  color = tiles[layer](fract(uv))
 //
 // A "combine" mode is provided for comparison: it lets the core build a single
-// atlas and rebake the mesh UVs (the default tusdzconvert/WebGL path), so the
+// atlas and rebake the mesh UVs (the default lusdzconvert/WebGL path), so the
 // two modes should render identically.
 
 import * as THREE from 'three';

@@ -10,26 +10,26 @@
 
 /* Validate prim + stage, returning the C handle (NULL + exception set on
  * failure). */
-tusd_stage* tusd_prim_stage_checked(tusd_state* st, TusdPrim* prim) {
+lightusd_stage* lightusd_prim_stage_checked(lightusd_state* st, LightUSDPrim* prim) {
   if (!prim->stage) {
     PyErr_SetString(st->UsdError, "Prim has no stage");
     return NULL;
   }
-  tusd_stage* stage = tusd_stage_handle(prim->stage);
+  lightusd_stage* stage = lightusd_stage_handle(prim->stage);
   if (!stage) {
     PyErr_SetString(st->UsdError, "Stage is closed");
     return NULL;
   }
-  uint64_t gen = tusd_stage_generation(stage);
+  uint64_t gen = lightusd_stage_generation(stage);
   if (prim->gen != gen) {
     /* The stage was structurally modified: prim-spec pointers may have
      * moved. Re-resolve this prim by its path (self-healing handle). */
     const char* path =
         prim->path_utf8 ? PyBytes_AsString(prim->path_utf8) : NULL;
-    tusd_prim fresh;
+    lightusd_prim fresh;
     memset(&fresh, 0, sizeof(fresh));
-    if (path) fresh = tusd_stage_prim_at_path(stage, path);
-    if (!tusd_prim_is_valid(fresh)) {
+    if (path) fresh = lightusd_stage_prim_at_path(stage, path);
+    if (!lightusd_prim_is_valid(fresh)) {
       PyErr_Format(st->StaleHandleError,
                    "Prim '%s' no longer exists on this stage",
                    path ? path : "<unknown>");
@@ -43,40 +43,40 @@ tusd_stage* tusd_prim_stage_checked(tusd_state* st, TusdPrim* prim) {
 
 /* Get the prim's path as a NUL-terminated C string (borrowed from stage
  * storage). */
-static const char* prim_path_cstr(TusdPrim* prim) {
-  tusd_sv sv = tusd_prim_path(prim->prim);
+static const char* prim_path_cstr(LightUSDPrim* prim) {
+  lightusd_sv sv = lightusd_prim_path(prim->prim);
   return sv.data ? sv.data : "";
 }
 
 /* Fetch state + validated stage handle for a Prim-derived object. */
-static tusd_state* named_ref_context(TusdNamedRef* ref, TusdPrim** out_prim,
-                                     tusd_stage** out_stage) {
-  tusd_state* st = tusd_state_from_obj((PyObject*)ref);
+static lightusd_state* named_ref_context(LightUSDNamedRef* ref, LightUSDPrim** out_prim,
+                                     lightusd_stage** out_stage) {
+  lightusd_state* st = lightusd_state_from_obj((PyObject*)ref);
   if (!st) return NULL;
-  TusdPrim* prim = (TusdPrim*)ref->prim;
-  tusd_stage* stage = tusd_prim_stage_checked(st, prim);
+  LightUSDPrim* prim = (LightUSDPrim*)ref->prim;
+  lightusd_stage* stage = lightusd_prim_stage_checked(st, prim);
   if (!stage) return NULL;
   *out_prim = prim;
   *out_stage = stage;
   return st;
 }
 
-static const char* named_ref_name(TusdNamedRef* ref) {
+static const char* named_ref_name(LightUSDNamedRef* ref) {
   return PyBytes_AsString(ref->name_utf8);
 }
 
 /* Create an Attribute / Relationship / VariantSet instance. */
-static PyObject* named_ref_new(tusd_state* st, PyObject* type_obj,
+static PyObject* named_ref_new(lightusd_state* st, PyObject* type_obj,
                                PyObject* prim_obj, PyObject* name) {
   (void)st;
   PyObject* name_utf8 = PyUnicode_AsUTF8String(name);
   if (!name_utf8) return NULL;
-  PyObject* obj = tusd_alloc(type_obj);
+  PyObject* obj = lightusd_alloc(type_obj);
   if (!obj) {
     Py_DECREF(name_utf8);
     return NULL;
   }
-  TusdNamedRef* ref = (TusdNamedRef*)obj;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)obj;
   ref->prim = prim_obj;
   Py_INCREF(prim_obj);
   ref->name = name;
@@ -86,7 +86,7 @@ static PyObject* named_ref_new(tusd_state* st, PyObject* type_obj,
 }
 
 static void named_ref_dealloc(PyObject* self) {
-  TusdNamedRef* ref = (TusdNamedRef*)self;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
   PyTypeObject* tp = Py_TYPE(self);
   Py_CLEAR(ref->prim);
   Py_CLEAR(ref->name);
@@ -99,7 +99,7 @@ static void named_ref_dealloc(PyObject* self) {
 /* Parse and dispatch a normalized authoring value.
  * norm is ("pod", type, is_array, bytes, count) | ("str", type, s) |
  * ("tokens", type, tuple). `time_ptr` selects the timesample path. */
-static int apply_normalized(tusd_state* st, tusd_stage* stage,
+static int apply_normalized(lightusd_state* st, lightusd_stage* stage,
                             const char* path, const char* name,
                             PyObject* norm, const double* time_ptr,
                             uint16_t flags) {
@@ -110,13 +110,13 @@ static int apply_normalized(tusd_state* st, tusd_stage* stage,
   }
   PyObject* kind_obj = PyTuple_GetItem(norm, 0);
   PyObject* kind_tmp = NULL;
-  const char* kind = tusd_utf8(kind_obj, &kind_tmp);
+  const char* kind = lightusd_utf8(kind_obj, &kind_tmp);
   if (!kind) return -1;
   long type_l = PyLong_AsLong(PyTuple_GetItem(norm, 1));
   if (type_l < 0 && PyErr_Occurred()) { Py_XDECREF(kind_tmp); return -1; }
-  tusd_type type = (tusd_type)type_l;
+  lightusd_type type = (lightusd_type)type_l;
 
-  tusd_status status;
+  lightusd_status status;
   if (strcmp(kind, "pod") == 0) {
     if (PyTuple_Size(norm) != 5) {
       PyErr_SetString(PyExc_TypeError, "pod normalization needs 5 items");
@@ -130,22 +130,22 @@ static int apply_normalized(tusd_state* st, tusd_stage* stage,
     Py_ssize_t nbytes = 0;
     if (PyBytes_AsStringAndSize(data, &buf, &nbytes) != 0) { Py_XDECREF(kind_tmp); return -1; }
     if (time_ptr) {
-      status = tusd_attr_set_timesample(stage, path, name, *time_ptr, type,
+      status = lightusd_attr_set_timesample(stage, path, name, *time_ptr, type,
                                         (uint8_t)is_array, buf,
                                         (size_t)count);
     } else {
-      status = tusd_attr_set(stage, path, name, type, (uint8_t)is_array, buf,
+      status = lightusd_attr_set(stage, path, name, type, (uint8_t)is_array, buf,
                              (size_t)count, flags);
     }
   } else if (strcmp(kind, "str") == 0) {
     PyObject* stmp = NULL;
-    const char* s = tusd_utf8(PyTuple_GetItem(norm, 2), &stmp);
+    const char* s = lightusd_utf8(PyTuple_GetItem(norm, 2), &stmp);
     if (!s) { Py_XDECREF(kind_tmp); return -1; }
     if (time_ptr) {
-      status = tusd_attr_set_timesample(stage, path, name, *time_ptr, type, 0,
+      status = lightusd_attr_set_timesample(stage, path, name, *time_ptr, type, 0,
                                         s, 1);
     } else {
-      status = tusd_attr_set(stage, path, name, type, 0, s, 1, flags);
+      status = lightusd_attr_set(stage, path, name, type, 0, s, 1, flags);
     }
     Py_XDECREF(stmp);
   } else if (strcmp(kind, "tokens") == 0) {
@@ -179,7 +179,7 @@ static int apply_normalized(tusd_state* st, tusd_stage* stage,
     Py_ssize_t filled = 0;
     int bad = 0;
     for (Py_ssize_t i = 0; i < n; ++i) {
-      arr[i] = tusd_utf8(PyTuple_GetItem(items, i), &tmps[i]);
+      arr[i] = lightusd_utf8(PyTuple_GetItem(items, i), &tmps[i]);
       if (!arr[i]) {
         bad = 1;
         break;
@@ -192,7 +192,7 @@ static int apply_normalized(tusd_state* st, tusd_stage* stage,
       PyMem_Free(tmps);
       { Py_XDECREF(kind_tmp); return -1; }
     }
-    status = tusd_attr_set_token_array(stage, path, name, type, arr,
+    status = lightusd_attr_set_token_array(stage, path, name, type, arr,
                                        (size_t)n, flags);
     for (Py_ssize_t i = 0; i < filled; ++i) Py_XDECREF(tmps[i]);
     PyMem_Free(arr);
@@ -202,15 +202,15 @@ static int apply_normalized(tusd_state* st, tusd_stage* stage,
     { Py_XDECREF(kind_tmp); return -1; }
   }
 
-  if (status != TUSD_OK) {
-    tusd_raise(st, status, name);
+  if (status != LIGHTUSD_OK) {
+    lightusd_raise(st, status, name);
     { Py_XDECREF(kind_tmp); return -1; }
   }
   { Py_XDECREF(kind_tmp); return 0; }
 }
 
 /* Normalize `value` through the facade-registered normalizer and author it. */
-static int set_value_common(tusd_state* st, tusd_stage* stage,
+static int set_value_common(lightusd_state* st, lightusd_stage* stage,
                             const char* path, const char* name,
                             PyObject* value, PyObject* type_hint,
                             const double* time_ptr, uint16_t flags) {
@@ -233,7 +233,7 @@ static int set_value_common(tusd_state* st, tusd_stage* stage,
  * ============================================================ */
 
 static void TimeSamples_dealloc(PyObject* self) {
-  TusdTimeSamples* ts = (TusdTimeSamples*)self;
+  LightUSDTimeSamples* ts = (LightUSDTimeSamples*)self;
   PyTypeObject* tp = Py_TYPE(self);
   Py_CLEAR(ts->attr);
   freefunc free_fn = (freefunc)PyType_GetSlot(tp, Py_tp_free);
@@ -241,10 +241,10 @@ static void TimeSamples_dealloc(PyObject* self) {
   Py_DECREF((PyObject*)tp);
 }
 
-static tusd_state* timesamples_context(TusdTimeSamples* ts, TusdPrim** prim,
-                                       tusd_stage** stage, const char** name) {
-  TusdNamedRef* attr = (TusdNamedRef*)ts->attr;
-  tusd_state* st = named_ref_context(attr, prim, stage);
+static lightusd_state* timesamples_context(LightUSDTimeSamples* ts, LightUSDPrim** prim,
+                                       lightusd_stage** stage, const char** name) {
+  LightUSDNamedRef* attr = (LightUSDNamedRef*)ts->attr;
+  lightusd_state* st = named_ref_context(attr, prim, stage);
   if (!st) return NULL;
   *name = named_ref_name(attr);
   if (!*name) return NULL;
@@ -252,46 +252,46 @@ static tusd_state* timesamples_context(TusdTimeSamples* ts, TusdPrim** prim,
 }
 
 static Py_ssize_t TimeSamples_length(PyObject* self) {
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   const char* name;
-  tusd_state* st =
-      timesamples_context((TusdTimeSamples*)self, &prim, &stage, &name);
+  lightusd_state* st =
+      timesamples_context((LightUSDTimeSamples*)self, &prim, &stage, &name);
   if (!st) return -1;
-  return (Py_ssize_t)tusd_attr_timesample_count(prim->prim, name);
+  return (Py_ssize_t)lightusd_attr_timesample_count(prim->prim, name);
 }
 
 static PyObject* TimeSamples_getitem(PyObject* self, Py_ssize_t idx) {
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   const char* name;
-  tusd_state* st =
-      timesamples_context((TusdTimeSamples*)self, &prim, &stage, &name);
+  lightusd_state* st =
+      timesamples_context((LightUSDTimeSamples*)self, &prim, &stage, &name);
   if (!st) return NULL;
-  Py_ssize_t n = (Py_ssize_t)tusd_attr_timesample_count(prim->prim, name);
+  Py_ssize_t n = (Py_ssize_t)lightusd_attr_timesample_count(prim->prim, name);
   if (idx < 0) idx += n;
   if (idx < 0 || idx >= n) {
     PyErr_SetString(PyExc_IndexError, "time sample index out of range");
     return NULL;
   }
   double time = 0.0;
-  tusd_value_view view;
-  tusd_status status =
-      tusd_attr_timesample_at(prim->prim, name, (size_t)idx, &time, &view);
-  if (status != TUSD_OK) return tusd_raise(st, status, name);
+  lightusd_value_view view;
+  lightusd_status status =
+      lightusd_attr_timesample_at(prim->prim, name, (size_t)idx, &time, &view);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
 
   PyObject* value;
-  if (!view.is_array && (view.type == TUSD_TYPE_STRING ||
-                         view.type == TUSD_TYPE_TOKEN ||
-                         view.type == TUSD_TYPE_ASSET_PATH)) {
+  if (!view.is_array && (view.type == LIGHTUSD_TYPE_STRING ||
+                         view.type == LIGHTUSD_TYPE_TOKEN ||
+                         view.type == LIGHTUSD_TYPE_ASSET_PATH)) {
     /* Rare: string-valued samples; go through interpolate-held for an owned
      * copy. */
-    tusd_value* owned = NULL;
-    status = tusd_attr_interpolate(prim->prim, name, time, 0, &owned);
-    if (status != TUSD_OK) return tusd_raise(st, status, name);
-    value = tusd_value_to_python(st, owned);
+    lightusd_value* owned = NULL;
+    status = lightusd_attr_interpolate(prim->prim, name, time, 0, &owned);
+    if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
+    value = lightusd_value_to_python(st, owned);
   } else {
-    value = tusd_view_to_python(st, prim->stage, NULL, &view);
+    value = lightusd_view_to_python(st, prim->stage, NULL, &view);
   }
   if (!value) return NULL;
   return Py_BuildValue("(dN)", time, value);
@@ -299,18 +299,18 @@ static PyObject* TimeSamples_getitem(PyObject* self, Py_ssize_t idx) {
 
 static PyObject* TimeSamples_get_times(PyObject* self, void* closure) {
   (void)closure;
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   const char* name;
-  tusd_state* st =
-      timesamples_context((TusdTimeSamples*)self, &prim, &stage, &name);
+  lightusd_state* st =
+      timesamples_context((LightUSDTimeSamples*)self, &prim, &stage, &name);
   if (!st) return NULL;
-  size_t n = tusd_attr_timesample_count(prim->prim, name);
+  size_t n = lightusd_attr_timesample_count(prim->prim, name);
   size_t times_n = n ? n : 1;
   if (times_n > SIZE_MAX / sizeof(double)) return PyErr_NoMemory();
   double* times = (double*)PyMem_Malloc(times_n * sizeof(double));
   if (!times) return PyErr_NoMemory();
-  tusd_attr_timesample_times(prim->prim, name, times, n);
+  lightusd_attr_timesample_times(prim->prim, name, times, n);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
   if (!tup) {
     PyMem_Free(times);
@@ -355,7 +355,7 @@ static PyType_Slot TimeSamples_slots[] = {
 
 static PyType_Spec TimeSamples_spec = {
     .name = "lightusd._core.TimeSamples",
-    .basicsize = sizeof(TusdTimeSamples),
+    .basicsize = sizeof(LightUSDTimeSamples),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
              | Py_TPFLAGS_IMMUTABLETYPE
@@ -370,26 +370,26 @@ static PyType_Spec TimeSamples_spec = {
 
 static PyObject* Attr_get_name(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
   Py_INCREF(ref->name);
   return ref->name;
 }
 
 static PyObject* Attr_get_type_name(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  tusd_sv sv = tusd_prim_property_type_name(prim->prim, name);
-  if (sv.len > 0) return tusd_sv_to_str(sv);
+  lightusd_sv sv = lightusd_prim_property_type_name(prim->prim, name);
+  if (sv.len > 0) return lightusd_sv_to_str(sv);
   /* Fall back to the stored value's type. */
-  tusd_value_view view;
-  if (tusd_attr_get(prim->prim, name, &view) == TUSD_OK) {
-    const char* tn = tusd_type_name(view.type);
+  lightusd_value_view view;
+  if (lightusd_attr_get(prim->prim, name, &view) == LIGHTUSD_OK) {
+    const char* tn = lightusd_type_name(view.type);
     if (tn[0]) {
       if (view.is_array) {
         return PyUnicode_FromFormat("%s[]", tn);
@@ -401,47 +401,47 @@ static PyObject* Attr_get_type_name(PyObject* self, void* closure) {
   return PyUnicode_FromString("");
 }
 
-static uint16_t attr_flags(TusdNamedRef* ref) {
-  TusdPrim* prim;
-  tusd_stage* stage;
+static uint16_t attr_flags(LightUSDNamedRef* ref) {
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   if (!named_ref_context(ref, &prim, &stage)) {
     PyErr_Clear();
     return 0;
   }
   const char* name = named_ref_name(ref);
   if (!name) return 0;
-  return tusd_prim_property_flags(prim->prim, name);
+  return lightusd_prim_property_flags(prim->prim, name);
 }
 
 static PyObject* Attr_get_flag(PyObject* self, void* closure) {
   uint16_t mask = (uint16_t)(uintptr_t)closure;
-  return PyBool_FromLong((attr_flags((TusdNamedRef*)self) & mask) != 0);
+  return PyBool_FromLong((attr_flags((LightUSDNamedRef*)self) & mask) != 0);
 }
 
 static PyObject* Attr_get_has_timesamples(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   if (!named_ref_context(ref, &prim, &stage)) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  return PyBool_FromLong(tusd_attr_has_timesamples(prim->prim, name));
+  return PyBool_FromLong(lightusd_attr_has_timesamples(prim->prim, name));
 }
 
 static PyObject* Attr_get_connections(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   if (!named_ref_context(ref, &prim, &stage)) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  size_t n = tusd_attr_connection_count(prim->prim, name);
+  size_t n = lightusd_attr_connection_count(prim->prim, name);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
   if (!tup) return NULL;
   for (size_t i = 0; i < n; ++i) {
-    PyObject* s = tusd_sv_to_str(tusd_attr_connection(prim->prim, name, i));
+    PyObject* s = lightusd_sv_to_str(lightusd_attr_connection(prim->prim, name, i));
     if (!s) {
       Py_DECREF(tup);
       return NULL;
@@ -453,70 +453,70 @@ static PyObject* Attr_get_connections(PyObject* self, void* closure) {
 
 static PyObject* Attr_get_timesamples(PyObject* self, void* closure) {
   (void)closure;
-  tusd_state* st = tusd_state_from_obj(self);
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  PyObject* obj = tusd_alloc(st->TimeSamplesType);
+  PyObject* obj = lightusd_alloc(st->TimeSamplesType);
   if (!obj) return NULL;
-  ((TusdTimeSamples*)obj)->attr = self;
+  ((LightUSDTimeSamples*)obj)->attr = self;
   Py_INCREF(self);
   return obj;
 }
 
 static PyObject* Attr_get_interpolation(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   if (!named_ref_context(ref, &prim, &stage)) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  tusd_value* val = NULL;
-  if (tusd_attr_metadata(prim->prim, name, "interpolation", &val) != TUSD_OK) {
+  lightusd_value* val = NULL;
+  if (lightusd_attr_metadata(prim->prim, name, "interpolation", &val) != LIGHTUSD_OK) {
     Py_RETURN_NONE;
   }
-  tusd_state* st = tusd_state_from_obj(self);
-  return tusd_value_to_python(st, val);
+  lightusd_state* st = lightusd_state_from_obj(self);
+  return lightusd_value_to_python(st, val);
 }
 
 static PyObject* Attr_metadata(PyObject* self, PyObject* args) {
   const char* key;
   if (!PyArg_ParseTuple(args, "s:metadata", &key)) return NULL;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  tusd_value* val = NULL;
-  tusd_status status = tusd_attr_metadata(prim->prim, name, key, &val);
-  if (status == TUSD_ERR_NOT_FOUND) Py_RETURN_NONE;
-  if (status != TUSD_OK) return tusd_raise(st, status, key);
-  return tusd_value_to_python(st, val);
+  lightusd_value* val = NULL;
+  lightusd_status status = lightusd_attr_metadata(prim->prim, name, key, &val);
+  if (status == LIGHTUSD_ERR_NOT_FOUND) Py_RETURN_NONE;
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, key);
+  return lightusd_value_to_python(st, val);
 }
 
 static PyObject* Attr_get_custom_data(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  tusd_dict_ref dict;
-  if (tusd_attr_custom_data(prim->prim, name, &dict) != TUSD_OK) {
+  lightusd_dict_ref dict;
+  if (lightusd_attr_custom_data(prim->prim, name, &dict) != LIGHTUSD_OK) {
     dict._dict = NULL;
   }
-  return tusd_dict_to_python(st, dict);
+  return lightusd_dict_to_python(st, dict);
 }
 
 static PyObject* Attr_get_impl(PyObject* self, PyObject* time_obj,
                                int interp_linear) {
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
@@ -524,30 +524,30 @@ static PyObject* Attr_get_impl(PyObject* self, PyObject* time_obj,
   if (time_obj && time_obj != Py_None) {
     double time = PyFloat_AsDouble(time_obj);
     if (time == -1.0 && PyErr_Occurred()) return NULL;
-    tusd_value* val = NULL;
-    tusd_status status = tusd_attr_interpolate(prim->prim, name, time,
+    lightusd_value* val = NULL;
+    lightusd_status status = lightusd_attr_interpolate(prim->prim, name, time,
                                                interp_linear ? 1 : 0, &val);
-    if (status == TUSD_ERR_NOT_FOUND) {
+    if (status == LIGHTUSD_ERR_NOT_FOUND) {
       /* No samples: fall back to the default value. */
-      return tusd_attr_value_to_python(st, prim->stage, prim->prim, name);
+      return lightusd_attr_value_to_python(st, prim->stage, prim->prim, name);
     }
-    if (status != TUSD_OK) return tusd_raise(st, status, name);
-    return tusd_value_to_python(st, val);
+    if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
+    return lightusd_value_to_python(st, val);
   }
 
   PyObject* value =
-      tusd_attr_value_to_python(st, prim->stage, prim->prim, name);
+      lightusd_attr_value_to_python(st, prim->stage, prim->prim, name);
   if (value) return value;
   /* No default: fall back to the earliest time sample. */
   if (PyErr_ExceptionMatches(PyExc_KeyError) &&
-      tusd_attr_has_timesamples(prim->prim, name)) {
+      lightusd_attr_has_timesamples(prim->prim, name)) {
     PyErr_Clear();
     double t0 = 0.0;
-    tusd_attr_timesample_times(prim->prim, name, &t0, 1);
-    tusd_value* val = NULL;
-    tusd_status status = tusd_attr_interpolate(prim->prim, name, t0, 0, &val);
-    if (status != TUSD_OK) return tusd_raise(st, status, name);
-    return tusd_value_to_python(st, val);
+    lightusd_attr_timesample_times(prim->prim, name, &t0, 1);
+    lightusd_value* val = NULL;
+    lightusd_status status = lightusd_attr_interpolate(prim->prim, name, t0, 0, &val);
+    if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
+    return lightusd_value_to_python(st, val);
   }
   return NULL;
 }
@@ -569,17 +569,17 @@ static PyObject* Attr_eval(PyObject* self, PyObject* args, PyObject* kwargs) {
   if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|d:eval", kwlist, &time)) {
     return NULL;
   }
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  tusd_value* val = NULL;
-  tusd_status status = tusd_attr_eval(stage, prim->prim, name, time, &val);
-  if (status != TUSD_OK) return tusd_raise(st, status, name);
-  return tusd_value_to_python(st, val);
+  lightusd_value* val = NULL;
+  lightusd_status status = lightusd_attr_eval(stage, prim->prim, name, time, &val);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
+  return lightusd_value_to_python(st, val);
 }
 
 static PyObject* Attr_set(PyObject* self, PyObject* args, PyObject* kwargs) {
@@ -591,10 +591,10 @@ static PyObject* Attr_set(PyObject* self, PyObject* args, PyObject* kwargs) {
                                    &type_hint, &time_obj)) {
     return NULL;
   }
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
@@ -616,31 +616,31 @@ static PyObject* Attr_set(PyObject* self, PyObject* args, PyObject* kwargs) {
 
 static PyObject* Attr_block(PyObject* self, PyObject* noargs) {
   (void)noargs;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  tusd_status status = tusd_attr_block(stage, prim_path_cstr(prim), name);
-  if (status != TUSD_OK) return tusd_raise(st, status, name);
+  lightusd_status status = lightusd_attr_block(stage, prim_path_cstr(prim), name);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
   Py_RETURN_NONE;
 }
 
 static PyObject* Attr_connect(PyObject* self, PyObject* args) {
   const char* target;
   if (!PyArg_ParseTuple(args, "s:connect", &target)) return NULL;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  tusd_status status =
-      tusd_attr_add_connection(stage, prim_path_cstr(prim), name, target);
-  if (status != TUSD_OK) return tusd_raise(st, status, name);
+  lightusd_status status =
+      lightusd_attr_add_connection(stage, prim_path_cstr(prim), name, target);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
   Py_RETURN_NONE;
 }
 
@@ -648,19 +648,19 @@ static PyObject* Attr_set_metadata(PyObject* self, PyObject* args) {
   const char* key;
   PyObject* value;
   if (!PyArg_ParseTuple(args, "sO:set_metadata", &key, &value)) return NULL;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
 
-  tusd_status status;
+  lightusd_status status;
   if (PyBool_Check(value)) {
     uint8_t b = value == Py_True ? 1 : 0;
-    status = tusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
-                                    TUSD_TYPE_BOOL, &b, 1);
+    status = lightusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
+                                    LIGHTUSD_TYPE_BOOL, &b, 1);
   } else if (PyLong_Check(value)) {
     long v = PyLong_AsLong(value);
     if (PyErr_Occurred()) return NULL;
@@ -669,30 +669,30 @@ static PyObject* Attr_set_metadata(PyObject* self, PyObject* args) {
       return NULL;
     }
     int32_t i = (int32_t)v;
-    status = tusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
-                                    TUSD_TYPE_INT, &i, 1);
+    status = lightusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
+                                    LIGHTUSD_TYPE_INT, &i, 1);
   } else if (PyFloat_Check(value)) {
     double d = PyFloat_AsDouble(value);
-    status = tusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
-                                    TUSD_TYPE_DOUBLE, &d, 1);
+    status = lightusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
+                                    LIGHTUSD_TYPE_DOUBLE, &d, 1);
   } else if (PyUnicode_Check(value)) {
     PyObject* tmp = NULL;
-    const char* s = tusd_utf8(value, &tmp);
+    const char* s = lightusd_utf8(value, &tmp);
     if (!s) return NULL;
-    status = tusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
-                                    TUSD_TYPE_TOKEN, s, 1);
+    status = lightusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
+                                    LIGHTUSD_TYPE_TOKEN, s, 1);
     Py_XDECREF(tmp);
   } else {
     PyErr_SetString(PyExc_TypeError,
                     "metadata value must be bool, int, float or str");
     return NULL;
   }
-  if (status != TUSD_OK) return tusd_raise(st, status, key);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, key);
   Py_RETURN_NONE;
 }
 
 static PyObject* Attr_repr(PyObject* self) {
-  TusdNamedRef* ref = (TusdNamedRef*)self;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
   PyObject* tn = Attr_get_type_name(self, NULL);
   if (!tn) {
     PyErr_Clear();
@@ -731,13 +731,13 @@ static PyGetSetDef Attr_getset[] = {
     {"name", Attr_get_name, NULL, "Property name.", NULL},
     {"type_name", Attr_get_type_name, NULL, "Declared USD type name.", NULL},
     {"is_array", Attr_get_flag, NULL, "Array-valued.",
-     (void*)(uintptr_t)TUSD_PROP_ARRAY},
+     (void*)(uintptr_t)LIGHTUSD_PROP_ARRAY},
     {"is_custom", Attr_get_flag, NULL, "Declared `custom`.",
-     (void*)(uintptr_t)TUSD_PROP_CUSTOM},
+     (void*)(uintptr_t)LIGHTUSD_PROP_CUSTOM},
     {"is_uniform", Attr_get_flag, NULL, "Declared `uniform`.",
-     (void*)(uintptr_t)TUSD_PROP_UNIFORM},
+     (void*)(uintptr_t)LIGHTUSD_PROP_UNIFORM},
     {"is_connection", Attr_get_flag, NULL, "Has connection(s).",
-     (void*)(uintptr_t)TUSD_PROP_CONNECTION},
+     (void*)(uintptr_t)LIGHTUSD_PROP_CONNECTION},
     {"has_timesamples", Attr_get_has_timesamples, NULL,
      "True if time samples are authored.", NULL},
     {"connections", Attr_get_connections, NULL,
@@ -760,7 +760,7 @@ static PyType_Slot Attr_slots[] = {
 
 static PyType_Spec Attr_spec = {
     .name = "lightusd._core.Attribute",
-    .basicsize = sizeof(TusdNamedRef),
+    .basicsize = sizeof(LightUSDNamedRef),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
              | Py_TPFLAGS_IMMUTABLETYPE
@@ -775,24 +775,24 @@ static PyType_Spec Attr_spec = {
 
 static PyObject* Rel_get_name(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
   Py_INCREF(ref->name);
   return ref->name;
 }
 
 static PyObject* Rel_get_targets(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   if (!named_ref_context(ref, &prim, &stage)) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  size_t n = tusd_rel_target_count(prim->prim, name);
+  size_t n = lightusd_rel_target_count(prim->prim, name);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
   if (!tup) return NULL;
   for (size_t i = 0; i < n; ++i) {
-    PyObject* s = tusd_sv_to_str(tusd_rel_target(prim->prim, name, i));
+    PyObject* s = lightusd_sv_to_str(lightusd_rel_target(prim->prim, name, i));
     if (!s) {
       Py_DECREF(tup);
       return NULL;
@@ -803,54 +803,54 @@ static PyObject* Rel_get_targets(PyObject* self, void* closure) {
 }
 
 static Py_ssize_t Rel_length(PyObject* self) {
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   if (!named_ref_context(ref, &prim, &stage)) return -1;
   const char* name = named_ref_name(ref);
   if (!name) return -1;
-  return (Py_ssize_t)tusd_rel_target_count(prim->prim, name);
+  return (Py_ssize_t)lightusd_rel_target_count(prim->prim, name);
 }
 
 static PyObject* Rel_getitem(PyObject* self, Py_ssize_t idx) {
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   if (!named_ref_context(ref, &prim, &stage)) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  Py_ssize_t n = (Py_ssize_t)tusd_rel_target_count(prim->prim, name);
+  Py_ssize_t n = (Py_ssize_t)lightusd_rel_target_count(prim->prim, name);
   if (idx < 0) idx += n;
   if (idx < 0 || idx >= n) {
     PyErr_SetString(PyExc_IndexError, "relationship target out of range");
     return NULL;
   }
-  return tusd_sv_to_str(tusd_rel_target(prim->prim, name, (size_t)idx));
+  return lightusd_sv_to_str(lightusd_rel_target(prim->prim, name, (size_t)idx));
 }
 
 static PyObject* Rel_add_target(PyObject* self, PyObject* args) {
   const char* target;
   if (!PyArg_ParseTuple(args, "s:add_target", &target)) return NULL;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  tusd_status status =
-      tusd_rel_add_target(stage, prim_path_cstr(prim), name, target);
-  if (status != TUSD_OK) return tusd_raise(st, status, name);
+  lightusd_status status =
+      lightusd_rel_add_target(stage, prim_path_cstr(prim), name, target);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
   Py_RETURN_NONE;
 }
 
 static PyObject* Rel_set_targets(PyObject* self, PyObject* args) {
   PyObject* seq;
   if (!PyArg_ParseTuple(args, "O:set_targets", &seq)) return NULL;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
@@ -882,7 +882,7 @@ static PyObject* Rel_set_targets(PyObject* self, PyObject* args) {
       bad = 1;
       break;
     }
-    arr[i] = tusd_utf8(item, &tmps[i]);
+    arr[i] = lightusd_utf8(item, &tmps[i]);
     Py_DECREF(item);
     if (!arr[i]) {
       bad = 1;
@@ -890,9 +890,9 @@ static PyObject* Rel_set_targets(PyObject* self, PyObject* args) {
     }
     filled++;
   }
-  tusd_status status = TUSD_OK;
+  lightusd_status status = LIGHTUSD_OK;
   if (!bad) {
-    status = tusd_rel_set_targets(stage, prim_path_cstr(prim), name, arr,
+    status = lightusd_rel_set_targets(stage, prim_path_cstr(prim), name, arr,
                                   (size_t)n);
   }
   for (Py_ssize_t i = 0; i < filled; ++i) Py_XDECREF(tmps[i]);
@@ -900,26 +900,26 @@ static PyObject* Rel_set_targets(PyObject* self, PyObject* args) {
   PyMem_Free(tmps);
   Py_DECREF(fast);
   if (bad) return NULL;
-  if (status != TUSD_OK) return tusd_raise(st, status, name);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
   Py_RETURN_NONE;
 }
 
 static PyObject* Rel_remove(PyObject* self, PyObject* noargs) {
   (void)noargs;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* name = named_ref_name(ref);
   if (!name) return NULL;
-  tusd_status status = tusd_rel_remove(stage, prim_path_cstr(prim), name);
-  if (status != TUSD_OK) return tusd_raise(st, status, name);
+  lightusd_status status = lightusd_rel_remove(stage, prim_path_cstr(prim), name);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
   Py_RETURN_NONE;
 }
 
 static PyObject* Rel_repr(PyObject* self) {
-  TusdNamedRef* ref = (TusdNamedRef*)self;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
   Py_ssize_t n = Rel_length(self);
   if (n < 0) {
     PyErr_Clear();
@@ -954,7 +954,7 @@ static PyType_Slot Rel_slots[] = {
 
 static PyType_Spec Rel_spec = {
     .name = "lightusd._core.Relationship",
-    .basicsize = sizeof(TusdNamedRef),
+    .basicsize = sizeof(LightUSDNamedRef),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
              | Py_TPFLAGS_IMMUTABLETYPE
@@ -969,24 +969,24 @@ static PyType_Spec Rel_spec = {
 
 static PyObject* VSet_get_name(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
   Py_INCREF(ref->name);
   return ref->name;
 }
 
 static PyObject* VSet_get_names(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   if (!named_ref_context(ref, &prim, &stage)) return NULL;
   const char* set_name = named_ref_name(ref);
   if (!set_name) return NULL;
-  size_t n = tusd_variant_count(prim->prim, set_name);
+  size_t n = lightusd_variant_count(prim->prim, set_name);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
   if (!tup) return NULL;
   for (size_t i = 0; i < n; ++i) {
-    PyObject* s = tusd_sv_to_str(tusd_variant_name(prim->prim, set_name, i));
+    PyObject* s = lightusd_sv_to_str(lightusd_variant_name(prim->prim, set_name, i));
     if (!s) {
       Py_DECREF(tup);
       return NULL;
@@ -998,37 +998,37 @@ static PyObject* VSet_get_names(PyObject* self, void* closure) {
 
 static PyObject* VSet_get_selection(PyObject* self, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
   if (!named_ref_context(ref, &prim, &stage)) return NULL;
   const char* set_name = named_ref_name(ref);
   if (!set_name) return NULL;
-  tusd_sv sv = tusd_variant_selection(prim->prim, set_name);
+  lightusd_sv sv = lightusd_variant_selection(prim->prim, set_name);
   if (sv.len == 0) Py_RETURN_NONE;
-  return tusd_sv_to_str(sv);
+  return lightusd_sv_to_str(sv);
 }
 
 static int VSet_set_selection(PyObject* self, PyObject* value, void* closure) {
   (void)closure;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return -1;
   const char* set_name = named_ref_name(ref);
   if (!set_name) return -1;
   const char* variant = "";
   PyObject* tmp = NULL;
   if (value && value != Py_None) {
-    variant = tusd_utf8(value, &tmp);
+    variant = lightusd_utf8(value, &tmp);
     if (!variant) return -1;
   }
-  tusd_status status = tusd_prim_set_variant_selection(
+  lightusd_status status = lightusd_prim_set_variant_selection(
       stage, prim_path_cstr(prim), set_name, variant);
   Py_XDECREF(tmp);
-  if (status != TUSD_OK) {
-    tusd_raise(st, status, set_name);
+  if (status != LIGHTUSD_OK) {
+    lightusd_raise(st, status, set_name);
     return -1;
   }
   return 0;
@@ -1037,21 +1037,21 @@ static int VSet_set_selection(PyObject* self, PyObject* value, void* closure) {
 static PyObject* VSet_add_variant(PyObject* self, PyObject* args) {
   const char* variant;
   if (!PyArg_ParseTuple(args, "s:add_variant", &variant)) return NULL;
-  TusdNamedRef* ref = (TusdNamedRef*)self;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = named_ref_context(ref, &prim, &stage);
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context(ref, &prim, &stage);
   if (!st) return NULL;
   const char* set_name = named_ref_name(ref);
   if (!set_name) return NULL;
-  tusd_status status = tusd_prim_add_variant(stage, prim_path_cstr(prim),
+  lightusd_status status = lightusd_prim_add_variant(stage, prim_path_cstr(prim),
                                              set_name, variant);
-  if (status != TUSD_OK) return tusd_raise(st, status, set_name);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, set_name);
   Py_RETURN_NONE;
 }
 
 static PyObject* VSet_repr(PyObject* self) {
-  TusdNamedRef* ref = (TusdNamedRef*)self;
+  LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
   return PyUnicode_FromFormat("VariantSet(%R)", ref->name);
 }
 
@@ -1079,7 +1079,7 @@ static PyType_Slot VSet_slots[] = {
 
 static PyType_Spec VSet_spec = {
     .name = "lightusd._core.VariantSet",
-    .basicsize = sizeof(TusdNamedRef),
+    .basicsize = sizeof(LightUSDNamedRef),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
              | Py_TPFLAGS_IMMUTABLETYPE
@@ -1091,7 +1091,7 @@ static PyType_Spec VSet_spec = {
 /* VariantSets: mapping of set name -> VariantSet */
 
 static void VSets_dealloc(PyObject* self) {
-  TusdPrimRef* r = (TusdPrimRef*)self;
+  LightUSDPrimRef* r = (LightUSDPrimRef*)self;
   PyTypeObject* tp = Py_TYPE(self);
   Py_CLEAR(r->prim);
   freefunc free_fn = (freefunc)PyType_GetSlot(tp, Py_tp_free);
@@ -1100,16 +1100,16 @@ static void VSets_dealloc(PyObject* self) {
 }
 
 static PyObject* VSets_names(PyObject* self) {
-  TusdPrimRef* r = (TusdPrimRef*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDPrimRef* r = (LightUSDPrimRef*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  TusdPrim* prim = (TusdPrim*)r->prim;
-  if (!tusd_prim_stage_checked(st, prim)) return NULL;
-  size_t n = tusd_prim_variant_set_count(prim->prim);
+  LightUSDPrim* prim = (LightUSDPrim*)r->prim;
+  if (!lightusd_prim_stage_checked(st, prim)) return NULL;
+  size_t n = lightusd_prim_variant_set_count(prim->prim);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
   if (!tup) return NULL;
   for (size_t i = 0; i < n; ++i) {
-    PyObject* s = tusd_sv_to_str(tusd_prim_variant_set_name(prim->prim, i));
+    PyObject* s = lightusd_sv_to_str(lightusd_prim_variant_set_name(prim->prim, i));
     if (!s) {
       Py_DECREF(tup);
       return NULL;
@@ -1120,28 +1120,28 @@ static PyObject* VSets_names(PyObject* self) {
 }
 
 static Py_ssize_t VSets_length(PyObject* self) {
-  TusdPrimRef* r = (TusdPrimRef*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDPrimRef* r = (LightUSDPrimRef*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return -1;
-  TusdPrim* prim = (TusdPrim*)r->prim;
-  if (!tusd_prim_stage_checked(st, prim)) return -1;
-  return (Py_ssize_t)tusd_prim_variant_set_count(prim->prim);
+  LightUSDPrim* prim = (LightUSDPrim*)r->prim;
+  if (!lightusd_prim_stage_checked(st, prim)) return -1;
+  return (Py_ssize_t)lightusd_prim_variant_set_count(prim->prim);
 }
 
 static PyObject* VSets_subscript(PyObject* self, PyObject* key) {
-  tusd_state* st = tusd_state_from_obj(self);
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  TusdPrimRef* r = (TusdPrimRef*)self;
-  TusdPrim* prim = (TusdPrim*)r->prim;
-  if (!tusd_prim_stage_checked(st, prim)) return NULL;
+  LightUSDPrimRef* r = (LightUSDPrimRef*)self;
+  LightUSDPrim* prim = (LightUSDPrim*)r->prim;
+  if (!lightusd_prim_stage_checked(st, prim)) return NULL;
   PyObject* tmp = NULL;
-  const char* set_name = tusd_utf8(key, &tmp);
+  const char* set_name = lightusd_utf8(key, &tmp);
   if (!set_name) return NULL;
   /* Validate existence. */
-  size_t n = tusd_prim_variant_set_count(prim->prim);
+  size_t n = lightusd_prim_variant_set_count(prim->prim);
   int found = 0;
   for (size_t i = 0; i < n; ++i) {
-    tusd_sv sv = tusd_prim_variant_set_name(prim->prim, i);
+    lightusd_sv sv = lightusd_prim_variant_set_name(prim->prim, i);
     if (sv.len == strlen(set_name) &&
         strncmp(sv.data, set_name, sv.len) == 0) {
       found = 1;
@@ -1165,18 +1165,18 @@ static PyObject* VSets_iter(PyObject* self) {
 }
 
 static int VSets_contains(PyObject* self, PyObject* key) {
-  TusdPrimRef* r = (TusdPrimRef*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDPrimRef* r = (LightUSDPrimRef*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return -1;
-  TusdPrim* prim = (TusdPrim*)r->prim;
-  if (!tusd_prim_stage_checked(st, prim)) return -1;
+  LightUSDPrim* prim = (LightUSDPrim*)r->prim;
+  if (!lightusd_prim_stage_checked(st, prim)) return -1;
   PyObject* tmp = NULL;
-  const char* set_name = tusd_utf8(key, &tmp);
+  const char* set_name = lightusd_utf8(key, &tmp);
   if (!set_name) return -1;
-  size_t n = tusd_prim_variant_set_count(prim->prim);
+  size_t n = lightusd_prim_variant_set_count(prim->prim);
   int found = 0;
   for (size_t i = 0; i < n; ++i) {
-    tusd_sv sv = tusd_prim_variant_set_name(prim->prim, i);
+    lightusd_sv sv = lightusd_prim_variant_set_name(prim->prim, i);
     if (sv.len == strlen(set_name) &&
         strncmp(sv.data, set_name, sv.len) == 0) {
       found = 1;
@@ -1218,7 +1218,7 @@ static PyType_Slot VSets_slots[] = {
 
 static PyType_Spec VSets_spec = {
     .name = "lightusd._core.VariantSets",
-    .basicsize = sizeof(TusdPrimRef),
+    .basicsize = sizeof(LightUSDPrimRef),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
              | Py_TPFLAGS_IMMUTABLETYPE
@@ -1232,7 +1232,7 @@ static PyType_Spec VSets_spec = {
  * ============================================================ */
 
 static void ChildIter_dealloc(PyObject* self) {
-  TusdChildIter* it = (TusdChildIter*)self;
+  LightUSDChildIter* it = (LightUSDChildIter*)self;
   PyTypeObject* tp = Py_TYPE(self);
   Py_CLEAR(it->prim);
   freefunc free_fn = (freefunc)PyType_GetSlot(tp, Py_tp_free);
@@ -1241,22 +1241,22 @@ static void ChildIter_dealloc(PyObject* self) {
 }
 
 static PyObject* ChildIter_next(PyObject* self) {
-  TusdChildIter* it = (TusdChildIter*)self;
-  tusd_state* st = tusd_state_from_obj(self);
+  LightUSDChildIter* it = (LightUSDChildIter*)self;
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  TusdPrim* prim = (TusdPrim*)it->prim;
-  tusd_stage* stage = tusd_prim_stage_checked(st, prim);
+  LightUSDPrim* prim = (LightUSDPrim*)it->prim;
+  lightusd_stage* stage = lightusd_prim_stage_checked(st, prim);
   if (!stage) return NULL;
-  size_t n = tusd_prim_child_count(prim->prim);
+  size_t n = lightusd_prim_child_count(prim->prim);
   if ((size_t)it->index >= n) {
     return NULL; /* StopIteration */
   }
-  tusd_prim child = tusd_prim_child(prim->prim, (size_t)it->index);
+  lightusd_prim child = lightusd_prim_child(prim->prim, (size_t)it->index);
   it->index++;
-  if (!tusd_prim_is_valid(child)) {
+  if (!lightusd_prim_is_valid(child)) {
     return NULL;
   }
-  return tusd_wrap_prim(st, prim->stage, child);
+  return lightusd_wrap_prim(st, prim->stage, child);
 }
 
 static PyObject* ChildIter_iter(PyObject* self) {
@@ -1273,7 +1273,7 @@ static PyType_Slot ChildIter_slots[] = {
 
 static PyType_Spec ChildIter_spec = {
     .name = "lightusd._core._PrimChildIterator",
-    .basicsize = sizeof(TusdChildIter),
+    .basicsize = sizeof(LightUSDChildIter),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
              | Py_TPFLAGS_IMMUTABLETYPE
@@ -1287,7 +1287,7 @@ static PyType_Spec ChildIter_spec = {
  * ============================================================ */
 
 static void Prim_dealloc(PyObject* self) {
-  TusdPrim* p = (TusdPrim*)self;
+  LightUSDPrim* p = (LightUSDPrim*)self;
   PyTypeObject* tp = Py_TYPE(self);
   Py_CLEAR(p->stage);
   Py_CLEAR(p->path_utf8);
@@ -1296,35 +1296,35 @@ static void Prim_dealloc(PyObject* self) {
   Py_DECREF((PyObject*)tp);
 }
 
-PyObject* tusd_wrap_prim(tusd_state* st, PyObject* stage_obj, tusd_prim prim) {
-  if (!tusd_prim_is_valid(prim)) {
+PyObject* lightusd_wrap_prim(lightusd_state* st, PyObject* stage_obj, lightusd_prim prim) {
+  if (!lightusd_prim_is_valid(prim)) {
     Py_RETURN_NONE;
   }
-  tusd_sv path = tusd_prim_path(prim);
+  lightusd_sv path = lightusd_prim_path(prim);
   PyObject* path_utf8 =
       PyBytes_FromStringAndSize(path.data ? path.data : "",
                                 (Py_ssize_t)path.len);
   if (!path_utf8) return NULL;
-  PyObject* obj = tusd_alloc(st->PrimType);
+  PyObject* obj = lightusd_alloc(st->PrimType);
   if (!obj) {
     Py_DECREF(path_utf8);
     return NULL;
   }
-  TusdPrim* p = (TusdPrim*)obj;
+  LightUSDPrim* p = (LightUSDPrim*)obj;
   p->stage = stage_obj;
   Py_INCREF(stage_obj);
   p->path_utf8 = path_utf8;
   p->prim = prim;
-  p->gen = tusd_stage_generation(tusd_stage_handle(stage_obj));
+  p->gen = lightusd_stage_generation(lightusd_stage_handle(stage_obj));
   return obj;
 }
 
-static tusd_state* prim_context(PyObject* self, TusdPrim** out,
-                                tusd_stage** stage_out) {
-  tusd_state* st = tusd_state_from_obj(self);
+static lightusd_state* prim_context(PyObject* self, LightUSDPrim** out,
+                                lightusd_stage** stage_out) {
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  TusdPrim* prim = (TusdPrim*)self;
-  tusd_stage* stage = tusd_prim_stage_checked(st, prim);
+  LightUSDPrim* prim = (LightUSDPrim*)self;
+  lightusd_stage* stage = lightusd_prim_stage_checked(st, prim);
   if (!stage) return NULL;
   *out = prim;
   if (stage_out) *stage_out = stage;
@@ -1332,16 +1332,16 @@ static tusd_state* prim_context(PyObject* self, TusdPrim** out,
 }
 
 static PyObject* Prim_get_sv(PyObject* self, void* closure) {
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
   switch ((uintptr_t)closure) {
     case 0:
-      return tusd_sv_to_str(tusd_prim_name(prim->prim));
+      return lightusd_sv_to_str(lightusd_prim_name(prim->prim));
     case 1:
-      return tusd_sv_to_str(tusd_prim_path(prim->prim));
+      return lightusd_sv_to_str(lightusd_prim_path(prim->prim));
     case 2:
-      return tusd_sv_to_str(tusd_prim_type_name(prim->prim));
+      return lightusd_sv_to_str(lightusd_prim_type_name(prim->prim));
     default:
       Py_RETURN_NONE;
   }
@@ -1349,51 +1349,51 @@ static PyObject* Prim_get_sv(PyObject* self, void* closure) {
 
 static PyObject* Prim_get_specifier(PyObject* self, void* closure) {
   (void)closure;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
   static const char* names[] = {"def", "over", "class"};
-  uint8_t s = tusd_prim_specifier(prim->prim);
+  uint8_t s = lightusd_prim_specifier(prim->prim);
   return PyUnicode_FromString(s <= 2 ? names[s] : "def");
 }
 
 static PyObject* Prim_get_active(PyObject* self, void* closure) {
   (void)closure;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
-  return PyBool_FromLong(tusd_prim_is_active(prim->prim));
+  return PyBool_FromLong(lightusd_prim_is_active(prim->prim));
 }
 
 static PyObject* Prim_get_kind(PyObject* self, void* closure) {
   (void)closure;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
-  tusd_sv sv = tusd_prim_kind(prim->prim);
+  lightusd_sv sv = lightusd_prim_kind(prim->prim);
   if (sv.len == 0) Py_RETURN_NONE;
-  return tusd_sv_to_str(sv);
+  return lightusd_sv_to_str(sv);
 }
 
 static PyObject* Prim_get_parent(PyObject* self, void* closure) {
   (void)closure;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
-  return tusd_wrap_prim(st, prim->stage, tusd_prim_parent(prim->prim));
+  return lightusd_wrap_prim(st, prim->stage, lightusd_prim_parent(prim->prim));
 }
 
 static PyObject* Prim_get_children(PyObject* self, void* closure) {
   (void)closure;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
-  size_t n = tusd_prim_child_count(prim->prim);
+  size_t n = lightusd_prim_child_count(prim->prim);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
   if (!tup) return NULL;
   for (size_t i = 0; i < n; ++i) {
     PyObject* child =
-        tusd_wrap_prim(st, prim->stage, tusd_prim_child(prim->prim, i));
+        lightusd_wrap_prim(st, prim->stage, lightusd_prim_child(prim->prim, i));
     if (!child) {
       Py_DECREF(tup);
       return NULL;
@@ -1405,42 +1405,42 @@ static PyObject* Prim_get_children(PyObject* self, void* closure) {
 
 /* closure: 0 = attributes (non-relationship properties), 1 = relationships */
 static PyObject* Prim_get_prop_names(PyObject* self, void* closure) {
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
   const int want_rel = (uintptr_t)closure == 1;
 
   if (want_rel) {
-    tusd_strlist* names = NULL;
-    if (tusd_prim_relationship_names(prim->prim, &names) != TUSD_OK) {
-      return tusd_raise(st, TUSD_ERR_INTERNAL, "relationship names");
+    lightusd_strlist* names = NULL;
+    if (lightusd_prim_relationship_names(prim->prim, &names) != LIGHTUSD_OK) {
+      return lightusd_raise(st, LIGHTUSD_ERR_INTERNAL, "relationship names");
     }
-    size_t n = tusd_strlist_size(names);
+    size_t n = lightusd_strlist_size(names);
     PyObject* tup = PyTuple_New((Py_ssize_t)n);
     if (!tup) {
-      tusd_strlist_destroy(names);
+      lightusd_strlist_destroy(names);
       return NULL;
     }
     for (size_t i = 0; i < n; ++i) {
-      PyObject* s = tusd_sv_to_str(tusd_strlist_get(names, i));
+      PyObject* s = lightusd_sv_to_str(lightusd_strlist_get(names, i));
       if (!s) {
         Py_DECREF(tup);
-        tusd_strlist_destroy(names);
+        lightusd_strlist_destroy(names);
         return NULL;
       }
       PyTuple_SetItem(tup, (Py_ssize_t)i, s);
     }
-    tusd_strlist_destroy(names);
+    lightusd_strlist_destroy(names);
     return tup;
   }
 
-  size_t total = tusd_prim_property_count(prim->prim);
+  size_t total = lightusd_prim_property_count(prim->prim);
   PyObject* list = PyList_New(0);
   if (!list) return NULL;
   for (size_t i = 0; i < total; ++i) {
-    uint16_t flags = tusd_prim_property_flags_at(prim->prim, i);
-    if (flags & TUSD_PROP_RELATIONSHIP) continue;
-    PyObject* s = tusd_sv_to_str(tusd_prim_property_name(prim->prim, i));
+    uint16_t flags = lightusd_prim_property_flags_at(prim->prim, i);
+    if (flags & LIGHTUSD_PROP_RELATIONSHIP) continue;
+    PyObject* s = lightusd_sv_to_str(lightusd_prim_property_name(prim->prim, i));
     if (!s || PyList_Append(list, s) != 0) {
       Py_XDECREF(s);
       Py_DECREF(list);
@@ -1455,72 +1455,72 @@ static PyObject* Prim_get_prop_names(PyObject* self, void* closure) {
 
 static PyObject* Prim_get_variant_sets(PyObject* self, void* closure) {
   (void)closure;
-  tusd_state* st = tusd_state_from_obj(self);
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  PyObject* obj = tusd_alloc(st->VariantSetsType);
+  PyObject* obj = lightusd_alloc(st->VariantSetsType);
   if (!obj) return NULL;
-  ((TusdPrimRef*)obj)->prim = self;
+  ((LightUSDPrimRef*)obj)->prim = self;
   Py_INCREF(self);
   return obj;
 }
 
 static PyObject* Prim_get_custom_data(PyObject* self, void* closure) {
   (void)closure;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
-  tusd_dict_ref dict;
-  if (tusd_prim_custom_data(prim->prim, &dict) != TUSD_OK) dict._dict = NULL;
-  return tusd_dict_to_python(st, dict);
+  lightusd_dict_ref dict;
+  if (lightusd_prim_custom_data(prim->prim, &dict) != LIGHTUSD_OK) dict._dict = NULL;
+  return lightusd_dict_to_python(st, dict);
 }
 
 static PyObject* Prim_get_asset_info(PyObject* self, void* closure) {
   (void)closure;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
-  tusd_dict_ref dict;
-  if (tusd_prim_asset_info(prim->prim, &dict) != TUSD_OK) dict._dict = NULL;
-  return tusd_dict_to_python(st, dict);
+  lightusd_dict_ref dict;
+  if (lightusd_prim_asset_info(prim->prim, &dict) != LIGHTUSD_OK) dict._dict = NULL;
+  return lightusd_dict_to_python(st, dict);
 }
 
 static Py_ssize_t Prim_length(PyObject* self) {
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return -1;
-  return (Py_ssize_t)tusd_prim_child_count(prim->prim);
+  return (Py_ssize_t)lightusd_prim_child_count(prim->prim);
 }
 
 static int Prim_contains(PyObject* self, PyObject* key) {
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return -1;
   PyObject* tmp = NULL;
-  const char* name = tusd_utf8(key, &tmp);
+  const char* name = lightusd_utf8(key, &tmp);
   if (!name) return -1;
-  int has = tusd_prim_has_property(prim->prim, name) ? 1 : 0;
+  int has = lightusd_prim_has_property(prim->prim, name) ? 1 : 0;
   Py_XDECREF(tmp);
   return has;
 }
 
 static PyObject* Prim_subscript(PyObject* self, PyObject* key) {
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
   PyObject* tmp = NULL;
-  const char* name = tusd_utf8(key, &tmp);
+  const char* name = lightusd_utf8(key, &tmp);
   if (!name) return NULL;
-  PyObject* res = tusd_attr_value_to_python(st, prim->stage, prim->prim, name);
+  PyObject* res = lightusd_attr_value_to_python(st, prim->stage, prim->prim, name);
   Py_XDECREF(tmp);
   return res;
 }
 
 static PyObject* Prim_iter(PyObject* self) {
-  tusd_state* st = tusd_state_from_obj(self);
+  lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  PyObject* obj = tusd_alloc(st->PrimChildIterType);
+  PyObject* obj = lightusd_alloc(st->PrimChildIterType);
   if (!obj) return NULL;
-  TusdChildIter* it = (TusdChildIter*)obj;
+  LightUSDChildIter* it = (LightUSDChildIter*)obj;
   it->prim = self;
   Py_INCREF(self);
   it->index = 0;
@@ -1537,23 +1537,23 @@ static PyObject* Prim_get_method(PyObject* self, PyObject* args,
                                    &def, &time_obj)) {
     return NULL;
   }
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
 
   PyObject* value = NULL;
   if (time_obj != Py_None) {
     double time = PyFloat_AsDouble(time_obj);
     if (time == -1.0 && PyErr_Occurred()) return NULL;
-    tusd_value* val = NULL;
-    tusd_status status = tusd_attr_interpolate(prim->prim, name, time, 1,
+    lightusd_value* val = NULL;
+    lightusd_status status = lightusd_attr_interpolate(prim->prim, name, time, 1,
                                                &val);
-    if (status == TUSD_OK) {
-      return tusd_value_to_python(st, val);
+    if (status == LIGHTUSD_OK) {
+      return lightusd_value_to_python(st, val);
     }
     /* fall through to the default value */
   }
-  value = tusd_attr_value_to_python(st, prim->stage, prim->prim, name);
+  value = lightusd_attr_value_to_python(st, prim->stage, prim->prim, name);
   if (value) return value;
   if (PyErr_ExceptionMatches(PyExc_KeyError)) {
     PyErr_Clear();
@@ -1566,14 +1566,14 @@ static PyObject* Prim_get_method(PyObject* self, PyObject* args,
 static PyObject* Prim_attribute(PyObject* self, PyObject* args) {
   PyObject* name;
   if (!PyArg_ParseTuple(args, "U:attribute", &name)) return NULL;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
   PyObject* tmp = NULL;
-  const char* cname = tusd_utf8(name, &tmp);
+  const char* cname = lightusd_utf8(name, &tmp);
   if (!cname) return NULL;
-  int ok = tusd_prim_has_property(prim->prim, cname) ||
-           tusd_attr_has_timesamples(prim->prim, cname);
+  int ok = lightusd_prim_has_property(prim->prim, cname) ||
+           lightusd_attr_has_timesamples(prim->prim, cname);
   Py_XDECREF(tmp);
   if (!ok) {
     PyErr_SetObject(PyExc_KeyError, name);
@@ -1585,13 +1585,13 @@ static PyObject* Prim_attribute(PyObject* self, PyObject* args) {
 static PyObject* Prim_relationship(PyObject* self, PyObject* args) {
   PyObject* name;
   if (!PyArg_ParseTuple(args, "U:relationship", &name)) return NULL;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
   PyObject* tmp = NULL;
-  const char* cname = tusd_utf8(name, &tmp);
+  const char* cname = lightusd_utf8(name, &tmp);
   if (!cname) return NULL;
-  int ok = tusd_prim_has_relationship(prim->prim, cname);
+  int ok = lightusd_prim_has_relationship(prim->prim, cname);
   Py_XDECREF(tmp);
   if (!ok) {
     PyErr_SetObject(PyExc_KeyError, name);
@@ -1603,32 +1603,32 @@ static PyObject* Prim_relationship(PyObject* self, PyObject* args) {
 static PyObject* Prim_child(PyObject* self, PyObject* args) {
   PyObject* name;
   if (!PyArg_ParseTuple(args, "U:child", &name)) return NULL;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
   PyObject* tmp = NULL;
-  const char* cname = tusd_utf8(name, &tmp);
+  const char* cname = lightusd_utf8(name, &tmp);
   if (!cname) return NULL;
-  tusd_prim child = tusd_prim_child_by_name(prim->prim, cname);
+  lightusd_prim child = lightusd_prim_child_by_name(prim->prim, cname);
   Py_XDECREF(tmp);
-  if (!tusd_prim_is_valid(child)) {
+  if (!lightusd_prim_is_valid(child)) {
     PyErr_SetObject(PyExc_KeyError, name);
     return NULL;
   }
-  return tusd_wrap_prim(st, prim->stage, child);
+  return lightusd_wrap_prim(st, prim->stage, child);
 }
 
 static PyObject* Prim_metadata(PyObject* self, PyObject* args) {
   const char* key;
   if (!PyArg_ParseTuple(args, "s:metadata", &key)) return NULL;
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
-  tusd_value* val = NULL;
-  tusd_status status = tusd_prim_get_metadata(prim->prim, key, &val);
-  if (status == TUSD_ERR_NOT_FOUND) Py_RETURN_NONE;
-  if (status != TUSD_OK) return tusd_raise(st, status, key);
-  return tusd_value_to_python(st, val);
+  lightusd_value* val = NULL;
+  lightusd_status status = lightusd_prim_get_metadata(prim->prim, key, &val);
+  if (status == LIGHTUSD_ERR_NOT_FOUND) Py_RETURN_NONE;
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, key);
+  return lightusd_value_to_python(st, val);
 }
 
 static PyObject* matrix16_to_python(const double m[16]) {
@@ -1654,12 +1654,12 @@ static PyObject* Prim_local_transform(PyObject* self, PyObject* args,
                                    &time)) {
     return NULL;
   }
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) return NULL;
   double m[16];
-  tusd_status status = tusd_prim_local_transform(prim->prim, time, m);
-  if (status != TUSD_OK) return tusd_raise(st, status, "local_transform");
+  lightusd_status status = lightusd_prim_local_transform(prim->prim, time, m);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "local_transform");
   return matrix16_to_python(m);
 }
 
@@ -1671,14 +1671,14 @@ static PyObject* Prim_world_transform(PyObject* self, PyObject* args,
                                    &time)) {
     return NULL;
   }
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = prim_context(self, &prim, &stage);
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = prim_context(self, &prim, &stage);
   if (!st) return NULL;
   double m[16];
-  tusd_status status =
-      tusd_prim_world_transform(stage, prim->prim, time, m);
-  if (status != TUSD_OK) return tusd_raise(st, status, "world_transform");
+  lightusd_status status =
+      lightusd_prim_world_transform(stage, prim->prim, time, m);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "world_transform");
   return matrix16_to_python(m);
 }
 
@@ -1698,9 +1698,9 @@ static PyObject* Prim_set(PyObject* self, PyObject* args, PyObject* kwargs) {
                                    &custom)) {
     return NULL;
   }
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = prim_context(self, &prim, &stage);
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = prim_context(self, &prim, &stage);
   if (!st) return NULL;
 
   double time = 0.0;
@@ -1711,8 +1711,8 @@ static PyObject* Prim_set(PyObject* self, PyObject* args, PyObject* kwargs) {
     time_ptr = &time;
   }
   uint16_t flags = 0;
-  if (uniform) flags |= TUSD_PROP_UNIFORM;
-  if (custom) flags |= TUSD_PROP_CUSTOM;
+  if (uniform) flags |= LIGHTUSD_PROP_UNIFORM;
+  if (custom) flags |= LIGHTUSD_PROP_CUSTOM;
 
   if (set_value_common(st, stage, prim_path_cstr(prim), name, value,
                        type_hint == Py_None ? NULL : type_hint, time_ptr,
@@ -1726,22 +1726,22 @@ static PyObject* Prim_set_metadata(PyObject* self, PyObject* args) {
   const char* key;
   PyObject* value;
   if (!PyArg_ParseTuple(args, "sO:set_metadata", &key, &value)) return NULL;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = prim_context(self, &prim, &stage);
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = prim_context(self, &prim, &stage);
   if (!st) return NULL;
   const char* path = prim_path_cstr(prim);
 
-  tusd_status status;
+  lightusd_status status;
   if (PyBool_Check(value)) {
     uint8_t b = value == Py_True ? 1 : 0;
     status =
-        tusd_prim_set_metadata(stage, path, key, TUSD_TYPE_BOOL, &b, 1);
+        lightusd_prim_set_metadata(stage, path, key, LIGHTUSD_TYPE_BOOL, &b, 1);
   } else if (PyUnicode_Check(value)) {
     PyObject* tmp = NULL;
-    const char* s = tusd_utf8(value, &tmp);
+    const char* s = lightusd_utf8(value, &tmp);
     if (!s) return NULL;
-    status = tusd_prim_set_metadata(stage, path, key, TUSD_TYPE_TOKEN, s, 1);
+    status = lightusd_prim_set_metadata(stage, path, key, LIGHTUSD_TYPE_TOKEN, s, 1);
     Py_XDECREF(tmp);
   } else if (PyList_Check(value) || PyTuple_Check(value)) {
     PyErr_SetString(PyExc_TypeError,
@@ -1751,7 +1751,7 @@ static PyObject* Prim_set_metadata(PyObject* self, PyObject* args) {
     PyErr_SetString(PyExc_TypeError, "metadata value must be bool or str");
     return NULL;
   }
-  if (status != TUSD_OK) return tusd_raise(st, status, key);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, key);
   Py_RETURN_NONE;
 }
 
@@ -1759,9 +1759,9 @@ static PyObject* Prim_set_metadata(PyObject* self, PyObject* args) {
 static PyObject* Prim_add_arc_impl(PyObject* self, PyObject* args,
                                    PyObject* kwargs, uint8_t arc_type,
                                    int asset_form) {
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = prim_context(self, &prim, &stage);
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = prim_context(self, &prim, &stage);
   if (!st) return NULL;
 
   const char* asset = NULL;
@@ -1778,9 +1778,9 @@ static PyObject* Prim_add_arc_impl(PyObject* self, PyObject* args,
       return NULL;
     }
   }
-  tusd_status status = tusd_prim_add_arc(stage, prim_path_cstr(prim),
+  lightusd_status status = lightusd_prim_add_arc(stage, prim_path_cstr(prim),
                                          arc_type, asset, target);
-  if (status != TUSD_OK) return tusd_raise(st, status, "add arc");
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "add arc");
   Py_RETURN_NONE;
 }
 
@@ -1807,72 +1807,72 @@ static PyObject* Prim_add_relationship(PyObject* self, PyObject* args) {
   if (!PyArg_ParseTuple(args, "sO:add_relationship", &name, &targets)) {
     return NULL;
   }
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = prim_context(self, &prim, &stage);
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = prim_context(self, &prim, &stage);
   if (!st) return NULL;
 
   PyObject* fast =
       PySequence_Fast(targets, "targets must be a sequence of str");
   if (!fast) return NULL;
   Py_ssize_t n = PySequence_Size(fast);
-  tusd_status status = TUSD_OK;
-  for (Py_ssize_t i = 0; i < n && status == TUSD_OK; ++i) {
+  lightusd_status status = LIGHTUSD_OK;
+  for (Py_ssize_t i = 0; i < n && status == LIGHTUSD_OK; ++i) {
     PyObject* item = PySequence_GetItem(fast, i);
     if (!item) {
       Py_DECREF(fast);
       return NULL;
     }
     PyObject* tmp = NULL;
-    const char* t = tusd_utf8(item, &tmp);
+    const char* t = lightusd_utf8(item, &tmp);
     Py_DECREF(item);
     if (!t) {
       Py_DECREF(fast);
       return NULL;
     }
-    status = tusd_rel_add_target(stage, prim_path_cstr(prim), name, t);
+    status = lightusd_rel_add_target(stage, prim_path_cstr(prim), name, t);
     Py_XDECREF(tmp);
   }
   Py_DECREF(fast);
-  if (status != TUSD_OK) return tusd_raise(st, status, name);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
   Py_RETURN_NONE;
 }
 
 static PyObject* Prim_add_variant_set(PyObject* self, PyObject* args) {
   const char* set_name;
   if (!PyArg_ParseTuple(args, "s:add_variant_set", &set_name)) return NULL;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = prim_context(self, &prim, &stage);
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = prim_context(self, &prim, &stage);
   if (!st) return NULL;
-  tusd_status status =
-      tusd_prim_add_variant_set(stage, prim_path_cstr(prim), set_name);
-  if (status != TUSD_OK) return tusd_raise(st, status, set_name);
+  lightusd_status status =
+      lightusd_prim_add_variant_set(stage, prim_path_cstr(prim), set_name);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, set_name);
   Py_RETURN_NONE;
 }
 
 static PyObject* Prim_remove_property(PyObject* self, PyObject* args) {
   const char* name;
   if (!PyArg_ParseTuple(args, "s:remove_property", &name)) return NULL;
-  TusdPrim* prim;
-  tusd_stage* stage;
-  tusd_state* st = prim_context(self, &prim, &stage);
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = prim_context(self, &prim, &stage);
   if (!st) return NULL;
-  tusd_status status = tusd_attr_remove(stage, prim_path_cstr(prim), name);
-  if (status != TUSD_OK) return tusd_raise(st, status, name);
+  lightusd_status status = lightusd_attr_remove(stage, prim_path_cstr(prim), name);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
   Py_RETURN_NONE;
 }
 
 static PyObject* Prim_repr(PyObject* self) {
-  TusdPrim* prim;
-  tusd_state* st = prim_context(self, &prim, NULL);
+  LightUSDPrim* prim;
+  lightusd_state* st = prim_context(self, &prim, NULL);
   if (!st) {
     PyErr_Clear();
     return PyUnicode_FromString("Prim(<stale>)");
   }
-  tusd_sv path = tusd_prim_path(prim->prim);
-  tusd_sv type = tusd_prim_type_name(prim->prim);
-  size_t n = tusd_prim_child_count(prim->prim);
+  lightusd_sv path = lightusd_prim_path(prim->prim);
+  lightusd_sv type = lightusd_prim_type_name(prim->prim);
+  size_t n = lightusd_prim_child_count(prim->prim);
   return PyUnicode_FromFormat("Prim('%.*s', type='%.*s', children=%zu)",
                               (int)path.len, path.data ? path.data : "",
                               (int)type.len, type.data ? type.data : "",
@@ -1964,7 +1964,7 @@ static PyType_Slot Prim_slots[] = {
 
 static PyType_Spec Prim_spec = {
     .name = "lightusd._core.Prim",
-    .basicsize = sizeof(TusdPrim),
+    .basicsize = sizeof(LightUSDPrim),
     .flags = Py_TPFLAGS_DEFAULT
 #ifdef Py_TPFLAGS_IMMUTABLETYPE
              | Py_TPFLAGS_IMMUTABLETYPE
@@ -1977,7 +1977,7 @@ static PyType_Spec Prim_spec = {
  * Registration
  * ============================================================ */
 
-int tusd_register_prim_types(PyObject* module, tusd_state* st) {
+int lightusd_register_prim_types(PyObject* module, lightusd_state* st) {
   st->PrimType = PyType_FromModuleAndSpec(module, &Prim_spec, NULL);
   if (!st->PrimType) return -1;
   if (PyModule_AddObjectRef(module, "Prim", st->PrimType) < 0) return -1;

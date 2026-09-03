@@ -24,7 +24,7 @@ In this document:
   converts a `lightusd::next::Stage` into render-ready data.
 
 The next stack is the default document and render-conversion path for
-`tusdview`, and the default material-resolution path for `tusdrender`. Legacy
+`lusdview`, and the default material-resolution path for `lusdrender`. Legacy
 paths remain available as explicit compatibility modes.
 
 ## next-core
@@ -178,10 +178,10 @@ with lossy assumptions.
 
 ## Application Defaults
 
-- `tusdview`: next-core and tydra-next are used by default. Use
+- `lusdview`: next-core and tydra-next are used by default. Use
   `--legacy-load` only for compatibility investigation. `--next` remains an
   accepted no-op for existing scripts.
-- `tusdrender`: next loading remains the primary render path and
+- `lusdrender`: next loading remains the primary render path and
   `-materialResolver tydra-next` is the default. Use
   `-materialResolver legacy` to compare against the former hand-written
   material resolver.

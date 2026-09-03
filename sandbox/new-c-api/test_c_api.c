@@ -60,21 +60,21 @@ void run_test(const char* name, void (*test_func)(void)) {
 // ============================================================================
 
 TEST(initialization) {
-    tusdz_result result = tusdz_init();
-    ASSERT_EQ(result, TUSDZ_SUCCESS, "Initialization should succeed");
+    lightusd_result result = lightusd_init();
+    ASSERT_EQ(result, LIGHTUSD_SUCCESS, "Initialization should succeed");
 }
 
 TEST(version) {
-    const char* version = tusdz_get_version();
+    const char* version = lightusd_get_version();
     ASSERT_NOT_NULL(version, "Version should not be NULL");
     printf("\nVersion: %s\n", version);
 }
 
 TEST(invalid_file) {
-    tusdz_stage stage = NULL;
+    lightusd_stage stage = NULL;
     char error[256];
 
-    tusdz_result result = tusdz_load_from_file(
+    lightusd_result result = lightusd_load_from_file(
         "nonexistent_file.usd",
         NULL,
         &stage,
@@ -82,59 +82,59 @@ TEST(invalid_file) {
         sizeof(error)
     );
 
-    ASSERT_EQ(result, TUSDZ_ERROR_PARSE_FAILED, "Should fail for nonexistent file");
+    ASSERT_EQ(result, LIGHTUSD_ERROR_PARSE_FAILED, "Should fail for nonexistent file");
     ASSERT_NULL(stage, "Stage should be NULL on failure");
     ASSERT_TRUE(strlen(error) > 0, "Error message should be provided");
 }
 
 TEST(null_arguments) {
     // Test with NULL filepath
-    tusdz_result result = tusdz_load_from_file(
+    lightusd_result result = lightusd_load_from_file(
         NULL,
         NULL,
         NULL,
         NULL,
         0
     );
-    ASSERT_EQ(result, TUSDZ_ERROR_INVALID_ARGUMENT, "Should fail with NULL arguments");
+    ASSERT_EQ(result, LIGHTUSD_ERROR_INVALID_ARGUMENT, "Should fail with NULL arguments");
 }
 
 TEST(error_to_string) {
-    const char* str = tusdz_result_to_string(TUSDZ_SUCCESS);
+    const char* str = lightusd_result_to_string(LIGHTUSD_SUCCESS);
     ASSERT_NOT_NULL(str, "String representation should not be NULL");
 
-    const char* error_str = tusdz_result_to_string(TUSDZ_ERROR_FILE_NOT_FOUND);
+    const char* error_str = lightusd_result_to_string(LIGHTUSD_ERROR_FILE_NOT_FOUND);
     ASSERT_NOT_NULL(error_str, "Error string should not be NULL");
 }
 
 TEST(prim_type_to_string) {
-    const char* mesh_str = tusdz_prim_type_to_string(TUSDZ_PRIM_MESH);
+    const char* mesh_str = lightusd_prim_type_to_string(LIGHTUSD_PRIM_MESH);
     ASSERT_NOT_NULL(mesh_str, "Mesh type string should not be NULL");
 
-    const char* xform_str = tusdz_prim_type_to_string(TUSDZ_PRIM_XFORM);
+    const char* xform_str = lightusd_prim_type_to_string(LIGHTUSD_PRIM_XFORM);
     ASSERT_NOT_NULL(xform_str, "Xform type string should not be NULL");
 }
 
 TEST(value_type_to_string) {
-    const char* float_str = tusdz_value_type_to_string(TUSDZ_VALUE_FLOAT);
+    const char* float_str = lightusd_value_type_to_string(LIGHTUSD_VALUE_FLOAT);
     ASSERT_NOT_NULL(float_str, "Float type string should not be NULL");
 
-    const char* float3_str = tusdz_value_type_to_string(TUSDZ_VALUE_FLOAT3);
+    const char* float3_str = lightusd_value_type_to_string(LIGHTUSD_VALUE_FLOAT3);
     ASSERT_NOT_NULL(float3_str, "Float3 type string should not be NULL");
 }
 
 TEST(detect_format) {
-    tusdz_format fmt = tusdz_detect_format("test.usda");
-    ASSERT_EQ(fmt, TUSDZ_FORMAT_USDA, "Should detect USDA format");
+    lightusd_format fmt = lightusd_detect_format("test.usda");
+    ASSERT_EQ(fmt, LIGHTUSD_FORMAT_USDA, "Should detect USDA format");
 
-    fmt = tusdz_detect_format("test.usdc");
-    ASSERT_EQ(fmt, TUSDZ_FORMAT_USDC, "Should detect USDC format");
+    fmt = lightusd_detect_format("test.usdc");
+    ASSERT_EQ(fmt, LIGHTUSD_FORMAT_USDC, "Should detect USDC format");
 
-    fmt = tusdz_detect_format("test.usdz");
-    ASSERT_EQ(fmt, TUSDZ_FORMAT_USDZ, "Should detect USDZ format");
+    fmt = lightusd_detect_format("test.usdz");
+    ASSERT_EQ(fmt, LIGHTUSD_FORMAT_USDZ, "Should detect USDZ format");
 
-    fmt = tusdz_detect_format("test.unknown");
-    ASSERT_EQ(fmt, TUSDZ_FORMAT_AUTO, "Should return AUTO for unknown extension");
+    fmt = lightusd_detect_format("test.unknown");
+    ASSERT_EQ(fmt, LIGHTUSD_FORMAT_AUTO, "Should return AUTO for unknown extension");
 }
 
 // ============================================================================
@@ -179,12 +179,12 @@ const char* get_test_usd_data(void) {
 
 TEST(load_from_memory) {
     const char* data = get_test_usd_data();
-    tusdz_stage stage = NULL;
+    lightusd_stage stage = NULL;
 
-    tusdz_result result = tusdz_load_from_memory(
+    lightusd_result result = lightusd_load_from_memory(
         (const uint8_t*)data,
         strlen(data),
-        TUSDZ_FORMAT_USDA,
+        LIGHTUSD_FORMAT_USDA,
         NULL,
         &stage,
         NULL,
@@ -193,17 +193,17 @@ TEST(load_from_memory) {
 
     // This test will likely fail without full LightUSD support
     // but demonstrates the API usage
-    if (result == TUSDZ_SUCCESS) {
+    if (result == LIGHTUSD_SUCCESS) {
         ASSERT_NOT_NULL(stage, "Stage should be loaded");
-        tusdz_stage_free(stage);
+        lightusd_stage_free(stage);
     }
 }
 
 TEST(shutdown) {
-    tusdz_shutdown();
+    lightusd_shutdown();
     // Second init should still work
-    tusdz_result result = tusdz_init();
-    ASSERT_EQ(result, TUSDZ_SUCCESS, "Re-initialization should succeed");
+    lightusd_result result = lightusd_init();
+    ASSERT_EQ(result, LIGHTUSD_SUCCESS, "Re-initialization should succeed");
 }
 
 // ============================================================================
@@ -212,7 +212,7 @@ TEST(shutdown) {
 
 TEST(memory_stats) {
     size_t used, peak;
-    tusdz_get_memory_stats(NULL, &used, &peak);
+    lightusd_get_memory_stats(NULL, &used, &peak);
     ASSERT_TRUE(used >= 0, "Memory usage should be non-negative");
 }
 

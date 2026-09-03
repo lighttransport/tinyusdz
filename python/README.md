@@ -1,6 +1,6 @@
 # lightusd
 
-Tiny, dependency-free **USD** (Universal Scene Description) library for
+Lightweight, dependency-free **USD** (Universal Scene Description) library for
 Python: load and author USDA / USDC / USDZ, resolve composition, and extract
 GPU-ready render data — with **zero-copy NumPy interop**.
 

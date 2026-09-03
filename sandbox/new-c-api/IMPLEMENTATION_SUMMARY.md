@@ -214,22 +214,22 @@ python3 -c "import lightusd; print(lightusd.get_version())"
 ```c
 #include "lightusd_c.h"
 
-tusdz_init();
+lightusd_init();
 
 // Load file
-tusdz_stage stage = NULL;
-tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
+lightusd_stage stage = NULL;
+lightusd_load_from_file("model.usd", NULL, &stage, NULL, 0);
 
 // Traverse
-tusdz_prim root = tusdz_stage_get_root_prim(stage);
-for (size_t i = 0; i < tusdz_prim_get_child_count(root); i++) {
-    tusdz_prim child = tusdz_prim_get_child_at(root, i);
-    printf("%s\n", tusdz_prim_get_name(child));
+lightusd_prim root = lightusd_stage_get_root_prim(stage);
+for (size_t i = 0; i < lightusd_prim_get_child_count(root); i++) {
+    lightusd_prim child = lightusd_prim_get_child_at(root, i);
+    printf("%s\n", lightusd_prim_get_name(child));
 }
 
 // Cleanup
-tusdz_stage_free(stage);
-tusdz_shutdown();
+lightusd_stage_free(stage);
+lightusd_shutdown();
 ```
 
 ### Python Bindings

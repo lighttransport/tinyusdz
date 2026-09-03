@@ -78,7 +78,7 @@ scope; new properties on supported schemas require fallback/validation tests.
 - `UsdVol` ParticleField schemas: registered and validated, with lazy typed
   accessors and Gaussian conversion recognizing official float/half attributes.
 - `UsdRender` settings, products, variables, and passes: registered, validated,
-  and exposed through typed accessors. `tusdrender` resolves settings/products/
+  and exposed through typed accessors. `lusdrender` resolves settings/products/
   passes, resolution, camera, purposes, and local render-visibility pruning.
   External pass commands are preserved but never executed.
 - `UsdSemanticsLabelsAPI`: registered with typed multiple-apply label access.

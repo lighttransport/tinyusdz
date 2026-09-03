@@ -56,7 +56,7 @@ std::string DirOf(const std::string &path) {
   return (pos == std::string::npos) ? std::string() : path.substr(0, pos);
 }
 
-// Flatten a layer with the same composition sequence tusdcat uses
+// Flatten a layer with the same composition sequence lusdcat uses
 // (subLayers, then references/payload/inherits/variant to a fixed point).
 bool FlattenLayerForDiff(lightusd::Layer &&in, const std::string &base_dir,
                          lightusd::Layer *out, std::string *warn,

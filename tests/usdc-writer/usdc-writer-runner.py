@@ -3,21 +3,21 @@
 USDC writer roundtrip test runner.
 
 Pipeline per file:
-  1. tusdcat input.usda -o temp.usdc    (LightUSD writes USDC)
-  2. tusdcat temp.usdc  -o temp_rt.usda (LightUSD reads USDC back as USDA)
-  3. tusddiff input.usda temp_rt.usda   (Layer-level diff on two USDA files)
+  1. lusdcat input.usda -o temp.usdc    (LightUSD writes USDC)
+  2. lusdcat temp.usdc  -o temp_rt.usda (LightUSD reads USDC back as USDA)
+  3. lusddiff input.usda temp_rt.usda   (Layer-level diff on two USDA files)
 
-tusddiff exit codes: 0 = identical, 1 = differences, 2 = error.
+lusddiff exit codes: 0 = identical, 1 = differences, 2 = error.
 
 Usage:
   python usdc-writer-runner.py \
-    --tusdcat ./build/tusdcat \
-    --tusddiff ./build/tusddiff \
+    --lusdcat ./build/lusdcat \
+    --lusddiff ./build/lusddiff \
     --basedir tests/usda
 
   python usdc-writer-runner.py \
-    --tusdcat ./build/tusdcat \
-    --tusddiff ./build/tusddiff \
+    --lusdcat ./build/lusdcat \
+    --lusddiff ./build/lusddiff \
     --basedir tests/usda \
     --verbose --keep-tmp
 """
@@ -39,13 +39,13 @@ KNOWN_SKIP = set([
 ])
 
 
-def run_tests(tusdcat: str, tusddiff: str, basedir: str,
+def run_tests(lusdcat: str, lusddiff: str, basedir: str,
               verbose: bool = False, keep_tmp: bool = False) -> int:
-    if not os.path.isfile(tusdcat):
-        print(f"Error: tusdcat not found: {tusdcat}", file=sys.stderr)
+    if not os.path.isfile(lusdcat):
+        print(f"Error: lusdcat not found: {lusdcat}", file=sys.stderr)
         return 1
-    if not os.path.isfile(tusddiff):
-        print(f"Error: tusddiff not found: {tusddiff}", file=sys.stderr)
+    if not os.path.isfile(lusddiff):
+        print(f"Error: lusddiff not found: {lusddiff}", file=sys.stderr)
         return 1
     if not os.path.isdir(basedir):
         print(f"Error: directory not found: {basedir}", file=sys.stderr)
@@ -66,8 +66,8 @@ def run_tests(tusdcat: str, tusddiff: str, basedir: str,
     tmpdir = tempfile.mkdtemp(prefix="usdc_writer_test_")
 
     print(f"USDC writer roundtrip: {total} files from {basedir}")
-    print(f"  tusdcat:  {tusdcat}")
-    print(f"  tusddiff: {tusddiff}")
+    print(f"  lusdcat:  {lusdcat}")
+    print(f"  lusddiff: {lusddiff}")
     print(f"  tmpdir:   {tmpdir}")
     print()
 
@@ -85,7 +85,7 @@ def run_tests(tusdcat: str, tusddiff: str, basedir: str,
         usda_rt_path = os.path.join(tmpdir, stem + "_rt.usda")
 
         # Step 1: Write USDC
-        wr = subprocess.run([tusdcat, filepath, "-o", usdc_path],
+        wr = subprocess.run([lusdcat, filepath, "-o", usdc_path],
                             capture_output=True, text=True, timeout=60)
         if wr.returncode != 0:
             write_errors += 1
@@ -98,7 +98,7 @@ def run_tests(tusdcat: str, tusddiff: str, basedir: str,
             continue
 
         # Step 2: Read USDC back and write USDA
-        rd = subprocess.run([tusdcat, usdc_path, "-o", usda_rt_path],
+        rd = subprocess.run([lusdcat, usdc_path, "-o", usda_rt_path],
                             capture_output=True, text=True, timeout=60)
         if rd.returncode != 0:
             write_errors += 1
@@ -133,7 +133,7 @@ def run_tests(tusdcat: str, tusddiff: str, basedir: str,
             pass
 
         # Step 3: Diff original USDA vs roundtripped USDA
-        dr = subprocess.run([tusddiff, filepath, usda_rt_path],
+        dr = subprocess.run([lusddiff, filepath, usda_rt_path],
                             capture_output=True, text=True, timeout=60)
 
         if dr.returncode == 0:
@@ -186,11 +186,11 @@ def run_tests(tusdcat: str, tusddiff: str, basedir: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="USDC writer roundtrip test: tusdcat writes USDC, tusddiff compares")
-    parser.add_argument("--tusdcat", required=True,
-                        help="Path to tusdcat executable")
-    parser.add_argument("--tusddiff", required=True,
-                        help="Path to tusddiff executable")
+        description="USDC writer roundtrip test: lusdcat writes USDC, lusddiff compares")
+    parser.add_argument("--lusdcat", required=True,
+                        help="Path to lusdcat executable")
+    parser.add_argument("--lusddiff", required=True,
+                        help="Path to lusddiff executable")
     parser.add_argument("--basedir", required=True,
                         help="Directory containing .usda files")
     parser.add_argument("--verbose", action="store_true",
@@ -200,7 +200,7 @@ def main():
     parser.add_argument("--report-only", action="store_true",
                         help="Report results but always exit 0 (informational mode)")
     args = parser.parse_args()
-    rc = run_tests(args.tusdcat, args.tusddiff, args.basedir,
+    rc = run_tests(args.lusdcat, args.lusddiff, args.basedir,
                    args.verbose, args.keep_tmp)
     return 0 if args.report_only else rc
 

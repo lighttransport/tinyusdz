@@ -240,8 +240,8 @@ make -j16
 ctest --output-on-failure
 
 # Double-roundtrip verification (output must be empty)
-./build/tusdcat tests/usda/foo-basic.usda > /tmp/r1.usda
-./build/tusdcat /tmp/r1.usda > /tmp/r2.usda
+./build/lusdcat tests/usda/foo-basic.usda > /tmp/r1.usda
+./build/lusdcat /tmp/r1.usda > /tmp/r2.usda
 diff /tmp/r1.usda /tmp/r2.usda
 
 # Individual test suites

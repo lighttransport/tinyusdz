@@ -184,7 +184,7 @@ static void pxrusd_test()
 
     sval.f = st;
     cval.f = ct;
-    std::cout << "45(tusdz)\n";
+    std::cout << "45(lightusd)\n";
     std::cout << "s == c ? " << (sval.u == cval.u) << "\n";
     std::cout << "s = " << sval.f << "\n"; printf("0x%016lx\n", sval.u);
     std::cout << "c = " << cval.f << "\n"; printf("0x%016lx\n", cval.u);
@@ -208,7 +208,7 @@ static void pxrusd_test()
 
     sval.f = st;
     cval.f = ct;
-    std::cout << "90(tusdz)\n";
+    std::cout << "90(lightusd)\n";
     std::cout << "s == c ? " << (sval.u == cval.u) << "\n";
     std::cout << "s = " << s << "\n";
     std::cout << "c = " << c << "\n";

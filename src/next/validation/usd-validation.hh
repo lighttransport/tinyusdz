@@ -131,7 +131,7 @@ void MergeValidationResults(USDValidationResult *dst,
                             const USDValidationResult &src);
 
 // One row of the rule registry: a stable rule identifier, the group that
-// emits it, and a one-line description. Powers `tusdchecker --dump-rules`
+// emits it, and a one-line description. Powers `lusdchecker --dump-rules`
 // (the counterpart of `usdchecker --dumpRules`).
 struct ValidationRuleInfo {
   const char *id;

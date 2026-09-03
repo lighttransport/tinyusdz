@@ -112,10 +112,10 @@ See `examples/` directory for complete examples:
 ### Basic Stage Loading
 
 ```python
-import lightusd_abi3 as tusd
+import lightusd_abi3 as lightusd
 
 # Load a USD file
-stage = tusd.Stage.load_from_file("model.usd")
+stage = lightusd.Stage.load_from_file("model.usd")
 
 # Print stage contents
 print(stage.to_string())
@@ -124,15 +124,15 @@ print(stage.to_string())
 ### Creating Values
 
 ```python
-import lightusd_abi3 as tusd
+import lightusd_abi3 as lightusd
 
 # Create integer value
-val_int = tusd.Value.from_int(42)
+val_int = lightusd.Value.from_int(42)
 print(val_int.type)  # "int"
 print(val_int.as_int())  # 42
 
 # Create float value
-val_float = tusd.Value.from_float(3.14)
+val_float = lightusd.Value.from_float(3.14)
 print(val_float.type)  # "float"
 print(val_float.as_float())  # 3.14
 ```
@@ -140,25 +140,25 @@ print(val_float.as_float())  # 3.14
 ### Creating Prims
 
 ```python
-import lightusd_abi3 as tusd
+import lightusd_abi3 as lightusd
 
 # Create a Mesh prim
-mesh = tusd.Prim("Mesh")
+mesh = lightusd.Prim("Mesh")
 print(mesh.type)  # "Mesh"
 
 # Create an Xform prim
-xform = tusd.Prim("Xform")
+xform = lightusd.Prim("Xform")
 print(xform.type)  # "Xform"
 ```
 
 ### NumPy Integration (GeomMesh Example)
 
 ```python
-import lightusd_abi3 as tusd
+import lightusd_abi3 as lightusd
 import numpy as np
 
 # Load USD file with mesh
-stage = tusd.Stage.load_from_file("mesh.usd")
+stage = lightusd.Stage.load_from_file("mesh.usd")
 
 # Get mesh prim (API to be implemented)
 # mesh = stage.get_prim_at_path("/World/Mesh")

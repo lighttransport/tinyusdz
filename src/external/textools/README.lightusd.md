@@ -95,8 +95,8 @@ four `include/` dirs public. Notes:
   intrinsics build unconditionally.
 - Threads: `TIR_ENABLE_THREADS` + `TIR_THREADS_PTHREAD` are defined on UNIX;
   serial elsewhere.
-- Consumers: `tusdview` (define `TUSDVIEW_WITH_TEXTOOLS`) via
-  `examples/tusdview/texture_tools.{hh,cc}`; ctest targets `textools-*`.
+- Consumers: `lusdview` (define `LUSDVIEW_WITH_TEXTOOLS`) via
+  `examples/lusdview/texture_tools.{hh,cc}`; ctest targets `textools-*`.
 
 ## lightusd-local patches (must survive a re-sync)
 
@@ -111,7 +111,7 @@ None.
 3. Review `git diff`; re-apply any local patches listed above.
 4. Rebuild and test:
    `cmake --build build_ninja --target lightusd_textools && ctest --test-dir build_ninja -R 'textools-' --output-on-failure`
-   then `ctest --test-dir build_ninja -R 'tusdview-' --output-on-failure`.
+   then `ctest --test-dir build_ninja -R 'lusdview-' --output-on-failure`.
 5. Update the import commit + date at the top of this file.
 
 ## Licenses

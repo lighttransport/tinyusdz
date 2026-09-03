@@ -107,8 +107,8 @@ ctest --test-dir build-next --output-on-failure
 # checks (sRGB/raw, gamma 2.2, Rec.709/AP1, AP1/AP0, pixel-exact
 # built-in/custom AP1 and piecewise-sRGB parity, plus MaterialXConfig constant
 # and texture NodeGraph fallback versus explicit metadata in both backends)
-python3 tools/tusdrender/check_colorspace_regression.py \
-  build_ninja/tools/tusdrender/tusdrender . \
+python3 tools/lusdrender/check_colorspace_regression.py \
+  build_ninja/tools/lusdrender/lusdrender . \
   --output /tmp/lightusd-colorspace-native
 
 # Numeric AP0/Macbeth references plus legacy/next WASM parity, raw bypass,

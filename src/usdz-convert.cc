@@ -78,7 +78,7 @@ size_t FileSizeOrZero(const std::string &filename) {
 
 void Log(bool verbose, const std::string &msg) {
   if (verbose) {
-    std::printf("[tusdzconvert] %s\n", msg.c_str());
+    std::printf("[lusdzconvert] %s\n", msg.c_str());
   }
 }
 
@@ -94,7 +94,7 @@ class PhaseTimer {
     start_ = std::chrono::steady_clock::now();
     active_ = true;
     if (verbose_) {
-      std::printf("[tusdzconvert][phase] %-22s ...\n", name.c_str());
+      std::printf("[lusdzconvert][phase] %-22s ...\n", name.c_str());
       std::fflush(stdout);
     }
   }
@@ -107,7 +107,7 @@ class PhaseTimer {
                       std::chrono::steady_clock::now() - start_)
                       .count();
       total_ms_ += ms;
-      std::printf("[tusdzconvert][phase] %-22s %9.1f ms  (total %9.1f ms)\n",
+      std::printf("[lusdzconvert][phase] %-22s %9.1f ms  (total %9.1f ms)\n",
                   cur_.c_str(), ms, total_ms_);
       std::fflush(stdout);
     }
@@ -774,7 +774,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
 
   Layer src_layer = root_layer;
 
-  // Like tusdcat, assets resolve against the local filesystem where USD's
+  // Like lusdcat, assets resolve against the local filesystem where USD's
   // parent-relative references (`@../common/foo.usd@`) are legitimate; the
   // resolver suffix-fallback additionally rebases paths authored against
   // another machine's layout (e.g. UE exports).
@@ -805,7 +805,7 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
   // below halve peak memory — this converter's job is multi-GB scenes.
   // Deferred variant evaluation (ShouldDeferVariantComposition) covers the
   // common selection-vs-late-variantSet hazard; the residual divergence is
-  // the inherits-vs-references strength edge, which tusdcat/web/binding
+  // the inherits-vs-references strength edge, which lusdcat/web/binding
   // handle via CompositeAllArcs.
   constexpr int kMaxIteration = 64;
   for (int i = 0; i < kMaxIteration; i++) {

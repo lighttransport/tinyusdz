@@ -5,7 +5,7 @@ Upstream: https://github.com/syoyo/lightrt (local: `~/work/lightrt`)
 This is a **copied vendor import that has diverged into a maintained fork**, not a
 pristine snapshot and not a git submodule. Both sides have evolved: lightusd added
 features/fixes here, and upstream advanced independently. Keep that in mind before
-re-syncing — a blind overwrite would drop lightusd-only code that `tusdrender`
+re-syncing — a blind overwrite would drop lightusd-only code that `lusdrender`
 depends on.
 
 ## Last re-sync
@@ -21,7 +21,7 @@ merge base):
 To re-sync again: for each diverged file run
 `git merge-file --diff3 ours <base> <upstream-main>`, resolve any conflicts
 (they cluster in `rtx_scene_build_core`; keep the staging-buffer side — see
-below), then rebuild + run `ctest -R tool-tusdrender-smoke`.
+below), then rebuild + run `ctest -R tool-lusdrender-smoke`.
 
 ## lightusd-local patches (must survive a re-sync)
 
@@ -62,11 +62,11 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.
 - `lightrt_c_cuda.{cu,h}` contains the upstream CUDA C entry point for the later
-  tusdview CUDA RT material path.
+  lusdview CUDA RT material path.
 
-The first tusdview integration uses these files as the reference layout and
+The first lusdview integration uses these files as the reference layout and
 bridges USD/Tydra material parameters into a LightRT/OpenPBR-compatible CPU
-block. The vendored C sources are not linked into tusdview yet; GL/Vulkan raster
+block. The vendored C sources are not linked into lusdview yet; GL/Vulkan raster
 currently consume the existing preview material subset, and VK/CUDA RT can be
 extended to sample the full LightRT/OpenPBR block.
 

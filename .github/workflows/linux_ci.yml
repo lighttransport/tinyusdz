@@ -150,7 +150,7 @@ jobs:
         for usd_file in models/suzanne.usdc models/cube.usda; do
           if [ -f "$usd_file" ]; then
             echo "Testing $usd_file"
-            ./build/tusdcat "$usd_file" > /tmp/tusdcat.txt
+            ./build/lusdcat "$usd_file" > /tmp/lusdcat.txt
             usdcat "$usd_file" > /tmp/usdcat.txt
             echo "✓ Both tools read $usd_file"
           fi
@@ -158,7 +158,7 @@ jobs:
 
         # Test 2: Convert with LightUSD, verify with OpenUSD
         if [ -f "models/suzanne.usdc" ]; then
-          ./build/tusdcat models/suzanne.usdc > /tmp/lightusd.usda
+          ./build/lusdcat models/suzanne.usdc > /tmp/lightusd.usda
           usdcat /tmp/lightusd.usda > /dev/null
           echo "✓ OpenUSD read LightUSD-generated USDA"
         fi
@@ -189,10 +189,10 @@ jobs:
     - name: tests
       run: cd build_mcp && ctest --output-on-failure
 
-  # Build and run the tusdview unit tests (no GPU required). These compiled
+  # Build and run the lusdview unit tests (no GPU required). These compiled
   # unit tests validate lighting, texture, material, geometry, and camera
   # extraction. The viewer itself is not built by the target list below.
-  build-tusdview-hermetic:
+  build-lusdview-hermetic:
 
     runs-on: ubuntu-latest
 
@@ -205,7 +205,7 @@ jobs:
           libxinerama-dev libxcursor-dev libxi-dev
     - name: configure
       run: |
-        CXX=clang++ CC=clang cmake -B build_tusdview -S . -G Ninja \
+        CXX=clang++ CC=clang cmake -B build_lusdview -S . -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DLIGHTUSD_WITH_TYDRA=On \
           -DLIGHTUSD_BUILD_EXAMPLES=On \
@@ -213,17 +213,17 @@ jobs:
           -DLIGHTUSD_BUILD_GUI_VIEWER=On
     - name: build tests
       run: |
-        cmake --build build_tusdview -j2 \
-          --target tusdview_lighting_test \
-          --target tusdview_lightrt_bridge_test \
-          --target tusdview_openpbr_material_test \
-          --target tusdview_texture_pipeline_test \
-          --target tusdview_lightrt_mtlx_eval_test \
-          --target tusdview_geometry_primvar_test \
-          --target tusdview_camera_nav_test
+        cmake --build build_lusdview -j2 \
+          --target lusdview_lighting_test \
+          --target lusdview_lightrt_bridge_test \
+          --target lusdview_openpbr_material_test \
+          --target lusdview_texture_pipeline_test \
+          --target lusdview_lightrt_mtlx_eval_test \
+          --target lusdview_geometry_primvar_test \
+          --target lusdview_camera_nav_test
     - name: tests
       run: |
-        cd build_tusdview && ctest --output-on-failure -R "tusdview_lighting|tusdview_lightrt_bridge|tusdview_openpbr|tusdview_texture_pipeline|tusdview_lightrt_mtlx|tusdview_geometry|tusdview_camera_nav|tusdview-vk-oit-validation"
+        cd build_lusdview && ctest --output-on-failure -R "lusdview_lighting|lusdview_lightrt_bridge|lusdview_openpbr|lusdview_texture_pipeline|lusdview_lightrt_mtlx|lusdview_geometry|lusdview_camera_nav|lusdview-vk-oit-validation"
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
   # The default build and the rest of CI do NOT compile src/next/ — it is gated
@@ -312,13 +312,13 @@ jobs:
   #   # Dedicated USDC tests for files that have shown issues on ARM64
   #   - name: test usdc timesamples files with ASan
   #     run: |
-  #       echo "Testing USDC timesamples files with tusdcat (ASan enabled)..."
-  #       ./build_asan/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
-  #       ./build_asan/tusdcat tests/usdc/timesamples-array-float-001.usdc
-  #       ./build_asan/tusdcat tests/usdc/timesamples-array-int-001.usdc
-  #       ./build_asan/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
-  #       ./build_asan/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
-  #       ./build_asan/tusdcat tests/usdc/timesamples-array-double-001.usdc
+  #       echo "Testing USDC timesamples files with lusdcat (ASan enabled)..."
+  #       ./build_asan/lusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+  #       ./build_asan/lusdcat tests/usdc/timesamples-array-float-001.usdc
+  #       ./build_asan/lusdcat tests/usdc/timesamples-array-int-001.usdc
+  #       ./build_asan/lusdcat tests/usdc/timesamples-array-dedup-002.usdc
+  #       ./build_asan/lusdcat tests/usdc/timesamples-array-dedup-001.usdc
+  #       ./build_asan/lusdcat tests/usdc/timesamples-array-double-001.usdc
   #       echo "All USDC timesamples tests passed."
 
   build-arm64-gcc:
@@ -337,23 +337,23 @@ jobs:
     - name: make
       run: cmake --build build
 
-    - name: Upload ARM64 tusdcat binary
+    - name: Upload ARM64 lusdcat binary
       uses: actions/upload-artifact@v5
       with:
-        name: tusdcat-linux-arm64-gcc
-        path: build/tusdcat
+        name: lusdcat-linux-arm64-gcc
+        path: build/lusdcat
         retention-days: 7
 
     # Dedicated USDC tests for files that have shown issues on ARM64
     - name: test usdc timesamples files
       run: |
-        echo "Testing USDC timesamples files with tusdcat..."
-        ./build/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-float-001.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-int-001.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "Testing USDC timesamples files with lusdcat..."
+        ./build/lusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-double-001.usdc
         echo "All USDC timesamples tests passed."
 
     - name: tests
@@ -382,23 +382,23 @@ jobs:
     - name: make
       run: cmake --build build
 
-    - name: Upload ARM64 tusdcat binary
+    - name: Upload ARM64 lusdcat binary
       uses: actions/upload-artifact@v5
       with:
-        name: tusdcat-linux-arm64-clang
-        path: build/tusdcat
+        name: lusdcat-linux-arm64-clang
+        path: build/lusdcat
         retention-days: 7
 
     # Dedicated USDC tests for files that have shown issues on ARM64
     - name: test usdc timesamples files
       run: |
-        echo "Testing USDC timesamples files with tusdcat..."
-        ./build/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-float-001.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-int-001.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
-        ./build/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "Testing USDC timesamples files with lusdcat..."
+        ./build/lusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build/lusdcat tests/usdc/timesamples-array-double-001.usdc
         echo "All USDC timesamples tests passed."
 
     - name: tests
@@ -442,7 +442,7 @@ jobs:
         for usd_file in models/suzanne.usdc models/cube.usda tests/usdc/timesamples-array-vec2f-001.usdc; do
           if [ -f "$usd_file" ]; then
             echo "Testing $usd_file"
-            ./build/tusdcat "$usd_file" > /tmp/tusdcat.txt
+            ./build/lusdcat "$usd_file" > /tmp/lusdcat.txt
             usdcat "$usd_file" > /tmp/usdcat.txt
             echo "✓ Both tools read $usd_file"
           fi
@@ -450,7 +450,7 @@ jobs:
 
         # Test 2: Convert with LightUSD, verify with OpenUSD
         if [ -f "models/suzanne.usdc" ]; then
-          ./build/tusdcat models/suzanne.usdc > /tmp/lightusd.usda
+          ./build/lusdcat models/suzanne.usdc > /tmp/lightusd.usda
           usdcat /tmp/lightusd.usda > /dev/null
           echo "✓ OpenUSD read LightUSD-generated USDA"
         fi

@@ -24,10 +24,10 @@
 
 #if defined(_WIN32)
 #include <direct.h>
-#define TUSDZ_MKDIR(p) _mkdir(p)
+#define LIGHTUSD_MKDIR(p) _mkdir(p)
 #else
 #include <sys/stat.h>
-#define TUSDZ_MKDIR(p) mkdir((p), 0755)
+#define LIGHTUSD_MKDIR(p) mkdir((p), 0755)
 #endif
 
 #include "asset-resolution.hh"
@@ -70,8 +70,8 @@ const char *kIncludeFragment = R"(<?xml version="1.0"?>
 )";
 
 bool Setup() {
-  TUSDZ_MKDIR(kTmpRoot);
-  if (TUSDZ_MKDIR(kBaseDir) != 0) {
+  LIGHTUSD_MKDIR(kTmpRoot);
+  if (LIGHTUSD_MKDIR(kBaseDir) != 0) {
     // EEXIST from a previous run is fine; anything else we still try to write.
   }
 

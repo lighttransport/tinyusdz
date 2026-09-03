@@ -2176,7 +2176,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       // `type_name` string was converted to standalone ifs -- same MSVC
       // C1061 ("blocks nested too deeply") risk class already fixed for
       // the same reason elsewhere in this codebase (crate-writer-values.cc,
-      // stage-converter.cc, tusdr_args.cc, tusdcat/main.cc). OPT_MATCH
+      // stage-converter.cc, lusdr_args.cc, lusdcat/main.cc). OPT_MATCH
       // folds the "did anything match yet" guard into the condition itself
       // so the final unsupported-type fallback below only fires when no
       // type matched -- exactly the original else-if chain's semantics --

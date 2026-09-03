@@ -1,6 +1,6 @@
 # texcomp web demo — Basis-free GPU texture compression
 
-Demonstrates, in the browser, the same transcode-on-load strategy tusdview uses
+Demonstrates, in the browser, the same transcode-on-load strategy lusdview uses
 natively: one RGBA8 texture → the private tinyexr **`uni`** intermediate →
 transcoded per device to the GPU-native block format the browser advertises
 (BC7 / ASTC / ETC2), uploaded as a `THREE.CompressedTexture`. Where no compressed

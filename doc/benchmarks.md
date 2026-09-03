@@ -1,41 +1,41 @@
-# Renderer benchmarks: tusdrender & tusdview
+# Renderer benchmarks: lusdrender & lusdview
 
 Two companion benchmark collections for the rendering stack:
 
-- **Part 1 — Moana Island per-element** (`tusdrender` vs. `usdrecord`/hdEmbree):
+- **Part 1 — Moana Island per-element** (`lusdrender` vs. `usdrecord`/hdEmbree):
   the island-scale, tens-of-millions-of-instances scenes that need streaming and
   view-dependent LOD.
-- **Part 2 — Middle-scale public scenes** (`tusdview`): single rooms / properties
+- **Part 2 — Middle-scale public scenes** (`lusdview`): single rooms / properties
   that load and render interactively with the default flags.
 
 The large-scene budgeting/LOD design and the Activision Caldera methodology live
 in [`large-scene.md`](large-scene.md) and
-[`tools/tusdrender/README.md`](../tools/tusdrender/README.md).
+[`tools/lusdrender/README.md`](../tools/lusdrender/README.md).
 
 ---
 
-# Part 1 — Moana Island per-element benchmark — tusdrender vs. usdrecord (hdEmbree)
+# Part 1 — Moana Island per-element benchmark — lusdrender vs. usdrecord (hdEmbree)
 
-A head-to-head of tusdview's `tusdrender` (LightRT BVH + the `next` lazy USDC
+A head-to-head of lusdview's `lusdrender` (LightRT BVH + the `next` lazy USDC
 loader) against Pixar's `usdrecord` driving the CPU **hdEmbree** Hydra delegate,
 on the **independent per-element geometry** files of the Disney Moana Island
 scene (`/mnt/disk1/data/island`). This is the first pass — individual elements
 only, not the full assembled `island.usda` (a deliberate follow-up).
 
 Methodology mirrors the Activision Caldera benchmark in
-[`tools/tusdrender/README.md`](../tools/tusdrender/README.md) and
+[`tools/lusdrender/README.md`](../tools/lusdrender/README.md) and
 [`large-scene.md`](large-scene.md).
 
 ## Methodology
 
-* **Host:** AMD Ryzen Threadripper 1950X (16C/32T), 62.6 GB RAM. tusdrender auto
+* **Host:** AMD Ryzen Threadripper 1950X (16C/32T), 62.6 GB RAM. lusdrender auto
   memory cap ≈ 23.2 GiB (`min(32, 0.5·MemAvailable)`).
 * **Resolution / framing:** `320×180`, `-autoframe` (matches Caldera).
 * **Inputs:** each element's standalone `usd/elements/<name>/element.usda`
   (three-file `element → instance → geometry` pattern → `model.usd` + XGen
   `prepend payload` archives).
-* **tusdrender:**
-  `tusdrender <element.usda> out.png -rtPreview -stats -w 320 -height 180 -autoframe`.
+* **lusdrender:**
+  `lusdrender <element.usda> out.png -rtPreview -stats -w 320 -height 180 -autoframe`.
   Load / triangle-stream / BVH-build / render seconds come from `-stats`; peak RSS
   and wall from `/usr/bin/time -v`.
 * **usdrecord:**
@@ -43,12 +43,12 @@ Methodology mirrors the Activision Caldera benchmark in
   with `PYTHONPATH=$dist/lib/python LD_LIBRARY_PATH=$dist/lib
   PXR_PLUGINPATH_NAME=$dist/plugin/usd`. usdrecord prints no stage breakdown, so
   only total wall + peak RSS are recorded.
-* **Harness:** [`tools/tusdrender/bench_island.py`](../tools/tusdrender/bench_island.py)
+* **Harness:** [`tools/lusdrender/bench_island.py`](../tools/lusdrender/bench_island.py)
   (reproducible; writes `results.json` + `results.md`).
 
 ## Results
 
-| element | size | tris | tusd load s | tusd bvh s | tusd render s | tusd total s | tusd RSS | usdrecord s | usdrecord RSS | speedup |
+| element | size | tris | lightusd load s | lightusd bvh s | lightusd render s | lightusd total s | lightusd RSS | usdrecord s | usdrecord RSS | speedup |
 |---|---|---|---|---|---|---|---|---|---|---|
 | isNaupakaA | 426.7 KB | 4.27 M | 0.01 | 0.01 | 0.01 | 0.04 | 14.7 MB | 0.74 | 174.8 MB | 18.5× |
 | isGardeniaA | 2.4 MB | 0.16 M | 0.17 | 0.00 | 0.00 | 0.19 | 87.8 MB | 1.14 | 257.5 MB | 6.0× |
@@ -68,10 +68,10 @@ material/texture lookup) cut isCoral's stream 2.47→0.62 s and total 8.2→6.4 
 helps every multi-mesh scene (Island full 73→66 s). The first-pass numbers are
 preserved in git history.)*
 
-`tris` = instance-expanded *triangle* count tusdrender traces (only the *unique*
+`tris` = instance-expanded *triangle* count lusdrender traces (only the *unique*
 prototype geometry is stored — isBeach's 4.09 B visible expand from 63 K unique
 across 86 prototypes placed by 22.1 M instances; it excludes curve strands).
-`speedup` = usdrecord wall ÷ tusdrender wall. ‡ = isIronwoodA1's heavy XGen is
+`speedup` = usdrecord wall ÷ lusdrender wall. ‡ = isIronwoodA1's heavy XGen is
 *curves* (`xgBonsai_curves.usd`, 34 BasisCurves prims, ~3 M hair segments) ray-
 traced as hair — its 0.89 s / 836 MB is the curve build, and it renders the
 foliage usdrecord does (the bare-trunk-only usdrecord row is 0.58 s). The curve
@@ -86,7 +86,7 @@ dropped, deriving endpoints straight from the points. Net **2.32 → 0.89 s
 > **PointInstancer expansion (fixed).** An earlier revision of this benchmark
 > showed isBeach at 0.06 M tris because the `-rtPreview` path skipped
 > UsdGeomPointInstancer geometry (the XGen ground cover, stones, shells, …).
-> `tusdrender.cc` now expands every PointInstancer into the two-level BLAS/TLAS
+> `lusdrender.cc` now expands every PointInstancer into the two-level BLAS/TLAS
 > path: each prototype is a deduped BLAS, each visible instance a TLAS placement
 > (scale·orient·translate composed with the instancer's world). This expanded
 > isNaupakaA 0.02 → 4.27 M, isCoral 17.4 → 87.5 M, and isBeach 0.06 M → 4.09 B
@@ -105,9 +105,9 @@ dropped, deriving endpoints straight from the points. Net **2.32 → 0.89 s
 
 > **Parallel TLAS build (added).** The two-level instanced path built its TLAS
 > through three serial per-instance loops (the `add_instance` fill in
-> `tusdrender.cc`, plus LightRT's `tlas_fill_instances` matrix-inversion and
+> `lusdrender.cc`, plus LightRT's `tlas_fill_instances` matrix-inversion and
 > `tlas_rebuild` bounds passes). All three are now multithreaded — a pre-sized
-> parallel scatter with a validity prefix-scan on the tusdrender side, and
+> parallel scatter with a validity prefix-scan on the lusdrender side, and
 > `tri_parallel_for` chunks (gated ≥4096 instances) on the LightRT side — byte
 > for byte identical output. isBeach's 22.1 M-instance bvh build dropped
 > 19.3 s → 12.6 s; the remaining cost is LightRT's already-threaded SAH BVH build
@@ -182,7 +182,7 @@ the real geometry is the separate `techvar_assets` package):
 cd /mnt/disk1/data/alab/usd
 cp -al ALab-2.3.0/ALab _merged_ALab            # hardlink farm (~0 extra space)
 cp -alf techvar_assets/fragment/. _merged_ALab/fragment/
-tusdrender _merged_ALab/entity/alab_set01/alab_set01.usda out.png \
+lusdrender _merged_ALab/entity/alab_set01/alab_set01.usda out.png \
     -rtPreview -stats -w 320 -height 180 -autoframe
 ```
 
@@ -225,7 +225,7 @@ on this allocation-bound compose.)
 
 ## Analysis
 
-**Light/medium elements (isNaupakaA → isDunesA, isHibiscus): clean tusdrender
+**Light/medium elements (isNaupakaA → isDunesA, isHibiscus): clean lusdrender
 wins.** 3–18× faster wall and ~2–12× lower peak RSS than hdEmbree. The
 `next` loader's startup is sub-second and LightRT's preview BVH builds in tens of
 milliseconds, where usdrecord pays a fixed Hydra/USD-stage + delegate spin-up
@@ -262,14 +262,14 @@ question, not pure builder.**
 ## Reproduce
 
 ```sh
-python3 tools/tusdrender/bench_island.py \
+python3 tools/lusdrender/bench_island.py \
     --island /mnt/disk1/data/island \
     --dist   /mnt/nvme02/work/lightusd-repo/OpenUSD/dist \
-    --bin    build_ninja/tools/tusdrender/tusdrender \
+    --bin    build_ninja/tools/lusdrender/lusdrender \
     --out    /tmp/island_bench
 # force a graceful-abort row by capping memory on the heavy element:
-python3 tools/tusdrender/bench_island.py --elements isCoral \
-    --tusd-extra='-maxMem 2' --skip-usdrecord
+python3 tools/lusdrender/bench_island.py --elements isCoral \
+    --lightusd-extra='-maxMem 2' --skip-usdrecord
 ```
 
 ## Follow-ups
@@ -310,7 +310,7 @@ python3 tools/tusdrender/bench_island.py --elements isCoral \
 
 ---
 
-# Part 2 — Middle-scale USD scene benchmarks (tusdview)
+# Part 2 — Middle-scale USD scene benchmarks (lusdview)
 
 Companion to [`large-scene.md`](large-scene.md) (Moana Island / Activision
 Caldera, tens-of-millions-of-instances scenes that need streaming + view-
@@ -326,10 +326,10 @@ useful regression / shading / framing references that sit between the small
 * **CPU:** AMD Ryzen 9 3950X (16C/32T)
 * **RAM:** 62 GiB
 * **GPU:** NVIDIA GeForce RTX 5060 Ti, 16 GiB VRAM
-* **Build:** `build/tusdview` (release), `--frames N` headless captures.
+* **Build:** `build/lusdview` (release), `--frames N` headless captures.
   Headless forces the **Vulkan** backend; GL numbers are captured windowed
   under `xvfb-run`. Wall / peak-RSS from `/usr/bin/time -v`; `present` (GPU +
-  readback, ms) from `TUSDVIEW_TIME_FRAME=1` (last settled frame — use
+  readback, ms) from `LUSDVIEW_TIME_FRAME=1` (last settled frame — use
   `--frames ≥ 4` so the projected-radius focal length settles, see
   [`large-scene.md`](large-scene.md) §2.6.5).
 
@@ -373,14 +373,14 @@ cleanly than the eager path (robust auto-frame, correct Z-up).
 ```sh
 K=/mnt/disk1/data/usd/Kitchen_set/Kitchen_set.usd
 # Vulkan rasterizer (headless):
-./build/tusdview --headless --backend vk        $K --frames 4 --screenshot kitchen_vk.png
+./build/lusdview --headless --backend vk        $K --frames 4 --screenshot kitchen_vk.png
 # Vulkan ray query:
-./build/tusdview --headless --backend vk --rt   $K --frames 6 --screenshot kitchen_rt.png
+./build/lusdview --headless --backend vk --rt   $K --frames 6 --screenshot kitchen_rt.png
 # OpenGL (windowed; best shading) under Xvfb:
 xvfb-run -a -s "-screen 0 1280x1024x24" \
-  ./build/tusdview --backend gl                 $K --frames 4 --screenshot kitchen_gl.png
+  ./build/lusdview --backend gl                 $K --frames 4 --screenshot kitchen_gl.png
 # Cleaner framing via the lazy loader:
-./build/tusdview --headless --next --backend vk $K --frames 4 --screenshot kitchen_next.png
+./build/lusdview --headless --next --backend vk $K --frames 4 --screenshot kitchen_next.png
 ```
 
 > _Screenshot omitted: Pixar's Kitchen_set EULA permits non-commercial
@@ -409,7 +409,7 @@ A whole house + landscaped lot. The shipped entry point
 (`Instances/usd_pointInstances_0621.usd`, 223 MB) over the assembly, composing
 via `--next` to **35 draws / 297,518 instances / 22.8 M unique tris** — but
 **4.33 B *effective* tris** once instancing is expanded. This is the regime where
-the per-frame [`--raster-lod`](large-scene.md#265-per-frame-view-dependent-raster-lod---raster-lod-tusdview)
+the per-frame [`--raster-lod`](large-scene.md#265-per-frame-view-dependent-raster-lod---raster-lod-lusdview)
 pays off: a single exterior view can put **a billion** effective triangles in the
 frustum.
 
@@ -422,11 +422,11 @@ with `--camera`. Interiors render near-black in the flat-shaded `--next` preview
 M=/mnt/disk1/data/usd/Intel_mooreLane_v1_2_0/Intel_mooreLane/USD/MooreLane_ASWF_0623.usda
 # Foliage-heavy exterior hero (40 GiB host cgroup, framing an authored camera):
 systemd-run --user --scope -p MemoryMax=40G -p MemorySwapMax=2G \
-  ./build/tusdview --headless --next --backend vk --camera cam_exteriorDrive \
+  ./build/lusdview --headless --next --backend vk --camera cam_exteriorDrive \
     --max-tris 80000000 --frames 4 --screenshot moore_ext.png $M
 # Same view, view-dependent LOD (collapse < 24 px to box proxies, drop < 1.5 px):
 systemd-run --user --scope -p MemoryMax=40G -p MemorySwapMax=2G \
-  ./build/tusdview --headless --next --backend vk --camera cam_exteriorDrive \
+  ./build/lusdview --headless --next --backend vk --camera cam_exteriorDrive \
     --raster-lod --raster-lod-cull-px 1.5 --raster-lod-full-px 24 \
     --max-tris 80000000 --frames 4 --screenshot moore_ext_lod.png $M
 ```

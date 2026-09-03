@@ -1,4 +1,4 @@
-# Vulkan validation layer settings for debugging tusdview / tusdrender.
+# Vulkan validation layer settings for debugging lusdview / lusdrender.
 # Activate with:  $env:VK_LAYER_SETTINGS_PATH = (Resolve-Path .\vk_layer_settings.txt)
 # (plus the VK_LAYER_PATH / VK_LOADER_LAYERS_ENABLE from activate-vulkan-validation.ps1)
 #

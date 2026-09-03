@@ -47,14 +47,14 @@ struct PrimVar {
 
   // Default constructor
   PrimVar() {
-    //TUSDZ_LOG_I("PrimVar default ctor");
+    //LIGHTUSD_LOG_I("PrimVar default ctor");
   }
 
   // Copy constructor
   PrimVar(const PrimVar& rhs)
     : _value(rhs._value), _blocked(rhs._blocked),
       _extras(rhs.clone_extras()) {
-    //TUSDZ_LOG_I("PrimVar copy ctor");
+    //LIGHTUSD_LOG_I("PrimVar copy ctor");
   }
 
   // Move constructor
@@ -62,13 +62,13 @@ struct PrimVar {
     : _value(std::move(rhs._value)),
       _blocked(rhs._blocked),
       _extras(std::move(rhs._extras)) {
-    //TUSDZ_LOG_I("PrimVar move ctor");
+    //LIGHTUSD_LOG_I("PrimVar move ctor");
     rhs._blocked = false;
   }
 
   // Copy assignment operator
   PrimVar& operator=(const PrimVar& rhs) {
-    //TUSDZ_LOG_I("PrimVar copy assignment op");
+    //LIGHTUSD_LOG_I("PrimVar copy assignment op");
     if (this != &rhs) {
       _value = rhs._value;
       _blocked = rhs._blocked;
@@ -79,7 +79,7 @@ struct PrimVar {
 
   // Move assignment operator
   PrimVar& operator=(PrimVar&& rhs) noexcept {
-    //TUSDZ_LOG_I("PrimVar move assignment op");
+    //LIGHTUSD_LOG_I("PrimVar move assignment op");
     if (this != &rhs) {
       _value = std::move(rhs._value);
       _blocked = rhs._blocked;
@@ -91,7 +91,7 @@ struct PrimVar {
 
   template<typename T>
   PrimVar(T &&v) noexcept : _value(std::move(v)) {
-    //TUSDZ_LOG_I("PrimVar templated ctor");
+    //LIGHTUSD_LOG_I("PrimVar templated ctor");
   }
 
   bool has_value() const {
@@ -100,7 +100,7 @@ struct PrimVar {
       return true;
     }
     bool ret = (_value.type_id() != value::TypeId::TYPE_ID_INVALID) && (_value.type_id() != value::TypeId::TYPE_ID_NULL);
-    //TUSDZ_LOG_I("has_value " << ret);
+    //LIGHTUSD_LOG_I("has_value " << ret);
     return ret;
   }
 
@@ -190,14 +190,14 @@ struct PrimVar {
   // Const ref version for lvalue arguments
   template <class T>
   void set_value(const T &v) {
-    //TUSDZ_LOG_I("set_value const_ref");
+    //LIGHTUSD_LOG_I("set_value const_ref");
     _value = v;
   }
 
   // Move version for rvalue arguments - avoids copy when caller passes temporary
   template <class T>
   void set_value(T &&v, typename std::enable_if<!std::is_lvalue_reference<T>::value && !std::is_same<typename std::decay<T>::type, value::Value>::value>::type* = nullptr) {
-    //TUSDZ_LOG_I("set_value move");
+    //LIGHTUSD_LOG_I("set_value move");
 
     // Create Value object first, then call move ctor.
     value::Value src(std::move(v));
@@ -206,12 +206,12 @@ struct PrimVar {
 
   // Special overload for value::Value to avoid double-wrapping
   void set_value(value::Value &&v) {
-    //TUSDZ_LOG_I("set_value Value move");
+    //LIGHTUSD_LOG_I("set_value Value move");
     _value = std::move(v);
   }
 
   void set_value(const value::Value &v) {
-    //TUSDZ_LOG_I("set_value Value copy");
+    //LIGHTUSD_LOG_I("set_value Value copy");
     _value = v;
   }
 

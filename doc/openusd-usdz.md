@@ -188,19 +188,19 @@ runtime-side limit.
 
 ---
 
-## 5. Status in lightusd — `tusdchecker --arkit`
+## 5. Status in lightusd — `lusdchecker --arkit`
 
 The rules above are **implemented** in the dependency-free `next` validator
 (`src/next/validation/usd-validation.{hh,cc}`) as an opt-in `arkit` rule group, and are exposed by
-the `tusdchecker` CLI (`tools/tusdchecker/`):
+the `lusdchecker` CLI (`tools/lusdchecker/`):
 
 ```sh
 cmake -S . -B build_ninja -G Ninja -DLIGHTUSD_BUILD_TOOLS=ON
-cmake --build build_ninja --target tusdchecker
+cmake --build build_ninja --target lusdchecker
 
-build_ninja/tusdchecker --arkit asset.usdz         # ARKit profile, exit 1 on any arkit.* error
-build_ninja/tusdchecker --groups core,arkit a.usda # just the ARKit rules on a layer
-build_ninja/tusdchecker --arkit --json asset.usdz  # "checkedGroups":[...,"arkit"]
+build_ninja/lusdchecker --arkit asset.usdz         # ARKit profile, exit 1 on any arkit.* error
+build_ninja/lusdchecker --groups core,arkit a.usda # just the ARKit rules on a layer
+build_ninja/lusdchecker --arkit --json asset.usdz  # "checkedGroups":[...,"arkit"]
 ```
 
 `--arkit` enables the `arkit` group plus the base groups OpenUSD always runs with it
@@ -208,9 +208,9 @@ build_ninja/tusdchecker --arkit --json asset.usdz  # "checkedGroups":[...,"arkit
 part of `--all` / `MakeValidateAllOptions()`: a Z-up layer with a `BasisCurves` prim is perfectly
 valid USD, just not ARKit-deliverable.
 
-### Rule mapping: OpenUSD checker → tusdchecker
+### Rule mapping: OpenUSD checker → lusdchecker
 
-| OpenUSD checker (complianceChecker.py) | tusdchecker rule id | Group |
+| OpenUSD checker (complianceChecker.py) | lusdchecker rule id | Group |
 | --- | --- | --- |
 | `ByteAlignmentChecker` | `package.entry.alignment` | package |
 | `CompressionChecker` | `package.entry.compression`, `package.entry.size` | package |

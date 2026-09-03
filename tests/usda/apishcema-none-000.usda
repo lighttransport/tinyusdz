@@ -9,7 +9,7 @@
 # from the typed-attribute None case in none-001.usda (where None
 # blocks a `primvars:myint` value), here None clears the apiSchemas
 # array-typed prim metadatum.
-# tusdcat preserves `apiSchemas = None` verbatim (matches pxrUSD usdcat).
+# lusdcat preserves `apiSchemas = None` verbatim (matches pxrUSD usdcat).
 
 def Mesh "m" (
     apiSchemas = None

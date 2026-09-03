@@ -416,4 +416,4 @@ function updateStats(values = {}) {
 
 // ── Expose for debugging ──
 window.__usdAssetsBrowser = { state, renderer, ASSETS };
-import { showLoader, hideLoader } from "../tusd-loader.js";
+import { showLoader, hideLoader } from "../lightusd-loader.js";

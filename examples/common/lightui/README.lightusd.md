@@ -3,8 +3,8 @@
 Upstream: https://github.com/syoyo/lightui (local: `~/work/lightui`)
 
 Vendored **subset** snapshot, not a git submodule. Imported for
-`examples/tusdquicklook`, which needs a portable software-rendered UI without
-ImGui/GLFW/OpenGL (unlike `examples/tusdview`).
+`examples/lusdquicklook`, which needs a portable software-rendered UI without
+ImGui/GLFW/OpenGL (unlike `examples/lusdview`).
 
 ## Snapshot
 
@@ -36,7 +36,7 @@ already has the requested size, and a later reconfigure still reaches the app
 as an ordinary resize event (`StructureNotifyMask` is selected).
 
 Worth reporting upstream. Verified with the interactive smoke test under Xvfb
-(`examples/tusdquicklook/tests/run-quicklook-gui-smoke.sh`), which hangs without
+(`examples/lusdquicklook/tests/run-quicklook-gui-smoke.sh`), which hangs without
 the patch.
 
 **`src/platform/x11/platform_x11.c` — synthesize multi-click counts.**
@@ -45,7 +45,7 @@ the patch.
 but the X11 backend hardcoded it to `1`. X11 reports every button press
 independently and has no notion of a double-click, so unless the backend
 tracks the run, no application on Linux can ever observe one — silently
-breaking every double-click feature (in tusdquicklook, both descend-into-
+breaking every double-click feature (in lusdquicklook, both descend-into-
 directory in the file list and click-to-focus in the viewport).
 
 The patch tracks the last press (button, time, position) and extends the run
@@ -60,7 +60,7 @@ Upstream draws each character in these four widgets as a 5x10 filled rectangle
 with a 7px advance, so their text renders as rows of grey blocks. Widgets that
 already carry a `lui_font_t *font` (`combo`, `tabs`, `label`, `menu`, `radio`,
 `text_input`, `numentry`, `text_edit`) render real glyphs instead. An app that
-mixes the two — as tusdquicklook does — gets legible combo labels next to an
+mixes the two — as lusdquicklook does — gets legible combo labels next to an
 illegible status bar.
 
 The patch adds the same optional `lui_font_t *font` field to these four

@@ -1,6 +1,6 @@
 #usda 1.0
 (
-    subLayers = [@../../tusdview/tests/deform-morph-skin.usda@]
+    subLayers = [@../../lusdview/tests/deform-morph-skin.usda@]
 )
 
 over "root" (

@@ -17,8 +17,8 @@
  *     of reads bottoms out in the C API's internal locking.
  */
 
-#ifndef TUSD_PY_INTERNAL_H_
-#define TUSD_PY_INTERNAL_H_
+#ifndef LIGHTUSD_PY_INTERNAL_H_
+#define LIGHTUSD_PY_INTERNAL_H_
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -75,18 +75,18 @@ typedef struct {
    * data:bytes, count:int) | ("str", type:int, s:str) | ("tokens", type:int,
    * items:tuple[str]) */
   PyObject* normalizer;
-} tusd_state;
+} lightusd_state;
 
 /* State lookup: module-level functions receive the module as self; methods on
  * our heap types recover the module via their defining type. */
-static inline tusd_state* tusd_state_from_module(PyObject* module) {
-  return (tusd_state*)PyModule_GetState(module);
+static inline lightusd_state* lightusd_state_from_module(PyObject* module) {
+  return (lightusd_state*)PyModule_GetState(module);
 }
 
-tusd_state* tusd_state_from_type(PyTypeObject* tp);
+lightusd_state* lightusd_state_from_type(PyTypeObject* tp);
 
-static inline tusd_state* tusd_state_from_obj(PyObject* obj) {
-  return tusd_state_from_type(Py_TYPE(obj));
+static inline lightusd_state* lightusd_state_from_obj(PyObject* obj) {
+  return lightusd_state_from_type(Py_TYPE(obj));
 }
 
 /* ============================================================
@@ -95,102 +95,102 @@ static inline tusd_state* tusd_state_from_obj(PyObject* obj) {
 
 typedef struct {
   PyObject_HEAD
-  tusd_stage* stage; /* owned; NULL after close() */
-} TusdStage;
+  lightusd_stage* stage; /* owned; NULL after close() */
+} LightUSDStage;
 
 typedef struct {
   PyObject_HEAD
-  PyObject* stage;     /* strong ref to TusdStage */
+  PyObject* stage;     /* strong ref to LightUSDStage */
   PyObject* path_utf8; /* bytes: prim path (for re-resolution) */
-  tusd_prim prim;
+  lightusd_prim prim;
   uint64_t gen; /* stage generation captured at creation */
-} TusdPrim;
+} LightUSDPrim;
 
 typedef struct {
   PyObject_HEAD
-  PyObject* prim;      /* strong ref to TusdPrim */
+  PyObject* prim;      /* strong ref to LightUSDPrim */
   PyObject* name;      /* str */
   PyObject* name_utf8; /* bytes: cached UTF-8 of name (limited-API friendly) */
-} TusdNamedRef; /* shared shape for Attribute / Relationship / VariantSet */
+} LightUSDNamedRef; /* shared shape for Attribute / Relationship / VariantSet */
 
 typedef struct {
   PyObject_HEAD
-  PyObject* prim; /* strong ref to TusdPrim */
-} TusdPrimRef; /* shared shape for TimeSamples(via attr)?, VariantSets */
+  PyObject* prim; /* strong ref to LightUSDPrim */
+} LightUSDPrimRef; /* shared shape for TimeSamples(via attr)?, VariantSets */
 
 typedef struct {
   PyObject_HEAD
-  PyObject* attr; /* strong ref to Attribute (TusdNamedRef) */
-} TusdTimeSamples;
+  PyObject* attr; /* strong ref to Attribute (LightUSDNamedRef) */
+} LightUSDTimeSamples;
 
 /* Zero-copy array view. Data lives either in stage-owned storage (owner keeps
- * the Stage/tusd_value wrapper alive) or in an owned tusd_value. */
+ * the Stage/lightusd_value wrapper alive) or in an owned lightusd_value. */
 typedef struct {
   PyObject_HEAD
   PyObject* owner;        /* strong ref keeping the memory alive (may be NULL
                              when owned_value is set) */
-  tusd_value* owned;      /* owned value destroyed in dealloc (may be NULL) */
-  tusd_value_view view;
+  lightusd_value* owned;      /* owned value destroyed in dealloc (may be NULL) */
+  lightusd_value_view view;
   Py_ssize_t shape[2];
   int ndim;
   char format[4];       /* struct-style format char for the storage type */
   char typestr[8];      /* numpy __array_interface__ typestr, e.g. "<f4" */
   Py_ssize_t itemsize;
-} TusdArray;
+} LightUSDArray;
 
 typedef struct {
   PyObject_HEAD
   PyObject* stage;   /* strong ref */
-  tusd_prim* stack;  /* DFS stack */
+  lightusd_prim* stack;  /* DFS stack */
   Py_ssize_t top;    /* number of valid entries */
   Py_ssize_t cap;
   uint64_t gen;
-} TusdStageIter;
+} LightUSDStageIter;
 
 typedef struct {
   PyObject_HEAD
-  PyObject* prim; /* strong ref to TusdPrim */
+  PyObject* prim; /* strong ref to LightUSDPrim */
   Py_ssize_t index;
-} TusdChildIter;
+} LightUSDChildIter;
 
 /* ============================================================
  * Shared helpers (defined across the py-*.c files)
  * ============================================================ */
 
-/* Raise the exception matching a tusd_status; message from tusd_last_error().
+/* Raise the exception matching a lightusd_status; message from lightusd_last_error().
  * `what` is a fallback/context prefix (may be NULL). Always returns NULL. */
-PyObject* tusd_raise(tusd_state* st, tusd_status status, const char* what);
+PyObject* lightusd_raise(lightusd_state* st, lightusd_status status, const char* what);
 
 /* Wrap helpers (all return new references, NULL on error). */
-PyObject* tusd_wrap_prim(tusd_state* st, PyObject* stage_obj, tusd_prim prim);
-PyObject* tusd_wrap_array_borrowed(tusd_state* st, PyObject* owner,
-                                   const tusd_value_view* view);
-PyObject* tusd_wrap_array_owned(tusd_state* st, tusd_value* owned,
-                                const tusd_value_view* view);
+PyObject* lightusd_wrap_prim(lightusd_state* st, PyObject* stage_obj, lightusd_prim prim);
+PyObject* lightusd_wrap_array_borrowed(lightusd_state* st, PyObject* owner,
+                                   const lightusd_value_view* view);
+PyObject* lightusd_wrap_array_owned(lightusd_state* st, lightusd_value* owned,
+                                const lightusd_value_view* view);
 
 /* Convert a POD/array value view to a Python object.
  * - scalars -> bool/int/float/tuple
- * - arrays -> TusdArray (anchored to `owner`, or adopting `owned`)
+ * - arrays -> LightUSDArray (anchored to `owner`, or adopting `owned`)
  * - blocks -> ValueBlock sentinel
  * Does NOT handle string-family / dictionary views (caller's job). Steals
  * `owned` on success when non-NULL. */
-PyObject* tusd_view_to_python(tusd_state* st, PyObject* owner,
-                              tusd_value* owned, const tusd_value_view* view);
+PyObject* lightusd_view_to_python(lightusd_state* st, PyObject* owner,
+                              lightusd_value* owned, const lightusd_value_view* view);
 
-/* Convert an owned tusd_value (any type incl. string family) to Python.
+/* Convert an owned lightusd_value (any type incl. string family) to Python.
  * Steals `val` (destroys it unless an Array adopts it). */
-PyObject* tusd_value_to_python(tusd_state* st, tusd_value* val);
+PyObject* lightusd_value_to_python(lightusd_state* st, lightusd_value* val);
 
 /* Convert a borrowed dict cursor to a new PyDict (recursive, copies). */
-PyObject* tusd_dict_to_python(tusd_state* st, tusd_dict_ref dict);
+PyObject* lightusd_dict_to_python(lightusd_state* st, lightusd_dict_ref dict);
 
 /* Fetch an attribute default value as Python (string family, token arrays,
  * PODs, arrays, blocks). `owner` anchors zero-copy arrays. */
-PyObject* tusd_attr_value_to_python(tusd_state* st, PyObject* stage_obj,
-                                    tusd_prim prim, const char* name);
+PyObject* lightusd_attr_value_to_python(lightusd_state* st, PyObject* stage_obj,
+                                    lightusd_prim prim, const char* name);
 
 /* sv -> str (new ref). */
-static inline PyObject* tusd_sv_to_str(tusd_sv sv) {
+static inline PyObject* lightusd_sv_to_str(lightusd_sv sv) {
   return PyUnicode_FromStringAndSize(sv.data ? sv.data : "",
                                      (Py_ssize_t)sv.len);
 }
@@ -198,31 +198,31 @@ static inline PyObject* tusd_sv_to_str(tusd_sv sv) {
 /* PyUnicode_AsUTF8 joined the limited API only in 3.13; go through a
  * temporary bytes object instead. The returned pointer is valid while *tmp
  * lives; caller must Py_XDECREF(*tmp) afterwards (NULL-safe). */
-static inline const char* tusd_utf8(PyObject* s, PyObject** tmp) {
+static inline const char* lightusd_utf8(PyObject* s, PyObject** tmp) {
   *tmp = PyUnicode_AsUTF8String(s);
   if (!*tmp) return NULL;
   return PyBytes_AsString(*tmp);
 }
 
 /* Stage helpers */
-static inline tusd_stage* tusd_stage_handle(PyObject* stage_obj) {
-  return ((TusdStage*)stage_obj)->stage;
+static inline lightusd_stage* lightusd_stage_handle(PyObject* stage_obj) {
+  return ((LightUSDStage*)stage_obj)->stage;
 }
 
 /* Returns the C stage handle after validating the Prim's generation; raises
  * StaleHandleError / UsdError and returns NULL on failure. */
-tusd_stage* tusd_prim_stage_checked(tusd_state* st, TusdPrim* prim);
+lightusd_stage* lightusd_prim_stage_checked(lightusd_state* st, LightUSDPrim* prim);
 
 /* Allocate an instance of a heap type created with PyType_FromModuleAndSpec
  * (bypasses tp_new so Python code cannot construct these directly). */
-PyObject* tusd_alloc(PyObject* type_obj);
+PyObject* lightusd_alloc(PyObject* type_obj);
 
 /* Type spec registration (called from module exec). */
-int tusd_register_array_type(PyObject* module, tusd_state* st);
-int tusd_register_render_types(PyObject* module, tusd_state* st);
-PyObject* tusd_to_render_scene(PyObject* module, PyObject* args,
+int lightusd_register_array_type(PyObject* module, lightusd_state* st);
+int lightusd_register_render_types(PyObject* module, lightusd_state* st);
+PyObject* lightusd_to_render_scene(PyObject* module, PyObject* args,
                                PyObject* kwargs);
-int tusd_register_prim_types(PyObject* module, tusd_state* st);
-int tusd_register_stage_type(PyObject* module, tusd_state* st);
+int lightusd_register_prim_types(PyObject* module, lightusd_state* st);
+int lightusd_register_stage_type(PyObject* module, lightusd_state* st);
 
-#endif /* TUSD_PY_INTERNAL_H_ */
+#endif /* LIGHTUSD_PY_INTERNAL_H_ */

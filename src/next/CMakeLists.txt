@@ -546,8 +546,8 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     target_include_directories(test_vr_edge_matrix PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next)
 
-    # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
-    # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
+    # lusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
+    # (tests/parse-asset-corpus.mjs --lusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/next_usdcat.cc
     )
@@ -853,7 +853,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
                     ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/parse-asset-corpus.mjs
                     --assets "${NEXT_CORPUS_ASSETS_DIR}"
                     --mode load
-                    --tusdcat "$<TARGET_FILE:next_usdcat>"
+                    --lusdcat "$<TARGET_FILE:next_usdcat>"
                     --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-parse-results"
                     # Regression ratchet: 0 of 280 corpus files fail to parse
                     # today (some USDC files load with warnings on unsupported
@@ -867,24 +867,24 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
 
         # Compose differential over the same corpus: flatten every asset and
         # cross-check against the pinned OpenUSD usdcat (needs the legacy
-        # build's tusddiff for the layer re-serialization diff). Ratchets
+        # build's lusddiff for the layer re-serialization diff). Ratchets
         # (2026-07-15 baseline: MATCH 267, DIFFER 2 + DIFFERR 9 = 11; the
-        # DIFFERR set is the LEGACY tusddiff parser failing on pxr output
+        # DIFFERR set is the LEGACY lusddiff parser failing on pxr output
         # forms, not next divergences): small headroom only — raising either
         # number requires justification.
         if(EXISTS "${NEXT_PXR_USDCAT}" AND
-           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../build/tusddiff")
+           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../build/lusddiff")
             add_test(
                 NAME next_corpus_flatten_compare
                 COMMAND ${LIGHTUSD_NEXT_NODE_EXECUTABLE}
                         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/parse-asset-corpus.mjs
                         --assets "${NEXT_CORPUS_ASSETS_DIR}"
                         --mode flatten
-                        --tusdcat "$<TARGET_FILE:next_usdcat>"
+                        --lusdcat "$<TARGET_FILE:next_usdcat>"
                         --serialize-args "--rewrite-layer --openusd-compat"
                         --compare
                         --usdcat "${NEXT_PXR_USDCAT}"
-                        --tusddiff "${CMAKE_CURRENT_SOURCE_DIR}/../../build/tusddiff"
+                        --lusddiff "${CMAKE_CURRENT_SOURCE_DIR}/../../build/lusddiff"
                         --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-flatten-results"
                         --max-fail 3
                         --max-differ 15

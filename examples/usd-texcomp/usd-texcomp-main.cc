@@ -8,7 +8,7 @@
 //     asset inputs:file = @diffuse.png@ ( customData = { asset ktx2 = @diffuse.ktx2@ } )
 //
 // `inputs:file` is left untouched, so the asset still opens in stock USD tools
-// and stays USDZ-legal; lightusd-aware consumers (tusdview
+// and stays USDZ-legal; lightusd-aware consumers (lusdview
 // --texture-keep-compressed on) find the companion and upload/transcode its GPU
 // blocks directly. This is the producer side of doc/texcomp.md.
 //
@@ -305,7 +305,7 @@ void Usage() {
       "mipped) next to the output and adds a legacy-safe hint on the attribute:\n"
       "  asset inputs:file = @t.png@ ( customData = { asset ktx2 = @t.ktx2@ } )\n"
       "inputs:file is unchanged, so stock USD tools and USDZ are unaffected.\n"
-      "Consume with: tusdview <output.usda> --texture-keep-compressed on\n");
+      "Consume with: lusdview <output.usda> --texture-keep-compressed on\n");
 }
 
 }  // namespace

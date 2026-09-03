@@ -9,8 +9,8 @@
 // which the caller catches and turns into a clean abort or a degraded result —
 // instead of being OOM-killed by the kernel with no diagnostics.
 //
-// Originally written for tools/tusdrender (-maxMem); lifted here so
-// examples/tusdquicklook can share it. Header-only, depends only on std plus
+// Originally written for tools/lusdrender (-maxMem); lifted here so
+// examples/lusdquicklook can share it. Header-only, depends only on std plus
 // resource-budget.hh.
 #pragma once
 

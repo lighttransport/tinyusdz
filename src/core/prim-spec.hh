@@ -43,28 +43,28 @@ namespace lightusd {
 class PrimSpec {
  public:
   PrimSpec() {
-    //TUSDZ_LOG_I("PrimSpec default constructor called");
+    //LIGHTUSD_LOG_I("PrimSpec default constructor called");
   }
 
   PrimSpec(const Specifier &spec, const std::string &name)
       : _specifier(spec), _name(name) {
-    //TUSDZ_LOG_I("PrimSpec constructor called with spec and name: " << name);
+    //LIGHTUSD_LOG_I("PrimSpec constructor called with spec and name: " << name);
   }
   PrimSpec(const Specifier &spec, const std::string &typeName,
            const std::string &name)
       : _specifier(spec), _typeName(typeName), _name(name) {
-    //TUSDZ_LOG_I("PrimSpec constructor called with spec, typeName, and name: " << name);
+    //LIGHTUSD_LOG_I("PrimSpec constructor called with spec, typeName, and name: " << name);
   }
 
   PrimSpec(const PrimSpec &rhs) {
-    //TUSDZ_LOG_I("PrimSpec copy constructor called");
+    //LIGHTUSD_LOG_I("PrimSpec copy constructor called");
     if (this != &rhs) {
       CopyFrom(rhs);
     }
   }
 
   PrimSpec &operator=(const PrimSpec &rhs) {
-    //TUSDZ_LOG_I("PrimSpec copy assignment operator called");
+    //LIGHTUSD_LOG_I("PrimSpec copy assignment operator called");
     if (this != &rhs) {
       CopyFrom(rhs);
     }
@@ -73,14 +73,14 @@ class PrimSpec {
   }
 
   PrimSpec(PrimSpec &&rhs) noexcept {
-    //TUSDZ_LOG_I("PrimSpec move constructor called");
+    //LIGHTUSD_LOG_I("PrimSpec move constructor called");
     if (this != &rhs) {
       MoveFrom(rhs);
     }
   }
 
   PrimSpec &operator=(PrimSpec &&rhs) noexcept {
-    //TUSDZ_LOG_I("PrimSpec move assignment operator called");
+    //LIGHTUSD_LOG_I("PrimSpec move assignment operator called");
     if (this != &rhs) {
       MoveFrom(rhs);
     }

@@ -161,11 +161,11 @@ Total                   18       6,610+    Complete project
 ### Functions Implemented: 70+
 
 **Tier 1 (Essential):**
-- tusdz_init / tusdz_shutdown
-- tusdz_load_from_file / tusdz_load_from_memory
-- tusdz_stage_free
-- tusdz_get_root_prim
-- tusdz_prim_get_child / tusdz_prim_child_count
+- lightusd_init / lightusd_shutdown
+- lightusd_load_from_file / lightusd_load_from_memory
+- lightusd_stage_free
+- lightusd_get_root_prim
+- lightusd_prim_get_child / lightusd_prim_child_count
 
 **Tier 2 (Core Operations):**
 - Scene traversal (prim navigation)
@@ -545,12 +545,12 @@ with LightUSD() as tz:
 ```c
 #include <lightusd_c.h>
 
-tusdz_init();
-tusdz_stage stage;
-tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
+lightusd_init();
+lightusd_stage stage;
+lightusd_load_from_file("model.usd", NULL, &stage, NULL, 0);
 // ... use stage ...
-tusdz_stage_free(stage);
-tusdz_shutdown();
+lightusd_stage_free(stage);
+lightusd_shutdown();
 ```
 
 ### For Rust Users

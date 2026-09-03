@@ -88,7 +88,7 @@ fi
 # synchronisation and the parallel PCP prewarm live entirely behind
 # LIGHTUSD_ENABLE_THREAD, so a change that breaks them passes every default
 # check and only fails for the tools/examples that force it ON
-# (tusdrender/tusdview/tusdquicklook).
+# (lusdrender/lusdview/lusdquicklook).
 #
 # Set ALSO_THREADS=0 to skip (e.g. a machine without a thread library).
 if [ "$ALSO_THREADS" != "0" ] && [ "$THREADS" != "ON" ]; then

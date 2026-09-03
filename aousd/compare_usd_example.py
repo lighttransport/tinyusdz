@@ -55,22 +55,22 @@ def analyze_with_openusd(filepath):
         return None
 
 def analyze_with_lightusd(filepath):
-    """Analyze USD file with LightUSD tusdcat tool"""
+    """Analyze USD file with LightUSD lusdcat tool"""
     try:
-        # Use tusdcat to dump the file
-        tusdcat_path = os.path.join(os.path.dirname(os.path.dirname(filepath)), "build", "tusdcat")
-        if not os.path.exists(tusdcat_path):
-            tusdcat_path = "../build/tusdcat"  # Try relative path
+        # Use lusdcat to dump the file
+        lusdcat_path = os.path.join(os.path.dirname(os.path.dirname(filepath)), "build", "lusdcat")
+        if not os.path.exists(lusdcat_path):
+            lusdcat_path = "../build/lusdcat"  # Try relative path
 
         # Suppress debug output by redirecting stderr
         result = subprocess.run(
-            [tusdcat_path, filepath],
+            [lusdcat_path, filepath],
             capture_output=True,
             text=True
         )
 
         if result.returncode != 0:
-            print(f"Error running tusdcat: {result.stderr}")
+            print(f"Error running lusdcat: {result.stderr}")
             return None
 
         # Parse the output

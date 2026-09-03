@@ -601,7 +601,7 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const lightusd::next::Stage& stage,
 
   // Prefer the shared next render converter when the shader is material-local.
   // It already handles UsdPreviewSurface, MaterialX UsdPreviewSurface, and
-  // OpenPBR inputs consistently with tusdview/tusdrender extraction.
+  // OpenPBR inputs consistently with lusdview/lusdrender extraction.
   // Guarded: ConvertMaterial itself falls back to ConvertUsdMtlxMaterial when
   // it cannot convert the shader, so delegating back from that path would
   // recurse until stack overflow.

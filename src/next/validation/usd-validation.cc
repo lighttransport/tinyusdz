@@ -9,7 +9,7 @@
 // Legacy checks that are not fully expressible on next::Layer / next::PrimSpec
 // are skipped or structurally approximated:
 //  - crate/package rules require the original bytes and are run by callers
-//    such as tusdchecker, not by Layer-only validation.
+//    such as lusdchecker, not by Layer-only validation.
 //  - API-schema validation uses next's compact built-in inventory rather than
 //    OpenUSD's dynamically discovered plugin registry.
 //  - Invalid list-edit qualifiers: next ArcEdit qualifiers are typed enums;
@@ -5412,7 +5412,7 @@ void BuildPrimIndex(const Layer &layer, uint32_t prim_index,
 //    extension (png/jpg/jpeg/bmp/tga are treated as 8-bit; exr/hdr as float).
 //  - The `package` container rules (zip layout, allowed entry extensions,
 //    `.usdc` root layer) need the original bytes and are run by callers such
-//    as tusdchecker under the `arkit.package.*` rule ids.
+//    as lusdchecker under the `arkit.package.*` rule ids.
 // ---------------------------------------------------------------------------
 
 // complianceChecker.py:792 `_allowedPrimTypeNames`.
@@ -6575,7 +6575,7 @@ USDValidationResult ValidateLayerLocal(const Layer &layer,
   USDValidationResult result;
   result.checked_groups = options;
   // Container groups need the original package/crate bytes and are run by
-  // callers that retain them (for example tusdchecker), not by Layer-only
+  // callers that retain them (for example lusdchecker), not by Layer-only
   // semantic validation.
   result.checked_groups.package = false;
   result.checked_groups.crate = false;
@@ -6777,7 +6777,7 @@ std::string Pluralize(size_t n, const char *noun) {
 const std::vector<ValidationRuleInfo> &GetValidationRuleTable() {
   // Ordered by (group, id). `vol.*` rules run under the geom group (Volume is
   // a renderable; see the Volume dispatch note). Package/crate/checker rules
-  // are emitted by the byte-container checks in tusdchecker, which shares
+  // are emitted by the byte-container checks in lusdchecker, which shares
   // this registry.
   static const std::vector<ValidationRuleInfo> kRules = {
       {"arkit.layer.extension", "arkit",

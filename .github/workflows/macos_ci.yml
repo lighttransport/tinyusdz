@@ -88,7 +88,7 @@ jobs:
           for usd_file in models/suzanne.usdc models/cube.usda; do
             if [ -f "$usd_file" ]; then
               echo "Testing $usd_file"
-              ./build/tusdcat "$usd_file" > /tmp/tusdcat.txt
+              ./build/lusdcat "$usd_file" > /tmp/lusdcat.txt
               usdcat "$usd_file" > /tmp/usdcat.txt
               echo "✓ Both tools read $usd_file"
             fi
@@ -96,7 +96,7 @@ jobs:
 
           # Test 2: Convert with LightUSD, verify with OpenUSD
           if [ -f "models/suzanne.usdc" ]; then
-            ./build/tusdcat models/suzanne.usdc > /tmp/lightusd.usda
+            ./build/lusdcat models/suzanne.usdc > /tmp/lightusd.usda
             usdcat /tmp/lightusd.usda > /dev/null
             echo "✓ OpenUSD read LightUSD-generated USDA"
           fi

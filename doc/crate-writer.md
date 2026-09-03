@@ -4,7 +4,7 @@ The LightUSD USDC Crate Writer writes USD Stage data to binary USDC (Crate) form
 
 > **Two crate writers in the current codebase.** This document primarily covers
 > the **classic** writer (`src/crate-writer*.cc`, driven by `Stage` via
-> `stage-converter.cc`, exposed by `tusdcat`). The refactored **`next`** engine
+> `stage-converter.cc`, exposed by `lusdcat`). The refactored **`next`** engine
 > ships a second, independent crate writer under `src/next/crate/` (used by the
 > `next` pipeline — `next_usdcat -f -o out.usdc`, the wasm `--pipeline stream-next`
 > USDZ path, etc.). The two share the on-disk format and the dedup principles
@@ -17,7 +17,7 @@ The LightUSD USDC Crate Writer writes USD Stage data to binary USDC (Crate) form
 **Classic writer:**
 - Core writer: `src/crate-writer.cc` (sections/TOC/compression), `src/crate-writer-values.cc` (value-data encoding + dedup), `src/crate-writer-inline.cc` (`TryInlineValue`), `src/crate-writer.hh`
 - Stage converter: `src/stage-converter.cc` (Stage/Prim/property → crate spec+field model)
-- CLI: `examples/tusdcat` with `-o/--output` option
+- CLI: `examples/lusdcat` with `-o/--output` option
 - Unit tests: `tests/unit/unit-crate-writer.cc`
 
 **`next` writer (`src/next/crate/`):** a single `crate-writer.cc` translation unit
@@ -28,11 +28,11 @@ exercised by `test_usdc.cc` / `test_usdcat_roundtrip.cc`). A lazy-array **pass-t
 
 ```bash
 # Basic conversion
-./tusdcat input.usda -o output.usdc
-./tusdcat output.usdc  # Verify readback
+./lusdcat input.usda -o output.usdc
+./lusdcat output.usdc  # Verify readback
 
 # Flattened composition
-./tusdcat --flatten --composition=r,p input.usda -o flattened.usdc
+./lusdcat --flatten --composition=r,p input.usda -o flattened.usdc
 ```
 
 ## Implemented Features
@@ -105,7 +105,7 @@ back to backfill the count, keys, offsets, and `ValueRep`s
 ```bash
 # Enable debug output
 export LIGHTUSD_ENABLE_DCOUT=1
-./tusdcat input.usda -o output.usdc
+./lusdcat input.usda -o output.usdc
 
 # Hex dump header
 xxd -l 128 output.usdc
@@ -255,7 +255,7 @@ flag), so the default output is unchanged:
 |-------|------------------------|
 | Low-level crate writer | `CrateWriter::Options::enable_float_array_compression` |
 | High-level USDC writer | `USDWriteOptions::compress_float_arrays` (→ `SaveAsUSDCToFile`) |
-| `tusdcat` CLI | `--compress-float-arrays` |
+| `lusdcat` CLI | `--compress-float-arrays` |
 
 ```cpp
 lightusd::USDWriteOptions wopts;
@@ -263,7 +263,7 @@ wopts.compress_float_arrays = true;  // default false
 lightusd::usdc::SaveAsUSDCToFile("out.usdc", stage, &warn, &err, wopts);
 ```
 ```bash
-tusdcat --compress-float-arrays input.usda -o out.usdc   # default: off
+lusdcat --compress-float-arrays input.usda -o out.usdc   # default: off
 ```
 
 - Helpers: `CrateWriter::WriteCompressedFloatArray` /

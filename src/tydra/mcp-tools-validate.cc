@@ -21,7 +21,7 @@ namespace {
 
 // Map the optional `groups` argument to ValidationOptions. No `groups` -> core
 // only. When `groups` is present, start all-off and enable the listed groups;
-// "all" matches tusdcat --validate-all.
+// "all" matches lusdcat --validate-all.
 ValidationOptions ParseGroups(const nlohmann::json &args) {
   ValidationOptions opts;
 
@@ -49,7 +49,7 @@ ValidationOptions ParseGroups(const nlohmann::json &args) {
         opts.physics = true;
         // NOTE: no "render" group here — this tool drives the LEGACY
         // validator, which has no UsdRender rules; next's validator (web
-        // binding, tusdchecker) is where the render group exists.
+        // binding, lusdchecker) is where the render group exists.
       } else if (name == "crate") {
         opts.crate = true;
       } else if (name == "all") {

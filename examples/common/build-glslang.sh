@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # Clone + build the Khronos glslang reference compiler and install it locally to
-# examples/common/glslang. tusdview's Vulkan ray-tracing shader (ray query) needs
+# examples/common/glslang. lusdview's Vulkan ray-tracing shader (ray query) needs
 # a glslang new enough to understand GL_EXT_ray_query, which many distro packages
 # (and older Vulkan SDKs) predate. Build it once with this script, then configure
-# tusdview normally: vk/vulkan.cmake auto-detects examples/common/glslang/bin and
+# lusdview normally: vk/vulkan.cmake auto-detects examples/common/glslang/bin and
 # uses it in preference to the system compiler.
 #
 # Linux only for now. Requires: git, cmake, a C++17 compiler, python3.
@@ -27,7 +27,7 @@ case "$(uname -s)" in
   *) echo "build-glslang.sh: Linux only for now (saw $(uname -s))."
      echo "  On Windows, use build-glslang.ps1 (or the build-glslang.bat wrapper)"
      echo "  in this same directory instead. Otherwise, install a glslangValidator"
-     echo "  with GL_EXT_ray_query support manually and pass -DTUSDVIEW_GLSLANG=/path"
+     echo "  with GL_EXT_ray_query support manually and pass -DLUSDVIEW_GLSLANG=/path"
      echo "  to CMake."; exit 1 ;;
 esac
 
@@ -74,10 +74,10 @@ echo "==> installed: $bin"
 "$bin" --version
 
 # Quick self-check: can it compile the ray-query shader?
-rt="$HERE/../tusdview/vk/shaders/raytrace.comp"
+rt="$HERE/../lusdview/vk/shaders/raytrace.comp"
 if [ -f "$rt" ]; then
   if "$bin" -V --target-env vulkan1.2 -o /tmp/_rq_check.spv "$rt" >/dev/null 2>&1; then
-    echo "==> OK: this glslang compiles GL_EXT_ray_query. Reconfigure tusdview to enable RT."
+    echo "==> OK: this glslang compiles GL_EXT_ray_query. Reconfigure lusdview to enable RT."
     rm -f /tmp/_rq_check.spv
   else
     echo "==> WARNING: this glslang still cannot compile $rt — try a newer ref."

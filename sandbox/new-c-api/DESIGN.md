@@ -21,10 +21,10 @@ This document describes the design of a minimal C99 API for LightUSD, providing 
 All C++ objects are wrapped in opaque handles:
 
 ```c
-typedef struct tusdz_stage_t* tusdz_stage;
-typedef struct tusdz_prim_t* tusdz_prim;
-typedef struct tusdz_value_t* tusdz_value;
-typedef struct tusdz_layer_t* tusdz_layer;
+typedef struct lightusd_stage_t* lightusd_stage;
+typedef struct lightusd_prim_t* lightusd_prim;
+typedef struct lightusd_value_t* lightusd_value;
+typedef struct lightusd_layer_t* lightusd_layer;
 ```
 
 ### Memory Management
@@ -37,14 +37,14 @@ typedef struct tusdz_layer_t* tusdz_layer;
 
 ```c
 typedef enum {
-    TUSDZ_SUCCESS = 0,
-    TUSDZ_ERROR_FILE_NOT_FOUND = -1,
-    TUSDZ_ERROR_PARSE_FAILED = -2,
-    TUSDZ_ERROR_OUT_OF_MEMORY = -3,
-    TUSDZ_ERROR_INVALID_ARGUMENT = -4,
-    TUSDZ_ERROR_NOT_SUPPORTED = -5,
-    TUSDZ_ERROR_INTERNAL = -99
-} tusdz_result;
+    LIGHTUSD_SUCCESS = 0,
+    LIGHTUSD_ERROR_FILE_NOT_FOUND = -1,
+    LIGHTUSD_ERROR_PARSE_FAILED = -2,
+    LIGHTUSD_ERROR_OUT_OF_MEMORY = -3,
+    LIGHTUSD_ERROR_INVALID_ARGUMENT = -4,
+    LIGHTUSD_ERROR_NOT_SUPPORTED = -5,
+    LIGHTUSD_ERROR_INTERNAL = -99
+} lightusd_result;
 ```
 
 ## API Structure
@@ -54,53 +54,53 @@ typedef enum {
 ```c
 // USD format types
 typedef enum {
-    TUSDZ_FORMAT_AUTO = 0,
-    TUSDZ_FORMAT_USDA,  // ASCII
-    TUSDZ_FORMAT_USDC,  // Binary/Crate
-    TUSDZ_FORMAT_USDZ   // Zip archive
-} tusdz_format;
+    LIGHTUSD_FORMAT_AUTO = 0,
+    LIGHTUSD_FORMAT_USDA,  // ASCII
+    LIGHTUSD_FORMAT_USDC,  // Binary/Crate
+    LIGHTUSD_FORMAT_USDZ   // Zip archive
+} lightusd_format;
 
 // Prim types
 typedef enum {
-    TUSDZ_PRIM_UNKNOWN = 0,
-    TUSDZ_PRIM_XFORM,
-    TUSDZ_PRIM_MESH,
-    TUSDZ_PRIM_MATERIAL,
-    TUSDZ_PRIM_SHADER,
-    TUSDZ_PRIM_CAMERA,
-    TUSDZ_PRIM_LIGHT,
-    TUSDZ_PRIM_SKELETON,
-    TUSDZ_PRIM_SKELROOT,
-    TUSDZ_PRIM_SKELANIMATION,
-    TUSDZ_PRIM_SCOPE,
-    TUSDZ_PRIM_GEOMSUBSET
-} tusdz_prim_type;
+    LIGHTUSD_PRIM_UNKNOWN = 0,
+    LIGHTUSD_PRIM_XFORM,
+    LIGHTUSD_PRIM_MESH,
+    LIGHTUSD_PRIM_MATERIAL,
+    LIGHTUSD_PRIM_SHADER,
+    LIGHTUSD_PRIM_CAMERA,
+    LIGHTUSD_PRIM_LIGHT,
+    LIGHTUSD_PRIM_SKELETON,
+    LIGHTUSD_PRIM_SKELROOT,
+    LIGHTUSD_PRIM_SKELANIMATION,
+    LIGHTUSD_PRIM_SCOPE,
+    LIGHTUSD_PRIM_GEOMSUBSET
+} lightusd_prim_type;
 
 // Value types
 typedef enum {
-    TUSDZ_VALUE_NONE = 0,
-    TUSDZ_VALUE_BOOL,
-    TUSDZ_VALUE_INT,
-    TUSDZ_VALUE_UINT,
-    TUSDZ_VALUE_FLOAT,
-    TUSDZ_VALUE_DOUBLE,
-    TUSDZ_VALUE_STRING,
-    TUSDZ_VALUE_TOKEN,
-    TUSDZ_VALUE_ASSET_PATH,
-    TUSDZ_VALUE_FLOAT2,
-    TUSDZ_VALUE_FLOAT3,
-    TUSDZ_VALUE_FLOAT4,
-    TUSDZ_VALUE_DOUBLE2,
-    TUSDZ_VALUE_DOUBLE3,
-    TUSDZ_VALUE_DOUBLE4,
-    TUSDZ_VALUE_MATRIX3F,
-    TUSDZ_VALUE_MATRIX4F,
-    TUSDZ_VALUE_MATRIX3D,
-    TUSDZ_VALUE_MATRIX4D,
-    TUSDZ_VALUE_QUATF,
-    TUSDZ_VALUE_QUATD,
-    TUSDZ_VALUE_ARRAY  // Arrays are typed arrays
-} tusdz_value_type;
+    LIGHTUSD_VALUE_NONE = 0,
+    LIGHTUSD_VALUE_BOOL,
+    LIGHTUSD_VALUE_INT,
+    LIGHTUSD_VALUE_UINT,
+    LIGHTUSD_VALUE_FLOAT,
+    LIGHTUSD_VALUE_DOUBLE,
+    LIGHTUSD_VALUE_STRING,
+    LIGHTUSD_VALUE_TOKEN,
+    LIGHTUSD_VALUE_ASSET_PATH,
+    LIGHTUSD_VALUE_FLOAT2,
+    LIGHTUSD_VALUE_FLOAT3,
+    LIGHTUSD_VALUE_FLOAT4,
+    LIGHTUSD_VALUE_DOUBLE2,
+    LIGHTUSD_VALUE_DOUBLE3,
+    LIGHTUSD_VALUE_DOUBLE4,
+    LIGHTUSD_VALUE_MATRIX3F,
+    LIGHTUSD_VALUE_MATRIX4F,
+    LIGHTUSD_VALUE_MATRIX3D,
+    LIGHTUSD_VALUE_MATRIX4D,
+    LIGHTUSD_VALUE_QUATF,
+    LIGHTUSD_VALUE_QUATD,
+    LIGHTUSD_VALUE_ARRAY  // Arrays are typed arrays
+} lightusd_value_type;
 
 // Load options
 typedef struct {
@@ -108,94 +108,94 @@ typedef struct {
     int max_depth;                // Composition depth limit, 0 = default
     int enable_composition;       // 1 = resolve references/payloads
     int strict_mode;              // 1 = fail on any warning
-} tusdz_load_options;
+} lightusd_load_options;
 ```
 
 ### 2. Tier 1: Minimal Viable API (10 functions)
 
 ```c
 // Initialization and cleanup
-tusdz_result tusdz_init(void);
-void tusdz_shutdown(void);
+lightusd_result lightusd_init(void);
+void lightusd_shutdown(void);
 
 // Loading
-tusdz_result tusdz_load_from_file(
+lightusd_result lightusd_load_from_file(
     const char* filepath,
-    const tusdz_load_options* options,  // can be NULL for defaults
-    tusdz_stage* out_stage,
+    const lightusd_load_options* options,  // can be NULL for defaults
+    lightusd_stage* out_stage,
     char* error_buf,
     size_t error_buf_size
 );
 
-tusdz_result tusdz_load_from_memory(
+lightusd_result lightusd_load_from_memory(
     const void* data,
     size_t size,
-    tusdz_format format,
-    const tusdz_load_options* options,
-    tusdz_stage* out_stage,
+    lightusd_format format,
+    const lightusd_load_options* options,
+    lightusd_stage* out_stage,
     char* error_buf,
     size_t error_buf_size
 );
 
-void tusdz_stage_free(tusdz_stage stage);
+void lightusd_stage_free(lightusd_stage stage);
 
 // Basic navigation
-tusdz_prim tusdz_stage_get_root_prim(tusdz_stage stage);
-size_t tusdz_prim_get_child_count(tusdz_prim prim);
-tusdz_prim tusdz_prim_get_child_at(tusdz_prim prim, size_t index);
-const char* tusdz_prim_get_name(tusdz_prim prim);
-tusdz_prim_type tusdz_prim_get_type(tusdz_prim prim);
+lightusd_prim lightusd_stage_get_root_prim(lightusd_stage stage);
+size_t lightusd_prim_get_child_count(lightusd_prim prim);
+lightusd_prim lightusd_prim_get_child_at(lightusd_prim prim, size_t index);
+const char* lightusd_prim_get_name(lightusd_prim prim);
+lightusd_prim_type lightusd_prim_get_type(lightusd_prim prim);
 ```
 
 ### 3. Tier 2: Core Functionality (11 functions)
 
 ```c
 // Path operations
-const char* tusdz_prim_get_path(tusdz_prim prim);
-tusdz_prim tusdz_stage_get_prim_at_path(tusdz_stage stage, const char* path);
+const char* lightusd_prim_get_path(lightusd_prim prim);
+lightusd_prim lightusd_stage_get_prim_at_path(lightusd_stage stage, const char* path);
 
 // Type checking
-int tusdz_prim_is_type(tusdz_prim prim, tusdz_prim_type type);
-const char* tusdz_prim_get_type_name(tusdz_prim prim);
+int lightusd_prim_is_type(lightusd_prim prim, lightusd_prim_type type);
+const char* lightusd_prim_get_type_name(lightusd_prim prim);
 
 // Properties
-size_t tusdz_prim_get_property_count(tusdz_prim prim);
-const char* tusdz_prim_get_property_name_at(tusdz_prim prim, size_t index);
-tusdz_value tusdz_prim_get_property(tusdz_prim prim, const char* name);
-void tusdz_value_free(tusdz_value value);
+size_t lightusd_prim_get_property_count(lightusd_prim prim);
+const char* lightusd_prim_get_property_name_at(lightusd_prim prim, size_t index);
+lightusd_value lightusd_prim_get_property(lightusd_prim prim, const char* name);
+void lightusd_value_free(lightusd_value value);
 
 // Value access
-tusdz_value_type tusdz_value_get_type(tusdz_value value);
-tusdz_result tusdz_value_get_float3(tusdz_value value, float* out_xyz);
-tusdz_result tusdz_value_get_string(tusdz_value value, const char** out_str);
+lightusd_value_type lightusd_value_get_type(lightusd_value value);
+lightusd_result lightusd_value_get_float3(lightusd_value value, float* out_xyz);
+lightusd_result lightusd_value_get_string(lightusd_value value, const char** out_str);
 ```
 
 ### 4. Tier 3: Extended API (15+ functions)
 
 ```c
 // Mesh specific
-tusdz_result tusdz_mesh_get_points(tusdz_prim mesh, float** out_points, size_t* out_count);
-tusdz_result tusdz_mesh_get_face_counts(tusdz_prim mesh, int** out_counts, size_t* out_count);
-tusdz_result tusdz_mesh_get_indices(tusdz_prim mesh, int** out_indices, size_t* out_count);
-tusdz_result tusdz_mesh_get_normals(tusdz_prim mesh, float** out_normals, size_t* out_count);
-tusdz_result tusdz_mesh_get_uvs(tusdz_prim mesh, float** out_uvs, size_t* out_count, int primvar_index);
+lightusd_result lightusd_mesh_get_points(lightusd_prim mesh, float** out_points, size_t* out_count);
+lightusd_result lightusd_mesh_get_face_counts(lightusd_prim mesh, int** out_counts, size_t* out_count);
+lightusd_result lightusd_mesh_get_indices(lightusd_prim mesh, int** out_indices, size_t* out_count);
+lightusd_result lightusd_mesh_get_normals(lightusd_prim mesh, float** out_normals, size_t* out_count);
+lightusd_result lightusd_mesh_get_uvs(lightusd_prim mesh, float** out_uvs, size_t* out_count, int primvar_index);
 
 // Transform
-tusdz_result tusdz_xform_get_matrix(tusdz_prim xform, double* out_matrix4x4);
-tusdz_result tusdz_xform_get_transform_ops(tusdz_prim xform, /* ... */);
+lightusd_result lightusd_xform_get_matrix(lightusd_prim xform, double* out_matrix4x4);
+lightusd_result lightusd_xform_get_transform_ops(lightusd_prim xform, /* ... */);
 
 // Material & Shading
-tusdz_prim tusdz_prim_get_material(tusdz_prim prim);
-tusdz_prim tusdz_material_get_surface_shader(tusdz_prim material);
-tusdz_value tusdz_shader_get_input(tusdz_prim shader, const char* name);
+lightusd_prim lightusd_prim_get_material(lightusd_prim prim);
+lightusd_prim lightusd_material_get_surface_shader(lightusd_prim material);
+lightusd_value lightusd_shader_get_input(lightusd_prim shader, const char* name);
 
 // Animation & Time samples
-int tusdz_stage_has_animation(tusdz_stage stage);
-tusdz_result tusdz_stage_get_time_range(tusdz_stage stage, double* start, double* end);
-tusdz_result tusdz_value_get_time_samples(tusdz_value value, double** out_times, size_t* count);
+int lightusd_stage_has_animation(lightusd_stage stage);
+lightusd_result lightusd_stage_get_time_range(lightusd_stage stage, double* start, double* end);
+lightusd_result lightusd_value_get_time_samples(lightusd_value value, double** out_times, size_t* count);
 
 // Writing (future)
-tusdz_result tusdz_stage_export_to_file(tusdz_stage stage, const char* filepath, tusdz_format format);
+lightusd_result lightusd_stage_export_to_file(lightusd_stage stage, const char* filepath, lightusd_format format);
 ```
 
 ## Implementation Strategy
@@ -222,7 +222,7 @@ tusdz_result tusdz_stage_export_to_file(tusdz_stage stage, const char* filepath,
 
 ### Pattern 1: Borrowed References (most common)
 ```c
-const char* name = tusdz_prim_get_name(prim);  // Do NOT free
+const char* name = lightusd_prim_get_name(prim);  // Do NOT free
 // name is valid as long as prim is valid
 ```
 
@@ -230,19 +230,19 @@ const char* name = tusdz_prim_get_name(prim);  // Do NOT free
 ```c
 float* points = NULL;
 size_t count = 0;
-if (tusdz_mesh_get_points(mesh, &points, &count) == TUSDZ_SUCCESS) {
+if (lightusd_mesh_get_points(mesh, &points, &count) == LIGHTUSD_SUCCESS) {
     // Use points...
-    tusdz_free(points);  // Must free when done
+    lightusd_free(points);  // Must free when done
 }
 ```
 
 ### Pattern 3: Handle Lifetime
 ```c
-tusdz_stage stage = NULL;
-if (tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0) == TUSDZ_SUCCESS) {
-    tusdz_prim root = tusdz_stage_get_root_prim(stage);  // Borrowed from stage
+lightusd_stage stage = NULL;
+if (lightusd_load_from_file("model.usd", NULL, &stage, NULL, 0) == LIGHTUSD_SUCCESS) {
+    lightusd_prim root = lightusd_stage_get_root_prim(stage);  // Borrowed from stage
     // Use root... (valid only while stage exists)
-    tusdz_stage_free(stage);  // Invalidates all prims from this stage
+    lightusd_stage_free(stage);  // Invalidates all prims from this stage
 }
 ```
 
@@ -250,26 +250,26 @@ if (tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0) == TUSDZ_SUCCESS) {
 
 - **Immutable Access**: Reading from stages/prims is thread-safe
 - **No Implicit State**: No global state modified by API calls
-- **Explicit Contexts**: Future: tusdz_context for thread-local state if needed
+- **Explicit Contexts**: Future: lightusd_context for thread-local state if needed
 
 ## Error Handling Examples
 
 ### Simple (ignore errors)
 ```c
-tusdz_stage stage = NULL;
-tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
+lightusd_stage stage = NULL;
+lightusd_load_from_file("model.usd", NULL, &stage, NULL, 0);
 if (stage) {
     // Use stage...
-    tusdz_stage_free(stage);
+    lightusd_stage_free(stage);
 }
 ```
 
 ### Detailed (capture errors)
 ```c
 char error[1024];
-tusdz_stage stage = NULL;
-tusdz_result result = tusdz_load_from_file("model.usd", NULL, &stage, error, sizeof(error));
-if (result != TUSDZ_SUCCESS) {
+lightusd_stage stage = NULL;
+lightusd_result result = lightusd_load_from_file("model.usd", NULL, &stage, error, sizeof(error));
+if (result != LIGHTUSD_SUCCESS) {
     fprintf(stderr, "Failed to load USD: %s (code: %d)\n", error, result);
     return -1;
 }

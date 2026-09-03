@@ -721,7 +721,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   // Per-texture trace: keep at debug level. At info level this floods the
   // console for material-heavy scenes (one line per texture connection, on
   // every conversion).
-  TUSDZ_LOG_D("path: " << path);
+  LIGHTUSD_LOG_D("path: " << path);
 
   // Check if prop_part is a standard UsdUVTexture output
   bool is_standard_output = (prop_part == kOutputsRGB) ||
@@ -3197,7 +3197,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       }
 
     } else {
-      //TUSDZ_LOG_I("get_value");
+      //LIGHTUSD_LOG_I("get_value");
       Animatable<value::texcoord2f> fallbacks = texture.st.get_value();
       value::texcoord2f uv;
       if (fallbacks.get(env.timecode, &uv)) {
@@ -3209,7 +3209,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             "UsdUVTexture at {}.",
             tex_abs_path.prim_part()));
       }
-      //TUSDZ_LOG_I("uv done");
+      //LIGHTUSD_LOG_I("uv done");
     }
   }
 

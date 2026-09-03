@@ -1364,7 +1364,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   usdc::USDCReader reader(&sr, config);
 
   // LIGHTUSD_CRATE_PROFILE=1: split the layer load into crate parse vs
-  // PrimSpec reconstruction (stderr; complements the tusdcat phase marks).
+  // PrimSpec reconstruction (stderr; complements the lusdcat phase marks).
   const bool profile_load = (std::getenv("LIGHTUSD_CRATE_PROFILE") != nullptr);
   const auto load_t0 = std::chrono::steady_clock::now();
 

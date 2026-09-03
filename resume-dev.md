@@ -55,7 +55,7 @@ Recent commits:
 
 - Full `build_ninja` build passed.
 - Focused MaterialX/OpenPBR regression passed 10/10:
-  - tusdrender CPU graph
+  - lusdrender CPU graph
   - flake parity
   - projection parity
   - LightRT bridge/evaluator/connection/evaluation
@@ -119,6 +119,6 @@ usage for the full-interpreter split:
 ```sh
 cmake --build build_ninja -j16
 ctest --test-dir build_ninja \
-  -R 'tusdview_lightrt|tusdview_openpbr|materialx-(cpu-graph|flake|projection)' \
+  -R 'lusdview_lightrt|lusdview_openpbr|materialx-(cpu-graph|flake|projection)' \
   --output-on-failure
 ```

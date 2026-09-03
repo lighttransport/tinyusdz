@@ -140,7 +140,7 @@ cargo install uv
 After setup, verify everything works:
 
 ```python
-python -c "import lightusd_abi3 as tusd; print(f'✓ LightUSD ABI3 {tusd.__version__}')"
+python -c "import lightusd_abi3 as lightusd; print(f'✓ LightUSD ABI3 {lightusd.__version__}')"
 python -c "import numpy as np; print(f'✓ NumPy {np.__version__}')"
 ```
 
@@ -273,11 +273,11 @@ python my_script.py
 Example of efficient code:
 
 ```python
-import lightusd_abi3 as tusd
+import lightusd_abi3 as lightusd
 import numpy as np
 
 # Load once
-stage = tusd.Stage.load_from_file("large_scene.usd")
+stage = lightusd.Stage.load_from_file("large_scene.usd")
 
 # Get mesh data (zero-copy via buffer protocol)
 mesh = stage.get_prim_at_path("/World/Mesh")

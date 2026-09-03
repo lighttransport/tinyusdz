@@ -2,12 +2,12 @@
 /**
  * compare-usda.js
  *
- * A CLI tool to compare USDA (USD ASCII) outputs from tusdcat and usdcat.
+ * A CLI tool to compare USDA (USD ASCII) outputs from lusdcat and usdcat.
  * Compares at the Prim and Attribute level, ignoring ordering differences.
  *
  * Usage:
  *   node compare-usda.js <file1.usda> <file2.usda>
- *   node compare-usda.js --tusdcat <tusdcat_path> --usdcat <usdcat_path> <input.usd>
+ *   node compare-usda.js --lusdcat <lusdcat_path> --usdcat <usdcat_path> <input.usd>
  */
 
 const fs = require('fs');
@@ -2163,8 +2163,8 @@ function formatDetailedDiff(diff, content1, content2) {
 function printUsage() {
   console.log(`
 Usage: compare-usda.js [options] <file1.usda> <file2.usda>
-       compare-usda.js --tusdcat <path> --usdcat <path> <input.usd>
-       compare-usda.js --tusdcat <path> --usdcat <path> "**/*.usd"
+       compare-usda.js --lusdcat <path> --usdcat <path> <input.usd>
+       compare-usda.js --lusdcat <path> --usdcat <path> "**/*.usd"
 
 Compare USDA outputs at the Prim and Attribute level, ignoring ordering differences.
 
@@ -2177,16 +2177,16 @@ Supports glob patterns for batch comparison:
 
 Examples:
   compare-usda.js file1.usda file2.usda
-  compare-usda.js --tusdcat ./tusdcat --usdcat usdcat model.usd
-  compare-usda.js --tusdcat ./tusdcat --usdcat usdcat "models/*.usda"
-  compare-usda.js --tusdcat ./tusdcat --usdcat usdcat "**/*.usd{a,c,z}"
-  compare-usda.js --tusdcat ./tusdcat --usdcat usdcat --base-dir /path/to/models "**/*.usd"
+  compare-usda.js --lusdcat ./lusdcat --usdcat usdcat model.usd
+  compare-usda.js --lusdcat ./lusdcat --usdcat usdcat "models/*.usda"
+  compare-usda.js --lusdcat ./lusdcat --usdcat usdcat "**/*.usd{a,c,z}"
+  compare-usda.js --lusdcat ./lusdcat --usdcat usdcat --base-dir /path/to/models "**/*.usd"
 
 Options:
   -h, --help              Show this help message
   -v, --verbose           Show detailed output
   -q, --quiet             Only show if files differ (exit code)
-  --tusdcat <path>        Path to tusdcat executable
+  --lusdcat <path>        Path to lusdcat executable
   --usdcat <path>         Path to usdcat executable
   --base-dir <path>       Base directory for glob patterns (default: current dir)
   --summary               Show summary statistics only
@@ -2209,7 +2209,7 @@ Exit codes:
 }
 
 /**
- * Compare a single file with tusdcat vs usdcat
+ * Compare a single file with lusdcat vs usdcat
  */
 function compareSingleFile(inputFile, options) {
   const result = {
@@ -2236,7 +2236,7 @@ function compareSingleFile(inputFile, options) {
       'delete-apiSchemas sublists apply as in-place removals; the writer ' +
       'does not re-emit a delete qualifier (known crate-writer P1)',
     'rel-inherits-none-001.usdc':
-      'legacy tusdcat prints explicit-empty inherits as [] where pxr keeps ' +
+      'legacy lusdcat prints explicit-empty inherits as [] where pxr keeps ' +
       'None (legacy-side gap; the next reader preserves the clear)',
   };
   const base = require('path').basename(inputFile);
@@ -2270,7 +2270,7 @@ function compareSingleFile(inputFile, options) {
   try {
     let content1, content2;
 
-    // Run tusdcat with timeout
+    // Run lusdcat with timeout
     const runUsdTool = (exe, filePath) => {
       return execFileSync(exe, [filePath], {
         encoding: 'utf-8',
@@ -2280,13 +2280,13 @@ function compareSingleFile(inputFile, options) {
       });
     };
 
-    // Run tusdcat with timeout
+    // Run lusdcat with timeout
     try {
-      content1 = runUsdTool(options.tusdcat, inputFile);
+      content1 = runUsdTool(options.lusdcat, inputFile);
     } catch (e) {
       result.status = 'error';
       const timeoutMsg = e.code === 'ETIMEDOUT' ? `timeout (${options.timeout / 1000}s)` : e.message;
-      result.error = `tusdcat failed: ${timeoutMsg}`;
+      result.error = `lusdcat failed: ${timeoutMsg}`;
       return result;
     }
 
@@ -2310,7 +2310,7 @@ function compareSingleFile(inputFile, options) {
       usda1 = parseUsda(content1);
     } catch (e) {
       result.status = 'error';
-      result.error = `Failed to parse tusdcat output: ${e.message}`;
+      result.error = `Failed to parse lusdcat output: ${e.message}`;
       // Show context in verbose mode
       if (options.verbose) {
         const lines = content1.split('\n');
@@ -2407,7 +2407,7 @@ function main() {
     assetPathBase1: null,
     assetPathBase2: null,
     floatTolerance: 1e-6,
-    tusdcat: null,
+    lusdcat: null,
     usdcat: null,
     baseDir: process.cwd(),
     continueOnError: false,
@@ -2453,8 +2453,8 @@ function main() {
       case '--float-tolerance':
         options.floatTolerance = parseFloat(args[++i]);
         break;
-      case '--tusdcat':
-        options.tusdcat = args[++i];
+      case '--lusdcat':
+        options.lusdcat = args[++i];
         break;
       case '--usdcat':
         options.usdcat = args[++i];
@@ -2484,7 +2484,7 @@ function main() {
 
   try {
     // Mode 1: Compare two USDA files directly
-    if (options.files.length === 2 && !options.tusdcat && !options.usdcat) {
+    if (options.files.length === 2 && !options.lusdcat && !options.usdcat) {
       const label1 = options.files[0];
       const label2 = options.files[1];
       const content1 = fs.readFileSync(options.files[0], 'utf-8');
@@ -2590,8 +2590,8 @@ function main() {
         process.exit(1);
       }
     }
-    // Mode 2: Run tusdcat and usdcat on input file(s) - supports glob patterns
-    else if (options.files.length >= 1 && options.tusdcat && options.usdcat) {
+    // Mode 2: Run lusdcat and usdcat on input file(s) - supports glob patterns
+    else if (options.files.length >= 1 && options.lusdcat && options.usdcat) {
       // Expand glob patterns
       const expandedFiles = expandFilePatterns(options.files, options.baseDir)
         // Filter out empty strings to prevent invalid file paths
@@ -2619,7 +2619,7 @@ function main() {
         if (!options.quiet && !options.json) {
           console.log(`[${i + 1}/${expandedFiles.length}] Processing: ${inputFile}`);
           if (options.printCommands) {
-            console.log(`  $ "${options.tusdcat}" "${inputFile}"`);
+            console.log(`  $ "${options.lusdcat}" "${inputFile}"`);
             console.log(`  $ "${options.usdcat}" "${inputFile}"`);
           }
         }
@@ -2719,7 +2719,7 @@ function main() {
       }
     }
     else {
-      console.error('Error: Invalid arguments. Either provide two USDA files or use --tusdcat and --usdcat with input file(s)/pattern(s).');
+      console.error('Error: Invalid arguments. Either provide two USDA files or use --lusdcat and --usdcat with input file(s)/pattern(s).');
       printUsage();
       process.exit(2);
     }

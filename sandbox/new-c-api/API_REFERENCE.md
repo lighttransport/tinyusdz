@@ -17,63 +17,63 @@ Complete reference documentation for the LightUSD C API.
 
 ## Initialization
 
-### tusdz_init()
+### lightusd_init()
 
 Initialize the LightUSD library. Must be called before using any other functions.
 
 ```c
-tusdz_result tusdz_init(void);
+lightusd_result lightusd_init(void);
 ```
 
-**Returns:** `TUSDZ_SUCCESS` on success
+**Returns:** `LIGHTUSD_SUCCESS` on success
 
 **Example:**
 ```c
-if (tusdz_init() != TUSDZ_SUCCESS) {
+if (lightusd_init() != LIGHTUSD_SUCCESS) {
     fprintf(stderr, "Failed to initialize\n");
     return 1;
 }
 ```
 
-### tusdz_shutdown()
+### lightusd_shutdown()
 
 Shutdown the library and free global resources.
 
 ```c
-void tusdz_shutdown(void);
+void lightusd_shutdown(void);
 ```
 
 **Example:**
 ```c
-tusdz_shutdown();
+lightusd_shutdown();
 ```
 
-### tusdz_get_version()
+### lightusd_get_version()
 
 Get library version string.
 
 ```c
-const char* tusdz_get_version(void);
+const char* lightusd_get_version(void);
 ```
 
 **Returns:** Version string like "1.0.0"
 
 **Example:**
 ```c
-printf("LightUSD version: %s\n", tusdz_get_version());
+printf("LightUSD version: %s\n", lightusd_get_version());
 ```
 
 ## Loading
 
-### tusdz_load_from_file()
+### lightusd_load_from_file()
 
 Load USD file from disk.
 
 ```c
-tusdz_result tusdz_load_from_file(
+lightusd_result lightusd_load_from_file(
     const char* filepath,
-    const tusdz_load_options* options,
-    tusdz_stage* out_stage,
+    const lightusd_load_options* options,
+    lightusd_stage* out_stage,
     char* error_buf,
     size_t error_buf_size
 );
@@ -90,9 +90,9 @@ tusdz_result tusdz_load_from_file(
 
 **Example:**
 ```c
-tusdz_stage stage = NULL;
+lightusd_stage stage = NULL;
 char error[1024];
-tusdz_result result = tusdz_load_from_file(
+lightusd_result result = lightusd_load_from_file(
     "model.usd",
     NULL,  // Use default options
     &stage,
@@ -100,25 +100,25 @@ tusdz_result result = tusdz_load_from_file(
     sizeof(error)
 );
 
-if (result != TUSDZ_SUCCESS) {
+if (result != LIGHTUSD_SUCCESS) {
     fprintf(stderr, "Error: %s\n", error);
 } else {
     // Use stage...
-    tusdz_stage_free(stage);
+    lightusd_stage_free(stage);
 }
 ```
 
-### tusdz_load_from_memory()
+### lightusd_load_from_memory()
 
 Load USD from memory buffer.
 
 ```c
-tusdz_result tusdz_load_from_memory(
+lightusd_result lightusd_load_from_memory(
     const void* data,
     size_t size,
-    tusdz_format format,
-    const tusdz_load_options* options,
-    tusdz_stage* out_stage,
+    lightusd_format format,
+    const lightusd_load_options* options,
+    lightusd_stage* out_stage,
     char* error_buf,
     size_t error_buf_size
 );
@@ -127,7 +127,7 @@ tusdz_result tusdz_load_from_memory(
 **Parameters:**
 - `data`: Memory buffer containing USD data
 - `size`: Size of buffer in bytes
-- `format`: Format of the data (`TUSDZ_FORMAT_USDA`, `TUSDZ_FORMAT_USDC`, `TUSDZ_FORMAT_USDZ`, or `TUSDZ_FORMAT_AUTO`)
+- `format`: Format of the data (`LIGHTUSD_FORMAT_USDA`, `LIGHTUSD_FORMAT_USDC`, `LIGHTUSD_FORMAT_USDZ`, or `LIGHTUSD_FORMAT_AUTO`)
 - `options`: Load options (NULL for defaults)
 - `out_stage`: Output stage handle
 - `error_buf`: Buffer for error message
@@ -140,56 +140,56 @@ tusdz_result tusdz_load_from_memory(
 const uint8_t* data = /* ... */;
 size_t size = /* ... */;
 
-tusdz_stage stage = NULL;
-tusdz_result result = tusdz_load_from_memory(
-    data, size, TUSDZ_FORMAT_AUTO, NULL, &stage, NULL, 0
+lightusd_stage stage = NULL;
+lightusd_result result = lightusd_load_from_memory(
+    data, size, LIGHTUSD_FORMAT_AUTO, NULL, &stage, NULL, 0
 );
 
-if (result == TUSDZ_SUCCESS && stage) {
+if (result == LIGHTUSD_SUCCESS && stage) {
     // Use stage...
-    tusdz_stage_free(stage);
+    lightusd_stage_free(stage);
 }
 ```
 
 ## Stage Operations
 
-### tusdz_stage_free()
+### lightusd_stage_free()
 
 Free a stage and all associated resources.
 
 ```c
-void tusdz_stage_free(tusdz_stage stage);
+void lightusd_stage_free(lightusd_stage stage);
 ```
 
 **Example:**
 ```c
-tusdz_stage_free(stage);
+lightusd_stage_free(stage);
 ```
 
-### tusdz_stage_get_root_prim()
+### lightusd_stage_get_root_prim()
 
 Get the root prim of the stage.
 
 ```c
-tusdz_prim tusdz_stage_get_root_prim(tusdz_stage stage);
+lightusd_prim lightusd_stage_get_root_prim(lightusd_stage stage);
 ```
 
 **Returns:** Root prim (borrowed reference, do not free)
 
 **Example:**
 ```c
-tusdz_prim root = tusdz_stage_get_root_prim(stage);
+lightusd_prim root = lightusd_stage_get_root_prim(stage);
 if (root) {
-    printf("Root prim: %s\n", tusdz_prim_get_name(root));
+    printf("Root prim: %s\n", lightusd_prim_get_name(root));
 }
 ```
 
-### tusdz_stage_get_prim_at_path()
+### lightusd_stage_get_prim_at_path()
 
 Get prim at specific path.
 
 ```c
-tusdz_prim tusdz_stage_get_prim_at_path(tusdz_stage stage, const char* path);
+lightusd_prim lightusd_stage_get_prim_at_path(lightusd_stage stage, const char* path);
 ```
 
 **Parameters:**
@@ -200,29 +200,29 @@ tusdz_prim tusdz_stage_get_prim_at_path(tusdz_stage stage, const char* path);
 
 **Example:**
 ```c
-tusdz_prim prim = tusdz_stage_get_prim_at_path(stage, "/World/Cube");
+lightusd_prim prim = lightusd_stage_get_prim_at_path(stage, "/World/Cube");
 if (prim) {
-    printf("Found: %s\n", tusdz_prim_get_name(prim));
+    printf("Found: %s\n", lightusd_prim_get_name(prim));
 }
 ```
 
-### tusdz_stage_has_animation()
+### lightusd_stage_has_animation()
 
 Check if stage has animation.
 
 ```c
-int tusdz_stage_has_animation(tusdz_stage stage);
+int lightusd_stage_has_animation(lightusd_stage stage);
 ```
 
 **Returns:** 1 if animated, 0 otherwise
 
-### tusdz_stage_get_time_range()
+### lightusd_stage_get_time_range()
 
 Get animation time range.
 
 ```c
-tusdz_result tusdz_stage_get_time_range(
-    tusdz_stage stage,
+lightusd_result lightusd_stage_get_time_range(
+    lightusd_stage stage,
     double* out_start_time,
     double* out_end_time,
     double* out_fps
@@ -232,220 +232,220 @@ tusdz_result tusdz_stage_get_time_range(
 **Example:**
 ```c
 double start, end, fps;
-if (tusdz_stage_get_time_range(stage, &start, &end, &fps) == TUSDZ_SUCCESS) {
+if (lightusd_stage_get_time_range(stage, &start, &end, &fps) == LIGHTUSD_SUCCESS) {
     printf("Animation: %.1f to %.1f @ %.1f fps\n", start, end, fps);
 }
 ```
 
 ## Prim Operations
 
-### tusdz_prim_get_name()
+### lightusd_prim_get_name()
 
 Get prim name.
 
 ```c
-const char* tusdz_prim_get_name(tusdz_prim prim);
+const char* lightusd_prim_get_name(lightusd_prim prim);
 ```
 
 **Returns:** Name string (borrowed, do not free)
 
-### tusdz_prim_get_path()
+### lightusd_prim_get_path()
 
 Get full path of prim.
 
 ```c
-const char* tusdz_prim_get_path(tusdz_prim prim);
+const char* lightusd_prim_get_path(lightusd_prim prim);
 ```
 
 **Returns:** Path string (borrowed, do not free)
 
-### tusdz_prim_get_type()
+### lightusd_prim_get_type()
 
 Get prim type enum.
 
 ```c
-tusdz_prim_type tusdz_prim_get_type(tusdz_prim prim);
+lightusd_prim_type lightusd_prim_get_type(lightusd_prim prim);
 ```
 
 **Returns:** Prim type enum value
 
 **Example:**
 ```c
-tusdz_prim_type type = tusdz_prim_get_type(prim);
-printf("Type: %s\n", tusdz_prim_type_to_string(type));
+lightusd_prim_type type = lightusd_prim_get_type(prim);
+printf("Type: %s\n", lightusd_prim_type_to_string(type));
 ```
 
-### tusdz_prim_get_type_name()
+### lightusd_prim_get_type_name()
 
 Get prim type name as string.
 
 ```c
-const char* tusdz_prim_get_type_name(tusdz_prim prim);
+const char* lightusd_prim_get_type_name(lightusd_prim prim);
 ```
 
 **Returns:** Type name (e.g., "Mesh", "Xform")
 
-### tusdz_prim_is_type()
+### lightusd_prim_is_type()
 
 Check if prim is specific type.
 
 ```c
-int tusdz_prim_is_type(tusdz_prim prim, tusdz_prim_type type);
+int lightusd_prim_is_type(lightusd_prim prim, lightusd_prim_type type);
 ```
 
 **Returns:** 1 if matches, 0 otherwise
 
 **Example:**
 ```c
-if (tusdz_prim_is_type(prim, TUSDZ_PRIM_MESH)) {
+if (lightusd_prim_is_type(prim, LIGHTUSD_PRIM_MESH)) {
     printf("This is a mesh!\n");
 }
 ```
 
-### tusdz_prim_get_child_count()
+### lightusd_prim_get_child_count()
 
 Get number of child prims.
 
 ```c
-size_t tusdz_prim_get_child_count(tusdz_prim prim);
+size_t lightusd_prim_get_child_count(lightusd_prim prim);
 ```
 
-### tusdz_prim_get_child_at()
+### lightusd_prim_get_child_at()
 
 Get child prim at index.
 
 ```c
-tusdz_prim tusdz_prim_get_child_at(tusdz_prim prim, size_t index);
+lightusd_prim lightusd_prim_get_child_at(lightusd_prim prim, size_t index);
 ```
 
 **Example:**
 ```c
-size_t count = tusdz_prim_get_child_count(prim);
+size_t count = lightusd_prim_get_child_count(prim);
 for (size_t i = 0; i < count; i++) {
-    tusdz_prim child = tusdz_prim_get_child_at(prim, i);
-    printf("Child: %s\n", tusdz_prim_get_name(child));
+    lightusd_prim child = lightusd_prim_get_child_at(prim, i);
+    printf("Child: %s\n", lightusd_prim_get_name(child));
 }
 ```
 
-### tusdz_prim_get_property_count()
+### lightusd_prim_get_property_count()
 
 Get number of properties on prim.
 
 ```c
-size_t tusdz_prim_get_property_count(tusdz_prim prim);
+size_t lightusd_prim_get_property_count(lightusd_prim prim);
 ```
 
-### tusdz_prim_get_property_name_at()
+### lightusd_prim_get_property_name_at()
 
 Get property name at index.
 
 ```c
-const char* tusdz_prim_get_property_name_at(tusdz_prim prim, size_t index);
+const char* lightusd_prim_get_property_name_at(lightusd_prim prim, size_t index);
 ```
 
-### tusdz_prim_get_property()
+### lightusd_prim_get_property()
 
 Get property value by name.
 
 ```c
-tusdz_value tusdz_prim_get_property(tusdz_prim prim, const char* name);
+lightusd_value lightusd_prim_get_property(lightusd_prim prim, const char* name);
 ```
 
-**Returns:** Value handle (must be freed with tusdz_value_free)
+**Returns:** Value handle (must be freed with lightusd_value_free)
 
 ## Value Operations
 
-### tusdz_value_free()
+### lightusd_value_free()
 
 Free a value handle.
 
 ```c
-void tusdz_value_free(tusdz_value value);
+void lightusd_value_free(lightusd_value value);
 ```
 
-### tusdz_value_get_type()
+### lightusd_value_get_type()
 
 Get value type.
 
 ```c
-tusdz_value_type tusdz_value_get_type(tusdz_value value);
+lightusd_value_type lightusd_value_get_type(lightusd_value value);
 ```
 
-### tusdz_value_get_bool()
+### lightusd_value_get_bool()
 
 Extract boolean value.
 
 ```c
-tusdz_result tusdz_value_get_bool(tusdz_value value, int* out);
+lightusd_result lightusd_value_get_bool(lightusd_value value, int* out);
 ```
 
-### tusdz_value_get_int()
+### lightusd_value_get_int()
 
 Extract integer value.
 
 ```c
-tusdz_result tusdz_value_get_int(tusdz_value value, int* out);
+lightusd_result lightusd_value_get_int(lightusd_value value, int* out);
 ```
 
-### tusdz_value_get_float()
+### lightusd_value_get_float()
 
 Extract float value.
 
 ```c
-tusdz_result tusdz_value_get_float(tusdz_value value, float* out);
+lightusd_result lightusd_value_get_float(lightusd_value value, float* out);
 ```
 
-### tusdz_value_get_double()
+### lightusd_value_get_double()
 
 Extract double value.
 
 ```c
-tusdz_result tusdz_value_get_double(tusdz_value value, double* out);
+lightusd_result lightusd_value_get_double(lightusd_value value, double* out);
 ```
 
-### tusdz_value_get_string()
+### lightusd_value_get_string()
 
 Extract string value.
 
 ```c
-tusdz_result tusdz_value_get_string(tusdz_value value, const char** out);
+lightusd_result lightusd_value_get_string(lightusd_value value, const char** out);
 ```
 
-**Returns:** `TUSDZ_SUCCESS` if successful
+**Returns:** `LIGHTUSD_SUCCESS` if successful
 
 **Example:**
 ```c
 const char* str;
-if (tusdz_value_get_string(value, &str) == TUSDZ_SUCCESS) {
+if (lightusd_value_get_string(value, &str) == LIGHTUSD_SUCCESS) {
     printf("String value: %s\n", str);
 }
 ```
 
-### tusdz_value_get_float3()
+### lightusd_value_get_float3()
 
 Extract 3-component float vector.
 
 ```c
-tusdz_result tusdz_value_get_float3(tusdz_value value, float* out_xyz);
+lightusd_result lightusd_value_get_float3(lightusd_value value, float* out_xyz);
 ```
 
 **Example:**
 ```c
 float xyz[3];
-if (tusdz_value_get_float3(value, xyz) == TUSDZ_SUCCESS) {
+if (lightusd_value_get_float3(value, xyz) == LIGHTUSD_SUCCESS) {
     printf("Position: (%f, %f, %f)\n", xyz[0], xyz[1], xyz[2]);
 }
 ```
 
 ## Mesh Operations
 
-### tusdz_mesh_get_points()
+### lightusd_mesh_get_points()
 
 Get mesh vertex positions.
 
 ```c
-tusdz_result tusdz_mesh_get_points(
-    tusdz_prim mesh,
+lightusd_result lightusd_mesh_get_points(
+    lightusd_prim mesh,
     const float** out_points,
     size_t* out_count
 );
@@ -460,7 +460,7 @@ tusdz_result tusdz_mesh_get_points(
 ```c
 const float* points;
 size_t point_count;
-if (tusdz_mesh_get_points(mesh, &points, &point_count) == TUSDZ_SUCCESS) {
+if (lightusd_mesh_get_points(mesh, &points, &point_count) == LIGHTUSD_SUCCESS) {
     size_t num_vertices = point_count / 3;
     for (size_t i = 0; i < num_vertices; i++) {
         printf("Point %zu: (%f, %f, %f)\n",
@@ -469,49 +469,49 @@ if (tusdz_mesh_get_points(mesh, &points, &point_count) == TUSDZ_SUCCESS) {
 }
 ```
 
-### tusdz_mesh_get_face_counts()
+### lightusd_mesh_get_face_counts()
 
 Get face vertex counts.
 
 ```c
-tusdz_result tusdz_mesh_get_face_counts(
-    tusdz_prim mesh,
+lightusd_result lightusd_mesh_get_face_counts(
+    lightusd_prim mesh,
     const int** out_counts,
     size_t* out_count
 );
 ```
 
-### tusdz_mesh_get_indices()
+### lightusd_mesh_get_indices()
 
 Get face vertex indices.
 
 ```c
-tusdz_result tusdz_mesh_get_indices(
-    tusdz_prim mesh,
+lightusd_result lightusd_mesh_get_indices(
+    lightusd_prim mesh,
     const int** out_indices,
     size_t* out_count
 );
 ```
 
-### tusdz_mesh_get_normals()
+### lightusd_mesh_get_normals()
 
 Get mesh normals.
 
 ```c
-tusdz_result tusdz_mesh_get_normals(
-    tusdz_prim mesh,
+lightusd_result lightusd_mesh_get_normals(
+    lightusd_prim mesh,
     const float** out_normals,
     size_t* out_count
 );
 ```
 
-### tusdz_mesh_get_uvs()
+### lightusd_mesh_get_uvs()
 
 Get mesh UV coordinates.
 
 ```c
-tusdz_result tusdz_mesh_get_uvs(
-    tusdz_prim mesh,
+lightusd_result lightusd_mesh_get_uvs(
+    lightusd_prim mesh,
     const float** out_uvs,
     size_t* out_count,
     int primvar_index
@@ -520,13 +520,13 @@ tusdz_result tusdz_mesh_get_uvs(
 
 ## Transform Operations
 
-### tusdz_xform_get_local_matrix()
+### lightusd_xform_get_local_matrix()
 
 Get local transformation matrix.
 
 ```c
-tusdz_result tusdz_xform_get_local_matrix(
-    tusdz_prim xform,
+lightusd_result lightusd_xform_get_local_matrix(
+    lightusd_prim xform,
     double time,
     double* out_matrix
 );
@@ -540,151 +540,151 @@ tusdz_result tusdz_xform_get_local_matrix(
 **Example:**
 ```c
 double matrix[16];
-if (tusdz_xform_get_local_matrix(xform, 0.0, matrix) == TUSDZ_SUCCESS) {
+if (lightusd_xform_get_local_matrix(xform, 0.0, matrix) == LIGHTUSD_SUCCESS) {
     // Use matrix for rendering
 }
 ```
 
 ## Material and Shader Operations
 
-### tusdz_prim_get_bound_material()
+### lightusd_prim_get_bound_material()
 
 Get material bound to prim.
 
 ```c
-tusdz_prim tusdz_prim_get_bound_material(tusdz_prim prim);
+lightusd_prim lightusd_prim_get_bound_material(lightusd_prim prim);
 ```
 
-### tusdz_material_get_surface_shader()
+### lightusd_material_get_surface_shader()
 
 Get surface shader from material.
 
 ```c
-tusdz_prim tusdz_material_get_surface_shader(tusdz_prim material);
+lightusd_prim lightusd_material_get_surface_shader(lightusd_prim material);
 ```
 
-### tusdz_shader_get_input()
+### lightusd_shader_get_input()
 
 Get shader input value.
 
 ```c
-tusdz_value tusdz_shader_get_input(tusdz_prim shader, const char* input_name);
+lightusd_value lightusd_shader_get_input(lightusd_prim shader, const char* input_name);
 ```
 
-### tusdz_shader_get_type_id()
+### lightusd_shader_get_type_id()
 
 Get shader type ID.
 
 ```c
-const char* tusdz_shader_get_type_id(tusdz_prim shader);
+const char* lightusd_shader_get_type_id(lightusd_prim shader);
 ```
 
 ## Animation Operations
 
-### tusdz_value_is_animated()
+### lightusd_value_is_animated()
 
 Check if value has animation.
 
 ```c
-int tusdz_value_is_animated(tusdz_value value);
+int lightusd_value_is_animated(lightusd_value value);
 ```
 
-### tusdz_value_eval_at_time()
+### lightusd_value_eval_at_time()
 
 Evaluate value at specific time.
 
 ```c
-tusdz_value tusdz_value_eval_at_time(tusdz_value value, double time);
+lightusd_value lightusd_value_eval_at_time(lightusd_value value, double time);
 ```
 
 ## Utilities
 
-### tusdz_result_to_string()
+### lightusd_result_to_string()
 
 Convert result code to string.
 
 ```c
-const char* tusdz_result_to_string(tusdz_result result);
+const char* lightusd_result_to_string(lightusd_result result);
 ```
 
-### tusdz_prim_type_to_string()
+### lightusd_prim_type_to_string()
 
 Convert prim type to string.
 
 ```c
-const char* tusdz_prim_type_to_string(tusdz_prim_type type);
+const char* lightusd_prim_type_to_string(lightusd_prim_type type);
 ```
 
-### tusdz_value_type_to_string()
+### lightusd_value_type_to_string()
 
 Convert value type to string.
 
 ```c
-const char* tusdz_value_type_to_string(tusdz_value_type type);
+const char* lightusd_value_type_to_string(lightusd_value_type type);
 ```
 
-### tusdz_detect_format()
+### lightusd_detect_format()
 
 Detect USD format from file path.
 
 ```c
-tusdz_format tusdz_detect_format(const char* filepath);
+lightusd_format lightusd_detect_format(const char* filepath);
 ```
 
-### tusdz_free()
+### lightusd_free()
 
 Free memory allocated by LightUSD.
 
 ```c
-void tusdz_free(void* ptr);
+void lightusd_free(void* ptr);
 ```
 
-### tusdz_stage_print_hierarchy()
+### lightusd_stage_print_hierarchy()
 
 Print stage hierarchy to stdout.
 
 ```c
-void tusdz_stage_print_hierarchy(tusdz_stage stage, int max_depth);
+void lightusd_stage_print_hierarchy(lightusd_stage stage, int max_depth);
 ```
 
-### tusdz_get_memory_stats()
+### lightusd_get_memory_stats()
 
 Get memory usage statistics.
 
 ```c
-void tusdz_get_memory_stats(
-    tusdz_stage stage,
+void lightusd_get_memory_stats(
+    lightusd_stage stage,
     size_t* out_bytes_used,
     size_t* out_bytes_peak
 );
 ```
 
-### tusdz_set_debug_logging()
+### lightusd_set_debug_logging()
 
 Enable/disable debug logging.
 
 ```c
-void tusdz_set_debug_logging(int enable);
+void lightusd_set_debug_logging(int enable);
 ```
 
 ## Error Codes
 
 ```c
-TUSDZ_SUCCESS = 0
-TUSDZ_ERROR_FILE_NOT_FOUND = -1
-TUSDZ_ERROR_PARSE_FAILED = -2
-TUSDZ_ERROR_OUT_OF_MEMORY = -3
-TUSDZ_ERROR_INVALID_ARGUMENT = -4
-TUSDZ_ERROR_NOT_SUPPORTED = -5
-TUSDZ_ERROR_COMPOSITION_FAILED = -6
-TUSDZ_ERROR_INVALID_FORMAT = -7
-TUSDZ_ERROR_IO_ERROR = -8
-TUSDZ_ERROR_INTERNAL = -99
+LIGHTUSD_SUCCESS = 0
+LIGHTUSD_ERROR_FILE_NOT_FOUND = -1
+LIGHTUSD_ERROR_PARSE_FAILED = -2
+LIGHTUSD_ERROR_OUT_OF_MEMORY = -3
+LIGHTUSD_ERROR_INVALID_ARGUMENT = -4
+LIGHTUSD_ERROR_NOT_SUPPORTED = -5
+LIGHTUSD_ERROR_COMPOSITION_FAILED = -6
+LIGHTUSD_ERROR_INVALID_FORMAT = -7
+LIGHTUSD_ERROR_IO_ERROR = -8
+LIGHTUSD_ERROR_INTERNAL = -99
 ```
 
 ## Type Definitions
 
-### tusdz_load_options
+### lightusd_load_options
 
 ```c
 typedef struct {
@@ -695,19 +695,19 @@ typedef struct {
     int structure_only;
     const char* (*asset_resolver)(const char*, void*);
     void* asset_resolver_data;
-} tusdz_load_options;
+} lightusd_load_options;
 ```
 
 ### Prim Types
 
-- `TUSDZ_PRIM_XFORM` - Transform
-- `TUSDZ_PRIM_MESH` - Polygon mesh
-- `TUSDZ_PRIM_MATERIAL` - Material
-- `TUSDZ_PRIM_SHADER` - Shader
-- `TUSDZ_PRIM_CAMERA` - Camera
-- `TUSDZ_PRIM_SKELETON` - Skeletal rig
-- `TUSDZ_PRIM_LIGHT` - Light (various subtypes)
-- `TUSDZ_PRIM_SCOPE` - Organizational scope
+- `LIGHTUSD_PRIM_XFORM` - Transform
+- `LIGHTUSD_PRIM_MESH` - Polygon mesh
+- `LIGHTUSD_PRIM_MATERIAL` - Material
+- `LIGHTUSD_PRIM_SHADER` - Shader
+- `LIGHTUSD_PRIM_CAMERA` - Camera
+- `LIGHTUSD_PRIM_SKELETON` - Skeletal rig
+- `LIGHTUSD_PRIM_LIGHT` - Light (various subtypes)
+- `LIGHTUSD_PRIM_SCOPE` - Organizational scope
 - And many more...
 
 ### Value Types
@@ -724,7 +724,7 @@ typedef struct {
 2. **Handle NULL returns:** Many functions return NULL on error
 3. **Don't free borrowed references:** Pointers from `get_*` functions are borrowed
 4. **Use error buffers:** Provide error buffers to understand failures
-5. **Cleanup properly:** Always call `tusdz_stage_free()` and `tusdz_shutdown()`
+5. **Cleanup properly:** Always call `lightusd_stage_free()` and `lightusd_shutdown()`
 6. **Use appropriate paths:** Paths should start with "/" (e.g., "/World/Geo")
 7. **Type check before extracting:** Verify value types before extraction
 8. **Handle arrays properly:** Check `is_array()` before accessing array data

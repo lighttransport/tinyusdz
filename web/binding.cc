@@ -2906,7 +2906,7 @@ class LightUSDLoaderNative {
     // converter, which is why only mesh colliders regressed.
     physics_scene_json_cache_ = BuildPhysicsSceneJSON(stage);
 
-    //std::cout << "[tusd:loadFromBinary] loaded << " filename << "\n";
+    //std::cout << "[lightusd:loadFromBinary] loaded << " filename << "\n";
 #if 0
     lightusd::tydra::RenderSceneConverterEnv env(stage);
 
@@ -3645,7 +3645,7 @@ class LightUSDLoaderNative {
       // Full-arc requests route through CompositeAllArcs, which implements
       // the correct LIVRPS strength ordering (L > I > V > R > P > S) with
       // deferred variant evaluation and cross-iteration selection
-      // persistence (the tusdcat driver uses the same routing). The
+      // persistence (the lusdcat driver uses the same routing). The
       // per-feature loop below is kept for feature-subset requests; it
       // applies R -> P -> I -> V, which inverts LIVRPS.
       const bool full_livrps = comp_features.inherits &&
@@ -4832,7 +4832,7 @@ class LightUSDLoaderNative {
     //} else {
     //  // Assume all triangles and facevarying attributes.
     //  if (!rmesh.is_triangulated()) {
-    //    TUSDZ_LOG_E("Mesh must be triangulated when the mesh doesn't have indices\n");
+    //    LIGHTUSD_LOG_E("Mesh must be triangulated when the mesh doesn't have indices\n");
     //    return mesh;
     //  }
     //}
@@ -12711,7 +12711,7 @@ emscripten::val fitTextures(const emscripten::val& opts) {
 //
 // Loads both inputs as Layers (pre-composition, so the full PrimSpec/Attribute
 // tree is preserved) and diffs them with lightusd::tydra. Mirrors the native
-// `tusddiff` tool (tools/tusddiff/tusddiff.cc).
+// `lusddiff` tool (tools/lusddiff/lusddiff.cc).
 emscripten::val usddiff(const emscripten::val& opts) {
   using namespace lightusd;
   emscripten::val result = emscripten::val::object();
@@ -12739,7 +12739,7 @@ emscripten::val usddiff(const emscripten::val& opts) {
   const std::string rhsName = optStr(right, "name", "right");
   const std::string format = optStr(opts, "format", "text");
 
-  // Diff tolerance / options, flat on `opts` (matching the tusddiff CLI):
+  // Diff tolerance / options, flat on `opts` (matching the lusddiff CLI):
   //   ulps (sets float+double; default 1), eps (absEps), compareMetadata,
   //   fuzzyAssetPaths.
   tydra::DiffOptions diffOpts;

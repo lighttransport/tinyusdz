@@ -184,7 +184,7 @@ source cache instead of deep-copying it per worker, keeps broad namespace
 fanout enabled, reserves the flattened layer from the discovered source count,
 uses direct source-cache hits during stage construction, avoids identity target
 remappers and no-relocate mapping copies, and dynamically balances the opinion
-fill pass. Tusdview also releases the composition cache before render-data
+fill pass. Lusdview also releases the composition cache before render-data
 extraction and provides `--full-fidelity --quit-after-convert` for repeatable
 CPU-only gates.
 
@@ -229,12 +229,12 @@ For repeatable measurements, use:
 ```sh
 # Parse/memory inventory for every USD layer.
 CALDERA_ROOT=/mnt/disk1/data/caldera \
-  examples/tusdview/tests/run-caldera-inventory.sh
+  examples/lusdview/tests/run-caldera-inventory.sh
 
 # Full cold viewer timings for selected composed roots.
 CALDERA_ROOT=/mnt/disk1/data/caldera \
   TIMEOUT_SECS=180 \
-  examples/tusdview/tests/run-caldera-matrix.sh
+  examples/lusdview/tests/run-caldera-matrix.sh
 ```
 
 The inventory measures leaf layers for parser cost but does not treat every

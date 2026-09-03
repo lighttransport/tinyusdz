@@ -1,8 +1,8 @@
 # sdist contents for the lightusd PyPI package.
-# Everything needed to run `python -m build --wheel` from a fresh checkout.
-# The wheel builds ONLY the "next" core (src/next + src/tydra/next), the C API
-# (src/c-api) and the extension sources (src/python); the legacy core is not
-# part of the package.
+# Everything needed to run `python -m build --wheel` from the sdist itself.
+# The wheel builds only the "next" core, Tydra-next, the C API, and the Python
+# extension, but those targets reuse selected sources and headers elsewhere in
+# src/. Keep those transitive build inputs in the sdist.
 
 include LICENSE
 include README.md
@@ -63,15 +63,15 @@ prune tools
 prune subprojects
 prune scripts
 exclude src/*.cc src/*.cpp
-# Root-level headers resolved via the -Isrc include path by next sources.
-include src/safe-arithmetic.hh
-include src/stream-reader.hh src/stream-writer.hh
-include src/namespace-mapping.hh
-include src/mtlx-xml-tokenizer.cc src/mtlx-xml-tokenizer.hh
-include src/mtlx-xml-parser.cc src/mtlx-xml-parser.hh
-include src/mtlx-dom.cc src/mtlx-dom.hh
-recursive-include src/external/fast_float/include *.h
-include src/external/dragonbox/dragonbox.h
+# Transitive standalone-next inputs. Headers are inexpensive and keeping the
+# complete src/ header surface avoids a fragile hand-maintained include graph.
+recursive-include src *.h *.hh *.hpp *.inc *.txt
+include src/color-transform.cc
+include src/mtlx-xml-tokenizer.cc src/mtlx-xml-parser.cc src/mtlx-dom.cc
+include src/ptx-loader.cc
+include src/core/path-expression.cc src/core/path-expression-eval.cc
+recursive-include src/tsd *.cc
+include src/external/miniz.c src/external/mikktspace/mikktspace.c
 
 # Strip build artefacts.
 global-exclude *.pyc *.pyo *.so *.pyd __pycache__

@@ -9,7 +9,7 @@ gate is fully closed (138/138); this file lists what remains and how to work on 
 - **Module under work:** `src/next/` — a standalone C++14 USD core (parser, crate,
   pcp composition, eval, validation, writer). It is NOT built by the top-level
   CMake; it has its own project + tests.
-- **Conformance report (read first):** `doc/ousd-vs-tusdz.md`. Every subsection ends
+- **Conformance report (read first):** `doc/ousd-vs-lightusd.md`. Every subsection ends
   with a `**Remaining:**` note; the closing summary (~line 778) names the critical path.
 - **ARKit/USDZ checker notes:** `doc/openusd-usdz.md`.
 

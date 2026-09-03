@@ -2266,7 +2266,7 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
     // carry `inherits` (multi-level classes — a class whose children inherit
     // further classes). Those children are introduced AFTER the children-first
     // traversal at the top of this function, so resolve them now, within THIS
-    // pass. Otherwise the prim keeps reporting unresolved inherits and tusdcat's
+    // pass. Otherwise the prim keeps reporting unresolved inherits and lusdcat's
     // outer loop re-runs CompositeInherits up to kMaxIteration (128) times,
     // re-copying large data every pass — the runaway behind oom.md's
     // teapotScene_animCycle (1644 vs OpenUSD's 24 inherit refs). `visited`

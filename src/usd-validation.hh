@@ -95,7 +95,7 @@ USDValidationResult ValidateUSDContainerFileAgainstAOUSDCore(
     std::string *warn, std::string *err,
     size_t max_file_size_in_mb = 16384ull);
 
-// Validate a USD payload or file using the same orchestration as `tusdcat`
+// Validate a USD payload or file using the same orchestration as `lusdcat`
 // validation: load as Layer, run Layer rules, then merge format/container
 // checks. Returns false only when the input could not be parsed as a Layer.
 // Warning-only results still return true and have USDValidationResult::ok().

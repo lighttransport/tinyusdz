@@ -1,7 +1,7 @@
 # Sanitizer Builds: AddressSanitizer and ThreadSanitizer
 
 Build and run instructions for the ASan and TSan configurations, the known
-i386 ASan limit for `tusdcat`, and the environment traps that make TSan fail
+i386 ASan limit for `lusdcat`, and the environment traps that make TSan fail
 *before your code even runs* — both produce cryptic startup errors that look
 like bugs in lightusd but are not.
 
@@ -21,7 +21,7 @@ cmake --build build_asan
 ctest --test-dir build_asan --output-on-failure
 ```
 
-For the 32-bit Linux diagnostic build used to reproduce the `tusdcat` issue:
+For the 32-bit Linux diagnostic build used to reproduce the `lusdcat` issue:
 
 ```sh
 cmake -S . -B build_clang21_m32_asan -G Ninja \
@@ -32,13 +32,13 @@ cmake -S . -B build_clang21_m32_asan -G Ninja \
   -DSANITIZE_ADDRESS=1 \
   -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_BUILD_EXAMPLES=ON
-cmake --build build_clang21_m32_asan --target tusdcat unit-test-lightusd
+cmake --build build_clang21_m32_asan --target lusdcat unit-test-lightusd
 ```
 
-### Known i386 `tusdcat` Limit
+### Known i386 `lusdcat` Limit
 
-`tusdcat` is too large for the i386 ASan runtime/allocator address-space layout.
-With clang-21, a 32-bit ASan build of the full `tusdcat` binary aborts at
+`lusdcat` is too large for the i386 ASan runtime/allocator address-space layout.
+With clang-21, a 32-bit ASan build of the full `lusdcat` binary aborts at
 startup or first output, before it can do useful validation work:
 
 ```text
@@ -56,7 +56,7 @@ OOM.
 
 The failure is caused by the ASan runtime needing large shadow, metadata,
 quarantine, fake-stack, and allocator regions inside the small 32-bit virtual
-address space, while the full `tusdcat` executable also carries a large text,
+address space, while the full `lusdcat` executable also carries a large text,
 data, and bss footprint. In the reproduced clang-21 build, the binary was an
 ELF32 executable with roughly:
 
@@ -72,7 +72,7 @@ requests failed with `ENOMEM`.
 
 ### Mitigations Tested
 
-These options did not make full i386 `tusdcat` ASan validation reliable:
+These options did not make full i386 `lusdcat` ASan validation reliable:
 
 - `ASAN_OPTIONS=quarantine_size_mb=0`
 - `ASAN_OPTIONS=detect_leaks=0`
@@ -84,19 +84,19 @@ These options did not make full i386 `tusdcat` ASan validation reliable:
 
 `ASAN_OPTIONS=allocator_may_return_null=1` can sometimes let trivial `--help`
 output continue, but it only converts the ASan allocator abort into null-return
-behavior. It does not make real `tusdcat` parse or validation paths reliable and
+behavior. It does not make real `lusdcat` parse or validation paths reliable and
 should not be used as a CI fix.
 
 ### Repo Policy
 
 The supported coverage split is:
 
-- Use full ASan `tusdcat` validation on 64-bit builds.
+- Use full ASan `lusdcat` validation on 64-bit builds.
 - Use 32-bit non-ASan builds for i386 tool coverage.
 - Use 32-bit ASan builds for smaller tests such as `unit-test-lightusd` and
   parser-focused executables.
 
-`CMakeLists.txt` skips the `tusdcat` end-to-end validation tests when both
+`CMakeLists.txt` skips the `lusdcat` end-to-end validation tests when both
 conditions are true:
 
 - `CMAKE_SIZEOF_VOID_P EQUAL 4`
@@ -105,7 +105,7 @@ conditions are true:
 The validation logic is still exercised on non-ASan 32-bit builds and on 64-bit
 ASan builds. If i386 ASan validation coverage is required, add a smaller
 dedicated validation executable that links only the parser and validation code
-needed for the target fixture set, instead of using full `tusdcat`.
+needed for the target fixture set, instead of using full `lusdcat`.
 
 Possible size-reduction flags such as `-O1`,
 `-fsanitize-address-use-after-return=never`, or
@@ -186,16 +186,16 @@ prefer the sysctl.
 ### Trap 2: `RLIMIT_AS` caps (self-imposed or inherited)
 
 **Symptom** — the trivial program works, but a specific tool (historically
-`tusdcat`) still dies with the same
+`lusdcat`) still dies with the same
 `out of memory: failed to allocate ... InternalMmapVector` error, while other
 binaries from the same build (e.g. `tydra_to_renderscene`) start fine.
 
 **Cause** — TSan reserves tens of **terabytes** of virtual address space at
 startup (shadow memory, internal allocators — reservations, not committed
-RAM). Any `RLIMIT_AS` cap kills it. `tusdcat` sets a 32 GB `RLIMIT_AS` in
+RAM). Any `RLIMIT_AS` cap kills it. `lusdcat` sets a 32 GB `RLIMIT_AS` in
 `main()` as an OOM/thrash guard; that guard is now compiled out under
 `__SANITIZE_THREAD__` / `__SANITIZE_ADDRESS__` (see
-`examples/tusdcat/main.cc`). If you add an address-space cap to another tool,
+`examples/lusdcat/main.cc`). If you add an address-space cap to another tool,
 gate it the same way. The same applies to caps inherited from the
 environment (`ulimit -v`, container limits).
 
@@ -203,7 +203,7 @@ environment (`ulimit -v`, container limits).
 
 ```bash
 # large scenes are slow under TSan (10-20x); start with mid-size models
-./build_tsan/tusdcat -f model.usdz -o /tmp/out.usdc
+./build_tsan/lusdcat -f model.usdz -o /tmp/out.usdc
 echo $?   # 66 = TSan reported an error; grep the output for "WARNING: ThreadSanitizer"
 ```
 
@@ -224,4 +224,4 @@ echo $?   # 66 = TSan reported an error; grep the output for "WARNING: ThreadSan
 - 2026-07: parallel USDC crate-reader fieldset race fixed (TSan-confirmed,
   dropped whole subtrees — "Parallel-parse data-loss race" in project notes).
 - 2026-07-06: both traps above hit in one session (kernel had
-  `mmap_rnd_bits=32`; tusdcat's own 32 GB `RLIMIT_AS` masked as a TSan OOM).
+  `mmap_rnd_bits=32`; lusdcat's own 32 GB `RLIMIT_AS` masked as a TSan OOM).

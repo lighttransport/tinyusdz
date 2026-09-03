@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Corpus-wide validation regression test.
 
-Runs `tusdcat --validate-all` over every parseable `.usda` in the tests/usda
+Runs `lusdcat --validate-all` over every parseable `.usda` in the tests/usda
 fixture corpus (excluding fail-case/, whose files are expected not to parse) and
 asserts the validator never crashes or hangs. This guards against regressions
 where a validator change segfaults or loops on some real-world construct -- the
@@ -18,7 +18,7 @@ A per-file outcome is one of:
 Only CRASH and TIMEOUT fail the test; the rest are reported for visibility.
 
 Usage:
-  python3 run-validation-regression.py --app ./build/tusdcat
+  python3 run-validation-regression.py --app ./build/lusdcat
                                        [--basedir tests/usda] [--timeout 30]
 """
 
@@ -55,7 +55,7 @@ def classify(app, fixture, timeout):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--app", default="./build/tusdcat")
+    ap.add_argument("--app", default="./build/lusdcat")
     here = os.path.dirname(os.path.abspath(__file__))
     default_basedir = os.path.dirname(os.path.dirname(here))  # tests/usda
     ap.add_argument("--basedir", default=default_basedir)

@@ -28,7 +28,7 @@ except ImportError:
     sys.exit(1)
 
 try:
-    import lightusd_abi3 as tusd
+    import lightusd_abi3 as lightusd
 except ImportError as e:
     print(f"Error: Could not import lightusd_abi3: {e}")
     print("\nPlease build the module first:")
@@ -307,7 +307,7 @@ def main():
 
         try:
             # Load the stage
-            stage = tusd.Stage.load_from_file(usd_file)
+            stage = lightusd.Stage.load_from_file(usd_file)
             print("✓ Stage loaded successfully")
 
             # Print stage info

@@ -807,7 +807,7 @@ bool StageSession::OpenFile(const std::string& filename,
     auto milliseconds = [](Clock::duration duration) {
       return std::chrono::duration<double, std::milli>(duration).count();
     };
-    TUSDZ_LOG_I("[next_session] root_load=" +
+    LIGHTUSD_LOG_I("[next_session] root_load=" +
                 std::to_string(milliseconds(root_loaded - open_begin)) +
                 "ms cache_open=" +
                 std::to_string(milliseconds(cache_opened - root_loaded)) +
@@ -1095,7 +1095,7 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
   // group's geometry is stored ONCE (the prototype member holds the subtree;
   // sibling instances carry instance_prototype meta and emit empty). Consumers
   // traverse instances transparently via UsdPrim::GetChildren(), which follows
-  // instance_prototype to the prototype's children — so tusdrender expands every
+  // instance_prototype to the prototype's children — so lusdrender expands every
   // instance into the flat triangle/BVH stream at its own world transform while
   // the composed STAGE keeps just one copy per prototype. (Inline expansion via
   // detect_instances=false instead duplicates every instance's geometry into the

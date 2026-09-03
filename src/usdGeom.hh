@@ -102,17 +102,17 @@ class GeomPrimvar {
 
  public:
   GeomPrimvar() : _has_value(false) {
-    //TUSDZ_LOG_I("GeomPrimvar default constructor called");
+    //LIGHTUSD_LOG_I("GeomPrimvar default constructor called");
   }
 
   GeomPrimvar(const Attribute &attr) : _attr(attr) {
-    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute");
+    //LIGHTUSD_LOG_I("GeomPrimvar constructor called with Attribute");
     _has_value = true;
   }
 
   GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr)
   {
-    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and indices vector");
+    //LIGHTUSD_LOG_I("GeomPrimvar constructor called with Attribute and indices vector");
     _indices = indices;
     _has_value = true;
   }

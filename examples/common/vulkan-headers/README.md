@@ -1,6 +1,6 @@
 # Vulkan headers (vendored)
 
-Khronos Vulkan API headers, used so tusdview's Vulkan backend builds without a
+Khronos Vulkan API headers, used so lusdview's Vulkan backend builds without a
 Vulkan SDK installed. Paired with the vendored [volk](../volk) meta-loader,
 which resolves the actual entry points at runtime.
 

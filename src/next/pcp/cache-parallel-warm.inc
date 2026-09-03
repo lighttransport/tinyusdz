@@ -122,7 +122,7 @@
       auto elapsed_ms = [](std::chrono::steady_clock::duration duration) {
         return std::chrono::duration<double, std::milli>(duration).count();
       };
-      TUSDZ_LOG_I("[next_build] sources=" +
+      LIGHTUSD_LOG_I("[next_build] sources=" +
                   FormatMilliseconds(prof_sources_ns_ / 1e6) +
                   "ms structure=" +
                   FormatMilliseconds(elapsed_ms(structure_t1 - structure_t0)) +
@@ -579,7 +579,7 @@
                    .count() / 1e6;
       };
       auto t_merge = PWClock::now();
-      TUSDZ_LOG_I("[next_warm] frontier=" + UIntToStr(level.size()) +
+      LIGHTUSD_LOG_I("[next_warm] frontier=" + UIntToStr(level.size()) +
                   " W=" + IntToStr(W) +
                   " discover=" + FormatMilliseconds(ms(t_start, t_discover)) +
                   "ms workers=" + FormatMilliseconds(ms(t_discover, t_workers)) +

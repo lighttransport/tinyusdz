@@ -108,7 +108,7 @@ Then force the shared converter through the flattened path by importing
 - Result: succeeds under wasm64 and stays below 4 GB process RSS for this asset
 - Archive integrity: `unzip -t /tmp/large_sample.wasm64_flat.usdz` passed
 
-A native `tusdcat /tmp/large_sample.wasm64_flat.usdz > /dev/null` parse/print
+A native `lusdcat /tmp/large_sample.wasm64_flat.usdz > /dev/null` parse/print
 attempt was stopped after roughly 90 seconds with no stderr. Treat that as
 inconclusive, not as a parse validation pass.
 

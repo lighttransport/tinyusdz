@@ -4,7 +4,7 @@
 // Also includes a standalone texture channel-repack tool.
 //
 // NOTE: fpnge uses x86 SIMD and is not compiled for WASM, so PNG re-encoding
-// here uses the portable `fpng` encoder. The native `tusdzconvert` CLI uses
+// here uses the portable `fpng` encoder. The native `lusdzconvert` CLI uses
 // fpnge.
 
 import {

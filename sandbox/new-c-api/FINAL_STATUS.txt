@@ -278,12 +278,12 @@ PYTHON (NO BUILD REQUIRED):
 C:
   #include <lightusd_c.h>
 
-  tusdz_init();
-  tusdz_stage stage;
-  tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
+  lightusd_init();
+  lightusd_stage stage;
+  lightusd_load_from_file("model.usd", NULL, &stage, NULL, 0);
   // Use stage...
-  tusdz_stage_free(stage);
-  tusdz_shutdown();
+  lightusd_stage_free(stage);
+  lightusd_shutdown();
 
 RUST:
   use lightusd::{init, shutdown, load_from_file};

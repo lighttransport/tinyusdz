@@ -196,7 +196,7 @@ function testWebProfile(ctx, profile) {
 
 function testOracle(ctx) {
   const env = {
-    TUSDCAT_PATH: path.join(ctx.cache, 'native-build', 'tusdcat'),
+    LUSDCAT_PATH: path.join(ctx.cache, 'native-build', 'lusdcat'),
     USDCAT_PATH: path.join(ctx.cache, 'openusd-install', 'bin', 'usdcat'),
   };
   run(ctx.root, 'LightUSD/OpenUSD comparison', 'bash', ['tests/run-usdcat-compare.sh'], env);
@@ -205,14 +205,14 @@ function testOracle(ctx) {
 function testAssets(ctx) {
   const env = {
     USD_WG_ASSETS_DIR: path.join(ctx.cache, 'usd-assets'),
-    TUSDCAT_PATH: path.join(ctx.cache, 'native-build', 'tusdcat'),
+    LUSDCAT_PATH: path.join(ctx.cache, 'native-build', 'lusdcat'),
   };
-  run(ctx.root, 'USD asset parser sweep', 'node', ['tests/parse-asset-corpus.mjs', '--assets', env.USD_WG_ASSETS_DIR, '--tusdcat', env.TUSDCAT_PATH, '--max-fail', '0'], env);
+  run(ctx.root, 'USD asset parser sweep', 'node', ['tests/parse-asset-corpus.mjs', '--assets', env.USD_WG_ASSETS_DIR, '--lusdcat', env.LUSDCAT_PATH, '--max-fail', '0'], env);
 }
 
 function testGpu(ctx) {
   const env = { USD_ASSETS_ROOT: path.join(ctx.cache, 'usd-assets') };
-  run(ctx.root, 'GPU/tusdview CTest', 'ctest', ['--test-dir', path.join(ctx.cache, 'native-build'), '-R', '^tusdview', '--output-on-failure'], env);
+  run(ctx.root, 'GPU/lusdview CTest', 'ctest', ['--test-dir', path.join(ctx.cache, 'native-build'), '-R', '^lusdview', '--output-on-failure'], env);
 }
 
 function prepare(ctx) {

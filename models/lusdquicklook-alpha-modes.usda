@@ -1,0 +1,177 @@
+#usda 1.0
+(
+    doc = """UsdPreviewSurface alpha-mode coverage.
+
+Three independent columns, each an opaque grey backdrop with a smaller quad in
+front of it, so every mode can be checked on its own patch of the image:
+
+  left   blend   opacity 0.5, no threshold  -> red tinted over the backdrop
+  middle cutout  opacity 0.8, threshold 0.5 -> fully opaque green
+  right  cutout  opacity 0.2, threshold 0.5 -> discarded, backdrop shows through
+
+The right column is the interesting one: a renderer that treats
+opacityThreshold as a plain blend factor shows a faint blue wash instead of
+nothing, and one that ignores opacity entirely shows solid blue.
+
+Companion to lusdview-transparency.usda, which covers back-to-front ordering
+of overlapping blended surfaces. This file deliberately does not overlap the
+translucent quads with each other, so it stays a test of the *modes* rather
+than of sort order.
+"""
+    defaultPrim = "World"
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+def Xform "World"
+{
+    # ---- Backdrops: opaque, one behind each foreground quad ----------------
+
+    def Mesh "BackdropLeft"
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </World/Looks/OpaqueGrey>
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "faceVarying"
+        )
+        point3f[] points = [(-3.1, -0.9, 0), (-1.3, -0.9, 0), (-1.3, 0.9, 0), (-3.1, 0.9, 0)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "BackdropMiddle"
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </World/Looks/OpaqueGrey>
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "faceVarying"
+        )
+        point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "BackdropRight"
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </World/Looks/OpaqueGrey>
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "faceVarying"
+        )
+        point3f[] points = [(1.3, -0.9, 0), (3.1, -0.9, 0), (3.1, 0.9, 0), (1.3, 0.9, 0)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    # ---- Foregrounds: one per alpha mode, all at the same depth ------------
+
+    def Mesh "BlendHalf"
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </World/Looks/BlendHalf>
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "faceVarying"
+        )
+        point3f[] points = [(-2.8, -0.6, 0.3), (-1.6, -0.6, 0.3), (-1.6, 0.6, 0.3), (-2.8, 0.6, 0.3)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "CutoutAbove"
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </World/Looks/CutoutAbove>
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "faceVarying"
+        )
+        point3f[] points = [(-0.6, -0.6, 0.3), (0.6, -0.6, 0.3), (0.6, 0.6, 0.3), (-0.6, 0.6, 0.3)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "CutoutBelow"
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </World/Looks/CutoutBelow>
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "faceVarying"
+        )
+        point3f[] points = [(1.6, -0.6, 0.3), (2.8, -0.6, 0.3), (2.8, 0.6, 0.3), (1.6, 0.6, 0.3)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Scope "Looks"
+    {
+        def Material "OpaqueGrey"
+        {
+            token outputs:surface.connect = </World/Looks/OpaqueGrey/Preview.outputs:surface>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.72, 0.72, 0.72)
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.6
+                token outputs:surface
+            }
+        }
+
+        # No opacityThreshold: per UsdPreviewSurface this is ordinary blending.
+        def Material "BlendHalf"
+        {
+            token outputs:surface.connect = </World/Looks/BlendHalf/Preview.outputs:surface>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.9, 0.1, 0.1)
+                float inputs:metallic = 0
+                float inputs:opacity = 0.5
+                float inputs:roughness = 0.5
+                token outputs:surface
+            }
+        }
+
+        # opacity >= opacityThreshold: fully opaque, not half-blended.
+        def Material "CutoutAbove"
+        {
+            token outputs:surface.connect = </World/Looks/CutoutAbove/Preview.outputs:surface>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.1, 0.8, 0.2)
+                float inputs:metallic = 0
+                float inputs:opacity = 0.8
+                float inputs:opacityThreshold = 0.5
+                float inputs:roughness = 0.5
+                token outputs:surface
+            }
+        }
+
+        # opacity < opacityThreshold: the surface is not there at all.
+        def Material "CutoutBelow"
+        {
+            token outputs:surface.connect = </World/Looks/CutoutBelow/Preview.outputs:surface>
+
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.1, 0.2, 0.9)
+                float inputs:metallic = 0
+                float inputs:opacity = 0.2
+                float inputs:opacityThreshold = 0.5
+                float inputs:roughness = 0.5
+                token outputs:surface
+            }
+        }
+    }
+}

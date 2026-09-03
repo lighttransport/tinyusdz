@@ -20,50 +20,50 @@
 // Handle definitions (opaque in the public header)
 // ============================================================
 
-struct tusd_string {
+struct lightusd_string {
   std::string s;
 };
 
-struct tusd_strlist {
+struct lightusd_strlist {
   std::vector<std::string> items;
 };
 
-struct tusd_value {
+struct lightusd_value {
   lightusd::next::Value v;
 };
 
-struct tusd_stage {
+struct lightusd_stage {
   lightusd::next::Stage stage;
   std::string warnings;
   // Directory of the file this stage was loaded from (empty for in-memory /
   // created stages); used to resolve relative texture asset paths.
   std::string source_dir;
   // Bumped by structural mutations (define/remove prim) so bindings can
-  // detect stale tusd_prim handles.
+  // detect stale lightusd_prim handles.
   std::atomic<uint64_t> generation{0};
 };
 
-namespace tusd_internal {
+namespace lightusd_internal {
 
-// Thread-local error message backing tusd_last_error().
+// Thread-local error message backing lightusd_last_error().
 void SetError(const std::string& msg);
 void SetError(const char* msg);
 
 // Convenience: set the error and return the status in one expression.
-inline tusd_status Fail(tusd_status st, const std::string& msg) {
+inline lightusd_status Fail(lightusd_status st, const std::string& msg) {
   SetError(msg);
   return st;
 }
 
-// tusd_prim <-> next::UsdPrim (both are {spec, layer, index} triples).
-inline lightusd::next::UsdPrim FromC(tusd_prim p) {
+// lightusd_prim <-> next::UsdPrim (both are {spec, layer, index} triples).
+inline lightusd::next::UsdPrim FromC(lightusd_prim p) {
   return lightusd::next::UsdPrim(
       static_cast<const lightusd::next::PrimSpec*>(p._spec),
       static_cast<const lightusd::next::Layer*>(p._layer), p._index);
 }
 
-inline tusd_prim ToC(const lightusd::next::UsdPrim& up) {
-  tusd_prim p;
+inline lightusd_prim ToC(const lightusd::next::UsdPrim& up) {
+  lightusd_prim p;
   p._spec = up.GetPrimSpec();
   p._layer = up.GetLayer();
   p._index = up.GetIndex();
@@ -71,15 +71,15 @@ inline tusd_prim ToC(const lightusd::next::UsdPrim& up) {
   return p;
 }
 
-inline tusd_sv SV(const std::string& s) {
-  tusd_sv v;
+inline lightusd_sv SV(const std::string& s) {
+  lightusd_sv v;
   v.data = s.c_str();
   v.len = s.size();
   return v;
 }
 
-inline tusd_sv EmptySV() {
-  tusd_sv v;
+inline lightusd_sv EmptySV() {
+  lightusd_sv v;
   v.data = "";
   v.len = 0;
   return v;
@@ -87,12 +87,12 @@ inline tusd_sv EmptySV() {
 
 // Build a borrowed zero-copy view from a Value. Materializes lazy arrays
 // (serialized by an internal mutex). String-family / dictionary / token-array
-// values yield data == NULL with storage == TUSD_COMP_NONE.
-tusd_status MakeView(const lightusd::next::Value& v, tusd_value_view* out);
+// values yield data == NULL with storage == LIGHTUSD_COMP_NONE.
+lightusd_status MakeView(const lightusd::next::Value& v, lightusd_value_view* out);
 
 // Build a next::Value from raw (type, is_array, data, count) as documented on
-// tusd_attr_set. Returns an empty Value and sets the error on failure.
-bool ValueFromRaw(tusd_type type, uint8_t is_array, const void* data,
+// lightusd_attr_set. Returns an empty Value and sets the error on failure.
+bool ValueFromRaw(lightusd_type type, uint8_t is_array, const void* data,
                   size_t count, lightusd::next::Value* out);
 
-}  // namespace tusd_internal
+}  // namespace lightusd_internal

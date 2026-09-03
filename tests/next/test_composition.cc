@@ -405,7 +405,7 @@ static VariantSetData MakeModelingVariantSet(bool populated) {
 // REFERENCING prim must win over the referenced asset's OWN default selection.
 //   /C1 references @geom@</Chair>, selects non-default "ChairB"
 //   geom/Chair: populated variantSet + its own (weaker) default "ChairA"
-// The main backend (examples/tusdcat) regressed on the larger Kitchen_set chain;
+// The main backend (examples/lusdcat) regressed on the larger Kitchen_set chain;
 // the next backend composes all arcs per-prim before ApplyVariants, so the local
 // selection is still present when the variant is baked. Confirms that here.
 static void test_variant_selection_over_reference() {

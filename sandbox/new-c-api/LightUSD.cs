@@ -135,16 +135,16 @@ public class LightUSD
     // ========================================================================
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_init();
+    private static extern int lightusd_init();
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern void tusdz_shutdown();
+    private static extern void lightusd_shutdown();
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_get_version();
+    private static extern IntPtr lightusd_get_version();
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_load_from_file(
+    private static extern int lightusd_load_from_file(
         [MarshalAs(UnmanagedType.LPStr)] string filepath,
         IntPtr options,
         out IntPtr outStage,
@@ -152,7 +152,7 @@ public class LightUSD
         UIntPtr errorBufSize);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_load_from_memory(
+    private static extern int lightusd_load_from_memory(
         [MarshalAs(UnmanagedType.LPArray)] byte[] data,
         UIntPtr size,
         int format,
@@ -162,103 +162,103 @@ public class LightUSD
         UIntPtr errorBufSize);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern void tusdz_stage_free(IntPtr stage);
+    private static extern void lightusd_stage_free(IntPtr stage);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_stage_get_root_prim(IntPtr stage);
+    private static extern IntPtr lightusd_stage_get_root_prim(IntPtr stage);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_prim_get_name(IntPtr prim);
+    private static extern IntPtr lightusd_prim_get_name(IntPtr prim);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_prim_get_path(IntPtr prim);
+    private static extern IntPtr lightusd_prim_get_path(IntPtr prim);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_prim_get_type(IntPtr prim);
+    private static extern int lightusd_prim_get_type(IntPtr prim);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_prim_get_type_name(IntPtr prim);
+    private static extern IntPtr lightusd_prim_get_type_name(IntPtr prim);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_prim_is_type(IntPtr prim, int primType);
+    private static extern int lightusd_prim_is_type(IntPtr prim, int primType);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern UIntPtr tusdz_prim_get_child_count(IntPtr prim);
+    private static extern UIntPtr lightusd_prim_get_child_count(IntPtr prim);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_prim_get_child_at(IntPtr prim, UIntPtr index);
+    private static extern IntPtr lightusd_prim_get_child_at(IntPtr prim, UIntPtr index);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern UIntPtr tusdz_prim_get_property_count(IntPtr prim);
+    private static extern UIntPtr lightusd_prim_get_property_count(IntPtr prim);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_prim_get_property_name_at(IntPtr prim, UIntPtr index);
+    private static extern IntPtr lightusd_prim_get_property_name_at(IntPtr prim, UIntPtr index);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_prim_get_property(
+    private static extern IntPtr lightusd_prim_get_property(
         IntPtr prim,
         [MarshalAs(UnmanagedType.LPStr)] string name);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern void tusdz_value_free(IntPtr value);
+    private static extern void lightusd_value_free(IntPtr value);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_value_get_type(IntPtr value);
+    private static extern int lightusd_value_get_type(IntPtr value);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_value_is_array(IntPtr value);
+    private static extern int lightusd_value_is_array(IntPtr value);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern UIntPtr tusdz_value_get_array_size(IntPtr value);
+    private static extern UIntPtr lightusd_value_get_array_size(IntPtr value);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_value_get_float(IntPtr value, out float outVal);
+    private static extern int lightusd_value_get_float(IntPtr value, out float outVal);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_value_get_double(IntPtr value, out double outVal);
+    private static extern int lightusd_value_get_double(IntPtr value, out double outVal);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_value_get_int(IntPtr value, out int outVal);
+    private static extern int lightusd_value_get_int(IntPtr value, out int outVal);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_value_get_string(IntPtr value, out IntPtr outStr);
+    private static extern int lightusd_value_get_string(IntPtr value, out IntPtr outStr);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_value_get_float3(IntPtr value, [Out] float[] outXyz);
+    private static extern int lightusd_value_get_float3(IntPtr value, [Out] float[] outXyz);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_value_get_matrix4d(IntPtr value, [Out] double[] outMatrix);
+    private static extern int lightusd_value_get_matrix4d(IntPtr value, [Out] double[] outMatrix);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_mesh_get_points(
+    private static extern int lightusd_mesh_get_points(
         IntPtr mesh,
         out IntPtr outPoints,
         out UIntPtr outCount);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_mesh_get_indices(
+    private static extern int lightusd_mesh_get_indices(
         IntPtr mesh,
         out IntPtr outIndices,
         out UIntPtr outCount);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_stage_has_animation(IntPtr stage);
+    private static extern int lightusd_stage_has_animation(IntPtr stage);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int tusdz_stage_get_time_range(
+    private static extern int lightusd_stage_get_time_range(
         IntPtr stage,
         out double outStart,
         out double outEnd,
         out double outFps);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_result_to_string(int result);
+    private static extern IntPtr lightusd_result_to_string(int result);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_prim_type_to_string(int primType);
+    private static extern IntPtr lightusd_prim_type_to_string(int primType);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr tusdz_value_type_to_string(int valueType);
+    private static extern IntPtr lightusd_value_type_to_string(int valueType);
 
     // ========================================================================
     // Global Functions
@@ -266,7 +266,7 @@ public class LightUSD
 
     public static void Init()
     {
-        int result = tusdz_init();
+        int result = lightusd_init();
         if (result != 0)
         {
             throw new Exception($"Failed to initialize LightUSD: {ResultToString(result)}");
@@ -275,18 +275,18 @@ public class LightUSD
 
     public static void Shutdown()
     {
-        tusdz_shutdown();
+        lightusd_shutdown();
     }
 
     public static string GetVersion()
     {
-        IntPtr ptr = tusdz_get_version();
+        IntPtr ptr = lightusd_get_version();
         return Marshal.PtrToStringAnsi(ptr) ?? "unknown";
     }
 
     public static Stage LoadFromFile(string filepath)
     {
-        int result = tusdz_load_from_file(filepath, IntPtr.Zero, out IntPtr stage, IntPtr.Zero, UIntPtr.Zero);
+        int result = lightusd_load_from_file(filepath, IntPtr.Zero, out IntPtr stage, IntPtr.Zero, UIntPtr.Zero);
         if (result != 0)
         {
             throw new Exception($"Failed to load USD: {ResultToString(result)}");
@@ -296,7 +296,7 @@ public class LightUSD
 
     public static Stage LoadFromMemory(byte[] data, Format format = Format.Auto)
     {
-        int result = tusdz_load_from_memory(data, (UIntPtr)data.Length, (int)format, IntPtr.Zero, out IntPtr stage, IntPtr.Zero, UIntPtr.Zero);
+        int result = lightusd_load_from_memory(data, (UIntPtr)data.Length, (int)format, IntPtr.Zero, out IntPtr stage, IntPtr.Zero, UIntPtr.Zero);
         if (result != 0)
         {
             throw new Exception($"Failed to load USD from memory: {ResultToString(result)}");
@@ -304,9 +304,9 @@ public class LightUSD
         return new Stage(stage);
     }
 
-    public static string ResultToString(int result) => Marshal.PtrToStringAnsi(tusdz_result_to_string(result)) ?? "Unknown";
-    public static string PrimTypeToString(PrimType type) => Marshal.PtrToStringAnsi(tusdz_prim_type_to_string((int)type)) ?? "Unknown";
-    public static string ValueTypeToString(ValueType type) => Marshal.PtrToStringAnsi(tusdz_value_type_to_string((int)type)) ?? "Unknown";
+    public static string ResultToString(int result) => Marshal.PtrToStringAnsi(lightusd_result_to_string(result)) ?? "Unknown";
+    public static string PrimTypeToString(PrimType type) => Marshal.PtrToStringAnsi(lightusd_prim_type_to_string((int)type)) ?? "Unknown";
+    public static string ValueTypeToString(ValueType type) => Marshal.PtrToStringAnsi(lightusd_value_type_to_string((int)type)) ?? "Unknown";
 
     // ========================================================================
     // Value Wrapper
@@ -324,36 +324,36 @@ public class LightUSD
 
         public ValueType Type
         {
-            get => (ValueType)tusdz_value_get_type(_handle);
+            get => (ValueType)lightusd_value_get_type(_handle);
         }
 
-        public bool IsArray => tusdz_value_is_array(_handle) != 0;
-        public UIntPtr ArraySize => tusdz_value_get_array_size(_handle);
+        public bool IsArray => lightusd_value_is_array(_handle) != 0;
+        public UIntPtr ArraySize => lightusd_value_get_array_size(_handle);
 
         public float? GetFloat()
         {
-            if (tusdz_value_get_float(_handle, out float val) == 0)
+            if (lightusd_value_get_float(_handle, out float val) == 0)
                 return val;
             return null;
         }
 
         public double? GetDouble()
         {
-            if (tusdz_value_get_double(_handle, out double val) == 0)
+            if (lightusd_value_get_double(_handle, out double val) == 0)
                 return val;
             return null;
         }
 
         public int? GetInt()
         {
-            if (tusdz_value_get_int(_handle, out int val) == 0)
+            if (lightusd_value_get_int(_handle, out int val) == 0)
                 return val;
             return null;
         }
 
         public string GetString()
         {
-            if (tusdz_value_get_string(_handle, out IntPtr val) == 0)
+            if (lightusd_value_get_string(_handle, out IntPtr val) == 0)
                 return Marshal.PtrToStringAnsi(val) ?? "";
             return null;
         }
@@ -361,7 +361,7 @@ public class LightUSD
         public float[] GetFloat3()
         {
             float[] result = new float[3];
-            if (tusdz_value_get_float3(_handle, result) == 0)
+            if (lightusd_value_get_float3(_handle, result) == 0)
                 return result;
             return null;
         }
@@ -369,7 +369,7 @@ public class LightUSD
         public double[] GetMatrix4d()
         {
             double[] result = new double[16];
-            if (tusdz_value_get_matrix4d(_handle, result) == 0)
+            if (lightusd_value_get_matrix4d(_handle, result) == 0)
                 return result;
             return null;
         }
@@ -378,7 +378,7 @@ public class LightUSD
         {
             if (!_disposed && _handle != IntPtr.Zero)
             {
-                tusdz_value_free(_handle);
+                lightusd_value_free(_handle);
                 _handle = IntPtr.Zero;
                 _disposed = true;
             }
@@ -404,20 +404,20 @@ public class LightUSD
             _handle = handle;
         }
 
-        public string Name => Marshal.PtrToStringAnsi(tusdz_prim_get_name(_handle)) ?? "";
-        public string Path => Marshal.PtrToStringAnsi(tusdz_prim_get_path(_handle)) ?? "";
-        public PrimType Type => (PrimType)tusdz_prim_get_type(_handle);
-        public string TypeName => Marshal.PtrToStringAnsi(tusdz_prim_get_type_name(_handle)) ?? "Unknown";
+        public string Name => Marshal.PtrToStringAnsi(lightusd_prim_get_name(_handle)) ?? "";
+        public string Path => Marshal.PtrToStringAnsi(lightusd_prim_get_path(_handle)) ?? "";
+        public PrimType Type => (PrimType)lightusd_prim_get_type(_handle);
+        public string TypeName => Marshal.PtrToStringAnsi(lightusd_prim_get_type_name(_handle)) ?? "Unknown";
 
-        public bool IsType(PrimType type) => tusdz_prim_is_type(_handle, (int)type) != 0;
+        public bool IsType(PrimType type) => lightusd_prim_is_type(_handle, (int)type) != 0;
         public bool IsMesh => IsType(PrimType.Mesh);
         public bool IsXform => IsType(PrimType.Xform);
 
-        public int ChildCount => (int)tusdz_prim_get_child_count(_handle);
+        public int ChildCount => (int)lightusd_prim_get_child_count(_handle);
 
         public Prim GetChild(int index)
         {
-            IntPtr child = tusdz_prim_get_child_at(_handle, (UIntPtr)index);
+            IntPtr child = lightusd_prim_get_child_at(_handle, (UIntPtr)index);
             return child != IntPtr.Zero ? new Prim(child) : null;
         }
 
@@ -430,17 +430,17 @@ public class LightUSD
             }
         }
 
-        public int PropertyCount => (int)tusdz_prim_get_property_count(_handle);
+        public int PropertyCount => (int)lightusd_prim_get_property_count(_handle);
 
         public string GetPropertyName(int index)
         {
-            IntPtr ptr = tusdz_prim_get_property_name_at(_handle, (UIntPtr)index);
+            IntPtr ptr = lightusd_prim_get_property_name_at(_handle, (UIntPtr)index);
             return Marshal.PtrToStringAnsi(ptr) ?? "";
         }
 
         public Value GetProperty(string name)
         {
-            IntPtr value = tusdz_prim_get_property(_handle, name);
+            IntPtr value = lightusd_prim_get_property(_handle, name);
             return value != IntPtr.Zero ? new Value(value) : null;
         }
 
@@ -475,16 +475,16 @@ public class LightUSD
         {
             get
             {
-                IntPtr root = tusdz_stage_get_root_prim(_handle);
+                IntPtr root = lightusd_stage_get_root_prim(_handle);
                 return root != IntPtr.Zero ? new Prim(root) : null;
             }
         }
 
-        public bool HasAnimation => tusdz_stage_has_animation(_handle) != 0;
+        public bool HasAnimation => lightusd_stage_has_animation(_handle) != 0;
 
         public (double Start, double End, double Fps)? GetTimeRange()
         {
-            if (tusdz_stage_get_time_range(_handle, out double start, out double end, out double fps) == 0)
+            if (lightusd_stage_get_time_range(_handle, out double start, out double end, out double fps) == 0)
                 return (start, end, fps);
             return null;
         }
@@ -493,7 +493,7 @@ public class LightUSD
         {
             if (!_disposed && _handle != IntPtr.Zero)
             {
-                tusdz_stage_free(_handle);
+                lightusd_stage_free(_handle);
                 _handle = IntPtr.Zero;
                 _disposed = true;
             }

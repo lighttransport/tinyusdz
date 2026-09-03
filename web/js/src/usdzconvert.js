@@ -923,7 +923,7 @@ function exportUSDZ(usd, remap, opts) {
   const hasRemap = remap && Object.keys(remap).length > 0;
   // Faithful path: when no texture path remapping is needed (passthrough /
   // USDZ->USDZ roundtrip), write the composed LAYER directly. This preserves all
-  // PrimSpec data and matches the native tusdzconvert output. The Stage-based
+  // PrimSpec data and matches the native lusdzconvert output. The Stage-based
   // export below reconstructs typed Prims and drops typed shader inputs that lack
   // a USDC serializer (e.g. OpenPBR surface inputs), so only use it when a remap
   // or ARKit metadata rewrite is required.

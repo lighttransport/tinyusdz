@@ -7,7 +7,7 @@
 // THREE.CompressedTexture. If no compressed format is available, decode `uni`
 // back to RGBA8 and upload a THREE.DataTexture. No basis_universal / KTX2Loader.
 //
-// This mirrors, in the browser, what tusdview does natively: one transcodable
+// This mirrors, in the browser, what lusdview does natively: one transcodable
 // asset, per-device GPU format, uncompressed fallback everywhere.
 
 import * as THREE from 'three';

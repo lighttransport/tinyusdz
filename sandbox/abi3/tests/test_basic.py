@@ -12,7 +12,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 try:
-    import lightusd_abi3 as tusd
+    import lightusd_abi3 as lightusd
 except ImportError as e:
     print(f"Error: Could not import lightusd_abi3: {e}")
     print("\nPlease build the module first:")
@@ -51,22 +51,22 @@ class TestRunner:
 
 def test_module_import():
     """Test module can be imported"""
-    assert hasattr(tusd, 'Stage'), "Module should have Stage class"
-    assert hasattr(tusd, 'Prim'), "Module should have Prim class"
-    assert hasattr(tusd, 'Value'), "Module should have Value class"
-    assert hasattr(tusd, 'ValueArray'), "Module should have ValueArray class"
-    assert hasattr(tusd, 'detect_format'), "Module should have detect_format function"
+    assert hasattr(lightusd, 'Stage'), "Module should have Stage class"
+    assert hasattr(lightusd, 'Prim'), "Module should have Prim class"
+    assert hasattr(lightusd, 'Value'), "Module should have Value class"
+    assert hasattr(lightusd, 'ValueArray'), "Module should have ValueArray class"
+    assert hasattr(lightusd, 'detect_format'), "Module should have detect_format function"
 
 
 def test_stage_creation():
     """Test stage creation"""
-    stage = tusd.Stage()
+    stage = lightusd.Stage()
     assert stage is not None, "Stage should be created"
 
 
 def test_prim_creation():
     """Test prim creation"""
-    prim = tusd.Prim("Xform")
+    prim = lightusd.Prim("Xform")
     assert prim is not None, "Prim should be created"
     assert prim.type == "Xform", f"Prim type should be 'Xform', got '{prim.type}'"
 
@@ -75,14 +75,14 @@ def test_prim_types():
     """Test different prim types"""
     prim_types = ["Xform", "Mesh", "Sphere", "Camera"]
     for prim_type in prim_types:
-        prim = tusd.Prim(prim_type)
+        prim = lightusd.Prim(prim_type)
         assert prim is not None, f"Should create {prim_type} prim"
         assert prim.type == prim_type, f"Prim type should be '{prim_type}'"
 
 
 def test_value_int():
     """Test integer value"""
-    val = tusd.Value.from_int(42)
+    val = lightusd.Value.from_int(42)
     assert val is not None, "Value should be created"
     assert val.type == "int", f"Value type should be 'int', got '{val.type}'"
     result = val.as_int()
@@ -91,7 +91,7 @@ def test_value_int():
 
 def test_value_float():
     """Test float value"""
-    val = tusd.Value.from_float(3.14)
+    val = lightusd.Value.from_float(3.14)
     assert val is not None, "Value should be created"
     assert val.type == "float", f"Value type should be 'float', got '{val.type}'"
     result = val.as_float()
@@ -100,25 +100,25 @@ def test_value_float():
 
 def test_detect_format():
     """Test format detection"""
-    assert tusd.detect_format("test.usda") == "USDA"
-    assert tusd.detect_format("test.usdc") == "USDC"
-    assert tusd.detect_format("test.usdz") == "USDZ"
-    assert tusd.detect_format("test.usd") == "AUTO"
+    assert lightusd.detect_format("test.usda") == "USDA"
+    assert lightusd.detect_format("test.usdc") == "USDC"
+    assert lightusd.detect_format("test.usdz") == "USDZ"
+    assert lightusd.detect_format("test.usd") == "AUTO"
 
 
 def test_memory_management():
     """Test memory management doesn't crash"""
     # Create and destroy many objects
     for i in range(100):
-        stage = tusd.Stage()
-        prim = tusd.Prim("Xform")
-        val = tusd.Value.from_int(i)
+        stage = lightusd.Stage()
+        prim = lightusd.Prim("Xform")
+        val = lightusd.Value.from_int(i)
         # Objects should be automatically freed
 
 
 def test_value_to_string():
     """Test value to_string method"""
-    val = tusd.Value.from_int(42)
+    val = lightusd.Value.from_int(42)
     s = val.to_string()
     assert isinstance(s, str), "to_string should return string"
     assert len(s) > 0, "String should not be empty"
@@ -126,7 +126,7 @@ def test_value_to_string():
 
 def test_prim_to_string():
     """Test prim to_string method"""
-    prim = tusd.Prim("Xform")
+    prim = lightusd.Prim("Xform")
     s = prim.to_string()
     assert isinstance(s, str), "to_string should return string"
     # Note: May be empty for a new prim, which is okay
@@ -134,21 +134,21 @@ def test_prim_to_string():
 
 def test_stage_to_string():
     """Test stage to_string method"""
-    stage = tusd.Stage()
+    stage = lightusd.Stage()
     s = stage.to_string()
     assert isinstance(s, str), "to_string should return string"
 
 
 def test_value_array_creation():
     """Test value array creation"""
-    arr = tusd.ValueArray()
+    arr = lightusd.ValueArray()
     assert arr is not None, "ValueArray should be created"
 
 
 def test_module_version():
     """Test module has version"""
-    assert hasattr(tusd, '__version__'), "Module should have __version__"
-    assert isinstance(tusd.__version__, str), "Version should be string"
+    assert hasattr(lightusd, '__version__'), "Module should have __version__"
+    assert isinstance(lightusd.__version__, str), "Version should be string"
 
 
 def main():

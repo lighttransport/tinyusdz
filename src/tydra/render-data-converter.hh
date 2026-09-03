@@ -485,7 +485,7 @@ struct RenderSceneConverterConfig {
   // Keep GPU-compressed KTX2 textures compressed instead of decoding them to
   // RGBA8. When a resolved `inputs:file` (or its `customData ktx2` companion)
   // is a `.ktx2`, the level-0 block payload is stored verbatim in the buffer
-  // and `TextureImage::blockFormat` is set, so a GPU consumer (e.g. tusdview)
+  // and `TextureImage::blockFormat` is set, so a GPU consumer (e.g. lusdview)
   // can upload/transcode the blocks directly instead of re-encoding decoded
   // texels. Requires LIGHTUSD_WITH_TEXTOOLS; ignored otherwise. Non-UDIM only.
   bool keep_compressed_textures{false};

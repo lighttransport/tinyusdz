@@ -2,7 +2,7 @@
 
 Synthetic `.usda` fixtures for the AOUSD Core semantic validator
 (`src/usd-validation.{hh,cc}`, exercised by `tests/unit/unit-usd-validation.cc`
-and the `tusdcat --validate` / `--validate-all` CLI).
+and the `lusdcat --validate` / `--validate-all` CLI).
 
 ## Layout
 
@@ -30,14 +30,14 @@ after the `#usda 1.0` header:
 # EXPECT: <rule_id>          # the file must report this rule (repeatable)
 ```
 
-`run-validation-suite.py` reads these markers, runs `tusdcat --validate-all`,
+`run-validation-suite.py` reads these markers, runs `lusdcat --validate-all`,
 and checks the reported `[rule_id]` tokens against them. For fixtures whose
 expected rules are all opt-in (`geom.*` / `shade.*` / `lux.*` / `physics.*`), it also runs core-only
 `--validate` and asserts nothing is reported — verifying the groups are opt-in.
 The suite runs in CTest as `validation-suite-test`.
 
 ```bash
-python3 tests/usda/validation/run-validation-suite.py --app ./build/tusdcat
+python3 tests/usda/validation/run-validation-suite.py --app ./build/lusdcat
 ```
 
 ## Corpus regression (robustness)
@@ -49,7 +49,7 @@ the suite checks rule *correctness*, this checks the validator never segfaults o
 loops on real constructs. It runs in CTest as `validation-regression-test`.
 
 ```bash
-python3 tests/usda/validation/run-validation-regression.py --app ./build/tusdcat
+python3 tests/usda/validation/run-validation-regression.py --app ./build/lusdcat
 ```
 
 ## Rule groups
@@ -135,8 +135,8 @@ a new shader type, add a matching lookup in `src/usd-validation.cc`.
 
 ```bash
 # Core only
-./build/tusdcat --validate     tests/usda/validation/invalid/bad-meters-per-unit.usda
+./build/lusdcat --validate     tests/usda/validation/invalid/bad-meters-per-unit.usda
 # All groups (core + geom + shade + lux + physics + crate)
-./build/tusdcat --validate-all tests/usda/validation/invalid/nested-gprim.usda
-./build/tusdcat --validate-all tests/usda/validation/valid/clean.usda   # OK
+./build/lusdcat --validate-all tests/usda/validation/invalid/nested-gprim.usda
+./build/lusdcat --validate-all tests/usda/validation/valid/clean.usda   # OK
 ```

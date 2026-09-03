@@ -22,7 +22,7 @@ except ImportError:
     sys.exit(1)
 
 try:
-    import lightusd_abi3 as tusd
+    import lightusd_abi3 as lightusd
 except ImportError as e:
     print(f"Error: Could not import lightusd_abi3: {e}")
     print("\nPlease build the module first:")
@@ -48,7 +48,7 @@ def example_buffer_protocol():
     # Example of how it would work with real data:
     print("Example usage (when fully implemented):")
     print("-" * 40)
-    print("stage = tusd.Stage.load_from_file('mesh.usd')")
+    print("stage = lightusd.Stage.load_from_file('mesh.usd')")
     print("mesh_prim = stage.get_prim_at_path('/World/Mesh')")
     print("positions = mesh_prim.get_attribute('points').get()")
     print("positions_np = np.asarray(positions)  # Zero-copy!")

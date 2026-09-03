@@ -12,7 +12,7 @@ SET(CMAKE_RC_COMPILER ${LLVM_MINGW_ROOT}/bin/x86_64-w64-mingw32-windres.exe)
 
 SET(CMAKE_FIND_ROOT_PATH ${LLVM_MINGW_ROOT}/x86_64-w64-mingw32)
 
-# We may need some advanced thread APIs to compile tinyusz. use 0x601(Win7) if required
+# We may need some advanced thread APIs to compile LightUSD. use 0x601(Win7) if required
 # SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_WIN32_WINNT=0x601")
 
 SET(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)

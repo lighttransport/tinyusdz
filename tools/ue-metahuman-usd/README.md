@@ -1,4 +1,4 @@
-# UE 5.8 MetaHuman to tusdview
+# UE 5.8 MetaHuman to lusdview
 
 This reproducible bridge assembles the installed offline `Ada` MetaHuman
 Character preset, exports its LOD0 head and body through Unreal's native USD
@@ -13,7 +13,7 @@ tools/ue-metahuman-usd/run-export.sh
 env __NV_PRIME_RENDER_OFFLOAD=1 \
   __GLX_VENDOR_LIBRARY_NAME=nvidia \
   __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
-  build_ninja/tusdview --headless --backend vk --vk-device nvidia \
+  build_ninja/lusdview --headless --backend vk --vk-device nvidia \
   --mode shaded --no-grid --view-dir 0,1,0 --frames 3 \
   --screenshot /tmp/metahuman-vk.ppm \
   tools/ue-metahuman-usd/output/MetaHuman_Hero.usda
@@ -89,7 +89,7 @@ Create a self-contained package for `web/demo/metahuman.html` with:
 tools/ue-metahuman-usd/package-usdz.sh
 ```
 
-This uses `tusdzconvert -noFlatten` so the USDZ root preserves the hero layer's
+This uses `lusdzconvert -noFlatten` so the USDZ root preserves the hero layer's
 head/body reference arcs. The browser's next
 WASM renderer indexes the archive entries and supplies those internal layers to
 the compositor. Choose **Open MetaHuman USDZ** in the demo, or select the

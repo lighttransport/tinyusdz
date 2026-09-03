@@ -13,8 +13,8 @@ const MUJOCO_WASM = `${MUJOCO_DIST}/mujoco_physics.wasm`;
 const USDA_ASSET_URL = './assets/physics-robot-arm.usda';
 
 const state = {
-  tinyLoader: null,
-  tinyNative: null,
+  lightusdLoader: null,
+  lightusdNative: null,
   mujoco: null,
   model: null,
   data: null,
@@ -187,14 +187,14 @@ async function usdaText() {
 
 async function loadLightUSDScene() {
   setStatus('Loading LightUSD WASM...');
-  state.tinyLoader = await createConfiguredLightUSDLoader();
-  LightUSDLoaderUtils.setLightUSD(state.tinyLoader.native_);
-  state.tinyNative = new state.tinyLoader.native_.LightUSDLoaderNative();
+  state.lightusdLoader = await createConfiguredLightUSDLoader();
+  LightUSDLoaderUtils.setLightUSD(state.lightusdLoader.native_);
+  state.lightusdNative = new state.lightusdLoader.native_.LightUSDLoaderNative();
 
   const text = await usdaText();
   const bytes = new TextEncoder().encode(text);
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  const sceneData = await parseUSDSceneFromArrayBuffer(state.tinyLoader, arrayBuffer, 'embedded_robot.usda');
+  const sceneData = await parseUSDSceneFromArrayBuffer(state.lightusdLoader, arrayBuffer, 'embedded_robot.usda');
   const rootNode = sceneData.getDefaultRootNode();
   const defaultMaterial = LightUSDLoaderUtils.createDefaultMaterial();
   state.usdObject = await LightUSDLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, {
@@ -204,12 +204,12 @@ async function loadLightUSDScene() {
   setRestObjectStyle(state.usdObject);
   restRoot.add(state.usdObject);
 
-  if (!state.tinyNative.loadFromBinary(bytes, 'embedded_robot.usda')) {
-    throw new Error(state.tinyNative.error() || 'LightUSD physics extraction failed.');
+  if (!state.lightusdNative.loadFromBinary(bytes, 'embedded_robot.usda')) {
+    throw new Error(state.lightusdNative.error() || 'LightUSD physics extraction failed.');
   }
-  const jsonText = state.tinyNative.extractPhysicsSceneJSON();
+  const jsonText = state.lightusdNative.extractPhysicsSceneJSON();
   if (!jsonText) {
-    throw new Error(state.tinyNative.error() || 'LightUSD returned empty physics JSON.');
+    throw new Error(state.lightusdNative.error() || 'LightUSD returned empty physics JSON.');
   }
   state.physicsJson = JSON.parse(jsonText);
   els.physicsJson.textContent = JSON.stringify(state.physicsJson, null, 2);

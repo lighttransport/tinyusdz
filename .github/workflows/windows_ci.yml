@@ -57,7 +57,7 @@ jobs:
         with:
           name: dist-win-x64-release
           path: |
-            build/Release/tusdcat.exe
+            build/Release/lusdcat.exe
 
       # Test with OpenUSD binary (Windows x64)
       - name: Download OpenUSD binary (Windows x64)
@@ -103,7 +103,7 @@ jobs:
 
           # The v25.11-lte usdcat.exe on this Windows runner exits
           # non-zero even on successful reads (same quirk hit by the
-          # Verify step's `usdcat --help`). We gate the step on tusdcat
+          # Verify step's `usdcat --help`). We gate the step on lusdcat
           # exit codes (those we control) and reset $LASTEXITCODE after
           # each usdcat call to keep pwsh from propagating the noise.
 
@@ -112,9 +112,9 @@ jobs:
           foreach ($usdFile in $testFiles) {
             if (Test-Path $usdFile) {
               Write-Host "Testing $usdFile"
-              .\build\Release\tusdcat.exe $usdFile > $null
+              .\build\Release\lusdcat.exe $usdFile > $null
               if ($LASTEXITCODE -ne 0) {
-                Write-Host "FAIL: tusdcat exit $LASTEXITCODE on $usdFile"
+                Write-Host "FAIL: lusdcat exit $LASTEXITCODE on $usdFile"
                 exit 1
               }
               & usdcat $usdFile > $null
@@ -125,9 +125,9 @@ jobs:
 
           # Test 2: Convert with LightUSD, verify with OpenUSD
           if (Test-Path "models/suzanne.usdc") {
-            .\build\Release\tusdcat.exe models/suzanne.usdc > lightusd_output.usda
+            .\build\Release\lusdcat.exe models/suzanne.usdc > lightusd_output.usda
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "FAIL: tusdcat exit $LASTEXITCODE on conversion"
+              Write-Host "FAIL: lusdcat exit $LASTEXITCODE on conversion"
               exit 1
             }
             & usdcat lightusd_output.usda > $null

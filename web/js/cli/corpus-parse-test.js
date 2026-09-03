@@ -3,7 +3,7 @@
 // Loads every .usd/.usda/.usdc/.usdz under the corpus through the WASM module
 // (LightUSDLoaderNative.loadAsLayerFromBinary -> LoadLayerFromMemory: a pure
 // parse, no composition or render-scene conversion — the WASM analogue of the
-// native `tusdcat -l` parse regression), classifies PASS/FAIL, and (optionally)
+// native `lusdcat -l` parse regression), classifies PASS/FAIL, and (optionally)
 // gates on a max failure count for use as a regression test.
 //
 // Run:  npm run test:corpus           (vite-node resolves the 'lightusd/' alias)

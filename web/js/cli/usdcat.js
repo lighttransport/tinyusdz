@@ -2,7 +2,7 @@
 // usdcat CLI — LightUSD WASM
 //
 // Load a USD asset, (optionally) flatten/compose it, and write USDA / USDC / USDZ.
-// A JS/WASM counterpart to the native `tusdcat` tool (examples/tusdcat/main.cc),
+// A JS/WASM counterpart to the native `lusdcat` tool (examples/lusdcat/main.cc),
 // reusing the same compose-to-fixed-point flatten path as usdzconvert.
 //
 // Usage:

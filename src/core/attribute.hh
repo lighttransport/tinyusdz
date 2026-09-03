@@ -28,7 +28,7 @@ class Attribute {
 
  public:
   Attribute() {
-    //TUSDZ_LOG_I("Attribute default constructor called");
+    //LIGHTUSD_LOG_I("Attribute default constructor called");
   }
 
   // Copy constructor
@@ -40,7 +40,7 @@ class Attribute {
       _var(rhs._var),
       _paths(rhs._paths),
       _metas(rhs._metas) {
-    //TUSDZ_LOG_I("Attribute copy constructor called");
+    //LIGHTUSD_LOG_I("Attribute copy constructor called");
   }
 
   // Move constructor
@@ -52,14 +52,14 @@ class Attribute {
       _var(std::move(rhs._var)),
       _paths(std::move(rhs._paths)),
       _metas(std::move(rhs._metas)) {
-    //TUSDZ_LOG_I("Attribute move constructor called");
+    //LIGHTUSD_LOG_I("Attribute move constructor called");
     rhs._variability = Variability::Varying;
     rhs._varying_authored = false;
   }
 
   // Copy assignment operator
   Attribute& operator=(const Attribute& rhs) {
-    //TUSDZ_LOG_I("Attribute copy assignment operator called");
+    //LIGHTUSD_LOG_I("Attribute copy assignment operator called");
     if (this != &rhs) {
       _name = rhs._name;
       _variability = rhs._variability;
@@ -74,7 +74,7 @@ class Attribute {
 
   // Move assignment operator
   Attribute& operator=(Attribute&& rhs) noexcept {
-    //TUSDZ_LOG_I("Attribute move assignment operator called");
+    //LIGHTUSD_LOG_I("Attribute move assignment operator called");
     if (this != &rhs) {
       _name = std::move(rhs._name);
       _variability = rhs._variability;

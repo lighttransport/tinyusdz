@@ -107,9 +107,9 @@ class Result:
     @staticmethod
     def to_string(result: int) -> str:
         """Convert result code to string"""
-        _lib.tusdz_result_to_string.restype = ctypes.c_char_p
-        _lib.tusdz_result_to_string.argtypes = [ctypes.c_int]
-        return _lib.tusdz_result_to_string(result).decode('utf-8')
+        _lib.lightusd_result_to_string.restype = ctypes.c_char_p
+        _lib.lightusd_result_to_string.argtypes = [ctypes.c_int]
+        return _lib.lightusd_result_to_string(result).decode('utf-8')
 
 
 # Format types
@@ -153,9 +153,9 @@ class PrimType:
     @staticmethod
     def to_string(prim_type: int) -> str:
         """Convert prim type to string"""
-        _lib.tusdz_prim_type_to_string.restype = ctypes.c_char_p
-        _lib.tusdz_prim_type_to_string.argtypes = [ctypes.c_int]
-        return _lib.tusdz_prim_type_to_string(prim_type).decode('utf-8')
+        _lib.lightusd_prim_type_to_string.restype = ctypes.c_char_p
+        _lib.lightusd_prim_type_to_string.argtypes = [ctypes.c_int]
+        return _lib.lightusd_prim_type_to_string(prim_type).decode('utf-8')
 
 
 # Value types
@@ -191,9 +191,9 @@ class ValueType:
     @staticmethod
     def to_string(value_type: int) -> str:
         """Convert value type to string"""
-        _lib.tusdz_value_type_to_string.restype = ctypes.c_char_p
-        _lib.tusdz_value_type_to_string.argtypes = [ctypes.c_int]
-        return _lib.tusdz_value_type_to_string(value_type).decode('utf-8')
+        _lib.lightusd_value_type_to_string.restype = ctypes.c_char_p
+        _lib.lightusd_value_type_to_string.argtypes = [ctypes.c_int]
+        return _lib.lightusd_value_type_to_string(value_type).decode('utf-8')
 
 
 class LoadOptions(ctypes.Structure):
@@ -222,52 +222,52 @@ class PrimWrapper:
     @property
     def name(self) -> str:
         """Get prim name"""
-        _lib.tusdz_prim_get_name.restype = ctypes.c_char_p
-        _lib.tusdz_prim_get_name.argtypes = [ctypes.c_void_p]
-        name = _lib.tusdz_prim_get_name(self._handle)
+        _lib.lightusd_prim_get_name.restype = ctypes.c_char_p
+        _lib.lightusd_prim_get_name.argtypes = [ctypes.c_void_p]
+        name = _lib.lightusd_prim_get_name(self._handle)
         return name.decode('utf-8') if name else ""
 
     @property
     def path(self) -> str:
         """Get prim path"""
-        _lib.tusdz_prim_get_path.restype = ctypes.c_char_p
-        _lib.tusdz_prim_get_path.argtypes = [ctypes.c_void_p]
-        path = _lib.tusdz_prim_get_path(self._handle)
+        _lib.lightusd_prim_get_path.restype = ctypes.c_char_p
+        _lib.lightusd_prim_get_path.argtypes = [ctypes.c_void_p]
+        path = _lib.lightusd_prim_get_path(self._handle)
         return path.decode('utf-8') if path else ""
 
     @property
     def prim_type(self) -> int:
         """Get prim type"""
-        _lib.tusdz_prim_get_type.restype = ctypes.c_int
-        _lib.tusdz_prim_get_type.argtypes = [ctypes.c_void_p]
-        return _lib.tusdz_prim_get_type(self._handle)
+        _lib.lightusd_prim_get_type.restype = ctypes.c_int
+        _lib.lightusd_prim_get_type.argtypes = [ctypes.c_void_p]
+        return _lib.lightusd_prim_get_type(self._handle)
 
     @property
     def type_name(self) -> str:
         """Get prim type name"""
-        _lib.tusdz_prim_get_type_name.restype = ctypes.c_char_p
-        _lib.tusdz_prim_get_type_name.argtypes = [ctypes.c_void_p]
-        name = _lib.tusdz_prim_get_type_name(self._handle)
+        _lib.lightusd_prim_get_type_name.restype = ctypes.c_char_p
+        _lib.lightusd_prim_get_type_name.argtypes = [ctypes.c_void_p]
+        name = _lib.lightusd_prim_get_type_name(self._handle)
         return name.decode('utf-8') if name else "Unknown"
 
     def is_type(self, prim_type: int) -> bool:
         """Check if prim is specific type"""
-        _lib.tusdz_prim_is_type.restype = ctypes.c_int
-        _lib.tusdz_prim_is_type.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        return bool(_lib.tusdz_prim_is_type(self._handle, prim_type))
+        _lib.lightusd_prim_is_type.restype = ctypes.c_int
+        _lib.lightusd_prim_is_type.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        return bool(_lib.lightusd_prim_is_type(self._handle, prim_type))
 
     @property
     def child_count(self) -> int:
         """Get number of child prims"""
-        _lib.tusdz_prim_get_child_count.restype = ctypes.c_size_t
-        _lib.tusdz_prim_get_child_count.argtypes = [ctypes.c_void_p]
-        return _lib.tusdz_prim_get_child_count(self._handle)
+        _lib.lightusd_prim_get_child_count.restype = ctypes.c_size_t
+        _lib.lightusd_prim_get_child_count.argtypes = [ctypes.c_void_p]
+        return _lib.lightusd_prim_get_child_count(self._handle)
 
     def get_child(self, index: int) -> Optional['PrimWrapper']:
         """Get child prim at index"""
-        _lib.tusdz_prim_get_child_at.restype = ctypes.c_void_p
-        _lib.tusdz_prim_get_child_at.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-        child = _lib.tusdz_prim_get_child_at(self._handle, index)
+        _lib.lightusd_prim_get_child_at.restype = ctypes.c_void_p
+        _lib.lightusd_prim_get_child_at.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        child = _lib.lightusd_prim_get_child_at(self._handle, index)
         return PrimWrapper(child) if child else None
 
     def get_children(self) -> List['PrimWrapper']:
@@ -277,22 +277,22 @@ class PrimWrapper:
     @property
     def property_count(self) -> int:
         """Get number of properties"""
-        _lib.tusdz_prim_get_property_count.restype = ctypes.c_size_t
-        _lib.tusdz_prim_get_property_count.argtypes = [ctypes.c_void_p]
-        return _lib.tusdz_prim_get_property_count(self._handle)
+        _lib.lightusd_prim_get_property_count.restype = ctypes.c_size_t
+        _lib.lightusd_prim_get_property_count.argtypes = [ctypes.c_void_p]
+        return _lib.lightusd_prim_get_property_count(self._handle)
 
     def get_property_name(self, index: int) -> str:
         """Get property name at index"""
-        _lib.tusdz_prim_get_property_name_at.restype = ctypes.c_char_p
-        _lib.tusdz_prim_get_property_name_at.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-        name = _lib.tusdz_prim_get_property_name_at(self._handle, index)
+        _lib.lightusd_prim_get_property_name_at.restype = ctypes.c_char_p
+        _lib.lightusd_prim_get_property_name_at.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        name = _lib.lightusd_prim_get_property_name_at(self._handle, index)
         return name.decode('utf-8') if name else ""
 
     def get_property(self, name: str) -> Optional['ValueWrapper']:
         """Get property by name"""
-        _lib.tusdz_prim_get_property.restype = ctypes.c_void_p
-        _lib.tusdz_prim_get_property.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-        value = _lib.tusdz_prim_get_property(self._handle, name.encode('utf-8'))
+        _lib.lightusd_prim_get_property.restype = ctypes.c_void_p
+        _lib.lightusd_prim_get_property.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        value = _lib.lightusd_prim_get_property(self._handle, name.encode('utf-8'))
         return ValueWrapper(value) if value else None
 
     @property
@@ -314,8 +314,8 @@ class PrimWrapper:
 
     def print_hierarchy(self, max_depth: int = -1):
         """Print prim hierarchy to stdout"""
-        _lib.tusdz_stage_print_hierarchy.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        _lib.tusdz_stage_print_hierarchy(self._handle, max_depth)
+        _lib.lightusd_stage_print_hierarchy.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        _lib.lightusd_stage_print_hierarchy(self._handle, max_depth)
 
     def __repr__(self) -> str:
         return f"PrimWrapper(name='{self.name}', type='{self.type_name}', children={self.child_count})"
@@ -330,9 +330,9 @@ class ValueWrapper:
     @property
     def value_type(self) -> int:
         """Get value type"""
-        _lib.tusdz_value_get_type.restype = ctypes.c_int
-        _lib.tusdz_value_get_type.argtypes = [ctypes.c_void_p]
-        return _lib.tusdz_value_get_type(self._handle)
+        _lib.lightusd_value_get_type.restype = ctypes.c_int
+        _lib.lightusd_value_get_type.argtypes = [ctypes.c_void_p]
+        return _lib.lightusd_value_get_type(self._handle)
 
     @property
     def type_name(self) -> str:
@@ -342,59 +342,59 @@ class ValueWrapper:
     @property
     def is_array(self) -> bool:
         """Check if value is an array"""
-        _lib.tusdz_value_is_array.restype = ctypes.c_int
-        _lib.tusdz_value_is_array.argtypes = [ctypes.c_void_p]
-        return bool(_lib.tusdz_value_is_array(self._handle))
+        _lib.lightusd_value_is_array.restype = ctypes.c_int
+        _lib.lightusd_value_is_array.argtypes = [ctypes.c_void_p]
+        return bool(_lib.lightusd_value_is_array(self._handle))
 
     @property
     def array_size(self) -> int:
         """Get array size"""
-        _lib.tusdz_value_get_array_size.restype = ctypes.c_size_t
-        _lib.tusdz_value_get_array_size.argtypes = [ctypes.c_void_p]
-        return _lib.tusdz_value_get_array_size(self._handle)
+        _lib.lightusd_value_get_array_size.restype = ctypes.c_size_t
+        _lib.lightusd_value_get_array_size.argtypes = [ctypes.c_void_p]
+        return _lib.lightusd_value_get_array_size(self._handle)
 
     def get_float(self) -> Optional[float]:
         """Get as float"""
         value = ctypes.c_float()
-        _lib.tusdz_value_get_float.restype = ctypes.c_int
-        _lib.tusdz_value_get_float.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
-        if _lib.tusdz_value_get_float(self._handle, ctypes.byref(value)) == Result.SUCCESS:
+        _lib.lightusd_value_get_float.restype = ctypes.c_int
+        _lib.lightusd_value_get_float.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+        if _lib.lightusd_value_get_float(self._handle, ctypes.byref(value)) == Result.SUCCESS:
             return float(value.value)
         return None
 
     def get_double(self) -> Optional[float]:
         """Get as double"""
         value = ctypes.c_double()
-        _lib.tusdz_value_get_double.restype = ctypes.c_int
-        _lib.tusdz_value_get_double.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double)]
-        if _lib.tusdz_value_get_double(self._handle, ctypes.byref(value)) == Result.SUCCESS:
+        _lib.lightusd_value_get_double.restype = ctypes.c_int
+        _lib.lightusd_value_get_double.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double)]
+        if _lib.lightusd_value_get_double(self._handle, ctypes.byref(value)) == Result.SUCCESS:
             return float(value.value)
         return None
 
     def get_int(self) -> Optional[int]:
         """Get as int"""
         value = ctypes.c_int()
-        _lib.tusdz_value_get_int.restype = ctypes.c_int
-        _lib.tusdz_value_get_int.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
-        if _lib.tusdz_value_get_int(self._handle, ctypes.byref(value)) == Result.SUCCESS:
+        _lib.lightusd_value_get_int.restype = ctypes.c_int
+        _lib.lightusd_value_get_int.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        if _lib.lightusd_value_get_int(self._handle, ctypes.byref(value)) == Result.SUCCESS:
             return int(value.value)
         return None
 
     def get_string(self) -> Optional[str]:
         """Get as string"""
         value = ctypes.c_char_p()
-        _lib.tusdz_value_get_string.restype = ctypes.c_int
-        _lib.tusdz_value_get_string.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p)]
-        if _lib.tusdz_value_get_string(self._handle, ctypes.byref(value)) == Result.SUCCESS:
+        _lib.lightusd_value_get_string.restype = ctypes.c_int
+        _lib.lightusd_value_get_string.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p)]
+        if _lib.lightusd_value_get_string(self._handle, ctypes.byref(value)) == Result.SUCCESS:
             return value.value.decode('utf-8') if value.value else None
         return None
 
     def get_float3(self) -> Optional[Tuple[float, float, float]]:
         """Get as float3"""
         values = (ctypes.c_float * 3)()
-        _lib.tusdz_value_get_float3.restype = ctypes.c_int
-        _lib.tusdz_value_get_float3.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
-        if _lib.tusdz_value_get_float3(self._handle, values) == Result.SUCCESS:
+        _lib.lightusd_value_get_float3.restype = ctypes.c_int
+        _lib.lightusd_value_get_float3.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+        if _lib.lightusd_value_get_float3(self._handle, values) == Result.SUCCESS:
             return tuple(float(v) for v in values)
         return None
 
@@ -411,38 +411,38 @@ class StageWrapper:
     @property
     def root_prim(self) -> PrimWrapper:
         """Get root prim"""
-        _lib.tusdz_stage_get_root_prim.restype = ctypes.c_void_p
-        _lib.tusdz_stage_get_root_prim.argtypes = [ctypes.c_void_p]
-        root = _lib.tusdz_stage_get_root_prim(self._handle)
+        _lib.lightusd_stage_get_root_prim.restype = ctypes.c_void_p
+        _lib.lightusd_stage_get_root_prim.argtypes = [ctypes.c_void_p]
+        root = _lib.lightusd_stage_get_root_prim(self._handle)
         return PrimWrapper(root) if root else None
 
     def get_prim_at_path(self, path: str) -> Optional[PrimWrapper]:
         """Get prim at path"""
-        _lib.tusdz_stage_get_prim_at_path.restype = ctypes.c_void_p
-        _lib.tusdz_stage_get_prim_at_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-        prim = _lib.tusdz_stage_get_prim_at_path(self._handle, path.encode('utf-8'))
+        _lib.lightusd_stage_get_prim_at_path.restype = ctypes.c_void_p
+        _lib.lightusd_stage_get_prim_at_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        prim = _lib.lightusd_stage_get_prim_at_path(self._handle, path.encode('utf-8'))
         return PrimWrapper(prim) if prim else None
 
     @property
     def has_animation(self) -> bool:
         """Check if stage has animation"""
-        _lib.tusdz_stage_has_animation.restype = ctypes.c_int
-        _lib.tusdz_stage_has_animation.argtypes = [ctypes.c_void_p]
-        return bool(_lib.tusdz_stage_has_animation(self._handle))
+        _lib.lightusd_stage_has_animation.restype = ctypes.c_int
+        _lib.lightusd_stage_has_animation.argtypes = [ctypes.c_void_p]
+        return bool(_lib.lightusd_stage_has_animation(self._handle))
 
     def get_time_range(self) -> Optional[Tuple[float, float, float]]:
         """Get time range (start, end, fps)"""
         start = ctypes.c_double()
         end = ctypes.c_double()
         fps = ctypes.c_double()
-        _lib.tusdz_stage_get_time_range.restype = ctypes.c_int
-        _lib.tusdz_stage_get_time_range.argtypes = [
+        _lib.lightusd_stage_get_time_range.restype = ctypes.c_int
+        _lib.lightusd_stage_get_time_range.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(ctypes.c_double),
             ctypes.POINTER(ctypes.c_double),
             ctypes.POINTER(ctypes.c_double),
         ]
-        if _lib.tusdz_stage_get_time_range(
+        if _lib.lightusd_stage_get_time_range(
             self._handle, ctypes.byref(start), ctypes.byref(end), ctypes.byref(fps)
         ) == Result.SUCCESS:
             return (float(start.value), float(end.value), float(fps.value))
@@ -451,7 +451,7 @@ class StageWrapper:
     def __del__(self):
         """Clean up stage"""
         if self._handle:
-            _lib.tusdz_stage_free(self._handle)
+            _lib.lightusd_stage_free(self._handle)
 
     def __repr__(self) -> str:
         root = self.root_prim
@@ -464,20 +464,20 @@ class StageWrapper:
 
 def init() -> bool:
     """Initialize LightUSD library"""
-    _lib.tusdz_init.restype = ctypes.c_int
-    return _lib.tusdz_init() == Result.SUCCESS
+    _lib.lightusd_init.restype = ctypes.c_int
+    return _lib.lightusd_init() == Result.SUCCESS
 
 
 def shutdown():
     """Shutdown LightUSD library"""
-    _lib.tusdz_shutdown.argtypes = []
-    _lib.tusdz_shutdown()
+    _lib.lightusd_shutdown.argtypes = []
+    _lib.lightusd_shutdown()
 
 
 def get_version() -> str:
     """Get LightUSD version"""
-    _lib.tusdz_get_version.restype = ctypes.c_char_p
-    version = _lib.tusdz_get_version()
+    _lib.lightusd_get_version.restype = ctypes.c_char_p
+    version = _lib.lightusd_get_version()
     return version.decode('utf-8') if version else "unknown"
 
 
@@ -490,8 +490,8 @@ def load_from_file(
     error_buf = ctypes.create_string_buffer(1024)
     stage = ctypes.c_void_p()
 
-    _lib.tusdz_load_from_file.restype = ctypes.c_int
-    _lib.tusdz_load_from_file.argtypes = [
+    _lib.lightusd_load_from_file.restype = ctypes.c_int
+    _lib.lightusd_load_from_file.argtypes = [
         ctypes.c_char_p,
         ctypes.POINTER(LoadOptions),
         ctypes.POINTER(ctypes.c_void_p),
@@ -499,7 +499,7 @@ def load_from_file(
         ctypes.c_size_t,
     ]
 
-    result = _lib.tusdz_load_from_file(
+    result = _lib.lightusd_load_from_file(
         filepath.encode('utf-8'),
         ctypes.byref(options) if options else None,
         ctypes.byref(stage),
@@ -526,8 +526,8 @@ def load_from_memory(
     error_buf = ctypes.create_string_buffer(1024)
     stage = ctypes.c_void_p()
 
-    _lib.tusdz_load_from_memory.restype = ctypes.c_int
-    _lib.tusdz_load_from_memory.argtypes = [
+    _lib.lightusd_load_from_memory.restype = ctypes.c_int
+    _lib.lightusd_load_from_memory.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_int,
@@ -537,7 +537,7 @@ def load_from_memory(
         ctypes.c_size_t,
     ]
 
-    result = _lib.tusdz_load_from_memory(
+    result = _lib.lightusd_load_from_memory(
         ctypes.c_char_p(data),
         len(data),
         format,
@@ -558,9 +558,9 @@ def load_from_memory(
 
 def detect_format(filepath: str) -> int:
     """Detect USD file format"""
-    _lib.tusdz_detect_format.restype = ctypes.c_int
-    _lib.tusdz_detect_format.argtypes = [ctypes.c_char_p]
-    return _lib.tusdz_detect_format(filepath.encode('utf-8'))
+    _lib.lightusd_detect_format.restype = ctypes.c_int
+    _lib.lightusd_detect_format.argtypes = [ctypes.c_char_p]
+    return _lib.lightusd_detect_format(filepath.encode('utf-8'))
 
 
 # ============================================================================

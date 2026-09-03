@@ -1014,7 +1014,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   }
 
 
-  //TUSDZ_LOG_I("texcoord. " << name << ", " << uvs.size());
+  //LIGHTUSD_LOG_I("texcoord. " << name << ", " << uvs.size());
   DCOUT("texcoord " << name << " : " << uvs);
 
   vattr.format = VertexAttributeFormat::Vec2;
@@ -1027,7 +1027,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   vattr.indices.clear();  // just in case.
 
   vattr.name = name;  // TODO: add "primvars:" namespace?
-  //TUSDZ_LOG_I("end");
+  //LIGHTUSD_LOG_I("end");
 
   return std::move(vattr);
 }
@@ -2243,7 +2243,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
   // - Reorder vertex attributes to 'vertex' variability.
   //
 
-  //TUSDZ_LOG_I("BuildVertexIndicesImpl");
+  //LIGHTUSD_LOG_I("BuildVertexIndicesImpl");
 
   const std::vector<uint32_t> &fvIndices =
       mesh.triangulatedFaceVertexIndices.size()
@@ -2602,7 +2602,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   // - Reorder vertex attributes to 'vertex' variability.
   //
 
-  //TUSDZ_LOG_I("BuildVertexIndicesFastImpl");
+  //LIGHTUSD_LOG_I("BuildVertexIndicesFastImpl");
 
   const std::vector<uint32_t> &fvIndices =
       mesh.triangulatedFaceVertexIndices.size()
@@ -2660,7 +2660,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
     return false;
   }
 
-  //TUSDZ_LOG_I("proc normal");
+  //LIGHTUSD_LOG_I("proc normal");
 
   // Just change variability
   if (mesh.normals.vertex_count() > 0) {
@@ -2690,7 +2690,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   }
 
 
-  //TUSDZ_LOG_I("build indices");
+  //LIGHTUSD_LOG_I("build indices");
 
   // TODO: omit indices.
   std::vector<uint32_t> out_indices;
@@ -2705,7 +2705,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
     mesh.usdFaceVertexIndices = std::move(out_indices);
   }
 
-  //TUSDZ_LOG_I("done build indices");
+  //LIGHTUSD_LOG_I("done build indices");
 
   return true;
 }
@@ -3070,7 +3070,7 @@ bool RenderSceneConverter::ConvertMesh(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
           env.timecode, env.tinterp, prim_path_str, &local_warn);
       if (ret) {
-        //TUSDZ_LOG_I("uv attr");
+        //LIGHTUSD_LOG_I("uv attr");
 
         // Use slotId 0 - use move to avoid copy
         uvAttrs[0] = std::move(ret.value());
@@ -3937,7 +3937,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  //TUSDZ_LOG_I("done uvAttr");
+  //LIGHTUSD_LOG_I("done uvAttr");
 
   // displayColor/displayOpacity were gathered above (and refined when
   // subdivision ran); single constant values become the mesh-level color.
@@ -5166,7 +5166,7 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   if (compute_normals || (compute_tangents && dst.normals.empty())) {
-    //TUSDZ_LOG_I("Build normals");
+    //LIGHTUSD_LOG_I("Build normals");
     DCOUT("Compute normals");
     std::vector<vec3> normals;
     // For leftHanded orientation meshes, flip the computed geometric normals
@@ -5243,7 +5243,7 @@ bool RenderSceneConverter::ConvertMesh(
       !compute_tangents) {
     if (!env.mesh_config.prefer_non_indexed) {
       DCOUT("Build vertex indices");
-      //TUSDZ_LOG_I("Build vertex indices");
+      //LIGHTUSD_LOG_I("Build vertex indices");
 
       if (!BuildVertexIndicesFastImpl(dst)) {
         return false;

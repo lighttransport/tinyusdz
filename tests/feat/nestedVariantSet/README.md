@@ -63,7 +63,7 @@ This directory contains synthetic USDA test files for validating nested variantS
 
 All test files have been validated with:
 - ✅ `test_lightusd` - All files load successfully
-- ✅ `tusdcat` - All files parse and reconstruct correctly
+- ✅ `lusdcat` - All files parse and reconstruct correctly
 
 ## Testing Commands
 
@@ -72,7 +72,7 @@ All test files have been validated with:
 ./build/test_lightusd tests/feat/nestedVariantSet/basic-2level-001.usda
 
 # View parsed structure
-./build/tusdcat tests/feat/nestedVariantSet/basic-2level-001.usda
+./build/lusdcat tests/feat/nestedVariantSet/basic-2level-001.usda
 
 # Test all files
 for f in tests/feat/nestedVariantSet/*.usda; do

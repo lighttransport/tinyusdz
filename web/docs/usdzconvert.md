@@ -3,7 +3,7 @@
 LightUSD's WASM `usdzconvert` packages a USD scene (a `.usd`/`.usda`/`.usdc`
 layer plus textures, or an existing `.usdz`) into a `.usdz` archive — entirely
 in the browser or in Node, no native toolchain required. It is the WebAssembly
-counterpart of the native [`tusdzconvert`](../../doc/tusdzconvert.md).
+counterpart of the native [`lusdzconvert`](../../doc/lusdzconvert.md).
 
 There are three entry points, all sharing one library
 (`web/js/src/usdzconvert.js`):

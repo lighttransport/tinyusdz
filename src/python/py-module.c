@@ -8,13 +8,13 @@
  * Generic helpers
  * ============================================================ */
 
-tusd_state* tusd_state_from_type(PyTypeObject* tp) {
+lightusd_state* lightusd_state_from_type(PyTypeObject* tp) {
   PyObject* module = PyType_GetModule(tp);
   if (!module) return NULL;
-  return (tusd_state*)PyModule_GetState(module);
+  return (lightusd_state*)PyModule_GetState(module);
 }
 
-PyObject* tusd_alloc(PyObject* type_obj) {
+PyObject* lightusd_alloc(PyObject* type_obj) {
   PyTypeObject* tp = (PyTypeObject*)type_obj;
   allocfunc alloc = (allocfunc)PyType_GetSlot(tp, Py_tp_alloc);
   if (!alloc) {
@@ -24,27 +24,27 @@ PyObject* tusd_alloc(PyObject* type_obj) {
   return alloc(tp, 0);
 }
 
-PyObject* tusd_raise(tusd_state* st, tusd_status status, const char* what) {
-  const char* detail = tusd_last_error();
+PyObject* lightusd_raise(lightusd_state* st, lightusd_status status, const char* what) {
+  const char* detail = lightusd_last_error();
   if (!detail || !detail[0]) detail = "(no detail)";
   PyObject* exc;
   switch (status) {
-    case TUSD_ERR_IO:
+    case LIGHTUSD_ERR_IO:
       exc = st->UsdIoError;
       break;
-    case TUSD_ERR_PARSE:
+    case LIGHTUSD_ERR_PARSE:
       exc = st->UsdParseError;
       break;
-    case TUSD_ERR_NOT_FOUND:
+    case LIGHTUSD_ERR_NOT_FOUND:
       exc = PyExc_KeyError;
       break;
-    case TUSD_ERR_TYPE_MISMATCH:
+    case LIGHTUSD_ERR_TYPE_MISMATCH:
       exc = PyExc_TypeError;
       break;
-    case TUSD_ERR_INVALID_ARG:
+    case LIGHTUSD_ERR_INVALID_ARG:
       exc = PyExc_ValueError;
       break;
-    case TUSD_ERR_OUT_OF_MEMORY:
+    case LIGHTUSD_ERR_OUT_OF_MEMORY:
       exc = PyExc_MemoryError;
       break;
     default:
@@ -59,13 +59,13 @@ PyObject* tusd_raise(tusd_state* st, tusd_status status, const char* what) {
   return NULL;
 }
 
-PyObject* tusd_wrap_stage(tusd_state* st, tusd_stage* stage) {
-  PyObject* obj = tusd_alloc(st->StageType);
+PyObject* lightusd_wrap_stage(lightusd_state* st, lightusd_stage* stage) {
+  PyObject* obj = lightusd_alloc(st->StageType);
   if (!obj) {
-    tusd_stage_destroy(stage);
+    lightusd_stage_destroy(stage);
     return NULL;
   }
-  ((TusdStage*)obj)->stage = stage;
+  ((LightUSDStage*)obj)->stage = stage;
   return obj;
 }
 
@@ -144,8 +144,8 @@ static int variants_from_dict(PyObject* dict, variant_overrides* v) {
   Py_ssize_t pos = 0;
   while (PyDict_Next(dict, &pos, &key, &value)) {
     size_t i = v->count;
-    v->sets[i] = tusd_utf8(key, &v->tmps[i * 2]);
-    v->names[i] = tusd_utf8(value, &v->tmps[i * 2 + 1]);
+    v->sets[i] = lightusd_utf8(key, &v->tmps[i * 2]);
+    v->names[i] = lightusd_utf8(value, &v->tmps[i * 2 + 1]);
     if (!v->sets[i] || !v->names[i]) {
       v->count = i + 1;
       variants_clear(v);
@@ -158,15 +158,15 @@ static int variants_from_dict(PyObject* dict, variant_overrides* v) {
 
 static int parse_format(const char* format, uint32_t* out) {
   if (!format) {
-    *out = TUSD_FORMAT_AUTO;
+    *out = LIGHTUSD_FORMAT_AUTO;
     return 0;
   }
   if (strcmp(format, "usda") == 0) {
-    *out = TUSD_FORMAT_USDA;
+    *out = LIGHTUSD_FORMAT_USDA;
   } else if (strcmp(format, "usdc") == 0) {
-    *out = TUSD_FORMAT_USDC;
+    *out = LIGHTUSD_FORMAT_USDC;
   } else if (strcmp(format, "usdz") == 0) {
-    *out = TUSD_FORMAT_USDZ;
+    *out = LIGHTUSD_FORMAT_USDZ;
   } else {
     PyErr_SetString(PyExc_ValueError,
                     "format must be 'usda', 'usdc' or 'usdz'");
@@ -189,11 +189,11 @@ static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
                                    &load_payloads, &max_memory)) {
     return NULL;
   }
-  tusd_state* st = tusd_state_from_module(module);
+  lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
 
-  tusd_load_options opts;
-  tusd_load_options_init(&opts);
+  lightusd_load_options opts;
+  lightusd_load_options_init(&opts);
   if (parse_format(format, &opts.format) != 0) return NULL;
   opts.composed = composed ? 1 : 0;
   opts.load_payloads = load_payloads ? 1 : 0;
@@ -205,40 +205,40 @@ static PyObject* mod_load(PyObject* module, PyObject* args, PyObject* kwargs) {
   opts.variant_names = vo.names;
   opts.variant_override_count = vo.count;
 
-  tusd_stage* stage = NULL;
-  tusd_status status;
+  lightusd_stage* stage = NULL;
+  lightusd_status status;
   Py_BEGIN_ALLOW_THREADS
-  status = tusd_stage_load(path, &opts, &stage);
+  status = lightusd_stage_load(path, &opts, &stage);
   Py_END_ALLOW_THREADS
   variants_clear(&vo);
-  if (status != TUSD_OK) return tusd_raise(st, status, path);
-  return tusd_wrap_stage(st, stage);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, path);
+  return lightusd_wrap_stage(st, stage);
 }
 
-static PyObject* load_from_buffer(tusd_state* st, const uint8_t* data,
+static PyObject* load_from_buffer(lightusd_state* st, const uint8_t* data,
                                   size_t size, const char* format,
                                   unsigned long long max_memory) {
-  tusd_load_options opts;
-  tusd_load_options_init(&opts);
+  lightusd_load_options opts;
+  lightusd_load_options_init(&opts);
   if (parse_format(format, &opts.format) != 0) return NULL;
   opts.max_memory = max_memory;
 
-  tusd_stage* stage = NULL;
-  tusd_status status;
+  lightusd_stage* stage = NULL;
+  lightusd_status status;
   Py_BEGIN_ALLOW_THREADS
-  status = tusd_stage_load_from_memory(data, size, &opts, &stage);
+  status = lightusd_stage_load_from_memory(data, size, &opts, &stage);
   Py_END_ALLOW_THREADS
-  if (status != TUSD_OK) return tusd_raise(st, status, "load from memory");
-  return tusd_wrap_stage(st, stage);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, "load from memory");
+  return lightusd_wrap_stage(st, stage);
 }
 
 static PyObject* mod_loads(PyObject* module, PyObject* args) {
   PyObject* text;
   if (!PyArg_ParseTuple(args, "U:loads", &text)) return NULL;
-  tusd_state* st = tusd_state_from_module(module);
+  lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
   PyObject* tmp = NULL;
-  const char* data = tusd_utf8(text, &tmp);
+  const char* data = lightusd_utf8(text, &tmp);
   if (!data) return NULL;
   Py_ssize_t size = PyBytes_Size(tmp);
   PyObject* res = load_from_buffer(st, (const uint8_t*)data, (size_t)size,
@@ -257,7 +257,7 @@ static PyObject* mod_load_bytes(PyObject* module, PyObject* args,
                                    &data_obj, &format, &max_memory)) {
     return NULL;
   }
-  tusd_state* st = tusd_state_from_module(module);
+  lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
 
   /* Accept bytes / bytearray / any buffer via bytes(); the C loader copies
@@ -286,23 +286,23 @@ static PyObject* mod_flatten_file(PyObject* module, PyObject* args,
                                    &src, &dst, &max_memory)) {
     return NULL;
   }
-  tusd_state* st = tusd_state_from_module(module);
+  lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
-  tusd_load_options opts;
-  tusd_load_options_init(&opts);
+  lightusd_load_options opts;
+  lightusd_load_options_init(&opts);
   opts.max_memory = max_memory;
-  tusd_status status;
+  lightusd_status status;
   Py_BEGIN_ALLOW_THREADS
-  status = tusd_flatten_file_to_usdc(src, dst, &opts);
+  status = lightusd_flatten_file_to_usdc(src, dst, &opts);
   Py_END_ALLOW_THREADS
-  if (status != TUSD_OK) return tusd_raise(st, status, src);
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, src);
   Py_RETURN_NONE;
 }
 
 static PyObject* mod_set_normalizer(PyObject* module, PyObject* args) {
   PyObject* fn;
   if (!PyArg_ParseTuple(args, "O:_set_normalizer", &fn)) return NULL;
-  tusd_state* st = tusd_state_from_module(module);
+  lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return NULL;
   PyObject* old = st->normalizer;
   if (fn == Py_None) {
@@ -319,14 +319,14 @@ static PyObject* mod_type_from_name(PyObject* module, PyObject* args) {
   (void)module;
   const char* name;
   if (!PyArg_ParseTuple(args, "s:type_from_name", &name)) return NULL;
-  return PyLong_FromLong((long)tusd_type_from_name(name));
+  return PyLong_FromLong((long)lightusd_type_from_name(name));
 }
 
 static PyObject* mod_type_name(PyObject* module, PyObject* args) {
   (void)module;
   int type;
   if (!PyArg_ParseTuple(args, "i:type_name", &type)) return NULL;
-  return PyUnicode_FromString(tusd_type_name((tusd_type)type));
+  return PyUnicode_FromString(lightusd_type_name((lightusd_type)type));
 }
 
 static PyMethodDef module_methods[] = {
@@ -342,7 +342,7 @@ static PyMethodDef module_methods[] = {
      METH_VARARGS | METH_KEYWORDS,
      "flatten_file(src, dst, *, max_memory=0)\n"
      "Low-memory flatten of a USD file into a USDC file."},
-    {"to_render_scene", (PyCFunction)(void (*)(void))tusd_to_render_scene,
+    {"to_render_scene", (PyCFunction)(void (*)(void))lightusd_to_render_scene,
      METH_VARARGS | METH_KEYWORDS,
      "to_render_scene(stage, *, triangulate=True, compute_normals=True, "
      "compute_tangents=False, load_textures=True, time=0.0, "
@@ -361,7 +361,7 @@ static PyMethodDef module_methods[] = {
  * ============================================================ */
 
 static int module_exec(PyObject* module) {
-  tusd_state* st = tusd_state_from_module(module);
+  lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return -1;
 
   st->UsdError =
@@ -402,17 +402,17 @@ static int module_exec(PyObject* module) {
     return -1;
   }
 
-  if (tusd_register_array_type(module, st) < 0) return -1;
-  if (tusd_register_prim_types(module, st) < 0) return -1;
-  if (tusd_register_stage_type(module, st) < 0) return -1;
-  if (tusd_register_render_types(module, st) < 0) return -1;
+  if (lightusd_register_array_type(module, st) < 0) return -1;
+  if (lightusd_register_prim_types(module, st) < 0) return -1;
+  if (lightusd_register_stage_type(module, st) < 0) return -1;
+  if (lightusd_register_render_types(module, st) < 0) return -1;
 
   /* ValueBlock sentinel */
   {
     PyObject* vb_type =
         PyType_FromModuleAndSpec(module, &ValueBlock_spec, NULL);
     if (!vb_type) return -1;
-    st->ValueBlock = tusd_alloc(vb_type);
+    st->ValueBlock = lightusd_alloc(vb_type);
     Py_DECREF(vb_type);
     if (!st->ValueBlock) return -1;
     if (PyModule_AddObjectRef(module, "ValueBlock", st->ValueBlock) < 0) {
@@ -421,14 +421,14 @@ static int module_exec(PyObject* module) {
   }
 
   if (PyModule_AddStringConstant(module, "__version__",
-                                 tusd_version_string()) < 0) {
+                                 lightusd_version_string()) < 0) {
     return -1;
   }
   return 0;
 }
 
 static int module_traverse(PyObject* module, visitproc visit, void* arg) {
-  tusd_state* st = tusd_state_from_module(module);
+  lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return 0;
   Py_VISIT(st->UsdError);
   Py_VISIT(st->UsdParseError);
@@ -458,7 +458,7 @@ static int module_traverse(PyObject* module, visitproc visit, void* arg) {
 }
 
 static int module_clear(PyObject* module) {
-  tusd_state* st = tusd_state_from_module(module);
+  lightusd_state* st = lightusd_state_from_module(module);
   if (!st) return 0;
   Py_CLEAR(st->UsdError);
   Py_CLEAR(st->UsdParseError);
@@ -504,7 +504,7 @@ static struct PyModuleDef moduledef = {
     PyModuleDef_HEAD_INIT,
     .m_name = "lightusd._core",
     .m_doc = "LightUSD core binding (next-core + tydra-next).",
-    .m_size = sizeof(tusd_state),
+    .m_size = sizeof(lightusd_state),
     .m_methods = module_methods,
     .m_slots = module_slots,
     .m_traverse = module_traverse,

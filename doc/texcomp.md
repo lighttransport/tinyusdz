@@ -1,7 +1,7 @@
 # GPU Texture Compression (KTX2 / BC / ASTC / ETC2)
 
 lightusd can load, decode, and produce GPU block-compressed textures to cut VRAM
-and bandwidth in the viewers (tusdview / tusdrender) and on the web — while
+and bandwidth in the viewers (lusdview / lusdrender) and on the web — while
 staying **DCC-transparent** and **legacy-compatible**: a USD/USDZ asset that uses
 compression still opens in stock USD tools and Apple Quick Look.
 
@@ -80,7 +80,7 @@ the `customData ktx2` hint to the attribute — leaving `inputs:file` untouched:
 usd-texcomp scene.usda -o scene_ktx2.usda [--mips on|off] [--zstd on|off]
 #   diffuse.png -> diffuse.ktx2 (1024x1024, 11 level(s), ...)
 # then:
-tusdview scene_ktx2.usda --texture-keep-compressed on
+lusdview scene_ktx2.usda --texture-keep-compressed on
 ```
 
 The output opens unchanged in stock USD tools (they see only the png and ignore
@@ -117,21 +117,21 @@ RGBA8 via the texpipe reader:
   handled.
 
 Because the loader decodes to a normal RGBA8 `Image`, every existing consumer
-works unchanged: **tusdrender** (a software path tracer) consumes `.ktx2` for
+works unchanged: **lusdrender** (a software path tracer) consumes `.ktx2` for
 free, and `usdz-convert` can re-encode it to png/jpg/exr for a legacy asset.
 
 `tydra::TextureImage` (`src/tydra/render-data.hh`) also carries a
 `TextureBlockFormat blockFormat` (+ `blockWidth`/`blockHeight`), which the
 keep-compressed passthrough (below) populates instead of decoding.
 
-## tusdview: compress-on-load
+## lusdview: compress-on-load
 
-tusdview converts decoded textures to a GPU block format at load to save VRAM,
+lusdview converts decoded textures to a GPU block format at load to save VRAM,
 selectable on the CLI:
 
 ```
-tusdview <scene.usd[z]> --texture-compress off|bc|bc7|astc|etc2|auto
-tusdview <scene.usd[z]> --texture-mips on|off
+lusdview <scene.usd[z]> --texture-compress off|bc|bc7|astc|etc2|auto
+lusdview <scene.usd[z]> --texture-mips on|off
 ```
 
 - `bc` = BC1/BC3 by opacity; `bc7` = BC7; `astc` = ASTC 4x4; `etc2` = ETC2_RGBA;
@@ -155,19 +155,19 @@ the kept-compressed passthrough, which uploads its blocks directly.
 
 ### Kept-compressed KTX2 passthrough
 
-When the texture asset is already a `.ktx2`, tusdview can upload its GPU blocks
+When the texture asset is already a `.ktx2`, lusdview can upload its GPU blocks
 directly instead of decoding to RGBA8 and re-encoding:
 
 ```
-tusdview <scene> --texture-keep-compressed on
+lusdview <scene> --texture-keep-compressed on
 # runnable example (a 64x64 uni KTX2 with a full mip chain):
-tusdview models/ktx2-uni-plane.usda --texture-keep-compressed on
+lusdview models/ktx2-uni-plane.usda --texture-keep-compressed on
 ```
 
 - Core/tydra loads the `.ktx2` block payload without decoding
   (`RenderSceneConverterConfig::keep_compressed_textures`), tagging the tydra
   `TextureImage` with its `TextureBlockFormat`.
-- tusdview adapts the blocks to the device (`TexToolsAdaptCompressed`): the `uni`
+- lusdview adapts the blocks to the device (`TexToolsAdaptCompressed`): the `uni`
   intermediate is a byte-copy to ASTC where supported, a cheap transcode to BC7
   or ETC2 otherwise, or a decode to RGBA8 as a last resort; a stored BC7/ASTC/BCn
   payload is uploaded as-is when the device supports it. This skips the expensive
@@ -242,8 +242,8 @@ than risking a silent misdecode of genuine Basis content.
 ## Building / gating
 
 - `LIGHTUSD_WITH_TEXTOOLS` (default ON) builds `lightusd_textools` and enables
-  the KTX2 image path in the core library and the compression paths in tusdview
-  (`TUSDVIEW_WITH_TEXTOOLS`). When OFF, `.ktx2` is not decoded and tusdview falls
+  the KTX2 image path in the core library and the compression paths in lusdview
+  (`LUSDVIEW_WITH_TEXTOOLS`). When OFF, `.ktx2` is not decoded and lusdview falls
   back to its built-in BC1/BC3 encoder.
 - textools tests: `ctest -R 'textools-' --output-on-failure` (KTX2
   write→read→decode round-trips live in `textools-texpipe`).

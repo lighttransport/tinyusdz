@@ -698,7 +698,7 @@ bool ReconstructXformOpsFromProperties(
 
     //const Attribute &attr = prop.get_attribute();
     //const auto &v = attr.get_var();
-    //TUSDZ_LOG_I("attr.value.type " << v.type_name());
+    //LIGHTUSD_LOG_I("attr.value.type " << v.type_name());
 
     if (prop.is_relationship()) {
       PUSH_ERROR_AND_RETURN("Relationship for `xformOpOrder` is not supported.");

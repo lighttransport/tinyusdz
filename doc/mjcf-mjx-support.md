@@ -130,8 +130,8 @@ The converter is cross-checked against **pixar OpenUSD** (the reference
 implementation) as an independent oracle — lightusd wrote the file, OpenUSD
 reads/validates it. Get the tools with `pip install usd-core` (provides
 `usdchecker`, `usdcat`, and the `pxr` Python module); a full OpenUSD build adds
-`usdview`/`usdrecord`. Without OpenUSD, lightusd's own `tusdcat`
-(`examples/tusdcat`) mirrors steps 2–3.
+`usdview`/`usdrecord`. Without OpenUSD, lightusd's own `lusdcat`
+(`examples/lusdcat`) mirrors steps 2–3.
 
 First export a model in all three formats:
 

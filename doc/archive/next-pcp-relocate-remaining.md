@@ -5,7 +5,7 @@
 > untagged entries). The "REMAINING"/"STILL FAILING" clusters A–E in the body
 > were superseded — the fixes landed in the commits listed at the top of this
 > doc. Current composition status lives in
-> [`../pcp.md`](../pcp.md) and [`../ousd-vs-tusdz.md`](../ousd-vs-tusdz.md).
+> [`../pcp.md`](../pcp.md) and [`../ousd-vs-lightusd.md`](../ousd-vs-lightusd.md).
 > Last verified 2026-07.
 
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**

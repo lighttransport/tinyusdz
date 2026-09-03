@@ -11,7 +11,7 @@ output directory:
   <type>-unknown-input.usda  an input name not in the schema               (shade.preview.unknownInput)
 
 Each fixture embeds machine-readable `# EXPECT:` / `# EXPECT-OK` markers that
-run-validation-suite.py checks against `tusdcat --validate-all` output.
+run-validation-suite.py checks against `lusdcat --validate-all` output.
 
 This keeps the fixtures in lock-step with the schema: regenerate after the
 schema (or the validator's table) changes.

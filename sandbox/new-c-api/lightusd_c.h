@@ -27,12 +27,12 @@ extern "C" {
 /* Platform-specific export macros */
 #ifdef _WIN32
     #ifdef LIGHTUSD_C_EXPORTS
-        #define TUSDZ_API __declspec(dllexport)
+        #define LIGHTUSD_API __declspec(dllexport)
     #else
-        #define TUSDZ_API __declspec(dllimport)
+        #define LIGHTUSD_API __declspec(dllimport)
     #endif
 #else
-    #define TUSDZ_API __attribute__((visibility("default")))
+    #define LIGHTUSD_API __attribute__((visibility("default")))
 #endif
 
 /* ============================================================================
@@ -42,138 +42,138 @@ extern "C" {
 /**
  * @brief Opaque handle types
  */
-typedef struct tusdz_stage_impl* tusdz_stage;
-typedef struct tusdz_prim_impl* tusdz_prim;
-typedef struct tusdz_value_impl* tusdz_value;
-typedef struct tusdz_layer_impl* tusdz_layer;
+typedef struct lightusd_stage_impl* lightusd_stage;
+typedef struct lightusd_prim_impl* lightusd_prim;
+typedef struct lightusd_value_impl* lightusd_value;
+typedef struct lightusd_layer_impl* lightusd_layer;
 
 /**
  * @brief Result codes for API functions
  */
 typedef enum {
-    TUSDZ_SUCCESS = 0,
-    TUSDZ_ERROR_FILE_NOT_FOUND = -1,
-    TUSDZ_ERROR_PARSE_FAILED = -2,
-    TUSDZ_ERROR_OUT_OF_MEMORY = -3,
-    TUSDZ_ERROR_INVALID_ARGUMENT = -4,
-    TUSDZ_ERROR_NOT_SUPPORTED = -5,
-    TUSDZ_ERROR_COMPOSITION_FAILED = -6,
-    TUSDZ_ERROR_INVALID_FORMAT = -7,
-    TUSDZ_ERROR_IO_ERROR = -8,
-    TUSDZ_ERROR_INTERNAL = -99
-} tusdz_result;
+    LIGHTUSD_SUCCESS = 0,
+    LIGHTUSD_ERROR_FILE_NOT_FOUND = -1,
+    LIGHTUSD_ERROR_PARSE_FAILED = -2,
+    LIGHTUSD_ERROR_OUT_OF_MEMORY = -3,
+    LIGHTUSD_ERROR_INVALID_ARGUMENT = -4,
+    LIGHTUSD_ERROR_NOT_SUPPORTED = -5,
+    LIGHTUSD_ERROR_COMPOSITION_FAILED = -6,
+    LIGHTUSD_ERROR_INVALID_FORMAT = -7,
+    LIGHTUSD_ERROR_IO_ERROR = -8,
+    LIGHTUSD_ERROR_INTERNAL = -99
+} lightusd_result;
 
 /**
  * @brief USD file formats
  */
 typedef enum {
-    TUSDZ_FORMAT_AUTO = 0,  /**< Auto-detect format from file extension or content */
-    TUSDZ_FORMAT_USDA,      /**< ASCII text format (.usda) */
-    TUSDZ_FORMAT_USDC,      /**< Binary Crate format (.usdc) */
-    TUSDZ_FORMAT_USDZ       /**< Zip archive format (.usdz) */
-} tusdz_format;
+    LIGHTUSD_FORMAT_AUTO = 0,  /**< Auto-detect format from file extension or content */
+    LIGHTUSD_FORMAT_USDA,      /**< ASCII text format (.usda) */
+    LIGHTUSD_FORMAT_USDC,      /**< Binary Crate format (.usdc) */
+    LIGHTUSD_FORMAT_USDZ       /**< Zip archive format (.usdz) */
+} lightusd_format;
 
 /**
  * @brief USD prim types
  */
 typedef enum {
-    TUSDZ_PRIM_UNKNOWN = 0,
-    TUSDZ_PRIM_XFORM,
-    TUSDZ_PRIM_MESH,
-    TUSDZ_PRIM_MATERIAL,
-    TUSDZ_PRIM_SHADER,
-    TUSDZ_PRIM_CAMERA,
-    TUSDZ_PRIM_DISTANT_LIGHT,
-    TUSDZ_PRIM_SPHERE_LIGHT,
-    TUSDZ_PRIM_RECT_LIGHT,
-    TUSDZ_PRIM_DISK_LIGHT,
-    TUSDZ_PRIM_CYLINDER_LIGHT,
-    TUSDZ_PRIM_DOME_LIGHT,
-    TUSDZ_PRIM_SKELETON,
-    TUSDZ_PRIM_SKELROOT,
-    TUSDZ_PRIM_SKELANIMATION,
-    TUSDZ_PRIM_SCOPE,
-    TUSDZ_PRIM_GEOMSUBSET,
-    TUSDZ_PRIM_SPHERE,
-    TUSDZ_PRIM_CUBE,
-    TUSDZ_PRIM_CYLINDER,
-    TUSDZ_PRIM_CAPSULE,
-    TUSDZ_PRIM_CONE,
-    TUSDZ_PRIM_NURBS_PATCH,
-    TUSDZ_PRIM_NURBS_CURVE,
-    TUSDZ_PRIM_BASIS_CURVES,
-    TUSDZ_PRIM_POINT_INSTANCER,
-    TUSDZ_PRIM_VOLUME
-} tusdz_prim_type;
+    LIGHTUSD_PRIM_UNKNOWN = 0,
+    LIGHTUSD_PRIM_XFORM,
+    LIGHTUSD_PRIM_MESH,
+    LIGHTUSD_PRIM_MATERIAL,
+    LIGHTUSD_PRIM_SHADER,
+    LIGHTUSD_PRIM_CAMERA,
+    LIGHTUSD_PRIM_DISTANT_LIGHT,
+    LIGHTUSD_PRIM_SPHERE_LIGHT,
+    LIGHTUSD_PRIM_RECT_LIGHT,
+    LIGHTUSD_PRIM_DISK_LIGHT,
+    LIGHTUSD_PRIM_CYLINDER_LIGHT,
+    LIGHTUSD_PRIM_DOME_LIGHT,
+    LIGHTUSD_PRIM_SKELETON,
+    LIGHTUSD_PRIM_SKELROOT,
+    LIGHTUSD_PRIM_SKELANIMATION,
+    LIGHTUSD_PRIM_SCOPE,
+    LIGHTUSD_PRIM_GEOMSUBSET,
+    LIGHTUSD_PRIM_SPHERE,
+    LIGHTUSD_PRIM_CUBE,
+    LIGHTUSD_PRIM_CYLINDER,
+    LIGHTUSD_PRIM_CAPSULE,
+    LIGHTUSD_PRIM_CONE,
+    LIGHTUSD_PRIM_NURBS_PATCH,
+    LIGHTUSD_PRIM_NURBS_CURVE,
+    LIGHTUSD_PRIM_BASIS_CURVES,
+    LIGHTUSD_PRIM_POINT_INSTANCER,
+    LIGHTUSD_PRIM_VOLUME
+} lightusd_prim_type;
 
 /**
  * @brief Value types for USD properties
  */
 typedef enum {
-    TUSDZ_VALUE_NONE = 0,
+    LIGHTUSD_VALUE_NONE = 0,
     /* Scalar types */
-    TUSDZ_VALUE_BOOL,
-    TUSDZ_VALUE_INT,
-    TUSDZ_VALUE_UINT,
-    TUSDZ_VALUE_INT64,
-    TUSDZ_VALUE_UINT64,
-    TUSDZ_VALUE_HALF,
-    TUSDZ_VALUE_FLOAT,
-    TUSDZ_VALUE_DOUBLE,
+    LIGHTUSD_VALUE_BOOL,
+    LIGHTUSD_VALUE_INT,
+    LIGHTUSD_VALUE_UINT,
+    LIGHTUSD_VALUE_INT64,
+    LIGHTUSD_VALUE_UINT64,
+    LIGHTUSD_VALUE_HALF,
+    LIGHTUSD_VALUE_FLOAT,
+    LIGHTUSD_VALUE_DOUBLE,
     /* String types */
-    TUSDZ_VALUE_STRING,
-    TUSDZ_VALUE_TOKEN,
-    TUSDZ_VALUE_ASSET_PATH,
+    LIGHTUSD_VALUE_STRING,
+    LIGHTUSD_VALUE_TOKEN,
+    LIGHTUSD_VALUE_ASSET_PATH,
     /* Vector types */
-    TUSDZ_VALUE_INT2,
-    TUSDZ_VALUE_INT3,
-    TUSDZ_VALUE_INT4,
-    TUSDZ_VALUE_HALF2,
-    TUSDZ_VALUE_HALF3,
-    TUSDZ_VALUE_HALF4,
-    TUSDZ_VALUE_FLOAT2,
-    TUSDZ_VALUE_FLOAT3,
-    TUSDZ_VALUE_FLOAT4,
-    TUSDZ_VALUE_DOUBLE2,
-    TUSDZ_VALUE_DOUBLE3,
-    TUSDZ_VALUE_DOUBLE4,
+    LIGHTUSD_VALUE_INT2,
+    LIGHTUSD_VALUE_INT3,
+    LIGHTUSD_VALUE_INT4,
+    LIGHTUSD_VALUE_HALF2,
+    LIGHTUSD_VALUE_HALF3,
+    LIGHTUSD_VALUE_HALF4,
+    LIGHTUSD_VALUE_FLOAT2,
+    LIGHTUSD_VALUE_FLOAT3,
+    LIGHTUSD_VALUE_FLOAT4,
+    LIGHTUSD_VALUE_DOUBLE2,
+    LIGHTUSD_VALUE_DOUBLE3,
+    LIGHTUSD_VALUE_DOUBLE4,
     /* Matrix types */
-    TUSDZ_VALUE_MATRIX2D,
-    TUSDZ_VALUE_MATRIX3D,
-    TUSDZ_VALUE_MATRIX4D,
+    LIGHTUSD_VALUE_MATRIX2D,
+    LIGHTUSD_VALUE_MATRIX3D,
+    LIGHTUSD_VALUE_MATRIX4D,
     /* Quaternion types */
-    TUSDZ_VALUE_QUATH,
-    TUSDZ_VALUE_QUATF,
-    TUSDZ_VALUE_QUATD,
+    LIGHTUSD_VALUE_QUATH,
+    LIGHTUSD_VALUE_QUATF,
+    LIGHTUSD_VALUE_QUATD,
     /* Color types */
-    TUSDZ_VALUE_COLOR3F,
-    TUSDZ_VALUE_COLOR3D,
-    TUSDZ_VALUE_COLOR4F,
-    TUSDZ_VALUE_COLOR4D,
+    LIGHTUSD_VALUE_COLOR3F,
+    LIGHTUSD_VALUE_COLOR3D,
+    LIGHTUSD_VALUE_COLOR4F,
+    LIGHTUSD_VALUE_COLOR4D,
     /* Other types */
-    TUSDZ_VALUE_NORMAL3F,
-    TUSDZ_VALUE_NORMAL3D,
-    TUSDZ_VALUE_POINT3F,
-    TUSDZ_VALUE_POINT3D,
-    TUSDZ_VALUE_TEXCOORD2F,
-    TUSDZ_VALUE_TEXCOORD2D,
-    TUSDZ_VALUE_TEXCOORD3F,
-    TUSDZ_VALUE_TEXCOORD3D,
+    LIGHTUSD_VALUE_NORMAL3F,
+    LIGHTUSD_VALUE_NORMAL3D,
+    LIGHTUSD_VALUE_POINT3F,
+    LIGHTUSD_VALUE_POINT3D,
+    LIGHTUSD_VALUE_TEXCOORD2F,
+    LIGHTUSD_VALUE_TEXCOORD2D,
+    LIGHTUSD_VALUE_TEXCOORD3F,
+    LIGHTUSD_VALUE_TEXCOORD3D,
     /* Complex types */
-    TUSDZ_VALUE_ARRAY,
-    TUSDZ_VALUE_DICTIONARY,
-    TUSDZ_VALUE_TIME_SAMPLES,
-    TUSDZ_VALUE_RELATIONSHIP
-} tusdz_value_type;
+    LIGHTUSD_VALUE_ARRAY,
+    LIGHTUSD_VALUE_DICTIONARY,
+    LIGHTUSD_VALUE_TIME_SAMPLES,
+    LIGHTUSD_VALUE_RELATIONSHIP
+} lightusd_value_type;
 
 /**
  * @brief Interpolation types for animated values
  */
 typedef enum {
-    TUSDZ_INTERPOLATION_HELD = 0,
-    TUSDZ_INTERPOLATION_LINEAR,
-    TUSDZ_INTERPOLATION_BEZIER
-} tusdz_interpolation;
+    LIGHTUSD_INTERPOLATION_HELD = 0,
+    LIGHTUSD_INTERPOLATION_LINEAR,
+    LIGHTUSD_INTERPOLATION_BEZIER
+} lightusd_interpolation;
 
 /**
  * @brief Load options for USD files
@@ -197,7 +197,7 @@ typedef struct {
     /** Custom asset resolver callback (can be NULL) */
     const char* (*asset_resolver)(const char* asset_path, void* user_data);
     void* asset_resolver_data;
-} tusdz_load_options;
+} lightusd_load_options;
 
 /* ============================================================================
  * Tier 1: Core API Functions (Essential)
@@ -205,20 +205,20 @@ typedef struct {
 
 /**
  * @brief Initialize the LightUSD library
- * @return TUSDZ_SUCCESS on success
+ * @return LIGHTUSD_SUCCESS on success
  */
-TUSDZ_API tusdz_result tusdz_init(void);
+LIGHTUSD_API lightusd_result lightusd_init(void);
 
 /**
  * @brief Shutdown the LightUSD library and free global resources
  */
-TUSDZ_API void tusdz_shutdown(void);
+LIGHTUSD_API void lightusd_shutdown(void);
 
 /**
  * @brief Get version string
  * @return Version string like "1.0.0"
  */
-TUSDZ_API const char* tusdz_get_version(void);
+LIGHTUSD_API const char* lightusd_get_version(void);
 
 /**
  * @brief Load USD from file
@@ -229,10 +229,10 @@ TUSDZ_API const char* tusdz_get_version(void);
  * @param error_buf_size Size of error buffer
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_load_from_file(
+LIGHTUSD_API lightusd_result lightusd_load_from_file(
     const char* filepath,
-    const tusdz_load_options* options,
-    tusdz_stage* out_stage,
+    const lightusd_load_options* options,
+    lightusd_stage* out_stage,
     char* error_buf,
     size_t error_buf_size
 );
@@ -241,19 +241,19 @@ TUSDZ_API tusdz_result tusdz_load_from_file(
  * @brief Load USD from memory buffer
  * @param data Memory buffer containing USD data
  * @param size Size of buffer in bytes
- * @param format Format of the data (use TUSDZ_FORMAT_AUTO to detect)
+ * @param format Format of the data (use LIGHTUSD_FORMAT_AUTO to detect)
  * @param options Load options (can be NULL for defaults)
  * @param out_stage Output stage handle
  * @param error_buf Buffer for error message (can be NULL)
  * @param error_buf_size Size of error buffer
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_load_from_memory(
+LIGHTUSD_API lightusd_result lightusd_load_from_memory(
     const void* data,
     size_t size,
-    tusdz_format format,
-    const tusdz_load_options* options,
-    tusdz_stage* out_stage,
+    lightusd_format format,
+    const lightusd_load_options* options,
+    lightusd_stage* out_stage,
     char* error_buf,
     size_t error_buf_size
 );
@@ -262,21 +262,21 @@ TUSDZ_API tusdz_result tusdz_load_from_memory(
  * @brief Free a stage and all associated resources
  * @param stage Stage to free
  */
-TUSDZ_API void tusdz_stage_free(tusdz_stage stage);
+LIGHTUSD_API void lightusd_stage_free(lightusd_stage stage);
 
 /**
  * @brief Get the root prim of the stage
  * @param stage Stage handle
  * @return Root prim (borrowed reference, do not free)
  */
-TUSDZ_API tusdz_prim tusdz_stage_get_root_prim(tusdz_stage stage);
+LIGHTUSD_API lightusd_prim lightusd_stage_get_root_prim(lightusd_stage stage);
 
 /**
  * @brief Get number of child prims
  * @param prim Parent prim
  * @return Number of children
  */
-TUSDZ_API size_t tusdz_prim_get_child_count(tusdz_prim prim);
+LIGHTUSD_API size_t lightusd_prim_get_child_count(lightusd_prim prim);
 
 /**
  * @brief Get child prim at index
@@ -284,21 +284,21 @@ TUSDZ_API size_t tusdz_prim_get_child_count(tusdz_prim prim);
  * @param index Child index
  * @return Child prim (borrowed reference, do not free)
  */
-TUSDZ_API tusdz_prim tusdz_prim_get_child_at(tusdz_prim prim, size_t index);
+LIGHTUSD_API lightusd_prim lightusd_prim_get_child_at(lightusd_prim prim, size_t index);
 
 /**
  * @brief Get prim name
  * @param prim Prim handle
  * @return Name string (borrowed, do not free)
  */
-TUSDZ_API const char* tusdz_prim_get_name(tusdz_prim prim);
+LIGHTUSD_API const char* lightusd_prim_get_name(lightusd_prim prim);
 
 /**
  * @brief Get prim type
  * @param prim Prim handle
  * @return Prim type enum
  */
-TUSDZ_API tusdz_prim_type tusdz_prim_get_type(tusdz_prim prim);
+LIGHTUSD_API lightusd_prim_type lightusd_prim_get_type(lightusd_prim prim);
 
 /* ============================================================================
  * Tier 2: Extended Core API
@@ -309,7 +309,7 @@ TUSDZ_API tusdz_prim_type tusdz_prim_get_type(tusdz_prim prim);
  * @param prim Prim handle
  * @return Path string (borrowed, do not free)
  */
-TUSDZ_API const char* tusdz_prim_get_path(tusdz_prim prim);
+LIGHTUSD_API const char* lightusd_prim_get_path(lightusd_prim prim);
 
 /**
  * @brief Get prim at specific path
@@ -317,7 +317,7 @@ TUSDZ_API const char* tusdz_prim_get_path(tusdz_prim prim);
  * @param path Prim path (e.g., "/World/Geo/Mesh")
  * @return Prim handle or NULL if not found
  */
-TUSDZ_API tusdz_prim tusdz_stage_get_prim_at_path(tusdz_stage stage, const char* path);
+LIGHTUSD_API lightusd_prim lightusd_stage_get_prim_at_path(lightusd_stage stage, const char* path);
 
 /**
  * @brief Check if prim is specific type
@@ -325,21 +325,21 @@ TUSDZ_API tusdz_prim tusdz_stage_get_prim_at_path(tusdz_stage stage, const char*
  * @param type Type to check
  * @return 1 if matches, 0 otherwise
  */
-TUSDZ_API int tusdz_prim_is_type(tusdz_prim prim, tusdz_prim_type type);
+LIGHTUSD_API int lightusd_prim_is_type(lightusd_prim prim, lightusd_prim_type type);
 
 /**
  * @brief Get type name as string
  * @param prim Prim handle
  * @return Type name (e.g., "Mesh", "Xform")
  */
-TUSDZ_API const char* tusdz_prim_get_type_name(tusdz_prim prim);
+LIGHTUSD_API const char* lightusd_prim_get_type_name(lightusd_prim prim);
 
 /**
  * @brief Get number of properties on prim
  * @param prim Prim handle
  * @return Property count
  */
-TUSDZ_API size_t tusdz_prim_get_property_count(tusdz_prim prim);
+LIGHTUSD_API size_t lightusd_prim_get_property_count(lightusd_prim prim);
 
 /**
  * @brief Get property name at index
@@ -347,77 +347,77 @@ TUSDZ_API size_t tusdz_prim_get_property_count(tusdz_prim prim);
  * @param index Property index
  * @return Property name (borrowed, do not free)
  */
-TUSDZ_API const char* tusdz_prim_get_property_name_at(tusdz_prim prim, size_t index);
+LIGHTUSD_API const char* lightusd_prim_get_property_name_at(lightusd_prim prim, size_t index);
 
 /**
  * @brief Get property value by name
  * @param prim Prim handle
  * @param name Property name
- * @return Value handle (must be freed with tusdz_value_free)
+ * @return Value handle (must be freed with lightusd_value_free)
  */
-TUSDZ_API tusdz_value tusdz_prim_get_property(tusdz_prim prim, const char* name);
+LIGHTUSD_API lightusd_value lightusd_prim_get_property(lightusd_prim prim, const char* name);
 
 /**
  * @brief Free a value handle
  * @param value Value to free
  */
-TUSDZ_API void tusdz_value_free(tusdz_value value);
+LIGHTUSD_API void lightusd_value_free(lightusd_value value);
 
 /**
  * @brief Get value type
  * @param value Value handle
  * @return Value type enum
  */
-TUSDZ_API tusdz_value_type tusdz_value_get_type(tusdz_value value);
+LIGHTUSD_API lightusd_value_type lightusd_value_get_type(lightusd_value value);
 
 /**
  * @brief Check if value is an array
  * @param value Value handle
  * @return 1 if array, 0 otherwise
  */
-TUSDZ_API int tusdz_value_is_array(tusdz_value value);
+LIGHTUSD_API int lightusd_value_is_array(lightusd_value value);
 
 /**
  * @brief Get array length for array values
  * @param value Value handle
  * @return Array length (0 if not an array)
  */
-TUSDZ_API size_t tusdz_value_get_array_size(tusdz_value value);
+LIGHTUSD_API size_t lightusd_value_get_array_size(lightusd_value value);
 
 /* ============================================================================
  * Value Extraction Functions
  * ============================================================================ */
 
 /* Scalar extraction */
-TUSDZ_API tusdz_result tusdz_value_get_bool(tusdz_value value, int* out);
-TUSDZ_API tusdz_result tusdz_value_get_int(tusdz_value value, int* out);
-TUSDZ_API tusdz_result tusdz_value_get_uint(tusdz_value value, unsigned int* out);
-TUSDZ_API tusdz_result tusdz_value_get_int64(tusdz_value value, int64_t* out);
-TUSDZ_API tusdz_result tusdz_value_get_uint64(tusdz_value value, uint64_t* out);
-TUSDZ_API tusdz_result tusdz_value_get_float(tusdz_value value, float* out);
-TUSDZ_API tusdz_result tusdz_value_get_double(tusdz_value value, double* out);
+LIGHTUSD_API lightusd_result lightusd_value_get_bool(lightusd_value value, int* out);
+LIGHTUSD_API lightusd_result lightusd_value_get_int(lightusd_value value, int* out);
+LIGHTUSD_API lightusd_result lightusd_value_get_uint(lightusd_value value, unsigned int* out);
+LIGHTUSD_API lightusd_result lightusd_value_get_int64(lightusd_value value, int64_t* out);
+LIGHTUSD_API lightusd_result lightusd_value_get_uint64(lightusd_value value, uint64_t* out);
+LIGHTUSD_API lightusd_result lightusd_value_get_float(lightusd_value value, float* out);
+LIGHTUSD_API lightusd_result lightusd_value_get_double(lightusd_value value, double* out);
 
 /* String extraction */
-TUSDZ_API tusdz_result tusdz_value_get_string(tusdz_value value, const char** out);
-TUSDZ_API tusdz_result tusdz_value_get_token(tusdz_value value, const char** out);
-TUSDZ_API tusdz_result tusdz_value_get_asset_path(tusdz_value value, const char** out);
+LIGHTUSD_API lightusd_result lightusd_value_get_string(lightusd_value value, const char** out);
+LIGHTUSD_API lightusd_result lightusd_value_get_token(lightusd_value value, const char** out);
+LIGHTUSD_API lightusd_result lightusd_value_get_asset_path(lightusd_value value, const char** out);
 
 /* Vector extraction */
-TUSDZ_API tusdz_result tusdz_value_get_float2(tusdz_value value, float* out_xy);
-TUSDZ_API tusdz_result tusdz_value_get_float3(tusdz_value value, float* out_xyz);
-TUSDZ_API tusdz_result tusdz_value_get_float4(tusdz_value value, float* out_xyzw);
-TUSDZ_API tusdz_result tusdz_value_get_double2(tusdz_value value, double* out_xy);
-TUSDZ_API tusdz_result tusdz_value_get_double3(tusdz_value value, double* out_xyz);
-TUSDZ_API tusdz_result tusdz_value_get_double4(tusdz_value value, double* out_xyzw);
+LIGHTUSD_API lightusd_result lightusd_value_get_float2(lightusd_value value, float* out_xy);
+LIGHTUSD_API lightusd_result lightusd_value_get_float3(lightusd_value value, float* out_xyz);
+LIGHTUSD_API lightusd_result lightusd_value_get_float4(lightusd_value value, float* out_xyzw);
+LIGHTUSD_API lightusd_result lightusd_value_get_double2(lightusd_value value, double* out_xy);
+LIGHTUSD_API lightusd_result lightusd_value_get_double3(lightusd_value value, double* out_xyz);
+LIGHTUSD_API lightusd_result lightusd_value_get_double4(lightusd_value value, double* out_xyzw);
 
 /* Matrix extraction (column-major) */
-TUSDZ_API tusdz_result tusdz_value_get_matrix3d(tusdz_value value, double* out_mat3x3);
-TUSDZ_API tusdz_result tusdz_value_get_matrix4d(tusdz_value value, double* out_mat4x4);
+LIGHTUSD_API lightusd_result lightusd_value_get_matrix3d(lightusd_value value, double* out_mat3x3);
+LIGHTUSD_API lightusd_result lightusd_value_get_matrix4d(lightusd_value value, double* out_mat4x4);
 
 /* Array extraction - returns pointer to internal data, do not free */
-TUSDZ_API tusdz_result tusdz_value_get_float_array(tusdz_value value, const float** out_data, size_t* out_count);
-TUSDZ_API tusdz_result tusdz_value_get_int_array(tusdz_value value, const int** out_data, size_t* out_count);
-TUSDZ_API tusdz_result tusdz_value_get_float3_array(tusdz_value value, const float** out_data, size_t* out_count);
+LIGHTUSD_API lightusd_result lightusd_value_get_float_array(lightusd_value value, const float** out_data, size_t* out_count);
+LIGHTUSD_API lightusd_result lightusd_value_get_int_array(lightusd_value value, const int** out_data, size_t* out_count);
+LIGHTUSD_API lightusd_result lightusd_value_get_float3_array(lightusd_value value, const float** out_data, size_t* out_count);
 
 /* ============================================================================
  * Tier 3: Geometry and Mesh API
@@ -430,8 +430,8 @@ TUSDZ_API tusdz_result tusdz_value_get_float3_array(tusdz_value value, const flo
  * @param out_count Number of points (each point is 3 floats)
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_mesh_get_points(
-    tusdz_prim mesh,
+LIGHTUSD_API lightusd_result lightusd_mesh_get_points(
+    lightusd_prim mesh,
     const float** out_points,
     size_t* out_count
 );
@@ -443,8 +443,8 @@ TUSDZ_API tusdz_result tusdz_mesh_get_points(
  * @param out_count Number of faces
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_mesh_get_face_counts(
-    tusdz_prim mesh,
+LIGHTUSD_API lightusd_result lightusd_mesh_get_face_counts(
+    lightusd_prim mesh,
     const int** out_counts,
     size_t* out_count
 );
@@ -456,8 +456,8 @@ TUSDZ_API tusdz_result tusdz_mesh_get_face_counts(
  * @param out_count Number of indices
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_mesh_get_indices(
-    tusdz_prim mesh,
+LIGHTUSD_API lightusd_result lightusd_mesh_get_indices(
+    lightusd_prim mesh,
     const int** out_indices,
     size_t* out_count
 );
@@ -469,8 +469,8 @@ TUSDZ_API tusdz_result tusdz_mesh_get_indices(
  * @param out_count Number of normals (each normal is 3 floats)
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_mesh_get_normals(
-    tusdz_prim mesh,
+LIGHTUSD_API lightusd_result lightusd_mesh_get_normals(
+    lightusd_prim mesh,
     const float** out_normals,
     size_t* out_count
 );
@@ -483,8 +483,8 @@ TUSDZ_API tusdz_result tusdz_mesh_get_normals(
  * @param primvar_index Which UV set to get (0 for primary)
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_mesh_get_uvs(
-    tusdz_prim mesh,
+LIGHTUSD_API lightusd_result lightusd_mesh_get_uvs(
+    lightusd_prim mesh,
     const float** out_uvs,
     size_t* out_count,
     int primvar_index
@@ -495,7 +495,7 @@ TUSDZ_API tusdz_result tusdz_mesh_get_uvs(
  * @param mesh Mesh prim
  * @return Subdivision scheme ("none", "catmullClark", "loop", "bilinear")
  */
-TUSDZ_API const char* tusdz_mesh_get_subdivision_scheme(tusdz_prim mesh);
+LIGHTUSD_API const char* lightusd_mesh_get_subdivision_scheme(lightusd_prim mesh);
 
 /* ============================================================================
  * Transform API
@@ -508,8 +508,8 @@ TUSDZ_API const char* tusdz_mesh_get_subdivision_scheme(tusdz_prim mesh);
  * @param out_matrix Output 4x4 matrix in column-major order
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_xform_get_local_matrix(
-    tusdz_prim xform,
+LIGHTUSD_API lightusd_result lightusd_xform_get_local_matrix(
+    lightusd_prim xform,
     double time,
     double* out_matrix
 );
@@ -521,8 +521,8 @@ TUSDZ_API tusdz_result tusdz_xform_get_local_matrix(
  * @param out_matrix Output 4x4 matrix in column-major order
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_prim_get_world_matrix(
-    tusdz_prim prim,
+LIGHTUSD_API lightusd_result lightusd_prim_get_world_matrix(
+    lightusd_prim prim,
     double time,
     double* out_matrix
 );
@@ -536,14 +536,14 @@ TUSDZ_API tusdz_result tusdz_prim_get_world_matrix(
  * @param prim Prim with material binding
  * @return Material prim or NULL
  */
-TUSDZ_API tusdz_prim tusdz_prim_get_bound_material(tusdz_prim prim);
+LIGHTUSD_API lightusd_prim lightusd_prim_get_bound_material(lightusd_prim prim);
 
 /**
  * @brief Get surface shader from material
  * @param material Material prim
  * @return Shader prim or NULL
  */
-TUSDZ_API tusdz_prim tusdz_material_get_surface_shader(tusdz_prim material);
+LIGHTUSD_API lightusd_prim lightusd_material_get_surface_shader(lightusd_prim material);
 
 /**
  * @brief Get shader input value
@@ -551,14 +551,14 @@ TUSDZ_API tusdz_prim tusdz_material_get_surface_shader(tusdz_prim material);
  * @param input_name Input name (e.g., "diffuseColor", "roughness")
  * @return Value handle (must be freed)
  */
-TUSDZ_API tusdz_value tusdz_shader_get_input(tusdz_prim shader, const char* input_name);
+LIGHTUSD_API lightusd_value lightusd_shader_get_input(lightusd_prim shader, const char* input_name);
 
 /**
  * @brief Get shader type/ID
  * @param shader Shader prim
  * @return Shader type string (e.g., "UsdPreviewSurface")
  */
-TUSDZ_API const char* tusdz_shader_get_type_id(tusdz_prim shader);
+LIGHTUSD_API const char* lightusd_shader_get_type_id(lightusd_prim shader);
 
 /* ============================================================================
  * Animation and Time Sampling API
@@ -569,7 +569,7 @@ TUSDZ_API const char* tusdz_shader_get_type_id(tusdz_prim shader);
  * @param stage Stage handle
  * @return 1 if animated, 0 otherwise
  */
-TUSDZ_API int tusdz_stage_has_animation(tusdz_stage stage);
+LIGHTUSD_API int lightusd_stage_has_animation(lightusd_stage stage);
 
 /**
  * @brief Get time code range for stage
@@ -579,8 +579,8 @@ TUSDZ_API int tusdz_stage_has_animation(tusdz_stage stage);
  * @param out_fps Frames per second
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_stage_get_time_range(
-    tusdz_stage stage,
+LIGHTUSD_API lightusd_result lightusd_stage_get_time_range(
+    lightusd_stage stage,
     double* out_start_time,
     double* out_end_time,
     double* out_fps
@@ -591,7 +591,7 @@ TUSDZ_API tusdz_result tusdz_stage_get_time_range(
  * @param value Value handle
  * @return 1 if animated, 0 otherwise
  */
-TUSDZ_API int tusdz_value_is_animated(tusdz_value value);
+LIGHTUSD_API int lightusd_value_is_animated(lightusd_value value);
 
 /**
  * @brief Get time sample times for animated value
@@ -600,8 +600,8 @@ TUSDZ_API int tusdz_value_is_animated(tusdz_value value);
  * @param out_count Number of time samples
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_value_get_time_samples(
-    tusdz_value value,
+LIGHTUSD_API lightusd_result lightusd_value_get_time_samples(
+    lightusd_value value,
     const double** out_times,
     size_t* out_count
 );
@@ -612,7 +612,7 @@ TUSDZ_API tusdz_result tusdz_value_get_time_samples(
  * @param time Time to evaluate at
  * @return New value handle at that time (must be freed)
  */
-TUSDZ_API tusdz_value tusdz_value_eval_at_time(tusdz_value value, double time);
+LIGHTUSD_API lightusd_value lightusd_value_eval_at_time(lightusd_value value, double time);
 
 /* ============================================================================
  * Metadata API
@@ -624,7 +624,7 @@ TUSDZ_API tusdz_value tusdz_value_eval_at_time(tusdz_value value, double time);
  * @param key Metadata key (e.g., "documentation", "hidden")
  * @return Value handle or NULL if not found (must be freed if not NULL)
  */
-TUSDZ_API tusdz_value tusdz_prim_get_metadata(tusdz_prim prim, const char* key);
+LIGHTUSD_API lightusd_value lightusd_prim_get_metadata(lightusd_prim prim, const char* key);
 
 /**
  * @brief Get list of metadata keys
@@ -633,8 +633,8 @@ TUSDZ_API tusdz_value tusdz_prim_get_metadata(tusdz_prim prim, const char* key);
  * @param out_count Number of keys
  * @return Result code
  */
-TUSDZ_API tusdz_result tusdz_prim_get_metadata_keys(
-    tusdz_prim prim,
+LIGHTUSD_API lightusd_result lightusd_prim_get_metadata_keys(
+    lightusd_prim prim,
     const char*** out_keys,
     size_t* out_count
 );
@@ -647,35 +647,35 @@ TUSDZ_API tusdz_result tusdz_prim_get_metadata_keys(
  * @brief Free memory allocated by LightUSD
  * @param ptr Pointer to free
  */
-TUSDZ_API void tusdz_free(void* ptr);
+LIGHTUSD_API void lightusd_free(void* ptr);
 
 /**
  * @brief Convert result code to string
  * @param result Result code
  * @return String description
  */
-TUSDZ_API const char* tusdz_result_to_string(tusdz_result result);
+LIGHTUSD_API const char* lightusd_result_to_string(lightusd_result result);
 
 /**
  * @brief Convert prim type to string
  * @param type Prim type
  * @return Type name string
  */
-TUSDZ_API const char* tusdz_prim_type_to_string(tusdz_prim_type type);
+LIGHTUSD_API const char* lightusd_prim_type_to_string(lightusd_prim_type type);
 
 /**
  * @brief Convert value type to string
  * @param type Value type
  * @return Type name string
  */
-TUSDZ_API const char* tusdz_value_type_to_string(tusdz_value_type type);
+LIGHTUSD_API const char* lightusd_value_type_to_string(lightusd_value_type type);
 
 /**
  * @brief Detect USD format from file extension
  * @param filepath File path
  * @return Detected format
  */
-TUSDZ_API tusdz_format tusdz_detect_format(const char* filepath);
+LIGHTUSD_API lightusd_format lightusd_detect_format(const char* filepath);
 
 /* ============================================================================
  * Debug and Diagnostic Functions
@@ -686,7 +686,7 @@ TUSDZ_API tusdz_format tusdz_detect_format(const char* filepath);
  * @param stage Stage handle
  * @param max_depth Maximum depth to print (0 = all)
  */
-TUSDZ_API void tusdz_stage_print_hierarchy(tusdz_stage stage, int max_depth);
+LIGHTUSD_API void lightusd_stage_print_hierarchy(lightusd_stage stage, int max_depth);
 
 /**
  * @brief Get memory usage statistics
@@ -694,8 +694,8 @@ TUSDZ_API void tusdz_stage_print_hierarchy(tusdz_stage stage, int max_depth);
  * @param out_bytes_used Bytes currently used
  * @param out_bytes_peak Peak bytes used
  */
-TUSDZ_API void tusdz_get_memory_stats(
-    tusdz_stage stage,
+LIGHTUSD_API void lightusd_get_memory_stats(
+    lightusd_stage stage,
     size_t* out_bytes_used,
     size_t* out_bytes_peak
 );
@@ -704,7 +704,7 @@ TUSDZ_API void tusdz_get_memory_stats(
  * @brief Enable/disable debug logging
  * @param enable 1 to enable, 0 to disable
  */
-TUSDZ_API void tusdz_set_debug_logging(int enable);
+LIGHTUSD_API void lightusd_set_debug_logging(int enable);
 
 #ifdef __cplusplus
 }

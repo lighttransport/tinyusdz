@@ -6,7 +6,7 @@
 // tydra-next's converter records texture *metadata* (RenderTexture: asset path,
 // wrap, value scale/bias, channel) but never decodes pixels -- applications
 // supply their own decode so the converter stays filesystem- and
-// archive-agnostic. Both tusdview and tusdrender need the same thing, and had
+// archive-agnostic. Both lusdview and lusdrender need the same thing, and had
 // grown two copies of it; this is the one implementation.
 //
 // The size cap and the byte budget are applied AT DECODE TIME, not as a

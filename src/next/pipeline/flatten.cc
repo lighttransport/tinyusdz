@@ -23,7 +23,7 @@
 #if defined(__EMSCRIPTEN__) && defined(LIGHTUSD_FLATTEN_MEMLOG)
 #include <emscripten/heap.h>
 #include "../strfmt.hh"     // AppendUInt
-#include "../../logger.hh"  // TUSDZ_LOG_I (only pulled in for this opt-in diag)
+#include "../../logger.hh"  // LIGHTUSD_LOG_I (only pulled in for this opt-in diag)
 #endif
 
 namespace lightusd {
@@ -52,7 +52,7 @@ void FlattenMemLog(const char* stage) {
   AppendUInt(msg,
              static_cast<size_t>(emscripten_get_heap_size()) / (1024 * 1024));
   msg += " MiB";
-  TUSDZ_LOG_I(msg);
+  LIGHTUSD_LOG_I(msg);
 #endif
 }
 

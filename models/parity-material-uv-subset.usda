@@ -1,6 +1,6 @@
 #usda 1.0
 (
-    doc = """Cross-tool parity fixture: tusdview and tusdrender must interpret ONE
+    doc = """Cross-tool parity fixture: lusdview and lusdrender must interpret ONE
 tydra-next scene the same way. Four coplanar quads in a row, framed head-on by
 `Cam`, each face carrying a different material through a `materialBind` GeomSubset:
 
@@ -20,11 +20,11 @@ as flat YELLOW, and only if the secondary UV set actually reaches the shader:
     face 3 goes flat in some OTHER color (a corner texel, or the averaged mip).
 
 Both failure modes are real regressions this fixture pins. The camera aperture is
-square on purpose: tusdview derives its FOV from `verticalAperture` and tusdrender
+square on purpose: lusdview derives its FOV from `verticalAperture` and lusdrender
 from `horizontalAperture`, so an anamorphic aperture frames the two tools
 differently and the comparison stops meaning anything.
 
-Driven by tools/tusdrender/tests/run-cross-tool-parity.sh."""
+Driven by tools/lusdrender/tests/run-cross-tool-parity.sh."""
     defaultPrim = "World"
     metersPerUnit = 1
     upAxis = "Y"

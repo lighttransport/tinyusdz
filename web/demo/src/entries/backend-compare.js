@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 import { isNextScene, buildNextThreeNode, nextCountsFromScene } from 'lightusd-next-demo-utils';
-import { showLoader, hideLoader } from '../tusd-loader.js';
+import { showLoader, hideLoader } from '../lightusd-loader.js';
 
 function escapeHTML(v) { return String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 function $id(i) { return document.getElementById(i); }

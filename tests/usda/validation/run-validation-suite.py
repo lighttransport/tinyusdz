@@ -6,14 +6,14 @@ Each fixture embeds machine-readable expectations as `#` comment markers:
   # EXPECT-OK                       the file must produce no validation issues
   # EXPECT: <rule_id>               the file must report this rule (repeatable)
 
-The runner invokes `tusdcat --validate-all <file>`, parses the reported
+The runner invokes `lusdcat --validate-all <file>`, parses the reported
 `[rule_id]` tokens, and checks them against the markers. For fixtures whose
 expected rules are all in opt-in groups (geom.* / shade.* / lux.* / physics.*), it additionally runs
 core-only `--validate` and asserts no issues are reported -- verifying the
 groups really are opt-in.
 
 Usage:
-  python3 run-validation-suite.py --app ./build/tusdcat [--basedir tests/usda/validation]
+  python3 run-validation-suite.py --app ./build/lusdcat [--basedir tests/usda/validation]
 """
 
 import argparse
@@ -56,8 +56,8 @@ def reported_rules(output):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--app", default="./build/tusdcat",
-                    help="path to tusdcat")
+    ap.add_argument("--app", default="./build/lusdcat",
+                    help="path to lusdcat")
     here = os.path.dirname(os.path.abspath(__file__))
     ap.add_argument("--basedir", default=here)
     ap.add_argument("--verbose", action="store_true")

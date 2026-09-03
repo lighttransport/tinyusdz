@@ -225,7 +225,7 @@ bool TestLightUsdcWriteDedup() {
       : (openusd_size - dedup_size);
   const size_t tolerance = 128;
   if (delta > tolerance) {
-    std::cerr << "LightUSD dedup USDC size drifted from OpenUSD: tiny="
+    std::cerr << "LightUSD dedup USDC size drifted from OpenUSD: lightusd="
               << dedup_size << " openusd=" << openusd_size
               << " delta=" << delta << "\n";
     std::remove(dedup_path.c_str());

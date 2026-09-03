@@ -333,7 +333,7 @@ enum class ComponentType {
 // transcodable intermediate: its payload is valid ASTC 4x4 and
 // can be transcoded per device to BC7/BC1/ASTC/ETC2 (texcomp tc_uni_transcode_*)
 // or decoded to RGBA8 (tc_uni_decompress_rgba8). Populated when a KTX2 asset is
-// loaded in "keep compressed" mode; consumers (tusdview GPU upload) map it to a
+// loaded in "keep compressed" mode; consumers (lusdview GPU upload) map it to a
 // GL/VK compressed format, or fall back to CPU-decoding it.
 enum class TextureBlockFormat {
   None = 0,

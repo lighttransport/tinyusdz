@@ -22,7 +22,7 @@ endif ()
 # Default to Release when configured as the top-level project and no build
 # type was given. Without this, single-config generators (Make/Ninja) leave
 # CMAKE_BUILD_TYPE empty, which on GCC/Clang means -O0 and silently produces
-# binaries that are 2-3x slower than expected (observed: tusdcat parsing
+# binaries that are 2-3x slower than expected (observed: lusdcat parsing
 # went from 3.8s -> 1.3s after switching from the empty default to Release).
 if (PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "LightUSD: CMAKE_BUILD_TYPE not set; defaulting to Release.")
@@ -102,17 +102,17 @@ if(IS_DIRECTORY "${_lightusd_default_usd_assets_root}")
                          "${_lightusd_default_usd_assets_root}" REALPATH)
 endif()
 set(LIGHTUSD_USD_ASSETS_ROOT "${_lightusd_default_usd_assets_root}" CACHE PATH
-    "Root directory for tusdview/tusdrender USD asset regressions")
+    "Root directory for lusdview/lusdrender USD asset regressions")
 unset(_lightusd_default_usd_assets_root)
 option(LIGHTUSD_BUILD_BENCHMARKS
        "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
 option(LIGHTUSD_BUILD_EXAMPLES
        "Build examples(but not all examples in `examples` folder are being built)"
        ${LIGHTUSD_DEFAULT_BUILD_EXAMPLES})
-option(LIGHTUSD_BUILD_TOOLS "Build tools (tusddumpcrate, etc.)" OFF)
-# Link a drop-in allocator into the CLI example tools (tusdcat,
+option(LIGHTUSD_BUILD_TOOLS "Build tools (lusddumpcrate, etc.)" OFF)
+# Link a drop-in allocator into the CLI example tools (lusdcat,
 # tydra_to_renderscene). The legacy flatten/compose path is allocation-heavy
-# (~20% of a large-scene `tusdcat -f` is glibc malloc/free/consolidate);
+# (~20% of a large-scene `lusdcat -f` is glibc malloc/free/consolidate);
 # jemalloc cut representative large-scene runs by 14-17% at ~+4% RSS with
 # byte-identical output. Tools only -- the library
 # never forces an allocator (apps choose). Same ranking as src/next
@@ -122,16 +122,16 @@ option(LIGHTUSD_BUILD_TOOLS "Build tools (tusddumpcrate, etc.)" OFF)
 option(LIGHTUSD_WITH_TCMALLOC
        "Link a drop-in allocator (jemalloc/tcmalloc/mimalloc) into CLI example tools (faster flatten/compose on large scenes)" OFF)
 option(LIGHTUSD_BUILD_GUI_VIEWER
-       "Build the interactive GUI USD viewer example 'tusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
+       "Build the interactive GUI USD viewer example 'lusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
        OFF)
 option(LIGHTUSD_BUILD_TEXTURE_GPU_BENCH
        "Build the standalone headless Vulkan/CUDA/HIP texture processing benchmark"
        OFF)
-option(LIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD
-       "Apply NVIDIA PRIME/GLVND offload variables to tusdview CTest cases when the NVIDIA device is visible"
+option(LIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD
+       "Apply NVIDIA PRIME/GLVND offload variables to lusdview CTest cases when the NVIDIA device is visible"
        OFF)
 option(LIGHTUSD_BUILD_QUICKLOOK
-       "Build the minimal portable USD Quick Look viewer 'tusdquicklook' (software UI via vendored lightui, CPU ray tracing; no GPU required)."
+       "Build the minimal portable USD Quick Look viewer 'lusdquicklook' (software UI via vendored lightui, CPU ray tracing; no GPU required)."
        OFF)
 option(LIGHTUSD_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
@@ -379,7 +379,7 @@ option(LIGHTUSD_WITH_REMOTERY
 # ---------
 
 # -- optional tool --
-# TODO: deperecate. Use tusdcat
+# TODO: deperecate. Use lusdcat
 option(LIGHTUSD_WITH_TOOL_USDA_PARSER "Build with USDA parser program" Off)
 option(LIGHTUSD_WITH_TOOL_USDC_PARSER "Build with USDC parser program" Off)
 # --------------
@@ -1084,7 +1084,7 @@ if(LIGHTUSD_WITH_ZSTD_COMPRESSION)
   list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
 endif()
 
-# Vendored pure-C11 texture processing stack used by tusdview/tusdrender.
+# Vendored pure-C11 texture processing stack used by lusdview/lusdrender.
 if(LIGHTUSD_WITH_TEXTOOLS)
   set(TEXTOOLS_DIR ${PROJECT_SOURCE_DIR}/src/external/textools)
   file(GLOB TEXTOOLS_SOURCES CONFIGURE_DEPENDS
@@ -1359,7 +1359,7 @@ endif()
 # Increase warning level for clang.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
-  set(TUSDZ_COMPILE_FLAGS
+  set(LIGHTUSD_COMPILE_FLAGS
       "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors"
   )
 
@@ -1369,7 +1369,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
   option(LIGHTUSD_NO_WERROR "Don't set -Werror when building the lightusd library" ${LIGHTUSD_DEFAULT_NO_WERROR})
   if (NOT LIGHTUSD_NO_WERROR)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
+    set(LIGHTUSD_COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS} -Werror")
   endif()
 
   # clang17 seems enable -Wunsafe-buffer-usage when `-Weverything` is defined,
@@ -1378,12 +1378,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # https://github.com/llvm/llvm-project/issues/64646
   # we need to suppress it as a work around.
   if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-unsafe-buffer-usage")
+    set(LIGHTUSD_COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS} -Wno-unsafe-buffer-usage")
   endif()
 
   # this is actually a work around of false-positive behavior of clang in Androind NDK 27.
   if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-switch-default")
+    set(LIGHTUSD_COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS} -Wno-switch-default")
   endif()
 
   include(CheckCXXCompilerFlag)
@@ -1392,15 +1392,15 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # rather than requiring negative-capability annotations throughout the code.
   check_cxx_compiler_flag("-Wthread-safety-negative" LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
   if (LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-thread-safety-negative")
+    set(LIGHTUSD_COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS} -Wno-thread-safety-negative")
   endif()
 
   if(LIGHTUSD_COMPILE_TIME_TRACE)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
+    set(LIGHTUSD_COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS} -ftime-trace ")
   endif()
 
   set_source_files_properties(${LIGHTUSD_SOURCES}
-                              PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
+                              PROPERTIES COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS}")
 
   # nlohmann/json is vendored third-party code. Clang 21's -Weverything emits
   # diagnostics from its header during template instantiation, so suppress only
@@ -1430,43 +1430,43 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
   if (LIGHTUSD_WITH_C_API)
     set_source_files_properties(${LIGHTUSD_C_API_SOURCES}
-                                PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
+                                PROPERTIES COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS}")
   endif()
 
 # Increase warning level for gcc.
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
 
-  set(TUSDZ_COMPILE_FLAGS
+  set(LIGHTUSD_COMPILE_FLAGS
       "-Wall "
   )
 
   option(LIGHTUSD_NO_WERROR "Don't set -Werror when building the lightusd library" ${LIGHTUSD_DEFAULT_NO_WERROR})
   if (NOT LIGHTUSD_NO_WERROR)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
+    set(LIGHTUSD_COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS} -Werror")
   endif()
 
   set_source_files_properties(${LIGHTUSD_SOURCES}
-                              PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
+                              PROPERTIES COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS}")
 
   if (LIGHTUSD_WITH_C_API)
     set_source_files_properties(${LIGHTUSD_C_API_SOURCES}
-                                PROPERTIES COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS}")
+                                PROPERTIES COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS}")
   endif()
 endif()
 
 if(LIGHTUSD_CUSTOM_COMPILE_FLAGS)
   #
-  # Overwrite existing TUSDZ_COMPILE_FLAGS
+  # Overwrite existing LIGHTUSD_COMPILE_FLAGS
   #
 
   #if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    set(TUSDZ_CUSTOM_COMPILE_FLAGS "-fstack-usage ")
+    set(LIGHTUSD_CUSTOM_COMPILE_FLAGS "-fstack-usage ")
     set_source_files_properties(${LIGHTUSD_SOURCES}
-                              PROPERTIES COMPILE_FLAGS "${TUSDZ_CUSTOM_COMPILE_FLAGS}")
+                              PROPERTIES COMPILE_FLAGS "${LIGHTUSD_CUSTOM_COMPILE_FLAGS}")
 
     if (LIGHTUSD_WITH_C_API)
       set_source_files_properties(${LIGHTUSD_C_API_SOURCES}
-                                  PROPERTIES COMPILE_FLAGS "${TUSDZ_CUSTOM_COMPILE_FLAGS}")
+                                  PROPERTIES COMPILE_FLAGS "${LIGHTUSD_CUSTOM_COMPILE_FLAGS}")
     endif()
   #endif()
 endif()
@@ -1679,7 +1679,7 @@ foreach(LIGHTUSD_LIB_TARGET ${LIGHTUSD_LIBS})
   endif()
 
   # Although LightUSD should compile well without /bigobj flag,
-  # corrent TinyYSDZ need to use bigobj format otherwise we'll get: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
+  # corrent LightUSD need to use bigobj format otherwise we'll get: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
   if(MSVC)
     target_compile_options(${LIGHTUSD_LIB_TARGET} PRIVATE /bigobj)
   endif()
@@ -2092,7 +2092,7 @@ endif()
 #endif()
 
 # Enable CTest before the example subdirectories are added, so a subdirectory
-# (e.g. examples/tusdview) can register its own tests with add_test(). The
+# (e.g. examples/lusdview) can register its own tests with add_test(). The
 # main enable_testing() inside the LIGHTUSD_BUILD_TESTS block below runs after
 # these add_subdirectory() calls, which is too late for the subdirectory's own
 # add_test() to take effect. Calling it twice is harmless.
@@ -2130,7 +2130,7 @@ if(LIGHTUSD_WITH_TCMALLOC)
 endif()
 
 if(LIGHTUSD_BUILD_EXAMPLES)
-  add_subdirectory(examples/tusdcat)
+  add_subdirectory(examples/lusdcat)
   if(LIGHTUSD_WITH_TEXTOOLS)
     # Authors .ktx2 texture companions + the legacy-safe customData hints.
     add_subdirectory(examples/usd-texcomp)
@@ -2143,13 +2143,13 @@ if(LIGHTUSD_BUILD_EXAMPLES)
     add_subdirectory(examples/urdf-to-usd)
 
     if (LIGHTUSD_BUILD_GUI_VIEWER)
-      add_subdirectory(examples/tusdview)
+      add_subdirectory(examples/lusdview)
     endif()
 
-    # Independent of LIGHTUSD_BUILD_GUI_VIEWER on purpose: tusdquicklook shares
-    # no code with tusdview and needs no window-system or GPU dependency.
+    # Independent of LIGHTUSD_BUILD_GUI_VIEWER on purpose: lusdquicklook shares
+    # no code with lusdview and needs no window-system or GPU dependency.
     if (LIGHTUSD_BUILD_QUICKLOOK)
-      add_subdirectory(examples/tusdquicklook)
+      add_subdirectory(examples/lusdquicklook)
     endif()
 
     if (LIGHTUSD_WITH_MCP_SERVER)
@@ -2182,7 +2182,7 @@ endif(LIGHTUSD_BUILD_EXAMPLES)
 
 if(LIGHTUSD_BUILD_TEXTURE_GPU_BENCH)
   if(LIGHTUSD_WITH_TEXTOOLS)
-    add_subdirectory(tools/tusdview-texture-bench)
+    add_subdirectory(tools/lusdview-texture-bench)
   else()
     message(WARNING "LIGHTUSD_BUILD_TEXTURE_GPU_BENCH requires LIGHTUSD_WITH_TEXTOOLS=ON")
   endif()
@@ -2195,16 +2195,16 @@ endif()
 
 # Tools
 if(LIGHTUSD_BUILD_TOOLS)
-  add_subdirectory(tools/tusddumpcrate)
-  add_subdirectory(tools/tusdzconvert)
-  add_subdirectory(tools/tusdchecker)
-  # tusddiff uses the Tydra diff-and-compare API.
+  add_subdirectory(tools/lusddumpcrate)
+  add_subdirectory(tools/lusdzconvert)
+  add_subdirectory(tools/lusdchecker)
+  # lusddiff uses the Tydra diff-and-compare API.
   if(LIGHTUSD_WITH_TYDRA)
-    add_subdirectory(tools/tusddiff)
-    # examples/tusdview (added earlier when LIGHTUSD_BUILD_GUI_VIEWER is also
+    add_subdirectory(tools/lusddiff)
+    # examples/lusdview (added earlier when LIGHTUSD_BUILD_GUI_VIEWER is also
     # ON) may have already pulled this in for its lightrt_c CPU RT backend.
-    if(NOT TARGET tusdrender)
-      add_subdirectory(tools/tusdrender)
+    if(NOT TARGET lusdrender)
+      add_subdirectory(tools/lusdrender)
     endif()
   endif()
 endif()
@@ -2275,8 +2275,8 @@ if(LIGHTUSD_BUILD_TESTS)
     endforeach()
   endif()
 
-  # (The tusdview unit tests are registered inside
-  # examples/tusdview/CMakeLists.txt, where their targets are in scope; that
+  # (The lusdview unit tests are registered inside
+  # examples/lusdview/CMakeLists.txt, where their targets are in scope; that
   # works because enable_testing() is now called before that subdirectory is
   # added — see the top-level enable_testing() call.)
 
@@ -2319,82 +2319,82 @@ if(LIGHTUSD_BUILD_TESTS)
   #
   # TODO: Add feature to specify Python interpreter at ctest run
   #
-  find_program(TUSDR_PYTHON NAMES python3 python)
-  if(TARGET tusdrender AND TUSDR_PYTHON)
+  find_program(LUSDR_PYTHON NAMES python3 python)
+  if(TARGET lusdrender AND LUSDR_PYTHON)
     add_test(
-      NAME tool-tusdrender-smoke
-      COMMAND ${TUSDR_PYTHON}
-              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_tusdrender_smoke.py
-              "$<TARGET_FILE:tusdrender>"
+      NAME tool-lusdrender-smoke
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_lusdrender_smoke.py
+              "$<TARGET_FILE:lusdrender>"
               ${PROJECT_SOURCE_DIR}
-              ${CMAKE_BINARY_DIR}/tools/tusdrender
+              ${CMAKE_BINARY_DIR}/tools/lusdrender
     )
 
     add_test(
-      NAME tool-tusdrender-materialx-cpu-graph
-      COMMAND ${TUSDR_PYTHON}
-              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_materialx_cpu_graph.py
-              "$<TARGET_FILE:tusdrender>" ${PROJECT_SOURCE_DIR})
-    set_tests_properties(tool-tusdrender-materialx-cpu-graph PROPERTIES
-                         TIMEOUT 45 LABELS "tusdrender;cpu;materialx;graph")
+      NAME tool-lusdrender-materialx-cpu-graph
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_cpu_graph.py
+              "$<TARGET_FILE:lusdrender>" ${PROJECT_SOURCE_DIR})
+    set_tests_properties(tool-lusdrender-materialx-cpu-graph PROPERTIES
+                         TIMEOUT 45 LABELS "lusdrender;cpu;materialx;graph")
 
     add_test(
-      NAME tool-tusdrender-materialx-flake-parity
-      COMMAND ${TUSDR_PYTHON}
-              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_materialx_flake_parity.py
-              "$<TARGET_FILE:tusdrender>")
-    set_tests_properties(tool-tusdrender-materialx-flake-parity PROPERTIES
+      NAME tool-lusdrender-materialx-flake-parity
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_flake_parity.py
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-materialx-flake-parity PROPERTIES
                          TIMEOUT 100 SKIP_RETURN_CODE 77
-                         LABELS "tusdrender;gpu;materialx;graph;parity")
+                         LABELS "lusdrender;gpu;materialx;graph;parity")
 
     add_test(
-      NAME tool-tusdrender-materialx-projection-parity
-      COMMAND ${TUSDR_PYTHON}
-              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_materialx_projection_parity.py
-              "$<TARGET_FILE:tusdrender>")
-    set_tests_properties(tool-tusdrender-materialx-projection-parity PROPERTIES
+      NAME tool-lusdrender-materialx-projection-parity
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_projection_parity.py
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-materialx-projection-parity PROPERTIES
                          TIMEOUT 100 SKIP_RETURN_CODE 77
-                         LABELS "tusdrender;gpu;materialx;graph;parity")
+                         LABELS "lusdrender;gpu;materialx;graph;parity")
 
     # The legacy (eager tydra) path handles every .usda/.usdz; it used to drop
     # every UsdUVTexture and render a flat constant base color.
     add_test(
-      NAME tool-tusdrender-legacy-texture
-      COMMAND ${TUSDR_PYTHON}
-              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_legacy_texture.py
-              "$<TARGET_FILE:tusdrender>"
+      NAME tool-lusdrender-legacy-texture
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_legacy_texture.py
+              "$<TARGET_FILE:lusdrender>"
               ${PROJECT_SOURCE_DIR}
-              ${CMAKE_BINARY_DIR}/tools/tusdrender
+              ${CMAKE_BINARY_DIR}/tools/lusdrender
     )
-    set_tests_properties(tool-tusdrender-legacy-texture
+    set_tests_properties(tool-lusdrender-legacy-texture
                          PROPERTIES SKIP_RETURN_CODE 77)
 
     add_test(
-      NAME tool-tusdrender-colorspace-regression
-      COMMAND ${TUSDR_PYTHON}
-              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_colorspace_regression.py
-              "$<TARGET_FILE:tusdrender>"
+      NAME tool-lusdrender-colorspace-regression
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_colorspace_regression.py
+              "$<TARGET_FILE:lusdrender>"
               ${PROJECT_SOURCE_DIR}
-              --output ${CMAKE_BINARY_DIR}/tools/tusdrender/colorspace-regression
+              --output ${CMAKE_BINARY_DIR}/tools/lusdrender/colorspace-regression
     )
-    set_tests_properties(tool-tusdrender-colorspace-regression
+    set_tests_properties(tool-lusdrender-colorspace-regression
                          PROPERTIES SKIP_RETURN_CODE 77)
 
     # -autoframe on a FLAT scene (a quad / ground plane) used to frame it exactly
     # edge-on and render black.
     add_test(
-      NAME tool-tusdrender-autoframe-flat
-      COMMAND ${TUSDR_PYTHON}
-              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_autoframe_flat.py
-              "$<TARGET_FILE:tusdrender>"
+      NAME tool-lusdrender-autoframe-flat
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_autoframe_flat.py
+              "$<TARGET_FILE:lusdrender>"
               ${PROJECT_SOURCE_DIR}
-              ${CMAKE_BINARY_DIR}/tools/tusdrender
+              ${CMAKE_BINARY_DIR}/tools/lusdrender
     )
-    set_tests_properties(tool-tusdrender-autoframe-flat
+    set_tests_properties(tool-lusdrender-autoframe-flat
                          PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 
-  # tusdrender's shell regressions in tools/tusdrender/tests/. These existed for
+  # lusdrender's shell regressions in tools/lusdrender/tests/. These existed for
   # a long time with NO add_test() anywhere, so nothing ran them and the docs
   # cited ctest names that did not resolve; run-degraded-material.sh had been
   # segfaulting (infinite MtlxConverter <-> ConvertMaterial recursion) unnoticed.
@@ -2405,32 +2405,32 @@ if(LIGHTUSD_BUILD_TESTS)
   # run-alpha-blend-sort-external.sh need external multi-GB asset corpora.
   #
   # bash is required (Git Bash/WSL on Windows). Without this find_program guard
-  # -- mirroring TUSDR_PYTHON's guard on the smoke tests above -- ctest can't
+  # -- mirroring LUSDR_PYTHON's guard on the smoke tests above -- ctest can't
   # find/launch the COMMAND at all on a native Windows box with neither on
   # PATH, which fails hard rather than the intended SKIP_RETURN_CODE 77 skip
   # (that property only takes effect once the test process actually runs).
-  find_program(TUSDR_BASH NAMES bash)
-  if(TARGET tusdrender AND TUSDR_BASH)
+  find_program(LUSDR_BASH NAMES bash)
+  if(TARGET lusdrender AND LUSDR_BASH)
     add_test(
-      NAME tool-tusdrender-gpu-render
-      COMMAND ${TUSDR_BASH}
-              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-gpu-render.sh
-              "$<TARGET_FILE:tusdrender>")
-    set_tests_properties(tool-tusdrender-gpu-render PROPERTIES
-                         SKIP_RETURN_CODE 77 LABELS "tusdrender;gpu;rt;materialx;openpbr")
-    if(TUSDR_PYTHON)
+      NAME tool-lusdrender-gpu-render
+      COMMAND ${LUSDR_BASH}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-gpu-render.sh
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-gpu-render PROPERTIES
+                         SKIP_RETURN_CODE 77 LABELS "lusdrender;gpu;rt;materialx;openpbr")
+    if(LUSDR_PYTHON)
       add_test(
-        NAME tool-tusdrender-materialx-openpbr-parity
-        COMMAND ${TUSDR_PYTHON}
-                ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_materialx_openpbr_parity.py
-                "$<TARGET_FILE:tusdrender>" ${PROJECT_SOURCE_DIR})
-      set_tests_properties(tool-tusdrender-materialx-openpbr-parity PROPERTIES
+        NAME tool-lusdrender-materialx-openpbr-parity
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_openpbr_parity.py
+                "$<TARGET_FILE:lusdrender>" ${PROJECT_SOURCE_DIR})
+      set_tests_properties(tool-lusdrender-materialx-openpbr-parity PROPERTIES
                            SKIP_RETURN_CODE 77
                            TIMEOUT 180
-                           RESOURCE_LOCK tusdview_semantic_gpu
-                           LABELS "tusdrender;gpu;rt;materialx;openpbr;parity")
+                           RESOURCE_LOCK lusdview_semantic_gpu
+                           LABELS "lusdrender;gpu;rt;materialx;openpbr;parity")
     endif()
-    set(TUSDR_SHELL_TESTS
+    set(LUSDR_SHELL_TESTS
         backplate
         backface-material
         camera-modes
@@ -2472,35 +2472,35 @@ if(LIGHTUSD_BUILD_TESTS)
         gaussian-carrier-dispatch
         gaussian-schema-aliases
         vk-ray-tiling)
-    foreach(t ${TUSDR_SHELL_TESTS})
+    foreach(t ${LUSDR_SHELL_TESTS})
       add_test(
-        NAME tool-tusdrender-${t}
-        COMMAND ${TUSDR_BASH}
-                ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-${t}.sh
-                "$<TARGET_FILE:tusdrender>"
+        NAME tool-lusdrender-${t}
+        COMMAND ${LUSDR_BASH}
+                ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-${t}.sh
+                "$<TARGET_FILE:lusdrender>"
       )
-      set_tests_properties(tool-tusdrender-${t} PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(tool-lusdrender-${t} PROPERTIES SKIP_RETURN_CODE 77)
     endforeach()
 
-    # run-material-resolver.sh takes the binary via $TUSDRENDER (its positional
+    # run-material-resolver.sh takes the binary via $LUSDRENDER (its positional
     # args are options) and skips itself when USD_ASSETS_ROOT is unset, so it is
     # safe to register: it runs on machines that have the corpus, skips on those
     # that don't. README.md already told people to run it by this ctest name.
     add_test(
-      NAME tool-tusdrender-material-resolver
-      COMMAND ${TUSDR_BASH} ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-material-resolver.sh
+      NAME tool-lusdrender-material-resolver
+      COMMAND ${LUSDR_BASH} ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-material-resolver.sh
     )
-    set_tests_properties(tool-tusdrender-material-resolver
+    set_tests_properties(tool-lusdrender-material-resolver
                          PROPERTIES SKIP_RETURN_CODE 77
-                         ENVIRONMENT "TUSDRENDER=$<TARGET_FILE:tusdrender>")
+                         ENVIRONMENT "LUSDRENDER=$<TARGET_FILE:lusdrender>")
 
     add_test(
-      NAME tool-tusdrender-alpha-blend-sort-external
-      COMMAND ${TUSDR_BASH}
-              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-alpha-blend-sort-external.sh
-              "$<TARGET_FILE:tusdrender>"
+      NAME tool-lusdrender-alpha-blend-sort-external
+      COMMAND ${LUSDR_BASH}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-alpha-blend-sort-external.sh
+              "$<TARGET_FILE:lusdrender>"
     )
-    set_tests_properties(tool-tusdrender-alpha-blend-sort-external
+    set_tests_properties(tool-lusdrender-alpha-blend-sort-external
                          PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 
@@ -2517,11 +2517,11 @@ if(LIGHTUSD_BUILD_TESTS)
 
   #
   # AOUSD validation fixture suite (self-checking via `# EXPECT:` markers).
-  # Runs `tusdcat --validate-all` over tests/usda/validation/**.
+  # Runs `lusdcat --validate-all` over tests/usda/validation/**.
   #
-  # These are end-to-end tests that spawn the `tusdcat` binary. On 32-bit
+  # These are end-to-end tests that spawn the `lusdcat` binary. On 32-bit
   # (i386) + AddressSanitizer, the i386 ASan runtime/allocator cannot reserve
-  # enough virtual address space for the full `tusdcat` process and it aborts
+  # enough virtual address space for the full `lusdcat` process and it aborts
   # before useful work (`ERROR: Failed to mmap`, mmap -> ENOMEM; often while
   # reporting an internal allocator OOM). This reproduces with both gcc's
   # libasan and clang's compiler-rt, so it is a 32-bit ASan address-space
@@ -2529,15 +2529,15 @@ if(LIGHTUSD_BUILD_TESTS)
   # itself is correct on 32-bit (verified with a non-ASan i386 build: full suite
   # passes) and is exercised by every 64-bit job, and ASan coverage of the core
   # library is still provided by unit-test-lightusd (which runs fine under
-  # 32-bit ASan). So skip just these tusdcat-driven E2E tests in the 32-bit+ASan
+  # 32-bit ASan). So skip just these lusdcat-driven E2E tests in the 32-bit+ASan
   # configuration.
-  set(_lightusd_tusdcat_e2e_ok TRUE)
+  set(_lightusd_lusdcat_e2e_ok TRUE)
   if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND SANITIZE_ADDRESS)
-    set(_lightusd_tusdcat_e2e_ok FALSE)
-    message(STATUS "lightusd: skipping tusdcat E2E validation tests on 32-bit + ASan (i386 ASan runtime cannot reserve enough address space for tusdcat)")
+    set(_lightusd_lusdcat_e2e_ok FALSE)
+    message(STATUS "lightusd: skipping lusdcat E2E validation tests on 32-bit + ASan (i386 ASan runtime cannot reserve enough address space for lusdcat)")
   endif()
 
-  if(TARGET tusdcat AND _lightusd_tusdcat_e2e_ok)
+  if(TARGET lusdcat AND _lightusd_lusdcat_e2e_ok)
     # Crate-writer round-trip pins. Every check here is a fix for authored USD
     # data that the .usdc writer silently DROPPED or INVENTED: schema fallbacks
     # written for declaration-only attributes, prim/attribute metadata blocks,
@@ -2547,14 +2547,14 @@ if(LIGHTUSD_BUILD_TESTS)
     add_test(
       NAME scope-imageable-roundtrip
       COMMAND bash "${PROJECT_SOURCE_DIR}/tests/run-scope-imageable-roundtrip.sh"
-              "$<TARGET_FILE:tusdcat>"
+              "$<TARGET_FILE:lusdcat>"
       )
     set_tests_properties(scope-imageable-roundtrip PROPERTIES SKIP_RETURN_CODE 77)
 
     add_test(
       NAME validation-suite-test
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-suite.py
-              --app "$<TARGET_FILE:tusdcat>"
+              --app "$<TARGET_FILE:lusdcat>"
               --basedir "${PROJECT_SOURCE_DIR}/tests/usda/validation"
       )
 
@@ -2563,19 +2563,19 @@ if(LIGHTUSD_BUILD_TESTS)
     add_test(
       NAME validation-regression-test
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-regression.py
-              --app "$<TARGET_FILE:tusdcat>"
+              --app "$<TARGET_FILE:lusdcat>"
               --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
 
     add_test(
       NAME validation-usdz-cube-test
-      COMMAND "$<TARGET_FILE:tusdcat>" --validate
+      COMMAND "$<TARGET_FILE:lusdcat>" --validate
               "${PROJECT_SOURCE_DIR}/models/cube.usdz"
       )
 
     add_test(
       NAME validation-usdz-texture-cat-plane-test
-      COMMAND "$<TARGET_FILE:tusdcat>" --validate
+      COMMAND "$<TARGET_FILE:lusdcat>" --validate
               "${PROJECT_SOURCE_DIR}/models/texture-cat-plane.usdz"
       )
 
@@ -2586,7 +2586,7 @@ if(LIGHTUSD_BUILD_TESTS)
       add_test(
         NAME web-validation-parity-test
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDCAT_PATH=$<TARGET_FILE:tusdcat>"
+                "LUSDCAT_PATH=$<TARGET_FILE:lusdcat>"
                 "LIGHTUSD_WASM_DIR=${PROJECT_SOURCE_DIR}/web/js/src/lightusd"
                 "LIGHTUSD_PARITY_SKIP_STALE_WASM=1"
                 "${LIGHTUSD_NODE_EXECUTABLE}"
@@ -2597,222 +2597,222 @@ if(LIGHTUSD_BUILD_TESTS)
 
   # Windowless Vulkan render regression. This works on both hardware and
   # software Vulkan devices and self-skips when no Vulkan device is available.
-  if(UNIX AND NOT APPLE AND TARGET tusdview)
+  if(UNIX AND NOT APPLE AND TARGET lusdview)
     # Opt-in external Island production smoke. With no ISLAND_USD environment
     # variable this returns 77 immediately, proving the corpus remains optional
     # in ordinary CI while making the real-data gate discoverable via CTest.
     add_test(
-      NAME tusdview-island-production-smoke
+      NAME lusdview-island-production-smoke
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-island-production-smoke.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-island-production-smoke.sh"
       )
-    set_tests_properties(tusdview-island-production-smoke PROPERTIES
+    set_tests_properties(lusdview-island-production-smoke PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 5400
-                         LABELS "tusdview;external;island")
+                         LABELS "lusdview;external;island")
 
     add_test(
-      NAME tusdview-progressive-checkpoints
+      NAME lusdview-progressive-checkpoints
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "LUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-progressive-checkpoints.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-progressive-checkpoints.sh"
       )
-    set_tests_properties(tusdview-progressive-checkpoints PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 150 LABELS "tusdview")
+    set_tests_properties(lusdview-progressive-checkpoints PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 150 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-vk-multitlas
+      NAME lusdview-vk-multitlas
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "LUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-multitlas.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-multitlas.sh"
       )
-    set_tests_properties(tusdview-vk-multitlas PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "tusdview")
+    set_tests_properties(lusdview-vk-multitlas PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-ptex-camera-demand
+      NAME lusdview-ptex-camera-demand
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDVIEW_PTEX_GENERATOR=$<TARGET_FILE:tusdview_ptex_atlas_test>"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "LUSDVIEW_PTEX_GENERATOR=$<TARGET_FILE:lusdview_ptex_atlas_test>"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-ptex-camera-demand.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-ptex-camera-demand.sh"
       )
-    set_tests_properties(tusdview-ptex-camera-demand PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 90 LABELS "tusdview")
+    set_tests_properties(lusdview-ptex-camera-demand PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 90 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-vk-render
+      NAME lusdview-vk-render
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-render.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-render.sh"
       )
-    set_tests_properties(tusdview-vk-render PROPERTIES
+    set_tests_properties(lusdview-vk-render PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 300)
 
     add_test(
-      NAME tusdview-vk-stacked-glass
+      NAME lusdview-vk-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/models/tusdview-stacked-glass.usda"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-render.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "ASSET=${PROJECT_SOURCE_DIR}/models/lusdview-stacked-glass.usda"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-render.sh"
     )
-    set_tests_properties(tusdview-vk-stacked-glass PROPERTIES
+    set_tests_properties(lusdview-vk-stacked-glass PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 300
-                         LABELS "tusdview;vulkan;transparency")
+                         LABELS "lusdview;vulkan;transparency")
 
     add_test(
-      NAME tusdview-vk-swbvh-render
+      NAME lusdview-vk-swbvh-render
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-swbvh-render.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-swbvh-render.sh"
       )
-    set_tests_properties(tusdview-vk-swbvh-render PROPERTIES
+    set_tests_properties(lusdview-vk-swbvh-render PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180
-                         LABELS "tusdview;vulkan;rt")
+                         LABELS "lusdview;vulkan;rt")
 
     add_test(
-      NAME tusdview-vk-swbvh-stacked-glass
+      NAME lusdview-vk-swbvh-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/models/tusdview-stacked-glass.usda"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-swbvh-render.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "ASSET=${PROJECT_SOURCE_DIR}/models/lusdview-stacked-glass.usda"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-swbvh-render.sh"
     )
-    set_tests_properties(tusdview-vk-swbvh-stacked-glass PROPERTIES
+    set_tests_properties(lusdview-vk-swbvh-stacked-glass PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180
-                         LABELS "tusdview;vulkan;rt;transparency")
+                         LABELS "lusdview;vulkan;rt;transparency")
 
     add_test(
-      NAME tusdview-vk-texture-validation
+      NAME lusdview-vk-texture-validation
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "LUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-texture-validation.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-texture-validation.sh"
       )
-    set_tests_properties(tusdview-vk-texture-validation PROPERTIES
+    set_tests_properties(lusdview-vk-texture-validation PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 150
-                         LABELS "tusdview;vulkan;validation")
+                         LABELS "lusdview;vulkan;validation")
 
     add_test(
-      NAME tusdview-vk-mtlx-cold-fallback
+      NAME lusdview-vk-mtlx-cold-fallback
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-mtlx-cold-fallback.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-mtlx-cold-fallback.sh"
     )
-    set_tests_properties(tusdview-vk-mtlx-cold-fallback PROPERTIES
+    set_tests_properties(lusdview-vk-mtlx-cold-fallback PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 120
-                         LABELS "tusdview;vulkan;rt;materialx")
+                         LABELS "lusdview;vulkan;rt;materialx")
 
     add_test(
-      NAME tusdview-vk-authored-materials
+      NAME lusdview-vk-authored-materials
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-authored-materials.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-authored-materials.sh"
       )
-    set_tests_properties(tusdview-vk-authored-materials PROPERTIES
+    set_tests_properties(lusdview-vk-authored-materials PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180
-                         LABELS "tusdview;vulkan;rt;materialx;authored-assets")
+                         LABELS "lusdview;vulkan;rt;materialx;authored-assets")
 
     add_test(
-      NAME tusdview-raster-multilight
+      NAME lusdview-raster-multilight
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-raster-multilight.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-raster-multilight.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-    set_tests_properties(tusdview-raster-multilight PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview"
-                         ENVIRONMENT "TUSDVIEW_GL_TIMEOUT=120s"
-                         RESOURCE_LOCK tusdview_gl_gpu)
+    set_tests_properties(lusdview-raster-multilight PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "lusdview"
+                         ENVIRONMENT "LUSDVIEW_GL_TIMEOUT=120s"
+                         RESOURCE_LOCK lusdview_gl_gpu)
 
     add_test(
-      NAME tusdview-rt-light-links
+      NAME lusdview-rt-light-links
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-rt-light-links.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-rt-light-links.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-    set_tests_properties(tusdview-rt-light-links PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 150 LABELS "tusdview")
+    set_tests_properties(lusdview-rt-light-links PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 150 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-raster-shadow-map
+      NAME lusdview-raster-shadow-map
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-raster-shadow-map.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-raster-shadow-map.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-    set_tests_properties(tusdview-raster-shadow-map PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview")
+    set_tests_properties(lusdview-raster-shadow-map PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-raster-carrier-shadow
+      NAME lusdview-raster-carrier-shadow
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-raster-carrier-shadow.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-raster-carrier-shadow.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-    set_tests_properties(tusdview-raster-carrier-shadow PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview")
+    set_tests_properties(lusdview-raster-carrier-shadow PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-shadow-alpha-inst
+      NAME lusdview-shadow-alpha-inst
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-shadow-alpha-inst.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-shadow-alpha-inst.sh"
       )
-    set_tests_properties(tusdview-shadow-alpha-inst PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 60 LABELS "tusdview")
+    set_tests_properties(lusdview-shadow-alpha-inst PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 60 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-aousd-conformance
+      NAME lusdview-aousd-conformance
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-aousd-conformance.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-aousd-conformance.sh"
       )
-    set_tests_properties(tusdview-aousd-conformance PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "tusdview")
+    set_tests_properties(lusdview-aousd-conformance PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-gl-vk-parity
+      NAME lusdview-gl-vk-parity
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
               # NVIDIA can need one additional cold shader-program compile for
               # a fixture variant not exercised by the global GL warm-up.
-              "TUSDVIEW_GL_VK_TIMEOUT=120s"
+              "LUSDVIEW_GL_VK_TIMEOUT=120s"
               bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-gl-vk-parity.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-gl-vk-parity.sh"
       )
-    set_tests_properties(tusdview-gl-vk-parity PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "tusdview")
+    set_tests_properties(lusdview-gl-vk-parity PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-backend-parity
+      NAME lusdview-backend-parity
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDVIEW_PARITY_FRAMES=1" "TUSDVIEW_PARITY_SIZE=96x96"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backend-parity.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "LUSDVIEW_PARITY_FRAMES=1" "LUSDVIEW_PARITY_SIZE=96x96"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-backend-parity.sh"
       )
-    set_tests_properties(tusdview-backend-parity PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview")
+    set_tests_properties(lusdview-backend-parity PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-unsupported-realtime-lobes
+      NAME lusdview-unsupported-realtime-lobes
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-unsupported-lobes.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-unsupported-lobes.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-    set_tests_properties(tusdview-unsupported-realtime-lobes PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 90 LABELS "tusdview")
+    set_tests_properties(lusdview-unsupported-realtime-lobes PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 90 LABELS "lusdview")
   endif()
 
   #
-  # tusdview CPU/GPU skinning screenshot parity. This is intentionally
+  # lusdview CPU/GPU skinning screenshot parity. This is intentionally
   # registered only for Linux GUI builds with xvfb-run available: OpenGL needs a
   # window/context, and xvfb supplies a headless X server.
   #
@@ -2821,12 +2821,12 @@ if(LIGHTUSD_BUILD_TESTS)
   # attribute but aPosition -- the skin joints/weights read as zero and the
   # GPU-skinned render is stuck in the rest pose regardless of the code under
   # test. The script detects that device and exits 77 (skip); see
-  # tests/tusdview/gpu_backend.py.
+  # tests/lusdview/gpu_backend.py.
   #
-  if(UNIX AND NOT APPLE AND TARGET tusdview)
-    # HIP is loaded dynamically by tusdview.  CTest often runs with a minimal
+  if(UNIX AND NOT APPLE AND TARGET lusdview)
+    # HIP is loaded dynamically by lusdview.  CTest often runs with a minimal
     # loader environment, so discover the ROCm runtime directory at configure
-    # time and propagate it to tusdview tests.  Preserve any caller-supplied
+    # time and propagate it to lusdview tests.  Preserve any caller-supplied
     # LD_LIBRARY_PATH after the discovered directory; this also supports
     # versioned installations such as /opt/rocm/core-7.14/lib.
     set(_lightusd_hip_library_dirs)
@@ -2865,33 +2865,33 @@ if(LIGHTUSD_BUILD_TESTS)
     find_program(LIGHTUSD_XVFB_RUN xvfb-run)
     if(LIGHTUSD_XVFB_RUN)
       add_test(
-        NAME tusdview-skinning-screenshot-diff
-        COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/tusdview/compare-skinning-screenshots.py
-                --app "$<TARGET_FILE:tusdview>"
+        NAME lusdview-skinning-screenshot-diff
+        COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/lusdview/compare-skinning-screenshots.py
+                --app "$<TARGET_FILE:lusdview>"
                 --model "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
-                --out-dir "${CMAKE_BINARY_DIR}/Testing/tusdview-skinning"
+                --out-dir "${CMAKE_BINARY_DIR}/Testing/lusdview-skinning"
                 --backend gl
                 --frames 4
                 --time 12
                 --xvfb-run "${LIGHTUSD_XVFB_RUN}"
         )
-      set_tests_properties(tusdview-skinning-screenshot-diff
+      set_tests_properties(lusdview-skinning-screenshot-diff
                            PROPERTIES SKIP_RETURN_CODE 77)
 
       # The HIP interactive tracer refits its BVH per pose instead of paying a
       # full scene rebuild. Refit must trace byte-identically to the rebuild
-      # path (TUSDVIEW_NO_BVH_REFIT=1) over the same --play run. Self-skips
+      # path (LUSDVIEW_NO_BVH_REFIT=1) over the same --play run. Self-skips
       # without a HIP device.
       add_test(
-        NAME tusdview-hip-bvh-refit
+        NAME lusdview-hip-bvh-refit
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-hip-bvh-refit.py
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-hip-bvh-refit.py
                 "${LIGHTUSD_XVFB_RUN}"
-                "$<TARGET_FILE:tusdview>"
+                "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-hip-bvh-refit"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-hip-bvh-refit"
         )
-      set_tests_properties(tusdview-hip-bvh-refit
+      set_tests_properties(lusdview-hip-bvh-refit
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800)
       # Skinning must also reach INSTANCED prototypes (a shared prototype behind
       # `instanceable = true`), which the next loader used to convert but never
@@ -2899,164 +2899,164 @@ if(LIGHTUSD_BUILD_TESTS)
       # animates inside the instance; CPU/GPU are not pixel-compared here (a
       # GPU-skinned prototype is de-instanced onto the material shader).
       add_test(
-        NAME tusdview-instanced-prototype-skinning
+        NAME lusdview-instanced-prototype-skinning
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-instanced-prototype-skinning.py
-                "$<TARGET_FILE:tusdview>"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-instanced-prototype-skinning.py
+                "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/skintest-instanced.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-instanced-skinning"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-instanced-skinning"
         )
       # It exits 77 when no usable GL display is present (it renders WINDOWED, to
       # exercise the real context). Without this the skip is reported as a failure.
-      set_tests_properties(tusdview-instanced-prototype-skinning
+      set_tests_properties(lusdview-instanced-prototype-skinning
                            PROPERTIES SKIP_RETURN_CODE 77)
 
       # The large-scene budget tree must descend from the real device, not the
       # GiB(32)/GiB(16) literals it used to be fed, and --vram-budget must
       # override the probe. Headless + tiny scene; skips without Vulkan.
       add_test(
-        NAME tusdview-vram-budget
+        NAME lusdview-vram-budget
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-vram-budget.py
-                "$<TARGET_FILE:tusdview>"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-vram-budget"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-vram-budget.py
+                "$<TARGET_FILE:lusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-vram-budget"
         )
-      set_tests_properties(tusdview-vram-budget PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(lusdview-vram-budget PROPERTIES SKIP_RETURN_CODE 77)
 
       # --texture-fit must actually decide whether textures are shrunk and
       # block-compressed. That decision previously had no coverage at all: a
       # regression either way showed up only as a slow or needlessly degraded
       # large-scene load. Headless + tiny scene; skips without Vulkan.
       add_test(
-        NAME tusdview-texture-fit
+        NAME lusdview-texture-fit
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-texture-fit.py
-                "$<TARGET_FILE:tusdview>"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-texture-fit"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-texture-fit.py
+                "$<TARGET_FILE:lusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-texture-fit"
         )
-      set_tests_properties(tusdview-texture-fit PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(lusdview-texture-fit PROPERTIES SKIP_RETURN_CODE 77)
 
       # A non-instanced blendshape mesh must animate on the default --next loader.
       # Morph used to be built only for instanced prototypes, so a plain
       # SkelRoot -> Mesh blendshape rendered frozen at its rest pose. Headless
       # (Vulkan); skips without a device.
       add_test(
-        NAME tusdview-noninstanced-blendshape
+        NAME lusdview-noninstanced-blendshape
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-noninstanced-blendshape.py
-                "$<TARGET_FILE:tusdview>"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-noninstanced-blendshape"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-noninstanced-blendshape.py
+                "$<TARGET_FILE:lusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-noninstanced-blendshape"
         )
-      set_tests_properties(tusdview-noninstanced-blendshape
+      set_tests_properties(lusdview-noninstanced-blendshape
                            PROPERTIES SKIP_RETURN_CODE 77)
 
       # Per-vertex displayColor must render on the Vulkan raster backend (it used
       # to reach only the RT path; VK raster drew the flat material color).
       add_test(
-        NAME tusdview-vertex-color
+        NAME lusdview-vertex-color
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-vertex-color.py
-                "$<TARGET_FILE:tusdview>"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-vertex-color"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-vertex-color.py
+                "$<TARGET_FILE:lusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-vertex-color"
         )
-      set_tests_properties(tusdview-vertex-color PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(lusdview-vertex-color PROPERTIES SKIP_RETURN_CODE 77)
 
       # Vulkan RT BLAS compaction: must shrink the acceleration structures, must
       # build ONE BLAS per prototype (not per instance), and must be image-neutral.
       add_test(
-        NAME tusdview-blas-compaction
+        NAME lusdview-blas-compaction
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-blas-compaction.py
-                "$<TARGET_FILE:tusdview>"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-blas-compaction.py
+                "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/blastest-instanced-static.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-blas-compaction"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-blas-compaction"
         )
-      set_tests_properties(tusdview-blas-compaction PROPERTIES
+      set_tests_properties(lusdview-blas-compaction PROPERTIES
                            SKIP_RETURN_CODE 77 TIMEOUT 300)
 
       # A texture must sample the UV set its UsdPrimvarReader names. The secondary
       # set used to be hard-coded as <primary>+"1" (so `uvSet1` was never
       # extracted), and nothing routed it even when it existed.
       add_test(
-        NAME tusdview-uv-set-routing
+        NAME lusdview-uv-set-routing
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-uv-set-routing.py
-                "$<TARGET_FILE:tusdview>"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-uv-set-routing.py
+                "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/multi-uv-quad.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-uv-set-routing"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-uv-set-routing"
         )
-      set_tests_properties(tusdview-uv-set-routing PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(lusdview-uv-set-routing PROPERTIES SKIP_RETURN_CODE 77)
 
-      # Cross-tool parity oracle: ONE scene through BOTH binaries. tusdview and
-      # tusdrender consume the same tydra-next RenderScene, so they must read
+      # Cross-tool parity oracle: ONE scene through BOTH binaries. lusdview and
+      # lusdrender consume the same tydra-next RenderScene, so they must read
       # GeomSubset material bindings and the secondary UV set the same way.
       # Nothing else in the suite compares the two -- which is precisely how a run
-      # of tusdview-only material/UV regressions stayed invisible while every
-      # per-tool test kept passing. Needs a real Vulkan device (tusdview
+      # of lusdview-only material/UV regressions stayed invisible while every
+      # per-tool test kept passing. Needs a real Vulkan device (lusdview
       # --headless); skips without one.
-      if(TARGET tusdrender)
+      if(TARGET lusdrender)
         add_test(
-          NAME tusdview-tusdrender-parity
+          NAME lusdview-lusdrender-parity
           COMMAND bash
-                  ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-cross-tool-parity.sh
+                  ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-cross-tool-parity.sh
           )
-        set_tests_properties(tusdview-tusdrender-parity PROPERTIES
+        set_tests_properties(lusdview-lusdrender-parity PROPERTIES
           SKIP_RETURN_CODE 77
           ENVIRONMENT
-            "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>")
+            "LUSDVIEW=$<TARGET_FILE:lusdview>;LUSDRENDER=$<TARGET_FILE:lusdrender>")
       endif()
 
       # Raster LOD must reach NON-instanced meshes, which also requires each one
       # to carry its own AABB (the next loader used to hand every static mesh the
       # scene-spanning box, disabling the per-mesh frustum cull along with it).
       add_test(
-        NAME tusdview-noninstanced-lod
+        NAME lusdview-noninstanced-lod
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-noninst-lod.py
-                "$<TARGET_FILE:tusdview>"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-noninstanced-lod"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-noninst-lod.py
+                "$<TARGET_FILE:lusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-noninstanced-lod"
         )
-      set_tests_properties(tusdview-noninstanced-lod PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(lusdview-noninstanced-lod PROPERTIES SKIP_RETURN_CODE 77)
 
       # The ray tracer traces vertex buffers, so the raster vertex shader's
       # deform never reaches it. --next --rt used to give up and re-run the whole
       # converter per time code; it now re-poses the retained rest vertices.
       add_test(
-        NAME tusdview-rt-skinning
+        NAME lusdview-rt-skinning
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-rt-skinning.py
-                "$<TARGET_FILE:tusdview>"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-rt-skinning.py
+                "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-skinning"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-rt-skinning"
         )
-      set_tests_properties(tusdview-rt-skinning PROPERTIES
+      set_tests_properties(lusdview-rt-skinning PROPERTIES
                            SKIP_RETURN_CODE 77 TIMEOUT 600)
 
       # A skinned mesh's BLAS is refit in place per pose (MODE_UPDATE) instead
       # of destroyed + fully rebuilt. Refit must trace byte-identically to the
-      # rebuild path (TUSDVIEW_NO_BLAS_REFIT=1) over the same --play run.
+      # rebuild path (LUSDVIEW_NO_BLAS_REFIT=1) over the same --play run.
       add_test(
-        NAME tusdview-rt-blas-refit
+        NAME lusdview-rt-blas-refit
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-rt-blas-refit.py
-                "$<TARGET_FILE:tusdview>"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-rt-blas-refit.py
+                "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-blas-refit"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-rt-blas-refit"
         )
-      set_tests_properties(tusdview-rt-blas-refit PROPERTIES
+      set_tests_properties(lusdview-rt-blas-refit PROPERTIES
                            SKIP_RETURN_CODE 77 TIMEOUT 420)
 
       # A non-instanced blendshaped mesh must morph: the static batch path used to
       # build no morph channels at all, so it rendered its rest shape forever.
       add_test(
-        NAME tusdview-blendshape-morph
+        NAME lusdview-blendshape-morph
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-blendshape-morph.py
-                "$<TARGET_FILE:tusdview>"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-blendshape-morph.py
+                "$<TARGET_FILE:lusdview>"
                 "${PROJECT_SOURCE_DIR}/models/blendshape-and-animation-test-001.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-blendshape-morph"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-blendshape-morph"
         )
-      set_tests_properties(tusdview-blendshape-morph PROPERTIES
+      set_tests_properties(lusdview-blendshape-morph PROPERTIES
                            SKIP_RETURN_CODE 77 TIMEOUT 600)
 
       # GPU deform vs CPU bake, in depth through a fixed camera, over the three
@@ -3083,18 +3083,18 @@ if(LIGHTUSD_BUILD_TESTS)
       foreach(deform_case skin-xform skin-animation morph-subsets morph-skin instanced-proto
                           pointinstancer)
         add_test(
-          NAME tusdview-deform-${deform_case}
+          NAME lusdview-deform-${deform_case}
           COMMAND python3
-                  ${PROJECT_SOURCE_DIR}/tests/tusdview/check-deform-parity.py
-                  "$<TARGET_FILE:tusdview>"
-                  "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-${deform_case}.usda"
-                  "${CMAKE_BINARY_DIR}/Testing/tusdview-deform-${deform_case}"
+                  ${PROJECT_SOURCE_DIR}/tests/lusdview/check-deform-parity.py
+                  "$<TARGET_FILE:lusdview>"
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/deform-${deform_case}.usda"
+                  "${CMAKE_BINARY_DIR}/Testing/lusdview-deform-${deform_case}"
           )
-        set_tests_properties(tusdview-deform-${deform_case}
+        set_tests_properties(lusdview-deform-${deform_case}
                              PROPERTIES SKIP_RETURN_CODE 77)
       endforeach()
-      set_tests_properties(tusdview-deform-instanced-proto
-                           PROPERTIES LABELS "tusdview")
+      set_tests_properties(lusdview-deform-instanced-proto
+                           PROPERTIES LABELS "lusdview")
 
       # An instanced prototype under the RAY TRACER: RT cannot use the raster vertex
       # shader's deform (the BLAS is built from vertex buffers, so the geometry itself
@@ -3102,48 +3102,48 @@ if(LIGHTUSD_BUILD_TESTS)
       # -- one BLAS, re-posed once, referenced by every placement's TLAS instance.
       # Raster and RT therefore reach the same pixels by genuinely different routes.
       add_test(
-        NAME tusdview-deform-instanced-proto-rt
+        NAME lusdview-deform-instanced-proto-rt
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-deform-parity.py
-                "$<TARGET_FILE:tusdview>"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-instanced-proto.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-deform-instanced-proto-rt"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-deform-parity.py
+                "$<TARGET_FILE:lusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/deform-instanced-proto.usda"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-deform-instanced-proto-rt"
                 rt
         )
-      set_tests_properties(tusdview-deform-instanced-proto-rt
-                           PROPERTIES SKIP_RETURN_CODE 77 LABELS "tusdview")
+      set_tests_properties(lusdview-deform-instanced-proto-rt
+                           PROPERTIES SKIP_RETURN_CODE 77 LABELS "lusdview")
 
       # The CUDA tracer builds its BVH from draw_ geometry, so it takes the deform
       # through poseNextDrawForTracer instead of the vertex shader. It used to be
       # pinned to the load-time CPU bake -- a second deform implementation, free to
       # disagree with the shader's, and it did. Skips (77) where CUDA is absent.
       add_test(
-        NAME tusdview-deform-cuda
+        NAME lusdview-deform-cuda
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-deform-parity.py
-                "$<TARGET_FILE:tusdview>"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-morph-skin.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-deform-cuda"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-deform-parity.py
+                "$<TARGET_FILE:lusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/deform-morph-skin.usda"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-deform-cuda"
                 cuda
         )
-      set_tests_properties(tusdview-deform-cuda PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(lusdview-deform-cuda PROPERTIES SKIP_RETURN_CODE 77)
 
       add_test(
-        NAME tusdview-cuda-kernel-cache
+        NAME lusdview-cuda-kernel-cache
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
                 bash
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cuda-kernel-cache.sh"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cuda-kernel-cache.sh"
         )
-      set_tests_properties(tusdview-cuda-kernel-cache
+      set_tests_properties(lusdview-cuda-kernel-cache
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 210)
 
       add_test(
-        NAME tusdview-cuda-cache-cli
+        NAME lusdview-cuda-cache-cli
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
                 bash
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cuda-cache-cli.sh"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cuda-cache-cli.sh"
         )
 
       # LEGACY loader: an animated --time load must pose the mesh ONCE. It bakes the
@@ -3151,17 +3151,17 @@ if(LIGHTUSD_BUILD_TESTS)
       # from posing it a second time was gated on an EXPLICIT --skinning gpu -- so
       # the DEFAULT (auto) deformed twice.
       add_test(
-        NAME tusdview-legacy-double-deform
+        NAME lusdview-legacy-double-deform
         COMMAND python3
-                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-legacy-double-deform.py
-                "$<TARGET_FILE:tusdview>"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-skin-xform.usda"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-legacy-double-deform"
+                ${PROJECT_SOURCE_DIR}/tests/lusdview/check-legacy-double-deform.py
+                "$<TARGET_FILE:lusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/deform-skin-xform.usda"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-legacy-double-deform"
         )
-      set_tests_properties(tusdview-legacy-double-deform
+      set_tests_properties(lusdview-legacy-double-deform
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 420)
     else()
-      message(STATUS "lightusd: skipping tusdview screenshot diff test; xvfb-run not found")
+      message(STATUS "lightusd: skipping lusdview screenshot diff test; xvfb-run not found")
     endif()
   endif()
 
@@ -3171,266 +3171,266 @@ if(LIGHTUSD_BUILD_TESTS)
   # Reading only the Mesh's own `material:binding` drops the material and every
   # texture with it. Renders headless (Vulkan offscreen); SKIPs without a GPU.
   #
-  if(UNIX AND NOT APPLE AND TARGET tusdview)
+  if(UNIX AND NOT APPLE AND TARGET lusdview)
     add_test(
-      NAME tusdview-material-binding-inheritance
+      NAME lusdview-material-binding-inheritance
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-material-binding-inheritance.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-material-binding-inheritance.sh"
       )
-    set_tests_properties(tusdview-material-binding-inheritance
+    set_tests_properties(lusdview-material-binding-inheritance
                          PROPERTIES SKIP_RETURN_CODE 77)
 
     # Unsupported bound surface shaders retain familiar PBR constants in a
     # per-material degraded PreviewSurface. Geometry must remain renderable and
     # the structured load summary must report the degradation.
     add_test(
-      NAME tusdview-degraded-material
+      NAME lusdview-degraded-material
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-degraded-material.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-degraded-material.sh"
       )
-    set_tests_properties(tusdview-degraded-material
+    set_tests_properties(lusdview-degraded-material
                          PROPERTIES SKIP_RETURN_CODE 77)
 
     # Deterministic screenshot controls must reject malformed/ambiguous camera
     # input before renderer initialization, so this remains a headless test.
     add_test(
-      NAME tusdview-cli-camera-options
+      NAME lusdview-cli-camera-options
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cli-camera-options.sh"
-              "$<TARGET_FILE:tusdview>"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cli-camera-options.sh"
+              "$<TARGET_FILE:lusdview>"
       )
 
     add_test(
-      NAME tusdview-cli-path-trace-options
+      NAME lusdview-cli-path-trace-options
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cli-path-trace-options.sh"
-              "$<TARGET_FILE:tusdview>"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cli-path-trace-options.sh"
+              "$<TARGET_FILE:lusdview>"
       )
-    set_tests_properties(tusdview-cli-path-trace-options PROPERTIES
-                         LABELS "tusdview;rt;path-trace")
+    set_tests_properties(lusdview-cli-path-trace-options PROPERTIES
+                         LABELS "lusdview;rt;path-trace")
 
     add_test(
-      NAME tusdview-cli-window-size
+      NAME lusdview-cli-window-size
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cli-window-size.sh"
-              "$<TARGET_FILE:tusdview>"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cli-window-size.sh"
+              "$<TARGET_FILE:lusdview>"
       )
-    set_tests_properties(tusdview-cli-window-size
-                         PROPERTIES SKIP_RETURN_CODE 77 LABELS "tusdview")
+    set_tests_properties(lusdview-cli-window-size
+                         PROPERTIES SKIP_RETURN_CODE 77 LABELS "lusdview")
 
     add_test(
-      NAME tusdview-camera-record-equivalence
+      NAME lusdview-camera-record-equivalence
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-record-equivalence.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-record-equivalence.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
-      set_tests_properties(tusdview-camera-record-equivalence
+      set_tests_properties(lusdview-camera-record-equivalence
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
-                                    LABELS "tusdview")
+                                    LABELS "lusdview")
 
     add_test(
-      NAME tusdview-camera-dof-cuda
+      NAME lusdview-camera-dof-cuda
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-dof-cuda.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-dof-cuda.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
-    set_tests_properties(tusdview-camera-dof-cuda
+    set_tests_properties(lusdview-camera-dof-cuda
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
-                                    LABELS "tusdview")
+                                    LABELS "lusdview")
 
     add_test(
-      NAME tusdview-camera-dof-vulkan
+      NAME lusdview-camera-dof-vulkan
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-dof-vulkan.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-dof-vulkan.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
-    set_tests_properties(tusdview-camera-dof-vulkan
+    set_tests_properties(lusdview-camera-dof-vulkan
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
-                                    LABELS "tusdview")
+                                    LABELS "lusdview")
 
     add_test(
-      NAME tusdview-area-light-cuda
+      NAME lusdview-area-light-cuda
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-area-light-cuda.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-area-light-cuda.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
-    set_tests_properties(tusdview-area-light-cuda
+    set_tests_properties(lusdview-area-light-cuda
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
-                                    LABELS "tusdview")
+                                    LABELS "lusdview")
 
     add_test(
-      NAME tusdview-area-light-vulkan
+      NAME lusdview-area-light-vulkan
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-area-light-vulkan.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-area-light-vulkan.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
-    set_tests_properties(tusdview-area-light-vulkan
+    set_tests_properties(lusdview-area-light-vulkan
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
-                                    LABELS "tusdview")
+                                    LABELS "lusdview")
 
     add_test(
-      NAME tusdview-next-nonmesh-extraction
+      NAME lusdview-next-nonmesh-extraction
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-next-nonmesh-extraction.sh"
-              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-next-nonmesh-extraction.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-    set_tests_properties(tusdview-next-nonmesh-extraction
+    set_tests_properties(lusdview-next-nonmesh-extraction
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 75
-                                    LABELS "tusdview")
+                                    LABELS "lusdview")
 
     if(UNIX AND NOT APPLE)
       add_test(
-        NAME tusdview-gl-nonmesh-render
+        NAME lusdview-gl-nonmesh-render
         COMMAND bash
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-gl-nonmesh-render.sh"
-                "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-gl-nonmesh-render.sh"
+                "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-      set_tests_properties(tusdview-gl-nonmesh-render
+      set_tests_properties(lusdview-gl-nonmesh-render
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 75
-                                      LABELS "tusdview")
+                                      LABELS "lusdview")
 
       add_test(
-        NAME tusdview-vk-nonmesh-render
+        NAME lusdview-vk-nonmesh-render
         COMMAND bash
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-nonmesh-render.sh"
-                "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-nonmesh-render.sh"
+                "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-      set_tests_properties(tusdview-vk-nonmesh-render
+      set_tests_properties(lusdview-vk-nonmesh-render
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90
-                                      LABELS "tusdview")
+                                      LABELS "lusdview")
 
       add_test(
-        NAME tusdview-vk-gaussian-chunks
+        NAME lusdview-vk-gaussian-chunks
         COMMAND bash
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-gaussian-chunks.sh"
-                "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-gaussian-chunks.sh"
+                "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-      set_tests_properties(tusdview-vk-gaussian-chunks
+      set_tests_properties(lusdview-vk-gaussian-chunks
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 105
-                                      LABELS "tusdview")
+                                      LABELS "lusdview")
 
       add_test(
-        NAME tusdview-nonmesh-backend-parity
+        NAME lusdview-nonmesh-backend-parity
         COMMAND bash
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-nonmesh-backend-parity.sh"
-                "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-nonmesh-backend-parity.sh"
+                "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
       )
-      set_tests_properties(tusdview-nonmesh-backend-parity
+      set_tests_properties(lusdview-nonmesh-backend-parity
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 150
-                                      LABELS "tusdview")
+                                      LABELS "lusdview")
     endif()
 
-    if(TUSDR_PYTHON)
+    if(LUSDR_PYTHON)
       # Start Vulkan once, then replace the USD scene and capture three cases
       # through MCP. Process-wide backend/loader variants remain separate tests.
       add_test(
-        NAME tusdview-mcp-render-batch
-        COMMAND ${TUSDR_PYTHON}
-                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
-                "$<TARGET_FILE:tusdview>"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-render-batch.json"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-render-batch"
+        NAME lusdview-mcp-render-batch
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_render_batch.py"
+                "$<TARGET_FILE:lusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/mcp-render-batch.json"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-mcp-render-batch"
         )
-      set_tests_properties(tusdview-mcp-render-batch
+      set_tests_properties(lusdview-mcp-render-batch
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
       add_test(
-        NAME tusdview-mcp-material-batch
-        COMMAND ${TUSDR_PYTHON}
-                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
-                "$<TARGET_FILE:tusdview>"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-material-batch.json"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-material-batch"
+        NAME lusdview-mcp-material-batch
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_render_batch.py"
+                "$<TARGET_FILE:lusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/mcp-material-batch.json"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-mcp-material-batch"
         )
-      set_tests_properties(tusdview-mcp-material-batch
+      set_tests_properties(lusdview-mcp-material-batch
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
       # The grid/no-grid image assertion also pins the RT compute-to-overlay
       # composition path without restarting Vulkan or rebuilding the TLAS.
       add_test(
-        NAME tusdview-mcp-render-batch-vk-rt
-        COMMAND ${TUSDR_PYTHON}
-                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
-                "$<TARGET_FILE:tusdview>"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-vk-rt-overlay.json"
-                "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-render-batch-vk-rt"
+        NAME lusdview-mcp-render-batch-vk-rt
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_render_batch.py"
+                "$<TARGET_FILE:lusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/mcp-vk-rt-overlay.json"
+                "${CMAKE_BINARY_DIR}/Testing/lusdview-mcp-render-batch-vk-rt"
                 --rt
         )
-      set_tests_properties(tusdview-mcp-render-batch-vk-rt
+      set_tests_properties(lusdview-mcp-render-batch-vk-rt
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
       add_test(
-        NAME tusdview-mcp-live-reload-vulkan
-        COMMAND ${TUSDR_PYTHON}
-                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_shader_reload.py"
-                "$<TARGET_FILE:tusdview>" vulkan
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/vk/shaders/raytrace.comp"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/area-light-shadow.usda"
+        NAME lusdview-mcp-live-reload-vulkan
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_shader_reload.py"
+                "$<TARGET_FILE:lusdview>" vulkan
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/vk/shaders/raytrace.comp"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/area-light-shadow.usda"
                 --materialx-vk-shader-max-kib 256
         )
-      set_tests_properties(tusdview-mcp-live-reload-vulkan
+      set_tests_properties(lusdview-mcp-live-reload-vulkan
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 360
-                                      LABELS "tusdview;rt;mcp;live-reload;vulkan")
+                                      LABELS "lusdview;rt;mcp;live-reload;vulkan")
       add_test(
-        NAME tusdview-mcp-live-reload-vulkan-swbvh
-        COMMAND ${CMAKE_COMMAND} -E env TUSDVIEW_RT_FORCE_SW=1
-                ${TUSDR_PYTHON}
-                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_shader_reload.py"
-                "$<TARGET_FILE:tusdview>" vulkan
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/vk/shaders/raytrace_swbvh.comp"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/area-light-shadow.usda"
+        NAME lusdview-mcp-live-reload-vulkan-swbvh
+        COMMAND ${CMAKE_COMMAND} -E env LUSDVIEW_RT_FORCE_SW=1
+                ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_shader_reload.py"
+                "$<TARGET_FILE:lusdview>" vulkan
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/vk/shaders/raytrace_swbvh.comp"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/area-light-shadow.usda"
         )
-      set_tests_properties(tusdview-mcp-live-reload-vulkan-swbvh
+      set_tests_properties(lusdview-mcp-live-reload-vulkan-swbvh
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
-                                      LABELS "tusdview;rt;mcp;live-reload;vulkan;swbvh")
+                                      LABELS "lusdview;rt;mcp;live-reload;vulkan;swbvh")
       add_test(
-        NAME tusdview-mcp-live-reload-cuda
-        COMMAND ${TUSDR_PYTHON}
-                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_shader_reload.py"
-                "$<TARGET_FILE:tusdview>" cuda
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/raytracer_kernel_src.txt"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/area-light-shadow.usda"
+        NAME lusdview-mcp-live-reload-cuda
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_shader_reload.py"
+                "$<TARGET_FILE:lusdview>" cuda
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/raytracer_kernel_src.txt"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/area-light-shadow.usda"
         )
-      set_tests_properties(tusdview-mcp-live-reload-cuda
+      set_tests_properties(lusdview-mcp-live-reload-cuda
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 480
-                                      LABELS "tusdview;rt;mcp;live-reload;cuda")
+                                      LABELS "lusdview;rt;mcp;live-reload;cuda")
       add_test(
-        NAME tusdview-mcp-live-reload-hip
-        COMMAND ${TUSDR_PYTHON}
-                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_shader_reload.py"
-                "$<TARGET_FILE:tusdview>" hip
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/raytracer_kernel_src.txt"
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/area-light-shadow.usda"
+        NAME lusdview-mcp-live-reload-hip
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_shader_reload.py"
+                "$<TARGET_FILE:lusdview>" hip
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/raytracer_kernel_src.txt"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/area-light-shadow.usda"
         )
-      set_tests_properties(tusdview-mcp-live-reload-hip
+      set_tests_properties(lusdview-mcp-live-reload-hip
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 360
-                                      LABELS "tusdview;rt;mcp;live-reload;hip")
-      find_program(TUSDVIEW_XVFB_RUN NAMES xvfb-run)
-      if(TUSDVIEW_XVFB_RUN)
+                                      LABELS "lusdview;rt;mcp;live-reload;hip")
+      find_program(LUSDVIEW_XVFB_RUN NAMES xvfb-run)
+      if(LUSDVIEW_XVFB_RUN)
         # Same manifest through one real, persistent GLFW/OpenGL window. The
         # trailing backend overrides the manifest's Vulkan default.
         add_test(
-          NAME tusdview-mcp-render-batch-gl-window
-          COMMAND "${TUSDVIEW_XVFB_RUN}" -a
-                  ${TUSDR_PYTHON}
-                  "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
-                  "$<TARGET_FILE:tusdview>"
-                  "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-render-batch.json"
-                  "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-render-batch-gl"
+          NAME lusdview-mcp-render-batch-gl-window
+          COMMAND "${LUSDVIEW_XVFB_RUN}" -a
+                  ${LUSDR_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_render_batch.py"
+                  "$<TARGET_FILE:lusdview>"
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/mcp-render-batch.json"
+                  "${CMAKE_BINARY_DIR}/Testing/lusdview-mcp-render-batch-gl"
                   --windowed --backend gl --size 1024x768
           )
-        set_tests_properties(tusdview-mcp-render-batch-gl-window
+        set_tests_properties(lusdview-mcp-render-batch-gl-window
                              PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
         add_test(
-          NAME tusdview-mcp-material-batch-gl-window
-          COMMAND "${TUSDVIEW_XVFB_RUN}" -a
-                  ${TUSDR_PYTHON}
-                  "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
-                  "$<TARGET_FILE:tusdview>"
-                  "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-material-batch.json"
-                  "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-material-batch-gl"
+          NAME lusdview-mcp-material-batch-gl-window
+          COMMAND "${LUSDVIEW_XVFB_RUN}" -a
+                  ${LUSDR_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/tests/lusdview/mcp_render_batch.py"
+                  "$<TARGET_FILE:lusdview>"
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/mcp-material-batch.json"
+                  "${CMAKE_BINARY_DIR}/Testing/lusdview-mcp-material-batch-gl"
                   --windowed --backend gl --size 1024x768
           )
-        set_tests_properties(tusdview-mcp-material-batch-gl-window
+        set_tests_properties(lusdview-mcp-material-batch-gl-window
                              PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
       endif()
     endif()
@@ -3438,46 +3438,46 @@ if(LIGHTUSD_BUILD_TESTS)
     # Exact material:binding:back resolution and draw-side selection, including
     # a GeomSubset-specific degraded back material and whole-mesh fallback.
     add_test(
-      NAME tusdview-backface-material
+      NAME lusdview-backface-material
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backface-material.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-backface-material.sh"
       )
-    set_tests_properties(tusdview-backface-material
+    set_tests_properties(lusdview-backface-material
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
-                                    ENVIRONMENT "TUSDVIEW_XVFB=1")
+                                    ENVIRONMENT "LUSDVIEW_XVFB=1")
 
     # doubleSided (audit T8): a single-sided mesh back-face culls, a doubleSided
     # one does not -- identically on GL and Vulkan. The --next loader used to
     # drop the authored flag entirely, and Vulkan never culled anything.
     add_test(
-      NAME tusdview-double-sided
+      NAME lusdview-double-sided
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-double-sided.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-double-sided.sh"
       )
-    set_tests_properties(tusdview-double-sided PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(lusdview-double-sided PROPERTIES SKIP_RETURN_CODE 77)
 
     # UsdPreviewSurface specular workflow + IOR on --next (audit T12): a colored
     # specularColor must tint the highlight (not fall back to white dielectric),
     # identically on GL and VK.
     add_test(
-      NAME tusdview-specular-workflow
+      NAME lusdview-specular-workflow
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-specular-workflow.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-specular-workflow.sh"
       )
-    set_tests_properties(tusdview-specular-workflow PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(lusdview-specular-workflow PROPERTIES SKIP_RETURN_CODE 77)
 
     # T12 opacity completion: separate scalar opacity textures (ordinary/UDIM)
     # on both raster backends, and varying displayOpacity on raster + RT.
     add_test(
-      NAME tusdview-opacity-material
+      NAME lusdview-opacity-material
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-opacity-material.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-opacity-material.sh"
       )
-    set_tests_properties(tusdview-opacity-material PROPERTIES
+    set_tests_properties(lusdview-opacity-material PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 900)
 
     # Texture-driven material factors must survive the complete raster / RT
@@ -3486,55 +3486,55 @@ if(LIGHTUSD_BUILD_TESTS)
     # aggregate test.
     set(_lightusd_semantic_backends gl vk-raster vk-rt cuda hip)
     foreach(_backend IN LISTS _lightusd_semantic_backends)
-      set(_test_name "tusdview-texture-semantic-aov-${_backend}")
+      set(_test_name "lusdview-texture-semantic-aov-${_backend}")
       set(_semantic_timeout_env)
       if(_backend STREQUAL "gl")
         # A fixture can select an additional NVIDIA shader variant that was
         # not covered by the global warm-up. Under concurrent suite load its
         # first compile can exceed the normal 60 s launch guard.
-        set(_semantic_timeout_env "TUSDVIEW_RENDER_TIMEOUT=180s")
+        set(_semantic_timeout_env "LUSDVIEW_RENDER_TIMEOUT=180s")
       elseif(_backend STREQUAL "vk-rt")
         # A new compact RT SPIR-V can take roughly 150 s for NVIDIA's first
-        # driver JIT.  Let that first process populate tusdview's persistent
+        # driver JIT.  Let that first process populate lusdview's persistent
         # VkPipelineCache; warm launches are typically below 200 ms.
-        set(_semantic_timeout_env "TUSDVIEW_RENDER_TIMEOUT=240s")
+        set(_semantic_timeout_env "LUSDVIEW_RENDER_TIMEOUT=240s")
       endif()
       add_test(
         NAME "${_test_name}"
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDVIEW=$<TARGET_FILE:tusdview>"
-                "TUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                "LUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
                 # The loader-parity shards below own UDIM/USDZ and both-loader
                 # coverage. Keep the main shards focused on every OpenPBR AOV;
                 # this removes duplicate process/device startup and bounds each
                 # hardware backend to roughly 13 viewer launches.
-                "TUSDVIEW_SEMANTIC_FAMILIES=openpbr"
-                "TUSDVIEW_SEMANTIC_UDIM=0"
-                "TUSDVIEW_SEMANTIC_PACKAGE_PARITY=0"
+                "LUSDVIEW_SEMANTIC_FAMILIES=openpbr"
+                "LUSDVIEW_SEMANTIC_UDIM=0"
+                "LUSDVIEW_SEMANTIC_PACKAGE_PARITY=0"
                 ${_semantic_timeout_env}
-                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-semantic-aov.sh"
         )
       # 300 s was enough only while a failed backend probe let most cases be
       # skipped; a full GL run over every mode and family measures ~436 s.
       set_tests_properties("${_test_name}" PROPERTIES
-                           SKIP_RETURN_CODE 77 TIMEOUT 1800 LABELS "tusdview"
-                           RESOURCE_LOCK tusdview_semantic_gpu)
+                           SKIP_RETURN_CODE 77 TIMEOUT 1800 LABELS "lusdview"
+                           RESOURCE_LOCK lusdview_semantic_gpu)
     endforeach()
 
     # Explicitly exercise the GL normal-map TBN fallback with constant UVs.
     # Keep this as a small GL-only shard so the full CUDA/HIP semantic matrices
     # do not repeat a regression case that targets the raster shader branch.
     add_test(
-      NAME tusdview-texture-semantic-aov-gl-degenerate
+      NAME lusdview-texture-semantic-aov-gl-degenerate
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDVIEW_SEMANTIC_BACKENDS=gl"
-              "TUSDVIEW_SEMANTIC_MODES=degenerate-normal degenerate-coat-normal"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "LUSDVIEW_SEMANTIC_BACKENDS=gl"
+              "LUSDVIEW_SEMANTIC_MODES=degenerate-normal degenerate-coat-normal"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-semantic-aov.sh"
     )
-    set_tests_properties(tusdview-texture-semantic-aov-gl-degenerate PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "tusdview"
-                         RESOURCE_LOCK tusdview_semantic_gpu)
+    set_tests_properties(lusdview-texture-semantic-aov-gl-degenerate PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview"
+                         RESOURCE_LOCK lusdview_semantic_gpu)
 
     # Keep the RT texture-table path loader-neutral without repeating the full
     # semantic matrix above. One textured OpenPBR albedo case still exercises
@@ -3543,67 +3543,67 @@ if(LIGHTUSD_BUILD_TESTS)
     # six.
     set(_lightusd_semantic_rt_backends vk-rt cuda hip)
     foreach(_backend IN LISTS _lightusd_semantic_rt_backends)
-      set(_test_name "tusdview-texture-semantic-rt-loader-parity-${_backend}")
+      set(_test_name "lusdview-texture-semantic-rt-loader-parity-${_backend}")
       set(_semantic_rt_timeout_env)
       if(_backend STREQUAL "vk-rt")
-        set(_semantic_rt_timeout_env "TUSDVIEW_RENDER_TIMEOUT=240s")
+        set(_semantic_rt_timeout_env "LUSDVIEW_RENDER_TIMEOUT=240s")
       elseif(_backend STREQUAL "cuda")
         # CUDA initialization can stall a child viewer after a preceding CUDA
         # shard has released its context. Keep one stalled render from
         # consuming the entire aggregate parity test timeout; the matrix has
         # passed with this guard and reports a normal backend failure/skip.
-        set(_semantic_rt_timeout_env "TUSDVIEW_RENDER_TIMEOUT=20s")
+        set(_semantic_rt_timeout_env "LUSDVIEW_RENDER_TIMEOUT=20s")
       endif()
       add_test(
         NAME "${_test_name}"
         COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
-              "TUSDVIEW_SEMANTIC_LOADERS=default legacy"
-              "TUSDVIEW_SEMANTIC_FAMILIES=openpbr"
-              "TUSDVIEW_SEMANTIC_MODES=albedo"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "LUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
+              "LUSDVIEW_SEMANTIC_LOADERS=default legacy"
+              "LUSDVIEW_SEMANTIC_FAMILIES=openpbr"
+              "LUSDVIEW_SEMANTIC_MODES=albedo"
               ${_semantic_rt_timeout_env}
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-semantic-aov.sh"
       )
       set_tests_properties("${_test_name}" PROPERTIES
-                           SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "tusdview"
-                           RESOURCE_LOCK tusdview_semantic_gpu)
+                           SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "lusdview"
+                           RESOURCE_LOCK lusdview_semantic_gpu)
     endforeach()
 
     add_test(
-      NAME tusdview-light-record-equivalence
+      NAME lusdview-light-record-equivalence
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-light-record-equivalence.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-light-record-equivalence.sh"
       )
-    set_tests_properties(tusdview-light-record-equivalence PROPERTIES
+    set_tests_properties(lusdview-light-record-equivalence PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     add_test(
-      NAME tusdview-instancer-invisible-ids
+      NAME lusdview-instancer-invisible-ids
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-instancer-invisible-ids.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-instancer-invisible-ids.sh"
       )
-    set_tests_properties(tusdview-instancer-invisible-ids PROPERTIES
+    set_tests_properties(lusdview-instancer-invisible-ids PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     add_test(
-      NAME tusdview-tydra-pointinstancer
+      NAME lusdview-tydra-pointinstancer
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-tydra-pointinstancer.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-tydra-pointinstancer.sh"
       )
-    set_tests_properties(tusdview-tydra-pointinstancer PROPERTIES
+    set_tests_properties(lusdview-tydra-pointinstancer PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     add_test(
-      NAME tusdview-inst-morph-cull
+      NAME lusdview-inst-morph-cull
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-inst-morph-cull.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-inst-morph-cull.sh"
       )
-    set_tests_properties(tusdview-inst-morph-cull PROPERTIES
+    set_tests_properties(lusdview-inst-morph-cull PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     # DomeLight IBL baking is provided by the optional vendored textools
@@ -3611,67 +3611,67 @@ if(LIGHTUSD_BUILD_TESTS)
     # its feature when that dependency is intentionally disabled.
     if(LIGHTUSD_WITH_TEXTOOLS)
       add_test(
-        NAME tusdview-dome-orientation
+        NAME lusdview-dome-orientation
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDVIEW=$<TARGET_FILE:tusdview>"
-                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-dome-orientation.sh"
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-dome-orientation.sh"
         )
-      set_tests_properties(tusdview-dome-orientation PROPERTIES
+      set_tests_properties(lusdview-dome-orientation PROPERTIES
                            SKIP_RETURN_CODE 77 TIMEOUT 240)
     endif()
 
     add_test(
-      NAME tusdview-displacement-udim
+      NAME lusdview-displacement-udim
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-displacement-udim.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-displacement-udim.sh"
       )
-    set_tests_properties(tusdview-displacement-udim PROPERTIES
+    set_tests_properties(lusdview-displacement-udim PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 600)
 
     add_test(
-      NAME tusdview-vk-displacement-isolation
+      NAME lusdview-vk-displacement-isolation
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-displacement-isolation.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-displacement-isolation.sh"
       )
-    set_tests_properties(tusdview-vk-displacement-isolation PROPERTIES
+    set_tests_properties(lusdview-vk-displacement-isolation PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     # A single mesh may bind different materials through materialBind
     # GeomSubsets. All RT backends must resolve the committed triangle's
     # submesh material, not the mesh's first material.
     add_test(
-      NAME tusdview-rt-geomsubset-material
+      NAME lusdview-rt-geomsubset-material
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-rt-geomsubset-material.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-rt-geomsubset-material.sh"
       )
-    set_tests_properties(tusdview-rt-geomsubset-material
+    set_tests_properties(lusdview-rt-geomsubset-material
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
 
     # Deferred package payloads must survive the async recomposition handoff in
     # both loaders. Drive the actual MCP action so the test covers the same
     # lifetime boundary as the interactive "Load payload" UI.
     add_test(
-      NAME tusdview-usdz-deferred-payload
+      NAME lusdview-usdz-deferred-payload
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usdz-deferred-payload.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usdz-deferred-payload.sh"
       )
-    set_tests_properties(tusdview-usdz-deferred-payload
+    set_tests_properties(lusdview-usdz-deferred-payload
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
 
     # Deterministic back-to-front alpha blending on both raster backends.
     # Keep this registered separately from scalar opacity/cutout coverage: it
     # catches draw-order regressions with three overlapping translucent layers.
     add_test(
-      NAME tusdview-transparency
+      NAME lusdview-transparency
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-transparency.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-transparency.sh"
       )
-    set_tests_properties(tusdview-transparency PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(lusdview-transparency PROPERTIES SKIP_RETURN_CODE 77)
 
     # Optional Khronos ValidationLayers smoke for the weighted-OIT command path.
     # Local developers can build the layer with
@@ -3679,77 +3679,77 @@ if(LIGHTUSD_BUILD_TESTS)
     # or prebuilt VK_LAYER_PATH; otherwise this test deliberately skips (77)
     # rather than downloading/building ValidationLayers during the test job.
     add_test(
-      NAME tusdview-vk-oit-validation
+      NAME lusdview-vk-oit-validation
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-oit-validation.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "LUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-oit-validation.sh"
       )
-    set_tests_properties(tusdview-vk-oit-validation PROPERTIES
+    set_tests_properties(lusdview-vk-oit-validation PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 150)
 
     # The CPU tracer must own headless screenshots, including its bounded
     # stacked-alpha compositor, rather than silently capturing Vulkan raster.
     add_test(
-      NAME tusdview-cpu-rt-headless
+      NAME lusdview-cpu-rt-headless
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cpu-rt-headless.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
       )
-    set_tests_properties(tusdview-cpu-rt-headless PROPERTIES
+    set_tests_properties(lusdview-cpu-rt-headless PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180)
 
     add_test(
-      NAME tusdview-cpu-rt-stacked-glass
+      NAME lusdview-cpu-rt-stacked-glass
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/models/tusdview-stacked-glass.usda"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cpu-rt-headless.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "ASSET=${PROJECT_SOURCE_DIR}/models/lusdview-stacked-glass.usda"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
     )
-    set_tests_properties(tusdview-cpu-rt-stacked-glass PROPERTIES
+    set_tests_properties(lusdview-cpu-rt-stacked-glass PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180
-                         LABELS "tusdview;rt;transparency")
+                         LABELS "lusdview;rt;transparency")
 
     add_test(
-      NAME tusdview-cpu-rt-openpbr-lobes
+      NAME lusdview-cpu-rt-openpbr-lobes
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/tusdview-unsupported-realtime-lobes.usda"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cpu-rt-headless.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-unsupported-realtime-lobes.usda"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
     )
-    set_tests_properties(tusdview-cpu-rt-openpbr-lobes PROPERTIES
+    set_tests_properties(lusdview-cpu-rt-openpbr-lobes PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180
-                         LABELS "tusdview;rt;openpbr")
+                         LABELS "lusdview;rt;openpbr")
 
     add_test(
-      NAME tusdview-cpu-rt-materialx-swizzle
+      NAME lusdview-cpu-rt-materialx-swizzle
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cpu-rt-materialx-swizzle.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-materialx-swizzle.sh"
     )
-    set_tests_properties(tusdview-cpu-rt-materialx-swizzle PROPERTIES
+    set_tests_properties(lusdview-cpu-rt-materialx-swizzle PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 180
-                         LABELS "tusdview;rt;materialx;openpbr")
+                         LABELS "lusdview;rt;materialx;openpbr")
 
     add_test(
-      NAME tusdview-openchess-materials
+      NAME lusdview-openchess-materials
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-openchess-materials.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-openchess-materials.sh"
       )
-    set_tests_properties(tusdview-openchess-materials PROPERTIES
+    set_tests_properties(lusdview-openchess-materials PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 240
-                         LABELS "tusdview;rt;materialx;openpbr")
+                         LABELS "lusdview;rt;materialx;openpbr")
 
     add_test(
-      NAME tusdview-openchess-path-trace
+      NAME lusdview-openchess-path-trace
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-openchess-path-trace.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-openchess-path-trace.sh"
       )
-    set_tests_properties(tusdview-openchess-path-trace PROPERTIES
+    set_tests_properties(lusdview-openchess-path-trace PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 3600
-                         LABELS "tusdview;rt;path-trace;materialx;openpbr;gpu")
+                         LABELS "lusdview;rt;path-trace;materialx;openpbr;gpu")
 
     # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
     # both put the stand-in on top of the geometry it stands in for (intent-vfx's
@@ -3757,31 +3757,31 @@ if(LIGHTUSD_BUILD_TESTS)
     # radius 1). Both loaders must supersede the proxy -- and still draw it when
     # there is no render geometry to supersede it.
     add_test(
-      NAME tusdview-purpose-proxy-supersede
+      NAME lusdview-purpose-proxy-supersede
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-purpose-proxy-supersede.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-purpose-proxy-supersede.sh"
       )
-    set_tests_properties(tusdview-purpose-proxy-supersede
+    set_tests_properties(lusdview-purpose-proxy-supersede
                          PROPERTIES SKIP_RETURN_CODE 77)
 
     # Layer-relative asset-path anchoring: a look layer nested below the root
     # reaches its texture with `../tex/...`, which only resolves when anchored to
     # the layer that authored it (see src/next/layer/asset-anchor.hh).
     add_test(
-      NAME tusdview-asset-path-anchoring
+      NAME lusdview-asset-path-anchoring
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-material-binding-inheritance.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-material-binding-inheritance.sh"
                    "${PROJECT_SOURCE_DIR}/models/nested-look-texture/root.usda"
       )
-    set_tests_properties(tusdview-asset-path-anchoring
+    set_tests_properties(lusdview-asset-path-anchoring
                          PROPERTIES SKIP_RETURN_CODE 77)
 
     # usd-wg/assets regression baseline. The batch harness could always RENDER the
     # corpus; what it had no answer for was "did this change what any of it looks
     # like?" -- so a render that silently turned a scene black still passed. The
-    # checked-in baseline (examples/tusdview/tests/usd-assets-goldens.tsv) records a
+    # checked-in baseline (examples/lusdview/tests/usd-assets-goldens.tsv) records a
     # COVERAGE fingerprint per (mode, asset): a silhouette bitfield, chosen over a
     # pixel hash because it survives the GPU/driver lighting differences that would
     # otherwise make the file useless anywhere but the machine that wrote it. A
@@ -3789,38 +3789,38 @@ if(LIGHTUSD_BUILD_TESTS)
     # shading nudge does not.
     #
     # Still a per-machine artifact in the end, so it is OPT-IN twice over: it needs
-    # the corpus (USD_ASSETS_ROOT, else SKIP) and TUSDVIEW_RUN_GOLDEN=1 (else SKIP).
+    # the corpus (USD_ASSETS_ROOT, else SKIP) and LUSDVIEW_RUN_GOLDEN=1 (else SKIP).
     # Refresh it deliberately, and read the diff before committing it:
     #
-    #   TUSDVIEW_RUN_GOLDEN=1 tests/tusdview/run-usd-assets-batch.sh \
+    #   LUSDVIEW_RUN_GOLDEN=1 tests/lusdview/run-usd-assets-batch.sh \
     #     --golden-kind coverage \
-    #     --update-golden examples/tusdview/tests/usd-assets-goldens.tsv
+    #     --update-golden examples/lusdview/tests/usd-assets-goldens.tsv
     add_test(
-      NAME tusdview-usd-assets-golden
+      NAME lusdview-usd-assets-golden
       COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_GOLDEN"
-              "TUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error,golden_mismatch,unexpected_degradation,expectation_mismatch"
-              bash "${PROJECT_SOURCE_DIR}/tests/tusdview/run-usd-assets-batch.sh"
+              "LUSDVIEW=$<TARGET_FILE:lusdview>"
+              "LUSDVIEW_USD_ASSETS_GATE=LUSDVIEW_RUN_GOLDEN"
+              "LUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error,golden_mismatch,unexpected_degradation,expectation_mismatch"
+              bash "${PROJECT_SOURCE_DIR}/tests/lusdview/run-usd-assets-batch.sh"
                    --root "${LIGHTUSD_USD_ASSETS_ROOT}"
                    --golden-kind coverage
-                   --golden "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/usd-assets-goldens.tsv"
+                   --golden "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/usd-assets-goldens.tsv"
       )
-    set_tests_properties(tusdview-usd-assets-golden
+    set_tests_properties(lusdview-usd-assets-golden
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 5400)
 
     # Self-contained classification/expectation test for the external-corpus
-    # harness. Uses a generated empty layer and tusdrender CPU, so it verifies
+    # harness. Uses a generated empty layer and lusdrender CPU, so it verifies
     # no_renderable plus hard expectation mismatches without usd-assets data.
-    if(TARGET tusdrender)
+    if(TARGET lusdrender)
       add_test(
-        NAME tusdview-usd-assets-classification
+        NAME lusdview-usd-assets-classification
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDVIEW=$<TARGET_FILE:tusdview>"
-                "TUSDRENDER=$<TARGET_FILE:tusdrender>"
-                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-no-renderable-tracking.sh"
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                "LUSDRENDER=$<TARGET_FILE:lusdrender>"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-no-renderable-tracking.sh"
         )
-      set_tests_properties(tusdview-usd-assets-classification
+      set_tests_properties(lusdview-usd-assets-classification
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
       # Bounded but broad cross-renderer coverage for the external usd-wg/assets
@@ -3828,44 +3828,44 @@ if(LIGHTUSD_BUILD_TESTS)
       # four backends and is intentionally much heavier than the self-contained
       # profile/classification regressions below.
       add_test(
-        NAME tusdview-usd-assets-broad-smoke
+        NAME lusdview-usd-assets-broad-smoke
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDVIEW=$<TARGET_FILE:tusdview>"
-                "TUSDRENDER=$<TARGET_FILE:tusdrender>"
-                "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_BROAD"
-                "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
-                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh"
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                "LUSDRENDER=$<TARGET_FILE:lusdrender>"
+                "LUSDVIEW_USD_ASSETS_GATE=LUSDVIEW_RUN_USD_ASSETS_BROAD"
+                "LUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usd-assets-render-smoke.sh"
                      --root "${LIGHTUSD_USD_ASSETS_ROOT}"
                      --profile usd-assets-broad
                      --require-profile-complete
-                     --modes vk-raster,vk-rt,tusdr-cpu,tusdr-vk
+                     --modes vk-raster,vk-rt,lusdr-cpu,lusdr-vk
                      --time 1
         )
-      set_tests_properties(tusdview-usd-assets-broad-smoke PROPERTIES
+      set_tests_properties(lusdview-usd-assets-broad-smoke PROPERTIES
                            SKIP_RETURN_CODE 77 TIMEOUT 7200
-                           LABELS "tusdview;external;usd-assets")
+                           LABELS "lusdview;external;usd-assets")
 
       add_test(
-        NAME tusdview-usd-assets-animation-smoke
+        NAME lusdview-usd-assets-animation-smoke
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDVIEW=$<TARGET_FILE:tusdview>"
-                "TUSDRENDER=$<TARGET_FILE:tusdrender>"
-                "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_ANIMATION"
-                "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
+                "LUSDRENDER=$<TARGET_FILE:lusdrender>"
+                "LUSDVIEW_USD_ASSETS_GATE=LUSDVIEW_RUN_USD_ASSETS_ANIMATION"
+                "LUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
                 "USD_ASSETS_ROOT=${LIGHTUSD_USD_ASSETS_ROOT}"
-                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-animation-smoke.sh"
+                bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usd-assets-animation-smoke.sh"
         )
-      set_tests_properties(tusdview-usd-assets-animation-smoke PROPERTIES
+      set_tests_properties(lusdview-usd-assets-animation-smoke PROPERTIES
                            SKIP_RETURN_CODE 77 TIMEOUT 3600
-                           LABELS "tusdview;external;usd-assets;animation")
+                           LABELS "lusdview;external;usd-assets;animation")
     endif()
 
     add_test(
-      NAME tusdview-usd-assets-broad-profile
+      NAME lusdview-usd-assets-broad-profile
       COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-broad-profile.sh"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usd-assets-broad-profile.sh"
       )
-    set_tests_properties(tusdview-usd-assets-broad-profile PROPERTIES TIMEOUT 120)
+    set_tests_properties(lusdview-usd-assets-broad-profile PROPERTIES TIMEOUT 120)
   endif()
 
   #
@@ -3945,17 +3945,17 @@ if(LIGHTUSD_BUILD_TESTS)
               "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
 
-    # USDC writer roundtrip: tusdcat writes USDC -> read back as USDA -> tusddiff
+    # USDC writer roundtrip: lusdcat writes USDC -> read back as USDA -> lusddiff
     # Uses --report-only so it does not fail the suite (informational baseline).
     # Run without --report-only for strict validation:
-    #   python3 tests/usdc-writer/usdc-writer-runner.py --tusdcat ./build/tusdcat --tusddiff ./build/tusddiff --basedir tests/usda --verbose
-    # tusddiff now lives under tools/ (LIGHTUSD_BUILD_TOOLS); skip if not built.
-    if(TARGET tusddiff)
+    #   python3 tests/usdc-writer/usdc-writer-runner.py --lusdcat ./build/lusdcat --lusddiff ./build/lusddiff --basedir tests/usda --verbose
+    # lusddiff now lives under tools/ (LIGHTUSD_BUILD_TOOLS); skip if not built.
+    if(TARGET lusddiff)
       add_test(
         NAME usdc-writer-diff-test
         COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usdc-writer/usdc-writer-runner.py
-                --tusdcat "$<TARGET_FILE:tusdcat>"
-                --tusddiff "$<TARGET_FILE:tusddiff>"
+                --lusdcat "$<TARGET_FILE:lusdcat>"
+                --lusddiff "$<TARGET_FILE:lusddiff>"
                 --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
                 --report-only
         )
@@ -3963,7 +3963,7 @@ if(LIGHTUSD_BUILD_TESTS)
   endif()
 
   #
-  # usd-wg asset corpus parse regression (native `tusdcat -l`).
+  # usd-wg asset corpus parse regression (native `lusdcat -l`).
   #
   # Runs the Node harness over the usd-wg/assets corpus (path from the
   # USD_WG_ASSETS_DIR env var, else its built-in default). The repository
@@ -3971,14 +3971,14 @@ if(LIGHTUSD_BUILD_TESTS)
   # 0 gates on the load baseline.
   #
   find_program(LIGHTUSD_NODE_EXECUTABLE NAMES node nodejs)
-  if(LIGHTUSD_NODE_EXECUTABLE AND TARGET tusdcat)
+  if(LIGHTUSD_NODE_EXECUTABLE AND TARGET lusdcat)
     add_test(
       NAME corpus-parse-native
       COMMAND ${LIGHTUSD_NODE_EXECUTABLE}
               ${PROJECT_SOURCE_DIR}/tests/parse-asset-corpus.mjs
               --optional-assets
               --mode load
-              --tusdcat "$<TARGET_FILE:tusdcat>"
+              --lusdcat "$<TARGET_FILE:lusdcat>"
               --out "${CMAKE_BINARY_DIR}/corpus-parse-results"
               --max-fail 0
       )
@@ -4140,8 +4140,8 @@ if(LIGHTUSD_BUILD_TESTS)
     add_test(NAME feat-asset-path-normalize COMMAND feat-asset-path-normalize
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
-    # Driver-level counterpart: run the binary flatten drivers (tusdcat, and
-    # tusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
+    # Driver-level counterpart: run the binary flatten drivers (lusdcat, and
+    # lusdzconvert -> src/usdz-convert.cc) end-to-end on the same fixtures so a
     # regression of the variant-deferral in an iterative flatten loop (not just
     # the library) is caught. The C++ test above drives the library with its own
     # deferred loop and would not notice a driver revert.
@@ -4157,21 +4157,21 @@ if(LIGHTUSD_BUILD_TESTS)
     else()
       set(_skip_vchain_driver FALSE)
     endif()
-    if(UNIX AND TARGET tusdcat AND NOT _skip_vchain_driver)
-      set(_vchain_tusdzconvert "")
-      if(TARGET tusdzconvert)
-        set(_vchain_tusdzconvert "$<TARGET_FILE:tusdzconvert>")
+    if(UNIX AND TARGET lusdcat AND NOT _skip_vchain_driver)
+      set(_vchain_lusdzconvert "")
+      if(TARGET lusdzconvert)
+        set(_vchain_lusdzconvert "$<TARGET_FILE:lusdzconvert>")
       endif()
       add_test(NAME feat-variant-chain-driver
                COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-variant-chain.sh
-                       $<TARGET_FILE:tusdcat> ${PROJECT_SOURCE_DIR}
-                       ${_vchain_tusdzconvert})
+                       $<TARGET_FILE:lusdcat> ${PROJECT_SOURCE_DIR}
+                       ${_vchain_lusdzconvert})
     endif()
 
-    if(UNIX AND TARGET tusdzconvert AND TARGET tusdcat)
-      add_test(NAME tusdzconvert-regression-driver
-               COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-tusdzconvert-regression.sh
-                       $<TARGET_FILE:tusdzconvert> $<TARGET_FILE:tusdcat>
+    if(UNIX AND TARGET lusdzconvert AND TARGET lusdcat)
+      add_test(NAME lusdzconvert-regression-driver
+               COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-lusdzconvert-regression.sh
+                       $<TARGET_FILE:lusdzconvert> $<TARGET_FILE:lusdcat>
                        ${PROJECT_SOURCE_DIR})
     endif()
 
@@ -4331,7 +4331,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
   # Xvfb normally gives GLFW a Mesa software context. On machines where the
   # NVIDIA device is visible, PRIME/GLVND can route that context to the real
-  # GPU; apply the same selection to every tusdview CTest case so nested
+  # GPU; apply the same selection to every lusdview CTest case so nested
   # xvfb-run invocations inherit it. Keep this opt-in because forcing the
   # NVIDIA ICD on a host without /dev/nvidia0 turns a useful capability skip
   # into a hard initialization failure.
@@ -4339,9 +4339,9 @@ if(LIGHTUSD_BUILD_TESTS)
   # Kernel/GLVND presence alone is not enough for Vulkan: a container can
   # expose libGLX_nvidia and the NVIDIA layers while the Vulkan ICD is absent,
   # leaving only llvmpipe. Probe the physical-device list before exporting
-  # TUSDVIEW_VK_DEVICE=nvidia; otherwise leave Vulkan on its normal automatic
+  # LUSDVIEW_VK_DEVICE=nvidia; otherwise leave Vulkan on its normal automatic
   # hardware/software selection path.
-  if(LIGHTUSD_TUSDVIEW_NVIDIA_OFFLOAD AND UNIX AND NOT APPLE AND TARGET tusdview)
+  if(LIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD AND UNIX AND NOT APPLE AND TARGET lusdview)
     if(EXISTS "/proc/driver/nvidia/version" AND
        EXISTS "/dev/nvidia0" AND
        EXISTS "/usr/share/glvnd/egl_vendor.d/10_nvidia.json")
@@ -4370,29 +4370,29 @@ if(LIGHTUSD_BUILD_TESTS)
           endif()
         endif()
       endif()
-      get_property(_lightusd_tusdview_tests DIRECTORY PROPERTY TESTS)
+      get_property(_lightusd_lusdview_tests DIRECTORY PROPERTY TESTS)
       set(_lightusd_nvidia_gl_cache
-          "${CMAKE_BINARY_DIR}/tusdview-nvidia-gl-cache")
+          "${CMAKE_BINARY_DIR}/lusdview-nvidia-gl-cache")
       file(MAKE_DIRECTORY "${_lightusd_nvidia_gl_cache}")
       add_test(
-        NAME tusdview-nvidia-gl-warmup
+        NAME lusdview-nvidia-gl-warmup
         COMMAND ${CMAKE_COMMAND} -E env
-                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                "LUSDVIEW=$<TARGET_FILE:lusdview>"
                 bash
-                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-gl-warmup.sh")
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-gl-warmup.sh")
       set_tests_properties(
-        tusdview-nvidia-gl-warmup
-        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview;opengl"
-                   FIXTURES_SETUP tusdview_nvidia_gl_cache
-                   RESOURCE_LOCK tusdview_gl_gpu)
-      list(APPEND _lightusd_tusdview_tests tusdview-nvidia-gl-warmup)
-      foreach(_lightusd_test IN LISTS _lightusd_tusdview_tests)
+        lusdview-nvidia-gl-warmup
+        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "lusdview;opengl"
+                   FIXTURES_SETUP lusdview_nvidia_gl_cache
+                   RESOURCE_LOCK lusdview_gl_gpu)
+      list(APPEND _lightusd_lusdview_tests lusdview-nvidia-gl-warmup)
+      foreach(_lightusd_test IN LISTS _lightusd_lusdview_tests)
         # CPU RT uses Vulkan only to provide a windowless presentation shell;
         # it neither needs GL shader warmup nor an NVIDIA device. Keeping these
         # tests automatic lets them run on RADV/llvmpipe when PRIME state or a
         # configure-time Xvfb display later disappears.
-        if(_lightusd_test MATCHES "^tusdview-" AND
-           NOT _lightusd_test MATCHES "^tusdview-cpu-rt-")
+        if(_lightusd_test MATCHES "^lusdview-" AND
+           NOT _lightusd_test MATCHES "^lusdview-cpu-rt-")
           get_property(_lightusd_test_env TEST "${_lightusd_test}"
                        PROPERTY ENVIRONMENT)
           if(NOT _lightusd_test_env)
@@ -4404,33 +4404,33 @@ if(LIGHTUSD_BUILD_TESTS)
                "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
                "__GL_SHADER_DISK_CACHE=1"
                "__GL_SHADER_DISK_CACHE_PATH=${_lightusd_nvidia_gl_cache}"
-               "TUSDVIEW_NVIDIA_OFFLOAD=1"
-               "TUSDVIEW_XVFB=1")
+               "LUSDVIEW_NVIDIA_OFFLOAD=1"
+               "LUSDVIEW_XVFB=1")
           if(_lightusd_nvidia_vulkan_visible)
-            list(APPEND _lightusd_test_env "TUSDVIEW_VK_DEVICE=nvidia")
+            list(APPEND _lightusd_test_env "LUSDVIEW_VK_DEVICE=nvidia")
           endif()
           set_tests_properties("${_lightusd_test}"
                                PROPERTIES ENVIRONMENT "${_lightusd_test_env}")
-          if(NOT _lightusd_test STREQUAL "tusdview-nvidia-gl-warmup")
+          if(NOT _lightusd_test STREQUAL "lusdview-nvidia-gl-warmup")
             set_property(TEST "${_lightusd_test}" APPEND PROPERTY
-                         FIXTURES_REQUIRED tusdview_nvidia_gl_cache)
+                         FIXTURES_REQUIRED lusdview_nvidia_gl_cache)
           endif()
         endif()
       endforeach()
       if(_lightusd_nvidia_vulkan_visible)
-        message(STATUS "lightusd: NVIDIA offload environment enabled for tusdview CTest cases (Vulkan NVIDIA device confirmed)")
+        message(STATUS "lightusd: NVIDIA offload environment enabled for lusdview CTest cases (Vulkan NVIDIA device confirmed)")
       else()
         message(STATUS "lightusd: NVIDIA GL offload environment enabled; Vulkan NVIDIA device not visible, leaving Vulkan device selection automatic")
       endif()
     else()
-      message(STATUS "lightusd: NVIDIA offload requested but NVIDIA device/GLVND is not visible; tusdview tests keep their normal environment")
+      message(STATUS "lightusd: NVIDIA offload requested but NVIDIA device/GLVND is not visible; lusdview tests keep their normal environment")
     endif()
   endif()
 
   if(_lightusd_hip_ld_library_path)
-    get_property(_lightusd_tusdview_tests DIRECTORY PROPERTY TESTS)
-    foreach(_lightusd_test IN LISTS _lightusd_tusdview_tests)
-      if(_lightusd_test MATCHES "^tusdview-")
+    get_property(_lightusd_lusdview_tests DIRECTORY PROPERTY TESTS)
+    foreach(_lightusd_test IN LISTS _lightusd_lusdview_tests)
+      if(_lightusd_test MATCHES "^lusdview-")
         get_property(_lightusd_test_env TEST "${_lightusd_test}"
                      PROPERTY ENVIRONMENT)
         if(NOT _lightusd_test_env)

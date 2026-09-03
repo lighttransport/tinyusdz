@@ -2,25 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-present Light Transport Entertainment, Inc.
 //
-// parse-asset-corpus.mjs — run the native `tusdcat` tool over a tree of USD
+// parse-asset-corpus.mjs — run the native `lusdcat` tool over a tree of USD
 // assets (e.g. a checkout of usd-wg/assets) and classify each file as
 // PASS / WARN / FAIL (plus TIMEOUT / CRASH / SKIP), then categorize the
 // warnings and errors by source-location signature.
 //
-// Status model (tusdcat prints `WARN : …` / `ERR : …` to stderr; exit 0 = the
+// Status model (lusdcat prints `WARN : …` / `ERR : …` to stderr; exit 0 = the
 // file loaded, non-zero = load failed):
 //   PASS    exit 0, no `WARN :` in stderr
 //   WARN    exit 0, has `WARN :`
 //   FAIL    non-zero exit, not killed by a signal
 //   TIMEOUT killed after --timeout
 //   CRASH   terminated by a signal (SIGSEGV/SIGABRT/…)
-//   SKIP    .mtlx (MaterialX is XML; tusdcat parses USD only) unless --include-mtlx
+//   SKIP    .mtlx (MaterialX is XML; lusdcat parses USD only) unless --include-mtlx
 //
 // Usage:
-//   node tests/parse-asset-corpus.mjs [--assets DIR] [--optional-assets] [--tusdcat PATH]
+//   node tests/parse-asset-corpus.mjs [--assets DIR] [--optional-assets] [--lusdcat PATH]
 //        [--mode load|flatten] [--timeout MS] [--jobs N] [--include-mtlx]
 //        [--out DIR]
-// Env: TUSDCAT_PATH overrides the default binary path.
+// Env: LUSDCAT_PATH overrides the default binary path.
 //
 // Outputs (under --out, default tests/asset-parse-results/):
 //   results.tsv   one row per file: relpath, status, exit, signal, ms, headline
@@ -39,7 +39,7 @@ import path from 'node:path';
 function parseArgs(argv) {
   const a = {
     assets: process.env.USD_WG_ASSETS_DIR || '',
-    tusdcat: process.env.TUSDCAT_PATH || './build/tusdcat',
+    lusdcat: process.env.LUSDCAT_PATH || './build/lusdcat',
     mode: 'load',
     timeout: 30000,
     jobs: Math.max(1, (os.cpus()?.length || 4) - 1),
@@ -55,12 +55,12 @@ function parseArgs(argv) {
     maxDiffer: Infinity,
     out: 'tests/asset-parse-results',
     // Compare mode: cross-check each asset against the OpenUSD reference
-    // (`usdcat`) and diff lightusd's re-serialization against it (`tusddiff`).
+    // (`usdcat`) and diff lightusd's re-serialization against it (`lusddiff`).
     compare: false,
     usdcat: process.env.USDCAT_PATH || '',
-    tusddiff: process.env.TUSDDIFF_PATH || './build/tusddiff',
-    // Extra args prepended when invoking --tusdcat for the compare-mode layer
-    // serialization (legacy tusdcat prints the layer bare; next_usdcat needs
+    lusddiff: process.env.LUSDDIFF_PATH || './build/lusddiff',
+    // Extra args prepended when invoking --lusdcat for the compare-mode layer
+    // serialization (legacy lusdcat prints the layer bare; next_usdcat needs
     // `--rewrite-layer`).
     serializeArgs: [],
   };
@@ -69,7 +69,7 @@ function parseArgs(argv) {
     const val = () => argv[++i];
     switch (k) {
       case '--assets': a.assets = val(); break;
-      case '--tusdcat': a.tusdcat = val(); break;
+      case '--lusdcat': a.lusdcat = val(); break;
       case '--mode': a.mode = val(); break;
       case '--timeout': a.timeout = parseInt(val(), 10); break;
       case '--jobs': a.jobs = parseInt(val(), 10); break;
@@ -80,12 +80,12 @@ function parseArgs(argv) {
       case '--out': a.out = val(); break;
       case '--compare': a.compare = true; break;
       case '--usdcat': a.usdcat = val(); break;
-      case '--tusddiff': a.tusddiff = val(); break;
+      case '--lusddiff': a.lusddiff = val(); break;
       case '--serialize-args': a.serializeArgs = val().split(/\s+/).filter(Boolean); break;
       case '-h': case '--help':
-        console.log('Usage: node tests/parse-asset-corpus.mjs [--assets DIR] [--optional-assets] [--tusdcat PATH] ' +
+        console.log('Usage: node tests/parse-asset-corpus.mjs [--assets DIR] [--optional-assets] [--lusdcat PATH] ' +
           '[--mode load|flatten] [--timeout MS] [--jobs N] [--include-mtlx] [--out DIR]\n' +
-          '       [--compare [--usdcat PATH] [--tusddiff PATH]]');
+          '       [--compare [--usdcat PATH] [--lusddiff PATH]]');
         process.exit(0);
         break;
       default:
@@ -107,8 +107,8 @@ function validateInputs(a) {
     console.error('No asset corpus configured. Pass --assets DIR or set USD_WG_ASSETS_DIR.');
     process.exit(2);
   }
-  if (!a.tusdcat) {
-    console.error('No tusdcat configured. Pass --tusdcat PATH or set TUSDCAT_PATH.');
+  if (!a.lusdcat) {
+    console.error('No lusdcat configured. Pass --lusdcat PATH or set LUSDCAT_PATH.');
     process.exit(2);
   }
 }
@@ -157,7 +157,7 @@ async function newestMtime(dir, depth = 3) {
 // ---------------------------------------------------------------------------
 
 // Run a process with a timeout. Uses spawn (not execFile) so we can DISCARD
-// stdout via opts.discardStdout — `tusdcat -f` prints the whole flattened layer,
+// stdout via opts.discardStdout — `lusdcat -f` prints the whole flattened layer,
 // which for large scenes is hundreds of MB and would blow execFile's maxBuffer
 // (killing the process and producing a spurious failure). The pass/fail check
 // only needs the exit status + stderr, so the main run discards stdout.
@@ -189,17 +189,17 @@ function run(bin, args, timeout, opts = {}) {
 
 // Cap the USDA-text size for the flatten pass/fail run: heavy composed scenes
 // (e.g. baked vertex-animation timeSamples) would otherwise serialize to many GB
-// of USDA and hang/OOM. With the cap, tusdcat keeps timeSamples compact by
+// of USDA and hang/OOM. With the cap, lusdcat keeps timeSamples compact by
 // falling back to in-memory USDC and exits 0 — so the harness measures
 // "did composition succeed", not "can we hold the giant USDA text".
 const runOne = (bin, flag, file, timeout) =>
   run(bin, [flag, file], timeout,
-      { discardStdout: true, env: { TUSDCAT_MAX_USDA_MB: '1024' } });
+      { discardStdout: true, env: { LUSDCAT_MAX_USDA_MB: '1024' } });
 
 // Cross-check one asset against the OpenUSD reference. Returns
 // { ref: REF_PASS|REF_WARN|REF_FAIL, diff: MATCH|DIFFER|DIFFERR|NA }.
 //   ref  — does OpenUSD `usdcat` parse it (and is it warning-clean)?
-//   diff — `tusddiff` between usdcat's re-serialization and tusdcat's, i.e. do
+//   diff — `lusddiff` between usdcat's re-serialization and lusdcat's, i.e. do
 //          the two implementations agree on the parsed layer? (layer-level, not
 //          composed — `--mode flatten` covers composition separately.)
 async function compareOne(a, file, tmpdir, idx) {
@@ -214,13 +214,13 @@ async function compareOne(a, file, tmpdir, idx) {
 
   let diff = 'NA';
   if (ref !== 'REF_FAIL') {
-    // ref serialization via usdcat -o; ours via tusdcat to stdout (-o is buggy).
+    // ref serialization via usdcat -o; ours via lusdcat to stdout (-o is buggy).
     const ru = await run(a.usdcat, [file, '-o', refOut], a.timeout);
-    const ro = await run(a.tusdcat, [...a.serializeArgs, file], a.timeout);
+    const ro = await run(a.lusdcat, [...a.serializeArgs, file], a.timeout);
     if (ru.code === 0 && ro.code === 0 && ro.stdout) {
       try {
         await fs.writeFile(oursOut, ro.stdout);
-        const d = await run(a.tusddiff, ['--quiet', refOut, oursOut], a.timeout);
+        const d = await run(a.lusddiff, ['--quiet', refOut, oursOut], a.timeout);
         diff = d.code === 0 ? 'MATCH' : d.code === 1 ? 'DIFFER' : 'DIFFERR';
       } catch { diff = 'DIFFERR'; }
       finally { await fs.rm(refOut, { force: true }); await fs.rm(oursOut, { force: true }); }
@@ -340,25 +340,25 @@ async function main() {
   }
 
   // binary present?
-  try { await fs.access(a.tusdcat); }
-  catch { console.error(`tusdcat not found at ${a.tusdcat}. Build it (ninja tusdcat) or pass --tusdcat.`); process.exit(2); }
+  try { await fs.access(a.lusdcat); }
+  catch { console.error(`lusdcat not found at ${a.lusdcat}. Build it (ninja lusdcat) or pass --lusdcat.`); process.exit(2); }
 
   // staleness hint: binary older than the newest src/ file?
   try {
-    const binM = (await fs.stat(a.tusdcat)).mtimeMs;
-    const srcM = await newestMtime(path.join(path.dirname(path.dirname(path.resolve(a.tusdcat))), 'src')).catch(() => 0);
+    const binM = (await fs.stat(a.lusdcat)).mtimeMs;
+    const srcM = await newestMtime(path.join(path.dirname(path.dirname(path.resolve(a.lusdcat))), 'src')).catch(() => 0);
     const srcM2 = await newestMtime('src').catch(() => 0);
     const newestSrc = Math.max(srcM, srcM2);
     if (newestSrc && binM < newestSrc) {
-      console.warn(`! ${a.tusdcat} (${new Date(binM).toISOString()}) is older than src/ ` +
-        `(${new Date(newestSrc).toISOString()}). Rebuild for current results: ninja tusdcat`);
+      console.warn(`! ${a.lusdcat} (${new Date(binM).toISOString()}) is older than src/ ` +
+        `(${new Date(newestSrc).toISOString()}). Rebuild for current results: ninja lusdcat`);
     }
   } catch {}
 
   // compare-mode setup
   let tmpdir = null;
   if (a.compare) {
-    for (const [name, p] of [['usdcat', a.usdcat], ['tusddiff', a.tusddiff]]) {
+    for (const [name, p] of [['usdcat', a.usdcat], ['lusddiff', a.lusddiff]]) {
       try { await fs.access(p); }
       catch { console.error(`--compare: ${name} not found at ${p} (pass --${name}).`); process.exit(2); }
     }
@@ -369,12 +369,12 @@ async function main() {
   files.sort((x, y) => x.file.localeCompare(y.file));
   if (!files.length) { console.error(`No USD files under ${a.assets}`); process.exit(2); }
 
-  console.error(`Running ${a.tusdcat} ${flag} over ${files.length} files from ${a.assets} ` +
+  console.error(`Running ${a.lusdcat} ${flag} over ${files.length} files from ${a.assets} ` +
     `(jobs=${a.jobs}, timeout=${a.timeout}ms)${a.compare ? ` + compare vs ${a.usdcat}` : ''}…`);
 
   const t0 = Date.now();
   const rows = await pool(files, a.jobs, async ({ file, ext }, i) => {
-    const r = await runOne(a.tusdcat, flag, file, a.timeout);
+    const r = await runOne(a.lusdcat, flag, file, a.timeout);
     const status = classify(ext, r);
     const row = { rel: path.relative(a.assets, file), ext, status, code: r.code, signal: r.signal, ms: r.ms, stderr: r.stderr };
     if (a.compare && ext !== '.mtlx') {
@@ -459,7 +459,7 @@ async function main() {
       ...ORDER.filter((s) => s !== 'SKIP' && REF.some((r) => crosstab[s][r]))
         .map((s) => `| ${s} | ${REF.map((r) => crosstab[s][r]).join(' | ')} |`),
       '',
-      '**`tusddiff` (lightusd re-serialization vs OpenUSD `usdcat` output, layer-level):** ' +
+      '**`lusddiff` (lightusd re-serialization vs OpenUSD `usdcat` output, layer-level):** ' +
         Object.entries(diffTally).map(([k, v]) => `${k} ${v}`).join(' · '),
       '',
       `**lightusd can't parse but OpenUSD can (parser bugs) — ${bugList.length}:**`,
@@ -470,10 +470,10 @@ async function main() {
   }
 
   const md = [
-    `# Asset parse report — \`tusdcat ${flag}\``,
+    `# Asset parse report — \`lusdcat ${flag}\``,
     '',
     `- Corpus: \`${a.assets}\` — ${files.length} files`,
-    `- Tool: \`${a.tusdcat}\` (mode: ${a.mode})`,
+    `- Tool: \`${a.lusdcat}\` (mode: ${a.mode})`,
     `- Elapsed: ${elapsed}s, jobs ${a.jobs}, timeout ${a.timeout}ms`,
     '',
     '## Status totals',
@@ -499,7 +499,7 @@ async function main() {
   // summary.json
   const catJson = (m) => sortCats(m).map(([sig, e]) => ({ signature: sig, count: e.count, files: [...e.files], samples: [...e.samples] }));
   await fs.writeFile(path.join(a.out, 'summary.json'), JSON.stringify({
-    assets: a.assets, tusdcat: a.tusdcat, mode: a.mode, files: files.length,
+    assets: a.assets, lusdcat: a.lusdcat, mode: a.mode, files: files.length,
     elapsedSec: Number(elapsed), totals,
     ...(a.compare ? { compare: { usdcat: a.usdcat, crosstab, diffTally,
       lightusdOnlyFailures: bugList.map((r) => ({ rel: r.rel, status: r.status, ref: r.ref, headline: headline(r.stderr) })) } } : {}),

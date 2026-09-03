@@ -42,7 +42,7 @@ int main(void) {
 
     lrt_tri_build_options opt;
     memset(&opt, 0, sizeof(opt));
-    opt.quality = LRT_TRI_BUILD_FAST;   /* the mode tusdrender defaults to */
+    opt.quality = LRT_TRI_BUILD_FAST;   /* the mode lusdrender defaults to */
     opt.layout = LRT_TRI_LAYOUT_AUTO;
     opt.num_threads = 4;
 

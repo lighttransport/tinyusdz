@@ -7,8 +7,8 @@
 //
 // Usage:
 //   node mtlx-roundtrip.js <input.usd>
-//   node mtlx-roundtrip.js --tusdcat <path> <input.usd>
-//   node mtlx-roundtrip.js --tusdcat <path> "**/*.usd"
+//   node mtlx-roundtrip.js --lusdcat <path> <input.usd>
+//   node mtlx-roundtrip.js --lusdcat <path> "**/*.usd"
 
 const fs = require('fs');
 const path = require('path');
@@ -739,12 +739,12 @@ function areValuesEqual(val1, val2, tolerance = 1e-6) {
 // ============================================================================
 
 /**
- * Extract MaterialX XML from USD file using tusdcat
+ * Extract MaterialX XML from USD file using lusdcat
  */
-function extractMtlxFromUsd(usdFile, tusdcatPath, options = {}) {
+function extractMtlxFromUsd(usdFile, lusdcatPath, options = {}) {
   try {
-    // Run tusdcat to get USDA output
-    const usda = execSync(`"${tusdcatPath}" "${usdFile}"`, {
+    // Run lusdcat to get USDA output
+    const usda = execSync(`"${lusdcatPath}" "${usdFile}"`, {
       encoding: 'utf-8',
       maxBuffer: 100 * 1024 * 1024,
       timeout: options.timeout || 60000
@@ -777,12 +777,12 @@ function testRoundtrip(inputFile, options) {
   };
 
   try {
-    // Extract using tusdcat
-    const extracted = extractMtlxFromUsd(inputFile, options.tusdcat, options);
+    // Extract using lusdcat
+    const extracted = extractMtlxFromUsd(inputFile, options.lusdcat, options);
 
     if (extracted.error) {
       result.status = 'error';
-      result.errors.push(`tusdcat failed: ${extracted.error}`);
+      result.errors.push(`lusdcat failed: ${extracted.error}`);
       return result;
     }
 
@@ -1717,7 +1717,7 @@ function testErrorCase(testCase, options) {
   };
 
   try {
-    const output = execSync(`"${options.tusdcat}" "${testCase.file}" 2>&1`, {
+    const output = execSync(`"${options.lusdcat}" "${testCase.file}" 2>&1`, {
       encoding: 'utf-8',
       maxBuffer: 10 * 1024 * 1024,
       timeout: options.timeout || 30000
@@ -2090,8 +2090,8 @@ function testColorspaceRoundtrip(testCase, options) {
   };
 
   try {
-    // Parse the file with tusdcat
-    const output = execSync(`"${options.tusdcat}" "${testCase.file}" 2>&1`, {
+    // Parse the file with lusdcat
+    const output = execSync(`"${options.lusdcat}" "${testCase.file}" 2>&1`, {
       encoding: 'utf-8',
       maxBuffer: 10 * 1024 * 1024,
       timeout: options.timeout || 30000
@@ -2139,9 +2139,9 @@ function testColorspaceRoundtrip(testCase, options) {
 function printUsage() {
   console.log(`
 Usage: mtlx-roundtrip.js [options] <input.usd>
-       mtlx-roundtrip.js --tusdcat <path> <input.usd>
-       mtlx-roundtrip.js --tusdcat <path> --generate-synthetic
-       mtlx-roundtrip.js --tusdcat <path> --fetch-mtlx-tests
+       mtlx-roundtrip.js --lusdcat <path> <input.usd>
+       mtlx-roundtrip.js --lusdcat <path> --generate-synthetic
+       mtlx-roundtrip.js --lusdcat <path> --fetch-mtlx-tests
 
 Test MaterialX import/export roundtrip in LightUSD.
 
@@ -2153,16 +2153,16 @@ Supports glob patterns:
   {a,b,c}  - matches any of the alternatives
 
 Examples:
-  mtlx-roundtrip.js --tusdcat ./tusdcat model.usd
-  mtlx-roundtrip.js --tusdcat ./tusdcat "models/*.usda"
-  mtlx-roundtrip.js --tusdcat ./tusdcat --generate-synthetic
-  mtlx-roundtrip.js --tusdcat ./tusdcat --fetch-mtlx-tests
+  mtlx-roundtrip.js --lusdcat ./lusdcat model.usd
+  mtlx-roundtrip.js --lusdcat ./lusdcat "models/*.usda"
+  mtlx-roundtrip.js --lusdcat ./lusdcat --generate-synthetic
+  mtlx-roundtrip.js --lusdcat ./lusdcat --fetch-mtlx-tests
 
 Options:
   -h, --help              Show this help message
   -v, --verbose           Show detailed output
   -q, --quiet             Only show summary
-  --tusdcat <path>        Path to tusdcat executable (required)
+  --lusdcat <path>        Path to lusdcat executable (required)
   --base-dir <path>       Base directory for glob patterns (default: current dir)
   --continue-on-error     Continue processing other files if one fails
   --json                  Output results as JSON
@@ -2197,7 +2197,7 @@ function main() {
   const options = {
     verbose: false,
     quiet: false,
-    tusdcat: null,
+    lusdcat: null,
     baseDir: process.cwd(),
     continueOnError: false,
     json: false,
@@ -2226,8 +2226,8 @@ function main() {
       case '--quiet':
         options.quiet = true;
         break;
-      case '--tusdcat':
-        options.tusdcat = args[++i];
+      case '--lusdcat':
+        options.lusdcat = args[++i];
         break;
       case '--base-dir':
         options.baseDir = args[++i];
@@ -2276,8 +2276,8 @@ function main() {
     }
   }
 
-  if (!options.tusdcat) {
-    console.error('Error: --tusdcat is required');
+  if (!options.lusdcat) {
+    console.error('Error: --lusdcat is required');
     printUsage();
     process.exit(2);
   }

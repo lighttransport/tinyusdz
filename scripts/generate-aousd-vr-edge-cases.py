@@ -10,7 +10,7 @@ re-run this script only when extending the matrix:
   PYTHONPATH=/mnt/nvme02/work/lightusd-repo/OpenUSD/dist/lib/python \
     python3 scripts/generate-aousd-vr-edge-cases.py
 
-Coverage targets (doc/ousd-vs-tusdz.md wishlist, beyond what the supplemental
+Coverage targets (doc/ousd-vs-lightusd.md wishlist, beyond what the supplemental
 corpus asserts): per-type interpolation dispatch (linear vs held-only types),
 array lerp incl. size-mismatch hold, sublayer offset/scale and
 timeCodesPerSecond stage-time mapping, default-time vs numeric zero, value

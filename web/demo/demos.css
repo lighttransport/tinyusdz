@@ -1000,7 +1000,7 @@ button {
 
 /* ── Loading Spinner ──────────────────────────────── */
 
-.tusd-loader {
+.lightusd-loader {
     position: absolute;
     left: 50%;
     top: 50%;
@@ -1020,7 +1020,7 @@ button {
     pointer-events: none;
 }
 
-.tusd-loader.hidden {
+.lightusd-loader.hidden {
     opacity: 0;
 }
 
@@ -1041,7 +1041,7 @@ button {
     transition: width 0.3s ease;
 }
 
-.tusd-loader .loader-text {
+.lightusd-loader .loader-text {
     color: var(--muted);
     font-size: 0.82rem;
     text-align: center;
@@ -1051,22 +1051,22 @@ button {
 
 /* ── Error Panel ─────────────────────────────── */
 
-#tusd-error {
+#lightusd-error {
     backdrop-filter: blur(8px);
     box-shadow: 0 4px 24px rgba(0,0,0,.4);
 }
 
-#tusd-error button:hover {
+#lightusd-error button:hover {
     background: rgba(240,138,138,.15) !important;
 }
 
 /* ── Warning Badge ───────────────────────────── */
 
-#tusd-warn-badge:hover {
+#lightusd-warn-badge:hover {
     background: rgba(242,200,121,.2) !important;
 }
 
-#tusd-warn-list {
+#lightusd-warn-list {
     backdrop-filter: blur(8px);
     box-shadow: 0 4px 20px rgba(0,0,0,.3);
 }

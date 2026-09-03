@@ -53,33 +53,33 @@ sudo make install PREFIX=/usr/local
 
 int main() {
     // Initialize library
-    tusdz_init();
+    lightusd_init();
 
     // Load USD file
-    tusdz_stage stage = NULL;
+    lightusd_stage stage = NULL;
     char error[1024];
-    tusdz_result result = tusdz_load_from_file(
+    lightusd_result result = lightusd_load_from_file(
         "model.usd", NULL, &stage, error, sizeof(error)
     );
 
-    if (result != TUSDZ_SUCCESS) {
+    if (result != LIGHTUSD_SUCCESS) {
         fprintf(stderr, "Error: %s\n", error);
         return 1;
     }
 
     // Traverse hierarchy
-    tusdz_prim root = tusdz_stage_get_root_prim(stage);
-    size_t child_count = tusdz_prim_get_child_count(root);
+    lightusd_prim root = lightusd_stage_get_root_prim(stage);
+    size_t child_count = lightusd_prim_get_child_count(root);
 
     for (size_t i = 0; i < child_count; i++) {
-        tusdz_prim child = tusdz_prim_get_child_at(root, i);
-        const char* name = tusdz_prim_get_name(child);
+        lightusd_prim child = lightusd_prim_get_child_at(root, i);
+        const char* name = lightusd_prim_get_name(child);
         printf("Child: %s\n", name);
     }
 
     // Cleanup
-    tusdz_stage_free(stage);
-    tusdz_shutdown();
+    lightusd_stage_free(stage);
+    lightusd_shutdown();
     return 0;
 }
 ```
@@ -88,12 +88,12 @@ int main() {
 
 ### Tier 1: Minimal Viable API (10 functions)
 Essential functions for loading and basic traversal:
-- `tusdz_init()` / `tusdz_shutdown()`
-- `tusdz_load_from_file()` / `tusdz_load_from_memory()`
-- `tusdz_stage_free()`
-- `tusdz_stage_get_root_prim()`
-- `tusdz_prim_get_child_count()` / `tusdz_prim_get_child_at()`
-- `tusdz_prim_get_name()` / `tusdz_prim_get_type()`
+- `lightusd_init()` / `lightusd_shutdown()`
+- `lightusd_load_from_file()` / `lightusd_load_from_memory()`
+- `lightusd_stage_free()`
+- `lightusd_stage_get_root_prim()`
+- `lightusd_prim_get_child_count()` / `lightusd_prim_get_child_at()`
+- `lightusd_prim_get_name()` / `lightusd_prim_get_type()`
 
 ### Tier 2: Core Functionality (11 functions)
 Path operations, properties, and value access:
@@ -115,7 +115,7 @@ The API uses three patterns:
 
 1. **Borrowed References** (most common):
 ```c
-const char* name = tusdz_prim_get_name(prim);  // Do NOT free
+const char* name = lightusd_prim_get_name(prim);  // Do NOT free
 // name is valid as long as prim is valid
 ```
 
@@ -123,36 +123,36 @@ const char* name = tusdz_prim_get_name(prim);  // Do NOT free
 ```c
 float* points = NULL;
 size_t count = 0;
-if (tusdz_mesh_get_points(mesh, &points, &count) == TUSDZ_SUCCESS) {
+if (lightusd_mesh_get_points(mesh, &points, &count) == LIGHTUSD_SUCCESS) {
     // Use points...
-    tusdz_free(points);  // Must free when done
+    lightusd_free(points);  // Must free when done
 }
 ```
 
 3. **Handle Lifetime**:
 ```c
-tusdz_stage stage = NULL;
-tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
+lightusd_stage stage = NULL;
+lightusd_load_from_file("model.usd", NULL, &stage, NULL, 0);
 // All prims from stage are valid only while stage exists
-tusdz_stage_free(stage);  // Invalidates all prims
+lightusd_stage_free(stage);  // Invalidates all prims
 ```
 
 ## Error Handling
 
 ```c
 // Simple - ignore errors
-tusdz_stage stage = NULL;
-tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
+lightusd_stage stage = NULL;
+lightusd_load_from_file("model.usd", NULL, &stage, NULL, 0);
 if (stage) {
     // Use stage...
 }
 
 // Detailed - capture errors
 char error[1024];
-tusdz_result result = tusdz_load_from_file(
+lightusd_result result = lightusd_load_from_file(
     "model.usd", NULL, &stage, error, sizeof(error)
 );
-if (result != TUSDZ_SUCCESS) {
+if (result != LIGHTUSD_SUCCESS) {
     fprintf(stderr, "Failed: %s (code: %d)\n", error, result);
 }
 ```
@@ -160,7 +160,7 @@ if (result != TUSDZ_SUCCESS) {
 ## Load Options
 
 ```c
-tusdz_load_options options = {
+lightusd_load_options options = {
     .max_memory_limit_mb = 1024,  // 1GB limit
     .max_depth = 10,               // Composition depth
     .enable_composition = 1,        // Resolve references
@@ -169,7 +169,7 @@ tusdz_load_options options = {
     .asset_resolver = NULL         // Custom resolver
 };
 
-tusdz_load_from_file("model.usd", &options, &stage, NULL, 0);
+lightusd_load_from_file("model.usd", &options, &stage, NULL, 0);
 ```
 
 ## Thread Safety
@@ -259,7 +259,7 @@ gcc -I/usr/local/include/lightusd myapp.c -L/usr/local/lib -llightusd_c -lm
 ```python
 import ctypes
 lib = ctypes.CDLL("liblightusd_c.so")
-lib.tusdz_init()
+lib.lightusd_init()
 # ... use the API
 ```
 

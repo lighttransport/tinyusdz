@@ -8,7 +8,7 @@
 # every writer has to emit them explicitly. Neither did: `visibility` was parsed
 # and then silently dropped by the USDA printer AND the crate writer (Scope is
 # not a GPrim, so ExtractGPrimProperties skipped it, and stage-converter had no
-# Scope case at all). A file round-tripped through tusdcat came back with the
+# Scope case at all). A file round-tripped through lusdcat came back with the
 # attribute simply gone -- silent data loss.
 #
 # This pins both directions: usda -> usda and usda -> usdc -> usda.
@@ -17,10 +17,10 @@ set -uo pipefail
 SKIP=77
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TUSDCAT="${1:-${TUSDCAT:-$REPO_ROOT/build/tusdcat}}"
+LUSDCAT="${1:-${LUSDCAT:-$REPO_ROOT/build/lusdcat}}"
 
-if [ ! -x "$TUSDCAT" ]; then
-  echo "SKIP: tusdcat binary not found at $TUSDCAT"
+if [ ! -x "$LUSDCAT" ]; then
+  echo "SKIP: lusdcat binary not found at $LUSDCAT"
   exit "$SKIP"
 fi
 
@@ -51,8 +51,8 @@ status=0
 check() {
   local label="$1" file="$2"
   local out="$TMP/$label.usda"
-  if ! "$TUSDCAT" "$file" > "$out" 2>"$TMP/$label.err"; then
-    echo "FAIL[$label]: tusdcat exited nonzero"
+  if ! "$LUSDCAT" "$file" > "$out" 2>"$TMP/$label.err"; then
+    echo "FAIL[$label]: lusdcat exited nonzero"
     cat "$TMP/$label.err"
     status=1
     return
@@ -71,9 +71,9 @@ check() {
 
 check usda-to-usda "$TMP/scope.usda"
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/scope.usdc" "$TMP/scope.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/scope.usdc" "$TMP/scope.usda" \
      >"$TMP/write.log" 2>&1; then
-  echo "FAIL: tusdcat could not write usdc"
+  echo "FAIL: lusdcat could not write usdc"
   cat "$TMP/write.log"
   exit 1
 fi
@@ -110,8 +110,8 @@ DistantLight RectLight DiskLight DomeLight Volume GeomSubset Model"
 sweep() {
   local label="$1" file="$2"
   local out="$TMP/sweep-$label.usda"
-  if ! "$TUSDCAT" "$file" > "$out" 2>/dev/null; then
-    echo "FAIL[$label]: tusdcat exited nonzero on the imageable sweep"
+  if ! "$LUSDCAT" "$file" > "$out" 2>/dev/null; then
+    echo "FAIL[$label]: lusdcat exited nonzero on the imageable sweep"
     status=1
     return
   fi
@@ -139,9 +139,9 @@ sweep() {
 
 sweep all-types-usda "$TMP/imageable.usda"
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/imageable.usdc" "$TMP/imageable.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/imageable.usdc" "$TMP/imageable.usda" \
      >"$TMP/write2.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the imageable sweep to usdc"
+  echo "FAIL: lusdcat could not write the imageable sweep to usdc"
   cat "$TMP/write2.log"
   exit 1
 fi
@@ -179,14 +179,14 @@ def Xform "W"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/light.usdc" "$TMP/light.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/light.usdc" "$TMP/light.usda" \
      >"$TMP/write3.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the light scene to usdc"
+  echo "FAIL: lusdcat could not write the light scene to usdc"
   cat "$TMP/write3.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/light.usdc" > "$TMP/light-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/light.usdc" > "$TMP/light-rt.usda" 2>/dev/null
 lost=""
 for expect in \
   'xformOp:translate = (5, 3, 0)' \
@@ -230,14 +230,14 @@ class "TheClass"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/typeless.usdc" "$TMP/typeless.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/typeless.usdc" "$TMP/typeless.usda" \
      >"$TMP/write4.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the typeless-prim scene to usdc"
+  echo "FAIL: lusdcat could not write the typeless-prim scene to usdc"
   cat "$TMP/write4.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/typeless.usdc" > "$TMP/typeless-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/typeless.usdc" > "$TMP/typeless-rt.usda" 2>/dev/null
 lost=""
 for expect in 'def "W"' 'over "child"' 'class "TheClass"'; do
   grep -qF "$expect" "$TMP/typeless-rt.usda" || lost="$lost
@@ -272,14 +272,14 @@ def Camera "W"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/camera.usdc" "$TMP/camera.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/camera.usdc" "$TMP/camera.usda" \
      >"$TMP/write5.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the camera scene to usdc"
+  echo "FAIL: lusdcat could not write the camera scene to usdc"
   cat "$TMP/write5.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/camera.usdc" > "$TMP/camera-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/camera.usdc" > "$TMP/camera-rt.usda" 2>/dev/null
 lost=""
 for expect in 'shutter:open = -0.25' 'shutter:close = 0.25'; do
   grep -qF "$expect" "$TMP/camera-rt.usda" || lost="$lost
@@ -332,14 +332,14 @@ def Xform "W"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/apischemas.usdc" "$TMP/apischemas.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/apischemas.usdc" "$TMP/apischemas.usda" \
      >"$TMP/write6.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the apiSchemas scene to usdc"
+  echo "FAIL: lusdcat could not write the apiSchemas scene to usdc"
   cat "$TMP/write6.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/apischemas.usdc" > "$TMP/apischemas-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/apischemas.usdc" > "$TMP/apischemas-rt.usda" 2>/dev/null
 lost=""
 for expect in \
   'delete apiSchemas = ["PhysicsArticulationRootAPI"]' \
@@ -398,14 +398,14 @@ def Xform "hasProxy"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/relationships.usdc" "$TMP/relationships.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/relationships.usdc" "$TMP/relationships.usda" \
      >"$TMP/write7.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the relationships scene to usdc"
+  echo "FAIL: lusdcat could not write the relationships scene to usdc"
   cat "$TMP/write7.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/relationships.usdc" > "$TMP/relationships-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/relationships.usdc" > "$TMP/relationships-rt.usda" 2>/dev/null
 lost=""
 for expect in \
   'varying rel myrel = </W>' \
@@ -467,14 +467,14 @@ def Xform "V" (
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/variant-meta.usdc" "$TMP/variant-meta.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/variant-meta.usdc" "$TMP/variant-meta.usda" \
      >"$TMP/write8.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the variant-meta scene to usdc"
+  echo "FAIL: lusdcat could not write the variant-meta scene to usdc"
   cat "$TMP/write8.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/variant-meta.usdc" > "$TMP/variant-meta-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/variant-meta.usdc" > "$TMP/variant-meta-rt.usda" 2>/dev/null
 lost=""
 for expect in \
   'active = true' \
@@ -541,14 +541,14 @@ def Material "mat"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/shader-connect.usdc" "$TMP/shader-connect.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/shader-connect.usdc" "$TMP/shader-connect.usda" \
      >"$TMP/write9.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the shader-connect scene to usdc"
+  echo "FAIL: lusdcat could not write the shader-connect scene to usdc"
   cat "$TMP/write9.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/shader-connect.usdc" > "$TMP/shader-connect-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/shader-connect.usdc" > "$TMP/shader-connect-rt.usda" 2>/dev/null
 lost=""
 for expect in \
   'int inputs:useSpecularWorkflow.connect = </mat/pbr.inputs:useSpecularWorkflowDriver>' \
@@ -636,14 +636,14 @@ def Xform "W"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/unauthored.usdc" "$TMP/unauthored.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/unauthored.usdc" "$TMP/unauthored.usda" \
      >"$TMP/write10.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the unauthored-attrs scene to usdc"
+  echo "FAIL: lusdcat could not write the unauthored-attrs scene to usdc"
   cat "$TMP/write10.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/unauthored.usdc" > "$TMP/unauthored-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/unauthored.usdc" > "$TMP/unauthored-rt.usda" 2>/dev/null
 bad=""
 # Nothing below was authored, so none of it may come back.
 for invented in \
@@ -722,14 +722,14 @@ def Xform "W"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/stagemeta.usdc" "$TMP/stagemeta.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/stagemeta.usdc" "$TMP/stagemeta.usda" \
      >"$TMP/write11.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the stage-meta scene to usdc"
+  echo "FAIL: lusdcat could not write the stage-meta scene to usdc"
   cat "$TMP/write11.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/stagemeta.usdc" > "$TMP/stagemeta-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/stagemeta.usdc" > "$TMP/stagemeta-rt.usda" 2>/dev/null
 # A corrupt fieldset makes the read produce NOTHING -- check that first, or the
 # grep loop below just reports every line as "lost" and buries the real cause.
 if [ ! -s "$TMP/stagemeta-rt.usda" ]; then
@@ -790,14 +790,14 @@ def Xform "W"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/xformblock.usdc" "$TMP/xformblock.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/xformblock.usdc" "$TMP/xformblock.usda" \
      >"$TMP/write12.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the blocked-xformOp scene to usdc"
+  echo "FAIL: lusdcat could not write the blocked-xformOp scene to usdc"
   cat "$TMP/write12.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/xformblock.usdc" > "$TMP/xformblock-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/xformblock.usdc" > "$TMP/xformblock-rt.usda" 2>/dev/null
 if grep -qF 'xformOp:rotateZ:spin = None' "$TMP/xformblock-rt.usda"; then
   echo "ok[xformop-block-usdc]: a blocked xformOp survived as None"
 else
@@ -867,14 +867,14 @@ def Xform "W"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/typedts.usdc" "$TMP/typedts.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/typedts.usdc" "$TMP/typedts.usda" \
      >"$TMP/write13.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the typed-timeSamples scene to usdc"
+  echo "FAIL: lusdcat could not write the typed-timeSamples scene to usdc"
   cat "$TMP/write13.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/typedts.usdc" > "$TMP/typedts-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/typedts.usdc" > "$TMP/typedts-rt.usda" 2>/dev/null
 if [ ! -s "$TMP/typedts-rt.usda" ]; then
   echo "FAIL[typed-timesamples-usdc]: crate read back EMPTY -- the prim failed to"
   echo "  reconstruct (a `uniform` attribute carrying timeSamples will do this)"
@@ -936,14 +936,14 @@ def Shader "Tex" (
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/meta.usdc" "$TMP/meta.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/meta.usdc" "$TMP/meta.usda" \
      >"$TMP/write16.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the metadata scene to usdc"
+  echo "FAIL: lusdcat could not write the metadata scene to usdc"
   cat "$TMP/write16.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/meta.usdc" > "$TMP/meta-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/meta.usdc" > "$TMP/meta-rt.usda" 2>/dev/null
 lost=""
 for expect in \
   'myCustomMeta = "hello"' \
@@ -997,14 +997,14 @@ def SkelRoot "Rig"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/skelsubset.usdc" "$TMP/skelsubset.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/skelsubset.usdc" "$TMP/skelsubset.usda" \
      >"$TMP/write17.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the skelroot/subset scene to usdc"
+  echo "FAIL: lusdcat could not write the skelroot/subset scene to usdc"
   cat "$TMP/write17.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/skelsubset.usdc" > "$TMP/skelsubset-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/skelsubset.usdc" > "$TMP/skelsubset-rt.usda" 2>/dev/null
 if [ ! -s "$TMP/skelsubset-rt.usda" ]; then
   echo "FAIL[skelroot-subsetfamily-usdc]: crate read back EMPTY -- the prim failed"
   echo "  to reconstruct (a non-uniform subsetFamily familyType will do this)"
@@ -1073,14 +1073,14 @@ def Scope "Mtl"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/misc.usdc" "$TMP/misc.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/misc.usdc" "$TMP/misc.usda" \
      >"$TMP/write18.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the misc scene to usdc"
+  echo "FAIL: lusdcat could not write the misc scene to usdc"
   cat "$TMP/write18.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/misc.usdc" > "$TMP/misc-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/misc.usdc" > "$TMP/misc-rt.usda" 2>/dev/null
 lost=""
 for expect in \
   'double size.connect = </bora.value>' \
@@ -1141,14 +1141,14 @@ def Shader "Tex"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/defonly.usdc" "$TMP/defonly.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/defonly.usdc" "$TMP/defonly.usda" \
      >"$TMP/write19.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the declaration-only scene to usdc"
+  echo "FAIL: lusdcat could not write the declaration-only scene to usdc"
   cat "$TMP/write19.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/defonly.usdc" > "$TMP/defonly-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/defonly.usdc" > "$TMP/defonly-rt.usda" 2>/dev/null
 if [ ! -s "$TMP/defonly-rt.usda" ]; then
   echo "FAIL[defonly-usdc]: crate read back EMPTY -- a spec carrying only a"
   echo "  typeName has no value for the reader to build a Property from"
@@ -1216,14 +1216,14 @@ def Plane "Pl"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/shapes.usdc" "$TMP/shapes.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/shapes.usdc" "$TMP/shapes.usda" \
      >"$TMP/write20.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the shapes scene to usdc"
+  echo "FAIL: lusdcat could not write the shapes scene to usdc"
   cat "$TMP/write20.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/shapes.usdc" > "$TMP/shapes-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/shapes.usdc" > "$TMP/shapes-rt.usda" 2>/dev/null
 bad=""
 for prop in radius height width length; do
   # declared, so it must survive...
@@ -1287,14 +1287,14 @@ def Camera "C"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/fallback.usdc" "$TMP/fallback.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/fallback.usdc" "$TMP/fallback.usda" \
      >"$TMP/write21.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the fallback scene to usdc"
+  echo "FAIL: lusdcat could not write the fallback scene to usdc"
   cat "$TMP/write21.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/fallback.usdc" > "$TMP/fallback-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/fallback.usdc" > "$TMP/fallback-rt.usda" 2>/dev/null
 bad=""
 for prop in doubleSided extent "inputs:intensity" "inputs:color" "inputs:radius" \
             "inputs:exposure" "inputs:normalize" "inputs:angle" focalLength \
@@ -1344,14 +1344,14 @@ def "bora"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/empty.usdc" "$TMP/empty.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/empty.usdc" "$TMP/empty.usda" \
      >"$TMP/write22.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the authored-but-empty scene to usdc"
+  echo "FAIL: lusdcat could not write the authored-but-empty scene to usdc"
   cat "$TMP/write22.log"
   exit 1
 fi
 
-"$TUSDCAT" "$TMP/empty.usdc" > "$TMP/empty-rt.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/empty.usdc" > "$TMP/empty-rt.usda" 2>/dev/null
 bad=""
 for expect in \
   'float xformOp:rotateZ:spin.timeSamples = {' \
@@ -1397,9 +1397,9 @@ def Xform "m"
 }
 USD
 
-  if ! "$TUSDCAT" --output-format usdc -o "$TMP/pxrts.usdc" "$TMP/pxrts.usda" \
+  if ! "$LUSDCAT" --output-format usdc -o "$TMP/pxrts.usdc" "$TMP/pxrts.usda" \
        >"$TMP/write23.log" 2>&1; then
-    echo "FAIL: tusdcat could not write the empty-timeSamples scene to usdc"
+    echo "FAIL: lusdcat could not write the empty-timeSamples scene to usdc"
     cat "$TMP/write23.log"
     exit 1
   fi
@@ -1454,9 +1454,9 @@ def Xform "Root" (
 }
 USD
 
-  if ! "$TUSDCAT" --output-format usdc -o "$TMP/pxrvar.usdc" "$TMP/pxrvar.usda" \
+  if ! "$LUSDCAT" --output-format usdc -o "$TMP/pxrvar.usdc" "$TMP/pxrvar.usda" \
        >"$TMP/write24.log" 2>&1; then
-    echo "FAIL: tusdcat could not write the variant scene to usdc"
+    echo "FAIL: lusdcat could not write the variant scene to usdc"
     cat "$TMP/write24.log"
     exit 1
   fi
@@ -1533,16 +1533,16 @@ check_unreg_output() {
   fi
 }
 
-"$TUSDCAT" "$TMP/unreg.usda" > "$TMP/unreg-ascii.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/unreg.usda" > "$TMP/unreg-ascii.usda" 2>/dev/null
 check_unreg_output "$TMP/unreg-ascii.usda" "unregistered-metadata-usda"
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/unreg.usdc" "$TMP/unreg.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/unreg.usdc" "$TMP/unreg.usda" \
      >"$TMP/write25.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the unregistered-metadata scene to usdc"
+  echo "FAIL: lusdcat could not write the unregistered-metadata scene to usdc"
   cat "$TMP/write25.log"
   exit 1
 fi
-"$TUSDCAT" "$TMP/unreg.usdc" > "$TMP/unreg-crate.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/unreg.usdc" > "$TMP/unreg-crate.usda" 2>/dev/null
 check_unreg_output "$TMP/unreg-crate.usda" "unregistered-metadata-usdc"
 
 if [ -x "$PXR_USDCAT" ]; then
@@ -1586,9 +1586,9 @@ def Scope "Main"
 }
 USD
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/main26.usdc" "$TMP/main26.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/main26.usdc" "$TMP/main26.usda" \
      >"$TMP/write26.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the sublayer scene to usdc"
+  echo "FAIL: lusdcat could not write the sublayer scene to usdc"
   cat "$TMP/write26.log"
   exit 1
 fi
@@ -1654,16 +1654,16 @@ check_roletype_output() {
   fi
 }
 
-"$TUSDCAT" "$TMP/roletype.usda" > "$TMP/roletype-ascii.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/roletype.usda" > "$TMP/roletype-ascii.usda" 2>/dev/null
 check_roletype_output "$TMP/roletype-ascii.usda" "authored-typename-usda"
 
-if ! "$TUSDCAT" --output-format usdc -o "$TMP/roletype.usdc" "$TMP/roletype.usda" \
+if ! "$LUSDCAT" --output-format usdc -o "$TMP/roletype.usdc" "$TMP/roletype.usda" \
      >"$TMP/write27.log" 2>&1; then
-  echo "FAIL: tusdcat could not write the role-type scene to usdc"
+  echo "FAIL: lusdcat could not write the role-type scene to usdc"
   cat "$TMP/write27.log"
   exit 1
 fi
-"$TUSDCAT" "$TMP/roletype.usdc" > "$TMP/roletype-crate.usda" 2>/dev/null
+"$LUSDCAT" "$TMP/roletype.usdc" > "$TMP/roletype-crate.usda" 2>/dev/null
 check_roletype_output "$TMP/roletype-crate.usda" "authored-typename-usdc"
 
 if [ -x "$PXR_USDCAT" ]; then

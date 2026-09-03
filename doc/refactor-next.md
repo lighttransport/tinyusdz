@@ -302,7 +302,7 @@ already fixed — check "Landed so far" first, always.
 | S5 | List-edit qualifiers (`prepend`/`append`/`delete`/`reorder`) are consumed and **discarded** by the USDA parser; arcs are flat `vector<string>` in `PrimSpecMeta`. `delete`/`explicit` are unrepresentable; `prepend` vs `append` cross-layer ordering is wrong per AOUSD §10.3.2. | `parser/ascii-parser.cc:577-584`; `layer/prim-spec.hh:90-93` |
 | S6 | Layer offsets are never composed through arc chains (`ProcessArc` copies the parent offset only; sublayer `(offset/scale)` not parsed; value evaluation has no offset handling). | `pcp/cache.cc:446`; `layer/layer.hh:31`; `eval/attribute-eval.cc` |
 | S7 | `deferred_payload_prims` is **mutated inside** `ExpandArcs` — a logically-const query writes shared state mid-expansion (blocks fine-grained threading); `UnloadPayload` invalidates without recomposing, so `HasDeferredPayload` returns stale `false` until something recomposes. | `pcp/cache.cc:556-559`; `cache.cc:1091`, `cache.cc:1059-1063` |
-| S8 | No fuzz targets and no usd-wg corpus regression gate cover `src/next` (legacy has both; the corpus runner already accepts `--tusdcat PATH`). | `tests/fuzzer/usdcparser_fuzzmain.cc` (legacy-only); `tests/parse-asset-corpus.mjs:42` |
+| S8 | No fuzz targets and no usd-wg corpus regression gate cover `src/next` (legacy has both; the corpus runner already accepts `--lusdcat PATH`). | `tests/fuzzer/usdcparser_fuzzmain.cc` (legacy-only); `tests/parse-asset-corpus.mjs:42` |
 
 ### 1.2 Memory / speed
 

@@ -1,5 +1,5 @@
 # Clone + build the Khronos glslang reference compiler and install it locally
-# to examples/common/glslang. tusdview's Vulkan ray-tracing shaders need a
+# to examples/common/glslang. lusdview's Vulkan ray-tracing shaders need a
 # glslang new enough to understand GL_EXT_ray_query (raytrace.comp) -- many
 # system/Vulkan-SDK-bundled glslangValidator builds predate it. The
 # compute-BVH fallback shader (raytrace_swbvh.comp) needs no ray-query
@@ -109,10 +109,10 @@ if (-not $bin) {
 Write-Host "==> installed: $bin"
 & $bin --version
 
-# Quick self-check: can it compile tusdview's two RT compute shaders?
-$tusdviewShaders = Join-Path $Here "..\tusdview\vk\shaders"
-$rayQueryShader = Join-Path $tusdviewShaders "raytrace.comp"
-$swBvhShader = Join-Path $tusdviewShaders "raytrace_swbvh.comp"
+# Quick self-check: can it compile lusdview's two RT compute shaders?
+$lusdviewShaders = Join-Path $Here "..\lusdview\vk\shaders"
+$rayQueryShader = Join-Path $lusdviewShaders "raytrace.comp"
+$swBvhShader = Join-Path $lusdviewShaders "raytrace_swbvh.comp"
 $tmpSpv = Join-Path $env:TEMP "_rq_check.spv"
 
 if (Test-Path $rayQueryShader) {
@@ -134,5 +134,5 @@ if (Test-Path $swBvhShader) {
     }
 }
 
-Write-Host "==> Reconfigure tusdview (cmake ..) to pick this glslang up, or run"
+Write-Host "==> Reconfigure lusdview (cmake ..) to pick this glslang up, or run"
 Write-Host "    vk/shaders/build-shaders.sh with it to regenerate embedded/*.spv.h."

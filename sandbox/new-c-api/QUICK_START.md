@@ -33,39 +33,39 @@ Create `hello_usd.c`:
 #include <stdio.h>
 
 int main() {
-    tusdz_init();
+    lightusd_init();
 
     // Load a USD file
-    tusdz_stage stage = NULL;
+    lightusd_stage stage = NULL;
     char error[256];
 
-    tusdz_result result = tusdz_load_from_file(
+    lightusd_result result = lightusd_load_from_file(
         "model.usd", NULL, &stage, error, sizeof(error)
     );
 
-    if (result != TUSDZ_SUCCESS) {
+    if (result != LIGHTUSD_SUCCESS) {
         fprintf(stderr, "Failed to load: %s\n", error);
         return 1;
     }
 
     // Get root prim
-    tusdz_prim root = tusdz_stage_get_root_prim(stage);
-    printf("Root prim: %s\n", tusdz_prim_get_name(root));
+    lightusd_prim root = lightusd_stage_get_root_prim(stage);
+    printf("Root prim: %s\n", lightusd_prim_get_name(root));
 
     // Traverse children
-    size_t child_count = tusdz_prim_get_child_count(root);
+    size_t child_count = lightusd_prim_get_child_count(root);
     printf("Children: %zu\n", child_count);
 
     for (size_t i = 0; i < child_count; i++) {
-        tusdz_prim child = tusdz_prim_get_child_at(root, i);
+        lightusd_prim child = lightusd_prim_get_child_at(root, i);
         printf("  - %s [%s]\n",
-               tusdz_prim_get_name(child),
-               tusdz_prim_get_type_name(child));
+               lightusd_prim_get_name(child),
+               lightusd_prim_get_type_name(child));
     }
 
     // Cleanup
-    tusdz_stage_free(stage);
-    tusdz_shutdown();
+    lightusd_stage_free(stage);
+    lightusd_shutdown();
 
     return 0;
 }
@@ -125,10 +125,10 @@ python3 hello_usd.py model.usd
 
 **C:**
 ```c
-tusdz_stage stage = NULL;
-tusdz_load_from_file("model.usd", NULL, &stage, NULL, 0);
-tusdz_stage_print_hierarchy(stage, -1);  // -1 = unlimited depth
-tusdz_stage_free(stage);
+lightusd_stage stage = NULL;
+lightusd_load_from_file("model.usd", NULL, &stage, NULL, 0);
+lightusd_stage_print_hierarchy(stage, -1);  // -1 = unlimited depth
+lightusd_stage_free(stage);
 ```
 
 **Python:**
@@ -142,11 +142,11 @@ root.print_hierarchy()
 
 **C:**
 ```c
-if (tusdz_prim_is_type(prim, TUSDZ_PRIM_MESH)) {
+if (lightusd_prim_is_type(prim, LIGHTUSD_PRIM_MESH)) {
     const float* points;
     size_t point_count;
 
-    tusdz_mesh_get_points(prim, &points, &point_count);
+    lightusd_mesh_get_points(prim, &points, &point_count);
 
     size_t num_vertices = point_count / 3;
     for (size_t i = 0; i < num_vertices; i++) {
@@ -159,7 +159,7 @@ if (tusdz_prim_is_type(prim, TUSDZ_PRIM_MESH)) {
 **Python:**
 ```python
 if prim.is_mesh():
-    points, count = tusdz_mesh_get_points(prim)
+    points, count = lightusd_mesh_get_points(prim)
     num_vertices = count // 3
     for i in range(num_vertices):
         print(f"Point {i}: ({points[i*3]}, {points[i*3+1]}, {points[i*3+2]})")
@@ -169,9 +169,9 @@ if prim.is_mesh():
 
 **C:**
 ```c
-tusdz_prim prim = tusdz_stage_get_prim_at_path(stage, "/World/Geo/Mesh");
+lightusd_prim prim = lightusd_stage_get_prim_at_path(stage, "/World/Geo/Mesh");
 if (prim) {
-    printf("Found: %s\n", tusdz_prim_get_name(prim));
+    printf("Found: %s\n", lightusd_prim_get_name(prim));
 }
 ```
 
@@ -186,17 +186,17 @@ if prim:
 
 **C:**
 ```c
-size_t prop_count = tusdz_prim_get_property_count(prim);
+size_t prop_count = lightusd_prim_get_property_count(prim);
 for (size_t i = 0; i < prop_count; i++) {
-    const char* name = tusdz_prim_get_property_name_at(prim, i);
-    tusdz_value value = tusdz_prim_get_property(prim, name);
+    const char* name = lightusd_prim_get_property_name_at(prim, i);
+    lightusd_value value = lightusd_prim_get_property(prim, name);
 
     if (value) {
         printf("%s: %s\n", name,
-               tusdz_value_type_to_string(
-                   tusdz_value_get_type(value)));
+               lightusd_value_type_to_string(
+                   lightusd_value_get_type(value)));
 
-        tusdz_value_free(value);
+        lightusd_value_free(value);
     }
 }
 ```
@@ -214,9 +214,9 @@ for i in range(prim.property_count):
 
 **C:**
 ```c
-if (tusdz_prim_is_type(prim, TUSDZ_PRIM_XFORM)) {
+if (lightusd_prim_is_type(prim, LIGHTUSD_PRIM_XFORM)) {
     double matrix[16];
-    tusdz_xform_get_local_matrix(prim, 0.0, matrix);
+    lightusd_xform_get_local_matrix(prim, 0.0, matrix);
 
     // matrix is in column-major order
     printf("Transform matrix:\n");
@@ -233,9 +233,9 @@ if (tusdz_prim_is_type(prim, TUSDZ_PRIM_XFORM)) {
 
 **C:**
 ```c
-if (tusdz_stage_has_animation(stage)) {
+if (lightusd_stage_has_animation(stage)) {
     double start, end, fps;
-    tusdz_stage_get_time_range(stage, &start, &end, &fps);
+    lightusd_stage_get_time_range(stage, &start, &end, &fps);
     printf("Animation: %.1f to %.1f @ %.1f fps\n", start, end, fps);
 }
 ```
@@ -252,13 +252,13 @@ if stage.has_animation:
 **C:**
 ```c
 char error[1024];
-tusdz_result result = tusdz_load_from_file(
+lightusd_result result = lightusd_load_from_file(
     filepath, NULL, &stage, error, sizeof(error)
 );
 
-if (result != TUSDZ_SUCCESS) {
+if (result != LIGHTUSD_SUCCESS) {
     fprintf(stderr, "Error (%d): %s\n",
-            result, tusdz_result_to_string(result));
+            result, lightusd_result_to_string(result));
     fprintf(stderr, "Details: %s\n", error);
 }
 ```
@@ -307,20 +307,20 @@ python3 test_python_api.py
 ## Tips
 
 1. **Always initialize and shutdown**
-   - Call `tusdz_init()` before use
-   - Call `tusdz_shutdown()` when done
+   - Call `lightusd_init()` before use
+   - Call `lightusd_shutdown()` when done
 
 2. **Check return codes**
    - Most functions return error codes
-   - Use `tusdz_result_to_string()` for error messages
+   - Use `lightusd_result_to_string()` for error messages
 
 3. **Understand memory ownership**
    - Pointers from `get_*` functions are borrowed
-   - Use `tusdz_*_free()` for allocated values
-   - Stages must be freed with `tusdz_stage_free()`
+   - Use `lightusd_*_free()` for allocated values
+   - Stages must be freed with `lightusd_stage_free()`
 
 4. **Use appropriate data types**
-   - Check value type with `tusdz_value_get_type()`
+   - Check value type with `lightusd_value_get_type()`
    - Use corresponding `get_*` function for type
 
 5. **Handle NULL safely**
@@ -390,7 +390,7 @@ pkg-config --cflags --libs lightusd_c
 2. **Minimize allocations**: Reuse buffers where possible
 3. **Use structure_only flag**: Skip heavy data if just traversing
 4. **Cache results**: Avoid redundant lookups
-5. **Profile memory**: Use `tusdz_get_memory_stats()`
+5. **Profile memory**: Use `lightusd_get_memory_stats()`
 
 ## License
 

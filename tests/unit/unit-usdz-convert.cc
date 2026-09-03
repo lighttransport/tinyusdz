@@ -73,7 +73,7 @@ std::vector<uint8_t> EncodePNG(const lightusd::Image &img) {
 
 std::string TempDir() {
   const std::string base =
-      lightusd::io::JoinPath(lightusd::io::GetTempDir(), "tusdzconvert_test");
+      lightusd::io::JoinPath(lightusd::io::GetTempDir(), "lusdzconvert_test");
   lightusd::io::CreateDirectories(base);
   return base;
 }
@@ -2081,7 +2081,7 @@ void usdz_convert_pipeline_jpeg_test(void) {
 // Cleanup: remove temp files created by earlier tests.
 void usdz_convert_cleanup_test(void) {
   const std::string base =
-      lightusd::io::JoinPath(lightusd::io::GetTempDir(), "tusdzconvert_test");
+      lightusd::io::JoinPath(lightusd::io::GetTempDir(), "lusdzconvert_test");
   if (lightusd::io::IsDirectory(base)) {
     lightusd::io::RemoveAll(base);
     // Not a test failure if cleanup fails (e.g. file in use).

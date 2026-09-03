@@ -1,7 +1,7 @@
 # vchar
 
 `vchar` is LightUSD's native virtual-human rendering profile. It is emitted
-beside `tusdview` when `LIGHTUSD_BUILD_GUI_VIEWER=ON` and deliberately uses the
+beside `lusdview` when `LIGHTUSD_BUILD_GUI_VIEWER=ON` and deliberately uses the
 same executable image: renderer, UsdSkel evaluation, blendshape deformation,
 MaterialX/OpenPBR materials, texture cache, and BasisCurves hair stay identical.
 

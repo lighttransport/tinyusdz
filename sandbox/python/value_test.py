@@ -27,5 +27,5 @@ pvar.set_obj([1.3]) # fltval)
 #print(gv.size)
 #print(gv)
 
-#ctinyiusdz.
+# lightusd
 #

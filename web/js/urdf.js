@@ -44,7 +44,7 @@ const state = {
   meshCache: new Map(),
   nativeMeshBuffers: new Map(),
   generatedTextureAssets: new Map(),
-  tinyLoader: null,
+  lightusdLoader: null,
   nativeExporter: null,
   joints: {},
   jointValues: {},
@@ -291,7 +291,7 @@ function jsHeapBytes() {
 
 function wasmHeapBytes() {
   try {
-    return state.tinyLoader?.native_?.HEAPU8?.buffer?.byteLength || 0;
+    return state.lightusdLoader?.native_?.HEAPU8?.buffer?.byteLength || 0;
   } catch (_) {
     return 0;
   }
@@ -555,18 +555,18 @@ function extension(path) {
 }
 
 async function ensureTinyLoader() {
-  if (!state.tinyLoader) {
+  if (!state.lightusdLoader) {
     setStatus('Loading LightUSD WASM...');
-    state.tinyLoader = await createConfiguredLightUSDLoader({
+    state.lightusdLoader = await createConfiguredLightUSDLoader({
       initOptions: {
         useZstdCompressedWasm: false,
         useMemory64: false,
         backend: state.settings.backend
       }
     });
-    LightUSDLoaderUtils.setLightUSD(state.tinyLoader.native_);
+    LightUSDLoaderUtils.setLightUSD(state.lightusdLoader.native_);
   }
-  return state.tinyLoader;
+  return state.lightusdLoader;
 }
 
 async function loadUSDMeshFromFile(file) {
@@ -5574,9 +5574,9 @@ if (backendSelect) {
   backendSelect.value = state.settings.backend;
   backendSelect.addEventListener('change', () => {
     state.nativeExporter?.delete?.();
-    state.tinyLoader?.dispose?.();
+    state.lightusdLoader?.dispose?.();
     state.nativeExporter = null;
-    state.tinyLoader = null;
+    state.lightusdLoader = null;
     state.settings.backend = backendSelect.value;
     if (loadStats.current) loadStats.current.backend = state.settings.backend;
     updateLoadStatsPanel();

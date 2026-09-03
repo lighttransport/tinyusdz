@@ -124,17 +124,17 @@ class ParserProfiler {
   ///
   /// Get timer instance for a parser
   ///
-  ParserTimer* GetTimer(const std::string& parser_name) TUSDZ_REQUIRES_NOT(mu_);
+  ParserTimer* GetTimer(const std::string& parser_name) LIGHTUSD_REQUIRES_NOT(mu_);
 
   ///
   /// Generate comprehensive profiling report for all parsers
   ///
-  std::string GenerateReport() const TUSDZ_REQUIRES_NOT(mu_);
+  std::string GenerateReport() const LIGHTUSD_REQUIRES_NOT(mu_);
 
   ///
   /// Clear all profiling data
   ///
-  void ClearAll() TUSDZ_REQUIRES_NOT(mu_);
+  void ClearAll() LIGHTUSD_REQUIRES_NOT(mu_);
 
  private:
   ParserProfiler() = default;

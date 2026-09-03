@@ -73,7 +73,7 @@ bool firstPointX(const PrimSpec &ps, float *out) {
 }
 
 // Iteratively compose references -> payload -> variants, deferring variant
-// resolution until references & payloads settle (mirrors the tusdcat driver).
+// resolution until references & payloads settle (mirrors the lusdcat driver).
 bool flatten(AssetResolutionResolver &resolver, Layer layer, Layer *out,
              std::string *warn, std::string *err) {
   Layer cur = std::move(layer);

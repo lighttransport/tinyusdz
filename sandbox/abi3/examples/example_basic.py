@@ -16,7 +16,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 try:
-    import lightusd_abi3 as tusd
+    import lightusd_abi3 as lightusd
 except ImportError as e:
     print(f"Error: Could not import lightusd_abi3: {e}")
     print("\nPlease build the module first:")
@@ -31,14 +31,14 @@ def example_values():
     print("=" * 60)
 
     # Create integer value
-    val_int = tusd.Value.from_int(42)
+    val_int = lightusd.Value.from_int(42)
     print(f"Integer value type: {val_int.type}")
     print(f"Integer value: {val_int.as_int()}")
     print(f"String representation: {val_int.to_string()}")
     print()
 
     # Create float value
-    val_float = tusd.Value.from_float(3.14159)
+    val_float = lightusd.Value.from_float(3.14159)
     print(f"Float value type: {val_float.type}")
     print(f"Float value: {val_float.as_float()}")
     print(f"String representation: {val_float.to_string()}")
@@ -56,7 +56,7 @@ def example_prims():
 
     for prim_type in prim_types:
         try:
-            prim = tusd.Prim(prim_type)
+            prim = lightusd.Prim(prim_type)
             print(f"Created {prim_type} prim")
             print(f"  Type: {prim.type}")
             # print(f"  String: {prim.to_string()}")
@@ -72,7 +72,7 @@ def example_stage_creation():
     print("=" * 60)
 
     # Create empty stage
-    stage = tusd.Stage()
+    stage = lightusd.Stage()
     print("Created empty stage")
     # print(f"Stage contents:\n{stage.to_string()}")
     print()
@@ -95,7 +95,7 @@ def example_stage_loading():
         if os.path.exists(test_file):
             print(f"Loading: {test_file}")
             try:
-                stage = tusd.Stage.load_from_file(test_file)
+                stage = lightusd.Stage.load_from_file(test_file)
                 print("Successfully loaded!")
                 # print(f"Stage contents:\n{stage.to_string()}")
                 break
@@ -121,7 +121,7 @@ def example_detect_format():
     ]
 
     for filename in test_filenames:
-        fmt = tusd.detect_format(filename)
+        fmt = lightusd.detect_format(filename)
         print(f"{filename:20s} -> {fmt}")
     print()
 
@@ -136,9 +136,9 @@ def example_memory_management():
 
     # Create many objects - they should be automatically freed
     for i in range(1000):
-        stage = tusd.Stage()
-        prim = tusd.Prim("Xform")
-        val = tusd.Value.from_int(i)
+        stage = lightusd.Stage()
+        prim = lightusd.Prim("Xform")
+        val = lightusd.Value.from_int(i)
         # Objects are automatically freed when they go out of scope
 
     print("Created and freed 1000 sets of objects")

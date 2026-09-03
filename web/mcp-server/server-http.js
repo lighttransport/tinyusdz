@@ -96,7 +96,7 @@ const session = new Map();
 
 initLightUSDNative().then(function (LightUSD) {
 
-  const tusd = new LightUSD.LightUSDLoaderNative();
+  const lightusd = new LightUSD.LightUSDLoaderNative();
   // Handle POST requests for client-to-server communication
   app.post('/mcp', async (req, res) => {
     // NOTE: do not log req.headers — the Authorization header carries the
@@ -122,7 +122,7 @@ initLightUSDNative().then(function (LightUSD) {
           // Store the transport by session ID
           transports[sessionId] = transport;
 
-          tusd.mcpCreateContext(sessionId);
+          lightusd.mcpCreateContext(sessionId);
         },
       });
 
@@ -150,8 +150,8 @@ initLightUSDNative().then(function (LightUSD) {
         const sessionId = server.server.transport.sessionId;
         console.log("list resources", sessionId);
 
-        tusd.mcpSelectContext(sessionId);
-        const resources_str = tusd.mcpResourcesList();
+        lightusd.mcpSelectContext(sessionId);
+        const resources_str = lightusd.mcpResourcesList();
         console.log("resources_str", resources_str);
 
         const j = JSON.parse(resources_str);
@@ -165,8 +165,8 @@ initLightUSDNative().then(function (LightUSD) {
         const uri = request.params.uri;
         //console.log("uri", uri);
 
-        tusd.mcpSelectContext(sessionId);
-        const resources_str = tusd.mcpResourcesRead(uri);
+        lightusd.mcpSelectContext(sessionId);
+        const resources_str = lightusd.mcpResourcesRead(uri);
         //console.log("resources_str", resources_str);
 
         const j = JSON.parse(resources_str);
@@ -177,11 +177,11 @@ initLightUSDNative().then(function (LightUSD) {
         const sessionId = server.server.transport.sessionId;
 
         console.log("sessId", sessionId);
-        console.log("tusd", tusd);
+        console.log("lightusd", lightusd);
 
-        tusd.mcpSelectContext(sessionId);
+        lightusd.mcpSelectContext(sessionId);
         console.log("listtools");
-        const tools_str = tusd.mcpToolsList();
+        const tools_str = lightusd.mcpToolsList();
         console.log("tools_str", tools_str);
 
         const j = JSON.parse(tools_str)
@@ -194,16 +194,16 @@ initLightUSDNative().then(function (LightUSD) {
         const sessionId = server.server.transport.sessionId;
 
         //console.log("sessId", sessionId);
-        //console.log("tusd", tusd);
+        //console.log("lightusd", lightusd);
 
-        tusd.mcpSelectContext(sessionId);
+        lightusd.mcpSelectContext(sessionId);
 
         const tool_name = request.params.name;
         const args = JSON.stringify(request.params.arguments);
         console.log("tool_name", tool_name);
         //console.log("args", args);
 
-        const result_str = tusd.mcpToolsCall(tool_name, args);
+        const result_str = lightusd.mcpToolsCall(tool_name, args);
         //console.log("result_str", result_str);
 
         const j = JSON.parse(result_str)

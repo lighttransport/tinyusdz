@@ -1,9 +1,9 @@
 # volk (vendored)
 
-[volk](https://github.com/zeux/volk) is a meta-loader for Vulkan. tusdview uses
+[volk](https://github.com/zeux/volk) is a meta-loader for Vulkan. lusdview uses
 it to resolve the Vulkan API at runtime (dlopen `libvulkan.so.1` / `vulkan-1.dll`)
 instead of linking the Vulkan SDK loader — the cuew/GLEW approach. This lets
-tusdview build with no Vulkan SDK present and run wherever a Vulkan ICD/loader
+lusdview build with no Vulkan SDK present and run wherever a Vulkan ICD/loader
 is installed.
 
 - Source: https://github.com/zeux/volk
@@ -26,7 +26,7 @@ older) release.
 
 ## Usage
 
-Built into the `tusdview` target by `vk/vulkan.cmake` with `VK_NO_PROTOTYPES`.
+Built into the `lusdview` target by `vk/vulkan.cmake` with `VK_NO_PROTOTYPES`.
 `vk_renderer.cc` calls `volkInitialize()` then `volkLoadInstance(instance)` /
 `volkLoadDevice(device)`. imgui's Vulkan backend dispatches through the same
 pointers via `IMGUI_IMPL_VULKAN_USE_VOLK`.

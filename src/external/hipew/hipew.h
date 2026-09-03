@@ -3,7 +3,7 @@
  *
  * Modeled on cuew (examples/common/cuew) but intentionally tiny: it declares
  * only the handful of HIP driver/runtime and hiprtc entry points the LightRT HIP
- * backend and tusdview's HipRayTracer need. Like cuew/vkew, it opens the shared
+ * backend and lusdview's HipRayTracer need. Like cuew/vkew, it opens the shared
  * libraries at runtime (dlopen / LoadLibrary) so there is NO link-time ROCm
  * dependency and a build with no ROCm installed still runs — hipewInit() just
  * returns an error and callers fall back / skip.

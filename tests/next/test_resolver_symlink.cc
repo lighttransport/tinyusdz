@@ -60,7 +60,7 @@ int g_failures = 0;
 // Unique-ish temp dir without relying on mkdtemp's template churn; pid keeps
 // parallel ctest runs from colliding.
 std::string MakeTempDir(const std::string &tag) {
-  std::string base = "/tmp/tusd_symlink_" + tag + "_" + std::to_string(getpid());
+  std::string base = "/tmp/lightusd_symlink_" + tag + "_" + std::to_string(getpid());
   // Best-effort clean + create.
   std::string rm = "rm -rf '" + base + "'";
   if (std::system(rm.c_str()) != 0) { /* ignore */ }

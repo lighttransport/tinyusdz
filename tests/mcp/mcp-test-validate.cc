@@ -179,7 +179,7 @@ def Xform "World"
     TEST_CHECK(result["issues"][0]["severity"] == "error");
   }
 
-  // Binary data uses the same wrapper as tusdcat/web, so all-groups validation
+  // Binary data uses the same wrapper as lusdcat/web, so all-groups validation
   // includes USDC crate checks when the source bytes are USDC.
   {
     lightusd::Stage stage;

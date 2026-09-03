@@ -90,19 +90,19 @@ python3 examples/example_numpy.py
 ### Basic Usage
 
 ```python
-import lightusd_abi3 as tusd
+import lightusd_abi3 as lightusd
 
 # Create objects
-stage = tusd.Stage()
-prim = tusd.Prim("Mesh")
-val = tusd.Value.from_int(42)
+stage = lightusd.Stage()
+prim = lightusd.Prim("Mesh")
+val = lightusd.Value.from_int(42)
 
 # Load USD file
-stage = tusd.Stage.load_from_file("model.usd")
+stage = lightusd.Stage.load_from_file("model.usd")
 print(stage.to_string())
 
 # Detect format
-fmt = tusd.detect_format("file.usda")  # Returns "USDA"
+fmt = lightusd.detect_format("file.usda")  # Returns "USDA"
 ```
 
 ## Technical Highlights

@@ -37,12 +37,12 @@ use std::path::Path;
 #[link(name = "lightusd_c")]
 extern "C" {
     // Initialization
-    fn tusdz_init() -> c_int;
-    fn tusdz_shutdown();
-    fn tusdz_get_version() -> *const c_char;
+    fn lightusd_init() -> c_int;
+    fn lightusd_shutdown();
+    fn lightusd_get_version() -> *const c_char;
 
     // Loading
-    fn tusdz_load_from_file(
+    fn lightusd_load_from_file(
         filepath: *const c_char,
         options: *const LoadOptionsC,
         out_stage: *mut *mut c_void,
@@ -50,7 +50,7 @@ extern "C" {
         error_buf_size: usize,
     ) -> c_int;
 
-    fn tusdz_load_from_memory(
+    fn lightusd_load_from_memory(
         data: *const c_void,
         size: usize,
         format: c_int,
@@ -60,80 +60,80 @@ extern "C" {
         error_buf_size: usize,
     ) -> c_int;
 
-    fn tusdz_stage_free(stage: *mut c_void);
+    fn lightusd_stage_free(stage: *mut c_void);
 
     // Prim operations
-    fn tusdz_stage_get_root_prim(stage: *mut c_void) -> *mut c_void;
-    fn tusdz_prim_get_name(prim: *mut c_void) -> *const c_char;
-    fn tusdz_prim_get_path(prim: *mut c_void) -> *const c_char;
-    fn tusdz_prim_get_type(prim: *mut c_void) -> c_int;
-    fn tusdz_prim_get_type_name(prim: *mut c_void) -> *const c_char;
-    fn tusdz_prim_is_type(prim: *mut c_void, prim_type: c_int) -> c_int;
-    fn tusdz_prim_get_child_count(prim: *mut c_void) -> usize;
-    fn tusdz_prim_get_child_at(prim: *mut c_void, index: usize) -> *mut c_void;
-    fn tusdz_prim_get_property_count(prim: *mut c_void) -> usize;
-    fn tusdz_prim_get_property_name_at(prim: *mut c_void, index: usize) -> *const c_char;
-    fn tusdz_prim_get_property(prim: *mut c_void, name: *const c_char) -> *mut c_void;
+    fn lightusd_stage_get_root_prim(stage: *mut c_void) -> *mut c_void;
+    fn lightusd_prim_get_name(prim: *mut c_void) -> *const c_char;
+    fn lightusd_prim_get_path(prim: *mut c_void) -> *const c_char;
+    fn lightusd_prim_get_type(prim: *mut c_void) -> c_int;
+    fn lightusd_prim_get_type_name(prim: *mut c_void) -> *const c_char;
+    fn lightusd_prim_is_type(prim: *mut c_void, prim_type: c_int) -> c_int;
+    fn lightusd_prim_get_child_count(prim: *mut c_void) -> usize;
+    fn lightusd_prim_get_child_at(prim: *mut c_void, index: usize) -> *mut c_void;
+    fn lightusd_prim_get_property_count(prim: *mut c_void) -> usize;
+    fn lightusd_prim_get_property_name_at(prim: *mut c_void, index: usize) -> *const c_char;
+    fn lightusd_prim_get_property(prim: *mut c_void, name: *const c_char) -> *mut c_void;
 
     // Value operations
-    fn tusdz_value_free(value: *mut c_void);
-    fn tusdz_value_get_type(value: *mut c_void) -> c_int;
-    fn tusdz_value_is_array(value: *mut c_void) -> c_int;
-    fn tusdz_value_get_array_size(value: *mut c_void) -> usize;
-    fn tusdz_value_get_float(value: *mut c_void, out: *mut c_float) -> c_int;
-    fn tusdz_value_get_double(value: *mut c_void, out: *mut c_double) -> c_int;
-    fn tusdz_value_get_int(value: *mut c_void, out: *mut c_int) -> c_int;
-    fn tusdz_value_get_string(value: *mut c_void, out: *mut *const c_char) -> c_int;
-    fn tusdz_value_get_float3(value: *mut c_void, out: *mut [c_float; 3]) -> c_int;
-    fn tusdz_value_get_matrix4d(value: *mut c_void, out: *mut [c_double; 16]) -> c_int;
+    fn lightusd_value_free(value: *mut c_void);
+    fn lightusd_value_get_type(value: *mut c_void) -> c_int;
+    fn lightusd_value_is_array(value: *mut c_void) -> c_int;
+    fn lightusd_value_get_array_size(value: *mut c_void) -> usize;
+    fn lightusd_value_get_float(value: *mut c_void, out: *mut c_float) -> c_int;
+    fn lightusd_value_get_double(value: *mut c_void, out: *mut c_double) -> c_int;
+    fn lightusd_value_get_int(value: *mut c_void, out: *mut c_int) -> c_int;
+    fn lightusd_value_get_string(value: *mut c_void, out: *mut *const c_char) -> c_int;
+    fn lightusd_value_get_float3(value: *mut c_void, out: *mut [c_float; 3]) -> c_int;
+    fn lightusd_value_get_matrix4d(value: *mut c_void, out: *mut [c_double; 16]) -> c_int;
 
     // Mesh operations
-    fn tusdz_mesh_get_points(
+    fn lightusd_mesh_get_points(
         mesh: *mut c_void,
         out_points: *mut *const c_float,
         out_count: *mut usize,
     ) -> c_int;
-    fn tusdz_mesh_get_face_counts(
+    fn lightusd_mesh_get_face_counts(
         mesh: *mut c_void,
         out_counts: *mut *const c_int,
         out_count: *mut usize,
     ) -> c_int;
-    fn tusdz_mesh_get_indices(
+    fn lightusd_mesh_get_indices(
         mesh: *mut c_void,
         out_indices: *mut *const c_int,
         out_count: *mut usize,
     ) -> c_int;
 
     // Transform operations
-    fn tusdz_xform_get_local_matrix(
+    fn lightusd_xform_get_local_matrix(
         xform: *mut c_void,
         time: c_double,
         out_matrix: *mut [c_double; 16],
     ) -> c_int;
 
     // Material operations
-    fn tusdz_prim_get_bound_material(prim: *mut c_void) -> *mut c_void;
-    fn tusdz_material_get_surface_shader(material: *mut c_void) -> *mut c_void;
-    fn tusdz_shader_get_input(shader: *mut c_void, input_name: *const c_char) -> *mut c_void;
-    fn tusdz_shader_get_type_id(shader: *mut c_void) -> *const c_char;
+    fn lightusd_prim_get_bound_material(prim: *mut c_void) -> *mut c_void;
+    fn lightusd_material_get_surface_shader(material: *mut c_void) -> *mut c_void;
+    fn lightusd_shader_get_input(shader: *mut c_void, input_name: *const c_char) -> *mut c_void;
+    fn lightusd_shader_get_type_id(shader: *mut c_void) -> *const c_char;
 
     // Animation operations
-    fn tusdz_stage_has_animation(stage: *mut c_void) -> c_int;
-    fn tusdz_stage_get_time_range(
+    fn lightusd_stage_has_animation(stage: *mut c_void) -> c_int;
+    fn lightusd_stage_get_time_range(
         stage: *mut c_void,
         out_start: *mut c_double,
         out_end: *mut c_double,
         out_fps: *mut c_double,
     ) -> c_int;
-    fn tusdz_value_is_animated(value: *mut c_void) -> c_int;
+    fn lightusd_value_is_animated(value: *mut c_void) -> c_int;
 
     // Utilities
-    fn tusdz_result_to_string(result: c_int) -> *const c_char;
-    fn tusdz_prim_type_to_string(prim_type: c_int) -> *const c_char;
-    fn tusdz_value_type_to_string(value_type: c_int) -> *const c_char;
-    fn tusdz_detect_format(filepath: *const c_char) -> c_int;
-    fn tusdz_stage_print_hierarchy(stage: *mut c_void, max_depth: c_int);
-    fn tusdz_get_memory_stats(
+    fn lightusd_result_to_string(result: c_int) -> *const c_char;
+    fn lightusd_prim_type_to_string(prim_type: c_int) -> *const c_char;
+    fn lightusd_value_type_to_string(value_type: c_int) -> *const c_char;
+    fn lightusd_detect_format(filepath: *const c_char) -> c_int;
+    fn lightusd_stage_print_hierarchy(stage: *mut c_void, max_depth: c_int);
+    fn lightusd_get_memory_stats(
         stage: *mut c_void,
         out_bytes_used: *mut usize,
         out_bytes_peak: *mut usize,
@@ -176,7 +176,7 @@ pub enum Result {
 impl Result {
     pub fn to_string(&self) -> String {
         unsafe {
-            let s = tusdz_result_to_string(*self as c_int);
+            let s = lightusd_result_to_string(*self as c_int);
             if !s.is_null() {
                 CStr::from_ptr(s).to_string_lossy().to_string()
             } else {
@@ -227,7 +227,7 @@ pub enum PrimType {
 impl PrimType {
     pub fn to_string(&self) -> String {
         unsafe {
-            let s = tusdz_prim_type_to_string(*self as c_int);
+            let s = lightusd_prim_type_to_string(*self as c_int);
             if !s.is_null() {
                 CStr::from_ptr(s).to_string_lossy().to_string()
             } else {
@@ -267,7 +267,7 @@ pub enum ValueType {
 impl ValueType {
     pub fn to_string(&self) -> String {
         unsafe {
-            let s = tusdz_value_type_to_string(*self as c_int);
+            let s = lightusd_value_type_to_string(*self as c_int);
             if !s.is_null() {
                 CStr::from_ptr(s).to_string_lossy().to_string()
             } else {
@@ -344,21 +344,21 @@ impl Value {
     }
 
     pub fn value_type(&self) -> ValueType {
-        unsafe { std::mem::transmute(tusdz_value_get_type(self.handle) as u32) }
+        unsafe { std::mem::transmute(lightusd_value_get_type(self.handle) as u32) }
     }
 
     pub fn is_array(&self) -> bool {
-        unsafe { tusdz_value_is_array(self.handle) != 0 }
+        unsafe { lightusd_value_is_array(self.handle) != 0 }
     }
 
     pub fn array_size(&self) -> usize {
-        unsafe { tusdz_value_get_array_size(self.handle) }
+        unsafe { lightusd_value_get_array_size(self.handle) }
     }
 
     pub fn get_float(&self) -> Option<f32> {
         unsafe {
             let mut val = 0.0f32;
-            if tusdz_value_get_float(self.handle, &mut val) == 0 {
+            if lightusd_value_get_float(self.handle, &mut val) == 0 {
                 Some(val)
             } else {
                 None
@@ -369,7 +369,7 @@ impl Value {
     pub fn get_double(&self) -> Option<f64> {
         unsafe {
             let mut val = 0.0f64;
-            if tusdz_value_get_double(self.handle, &mut val) == 0 {
+            if lightusd_value_get_double(self.handle, &mut val) == 0 {
                 Some(val)
             } else {
                 None
@@ -380,7 +380,7 @@ impl Value {
     pub fn get_string(&self) -> Option<String> {
         unsafe {
             let mut ptr: *const c_char = ptr::null();
-            if tusdz_value_get_string(self.handle, &mut ptr) == 0 && !ptr.is_null() {
+            if lightusd_value_get_string(self.handle, &mut ptr) == 0 && !ptr.is_null() {
                 Some(CStr::from_ptr(ptr).to_string_lossy().to_string())
             } else {
                 None
@@ -391,7 +391,7 @@ impl Value {
     pub fn get_float3(&self) -> Option<[f32; 3]> {
         unsafe {
             let mut val = [0.0f32; 3];
-            if tusdz_value_get_float3(self.handle, &mut val) == 0 {
+            if lightusd_value_get_float3(self.handle, &mut val) == 0 {
                 Some(val)
             } else {
                 None
@@ -403,7 +403,7 @@ impl Value {
 impl Drop for Value {
     fn drop(&mut self) {
         unsafe {
-            tusdz_value_free(self.handle);
+            lightusd_value_free(self.handle);
         }
     }
 }
@@ -427,7 +427,7 @@ impl Prim {
 
     pub fn name(&self) -> String {
         unsafe {
-            let s = tusdz_prim_get_name(self.handle);
+            let s = lightusd_prim_get_name(self.handle);
             if !s.is_null() {
                 CStr::from_ptr(s).to_string_lossy().to_string()
             } else {
@@ -438,7 +438,7 @@ impl Prim {
 
     pub fn path(&self) -> String {
         unsafe {
-            let s = tusdz_prim_get_path(self.handle);
+            let s = lightusd_prim_get_path(self.handle);
             if !s.is_null() {
                 CStr::from_ptr(s).to_string_lossy().to_string()
             } else {
@@ -448,12 +448,12 @@ impl Prim {
     }
 
     pub fn prim_type(&self) -> PrimType {
-        unsafe { std::mem::transmute(tusdz_prim_get_type(self.handle) as u32) }
+        unsafe { std::mem::transmute(lightusd_prim_get_type(self.handle) as u32) }
     }
 
     pub fn type_name(&self) -> String {
         unsafe {
-            let s = tusdz_prim_get_type_name(self.handle);
+            let s = lightusd_prim_get_type_name(self.handle);
             if !s.is_null() {
                 CStr::from_ptr(s).to_string_lossy().to_string()
             } else {
@@ -463,7 +463,7 @@ impl Prim {
     }
 
     pub fn is_type(&self, prim_type: PrimType) -> bool {
-        unsafe { tusdz_prim_is_type(self.handle, prim_type as c_int) != 0 }
+        unsafe { lightusd_prim_is_type(self.handle, prim_type as c_int) != 0 }
     }
 
     pub fn is_mesh(&self) -> bool {
@@ -475,11 +475,11 @@ impl Prim {
     }
 
     pub fn child_count(&self) -> usize {
-        unsafe { tusdz_prim_get_child_count(self.handle) }
+        unsafe { lightusd_prim_get_child_count(self.handle) }
     }
 
     pub fn child(&self, index: usize) -> Option<Prim> {
-        unsafe { Prim::from_raw(tusdz_prim_get_child_at(self.handle, index)) }
+        unsafe { Prim::from_raw(lightusd_prim_get_child_at(self.handle, index)) }
     }
 
     pub fn children(&self) -> Vec<Prim> {
@@ -487,12 +487,12 @@ impl Prim {
     }
 
     pub fn property_count(&self) -> usize {
-        unsafe { tusdz_prim_get_property_count(self.handle) }
+        unsafe { lightusd_prim_get_property_count(self.handle) }
     }
 
     pub fn property_name(&self, index: usize) -> String {
         unsafe {
-            let s = tusdz_prim_get_property_name_at(self.handle, index);
+            let s = lightusd_prim_get_property_name_at(self.handle, index);
             if !s.is_null() {
                 CStr::from_ptr(s).to_string_lossy().to_string()
             } else {
@@ -504,7 +504,7 @@ impl Prim {
     pub fn property(&self, name: &str) -> Option<Value> {
         unsafe {
             let cname = CString::new(name).ok()?;
-            Value::from_raw(tusdz_prim_get_property(self.handle, cname.as_ptr()))
+            Value::from_raw(lightusd_prim_get_property(self.handle, cname.as_ptr()))
         }
     }
 
@@ -528,7 +528,7 @@ impl Prim {
             // Points
             let mut ptr: *const c_float = ptr::null();
             let mut count = 0usize;
-            if tusdz_mesh_get_points(self.handle, &mut ptr, &mut count) == 0 && !ptr.is_null() {
+            if lightusd_mesh_get_points(self.handle, &mut ptr, &mut count) == 0 && !ptr.is_null() {
                 mesh_data.points = Some(std::slice::from_raw_parts(ptr, count).to_vec());
                 mesh_data.vertex_count = count / 3;
             }
@@ -536,7 +536,7 @@ impl Prim {
             // Face counts
             let mut ptr: *const c_int = ptr::null();
             let mut count = 0usize;
-            if tusdz_mesh_get_face_counts(self.handle, &mut ptr, &mut count) == 0 && !ptr.is_null() {
+            if lightusd_mesh_get_face_counts(self.handle, &mut ptr, &mut count) == 0 && !ptr.is_null() {
                 mesh_data.face_counts = Some(std::slice::from_raw_parts(ptr, count).to_vec());
                 mesh_data.face_count = count;
             }
@@ -544,7 +544,7 @@ impl Prim {
             // Indices
             let mut ptr: *const c_int = ptr::null();
             let mut count = 0usize;
-            if tusdz_mesh_get_indices(self.handle, &mut ptr, &mut count) == 0 && !ptr.is_null() {
+            if lightusd_mesh_get_indices(self.handle, &mut ptr, &mut count) == 0 && !ptr.is_null() {
                 mesh_data.indices = Some(std::slice::from_raw_parts(ptr, count).to_vec());
             }
         }
@@ -556,7 +556,7 @@ impl Prim {
     pub fn get_local_matrix(&self, time: f64) -> Option<Transform> {
         unsafe {
             let mut matrix = [[0.0f64; 4]; 4];
-            if tusdz_xform_get_local_matrix(self.handle, time, &mut matrix) == 0 {
+            if lightusd_xform_get_local_matrix(self.handle, time, &mut matrix) == 0 {
                 Some(Transform { matrix })
             } else {
                 None
@@ -583,11 +583,11 @@ impl Stage {
     }
 
     pub fn root_prim(&self) -> Option<Prim> {
-        unsafe { Prim::from_raw(tusdz_stage_get_root_prim(self.handle)) }
+        unsafe { Prim::from_raw(lightusd_stage_get_root_prim(self.handle)) }
     }
 
     pub fn has_animation(&self) -> bool {
-        unsafe { tusdz_stage_has_animation(self.handle) != 0 }
+        unsafe { lightusd_stage_has_animation(self.handle) != 0 }
     }
 
     pub fn get_time_range(&self) -> Option<(f64, f64, f64)> {
@@ -595,7 +595,7 @@ impl Stage {
             let mut start = 0.0f64;
             let mut end = 0.0f64;
             let mut fps = 0.0f64;
-            if tusdz_stage_get_time_range(self.handle, &mut start, &mut end, &mut fps) == 0 {
+            if lightusd_stage_get_time_range(self.handle, &mut start, &mut end, &mut fps) == 0 {
                 Some((start, end, fps))
             } else {
                 None
@@ -605,7 +605,7 @@ impl Stage {
 
     pub fn print_hierarchy(&self, max_depth: i32) {
         unsafe {
-            tusdz_stage_print_hierarchy(self.handle, max_depth);
+            lightusd_stage_print_hierarchy(self.handle, max_depth);
         }
     }
 }
@@ -613,7 +613,7 @@ impl Stage {
 impl Drop for Stage {
     fn drop(&mut self) {
         unsafe {
-            tusdz_stage_free(self.handle);
+            lightusd_stage_free(self.handle);
         }
     }
 }
@@ -624,7 +624,7 @@ impl Drop for Stage {
 
 pub fn init() -> Result<()> {
     unsafe {
-        match tusdz_init() {
+        match lightusd_init() {
             0 => Ok(()),
             code => Err(format!("Initialization failed: {}", code)),
         }
@@ -633,13 +633,13 @@ pub fn init() -> Result<()> {
 
 pub fn shutdown() {
     unsafe {
-        tusdz_shutdown();
+        lightusd_shutdown();
     }
 }
 
 pub fn get_version() -> String {
     unsafe {
-        let s = tusdz_get_version();
+        let s = lightusd_get_version();
         if !s.is_null() {
             CStr::from_ptr(s).to_string_lossy().to_string()
         } else {
@@ -662,7 +662,7 @@ pub fn load_from_file<P: AsRef<Path>>(
         let mut stage: *mut c_void = ptr::null_mut();
         let mut error_buf = vec![0u8; 1024];
 
-        let result = tusdz_load_from_file(
+        let result = lightusd_load_from_file(
             cpath.as_ptr(),
             ptr::null(),
             &mut stage,
@@ -683,7 +683,7 @@ pub fn detect_format<P: AsRef<Path>>(filepath: P) -> Format {
     let path_str = filepath.as_ref().to_str().unwrap_or("");
     let cpath = CString::new(path_str).unwrap();
     unsafe {
-        match tusdz_detect_format(cpath.as_ptr()) {
+        match lightusd_detect_format(cpath.as_ptr()) {
             1 => Format::Usda,
             2 => Format::Usdc,
             3 => Format::Usdz,

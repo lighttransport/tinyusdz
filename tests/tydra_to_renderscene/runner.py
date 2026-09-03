@@ -56,7 +56,7 @@ def main():
     parser = argparse.ArgumentParser(description='tydra_to_renderscene tester.')
     parser.add_argument('usd_path', type=str, nargs='?', default="../models/",
                         help='Path to USD source tree')
-    parser.add_argument('--app', default=os.environ.get('TUSDRENDER_APP',
+    parser.add_argument('--app', default=os.environ.get('LUSDRENDER_APP',
                         'tydra_to_renderscene'),
                         help='tydra_to_renderscene executable')
     parser.add_argument('--timeout', type=int, default=180,

@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lightusd"
 dynamic = ["version"]
-description = "Tiny, dependency-free USD/USDA/USDC/USDZ loader + Tydra render-scene access, with NumPy-friendly zero-copy arrays (CPython abi3 + free-threaded wheels)."
+description = "Lightweight, dependency-free USD/USDA/USDC/USDZ loader + Tydra render-scene access, with NumPy-friendly zero-copy arrays (CPython abi3 + free-threaded wheels)."
 readme = "python/README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"

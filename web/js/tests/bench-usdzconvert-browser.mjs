@@ -362,7 +362,7 @@ async function main() {
   const jsonPath = path.join(opts.out, 'summary.json');
   fs.writeFileSync(jsonPath, JSON.stringify({ generatedAt: new Date().toISOString(), rows }, null, 2));
   const tsvPath = path.join(opts.out, 'summary.tsv');
-  fs.writeFileSync(tsvPath, ['status\tmode\tscene\tpipeline\tcodec\tformat\tresize\tgpu\tfetchMs\twasmInitMs\tconvertMs\tvalidateMs\tusdzBytes\twasmHeapBytes\tjsHeapBytes\ttextureConcurrency\ttexProcessed\ttexDecodeMs\ttexRasterMs\ttexEncodeMs\terror',
+  fs.writeFileSync(tsvPath, ['status\tmode\tscene\tpipeline\tcodec\tformat\tresize\tgpu\tfetchMs\twasmInitMs\tconvertMs\tvalidateMs\usdzBytes\twasmHeapBytes\tjsHeapBytes\ttextureConcurrency\ttexProcessed\ttexDecodeMs\ttexRasterMs\ttexEncodeMs\terror',
     ...rows.map((r) => [
       r.ok ? 'PASS' : 'FAIL', r.mode, r.scene, r.pipeline || 'memory', r.codec, r.textureFormat, r.resize,
       r.gpu || '', Math.round(r.timings?.fetchMs ?? -1), Math.round(r.timings?.wasmInitMs ?? -1),

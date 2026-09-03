@@ -1,7 +1,7 @@
 #pragma once
 
-// NOTE: Trimmed for tusdview. Original light3d mesh_data.h pulled in the full
-// Xform/Prim scene-graph via "xform.h" and defined a MeshPrim class. tusdview
+// NOTE: Trimmed for lusdview. Original light3d mesh_data.h pulled in the full
+// Xform/Prim scene-graph via "xform.h" and defined a MeshPrim class. lusdview
 // only needs the plain MeshGeometry POD (used by material.cpp helpers), so the
 // MeshPrim class and the xform.h dependency were removed.
 #include "light3d.h"  // Vec3 / Vec4

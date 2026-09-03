@@ -3,7 +3,7 @@
 //
 // LightUSD Next - next_usdcat
 //
-// Minimal tusdcat-compatible CLI for the src/next module, so the usd-wg
+// Minimal lusdcat-compatible CLI for the src/next module, so the usd-wg
 // asset-corpus regression gate (tests/parse-asset-corpus.mjs) can drive next
 // the same way it drives the legacy loader:
 //   next_usdcat [-l|-f] file.usd[acz]
@@ -267,7 +267,7 @@ int main(int argc, char **argv) {
   if (flatten) {
     AssetResolver resolver;
     // Anchor relative asset paths (references/payloads/sublayers) to the input
-    // file's directory, like usdcat/tusdcat.
+    // file's directory, like usdcat/lusdcat.
     {
       std::string fn(filename);
       auto slash = fn.find_last_of("/\\");

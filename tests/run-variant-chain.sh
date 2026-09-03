@@ -11,16 +11,16 @@
 # against empty variant blocks and the deep default "ChairA" wins.
 #
 # Covers:
-#   - tusdcat       (examples/tusdcat, the native flatten driver)
-#   - tusdzconvert  (tools/tusdzconvert -> src/usdz-convert.cc flatten loop)
+#   - lusdcat       (examples/lusdcat, the native flatten driver)
+#   - lusdzconvert  (tools/lusdzconvert -> src/usdz-convert.cc flatten loop)
 #
-# Usage: run-variant-chain.sh <tusdcat> <project-source-dir> [tusdzconvert]
+# Usage: run-variant-chain.sh <lusdcat> <project-source-dir> [lusdzconvert]
 
 set -u
 
-TUSDCAT="${1:?usage: run-variant-chain.sh <tusdcat> <srcdir> [tusdzconvert]}"
-SRCDIR="${2:?usage: run-variant-chain.sh <tusdcat> <srcdir> [tusdzconvert]}"
-TUSDZCONVERT="${3:-}"
+LUSDCAT="${1:?usage: run-variant-chain.sh <lusdcat> <srcdir> [lusdzconvert]}"
+SRCDIR="${2:?usage: run-variant-chain.sh <lusdcat> <srcdir> [lusdzconvert]}"
+LUSDZCONVERT="${3:-}"
 MAIN="${SRCDIR}/tests/usda/feat-variant-chain-main.usda"
 
 if [ ! -f "${MAIN}" ]; then
@@ -53,45 +53,45 @@ check_flattened() {
 
 rc=0
 
-# --- tusdcat ---
-if [ -x "${TUSDCAT}" ]; then
-  OUT="${WORK}/tusdcat.usda"
-  if "${TUSDCAT}" --flatten "${MAIN}" -o "${OUT}" >/dev/null 2>&1; then
-    check_flattened "tusdcat" "${OUT}" || rc=1
+# --- lusdcat ---
+if [ -x "${LUSDCAT}" ]; then
+  OUT="${WORK}/lusdcat.usda"
+  if "${LUSDCAT}" --flatten "${MAIN}" -o "${OUT}" >/dev/null 2>&1; then
+    check_flattened "lusdcat" "${OUT}" || rc=1
   else
-    echo "FAIL: tusdcat --flatten failed on ${MAIN}"; rc=1
+    echo "FAIL: lusdcat --flatten failed on ${MAIN}"; rc=1
   fi
 else
-  echo "SKIP: tusdcat not found at ${TUSDCAT}"
+  echo "SKIP: lusdcat not found at ${LUSDCAT}"
 fi
 
-# --- tusdzconvert (src/usdz-convert.cc flatten path) ---
-if [ -n "${TUSDZCONVERT}" ] && [ -x "${TUSDZCONVERT}" ]; then
-  OUT="${WORK}/tusdzconvert.usda"
-  if "${TUSDZCONVERT}" "${MAIN}" "${OUT}" --outputFormat usda >/dev/null 2>&1; then
-    check_flattened "tusdzconvert" "${OUT}" || rc=1
+# --- lusdzconvert (src/usdz-convert.cc flatten path) ---
+if [ -n "${LUSDZCONVERT}" ] && [ -x "${LUSDZCONVERT}" ]; then
+  OUT="${WORK}/lusdzconvert.usda"
+  if "${LUSDZCONVERT}" "${MAIN}" "${OUT}" --outputFormat usda >/dev/null 2>&1; then
+    check_flattened "lusdzconvert" "${OUT}" || rc=1
   else
-    echo "FAIL: tusdzconvert flatten failed on ${MAIN}"; rc=1
+    echo "FAIL: lusdzconvert flatten failed on ${MAIN}"; rc=1
   fi
-elif [ -n "${TUSDZCONVERT}" ]; then
-  echo "SKIP: tusdzconvert not found at ${TUSDZCONVERT}"
+elif [ -n "${LUSDZCONVERT}" ]; then
+  echo "SKIP: lusdzconvert not found at ${LUSDZCONVERT}"
 fi
 
 # --- LIVRPS strength: inherits beats references (L > I > ... > R) ---
-# tusdcat default --flatten routes through CompositeAllArcs; the legacy
+# lusdcat default --flatten routes through CompositeAllArcs; the legacy
 # per-feature loop applied R before I and let the referenced opinion win.
 LIVRPS_MAIN="${SRCDIR}/tests/usda/feat-livrps-inherits-main.usda"
-if [ -x "${TUSDCAT}" ] && [ -f "${LIVRPS_MAIN}" ]; then
-  OUT="${WORK}/tusdcat-livrps.usda"
-  if "${TUSDCAT}" --flatten "${LIVRPS_MAIN}" -o "${OUT}" >/dev/null 2>&1; then
+if [ -x "${LUSDCAT}" ] && [ -f "${LIVRPS_MAIN}" ]; then
+  OUT="${WORK}/lusdcat-livrps.usda"
+  if "${LUSDCAT}" --flatten "${LIVRPS_MAIN}" -o "${OUT}" >/dev/null 2>&1; then
     if grep -q "int x = 50" "${OUT}" && ! grep -q "int x = 100" "${OUT}"; then
-      echo "PASS: tusdcat: inherited class opinion (x=50) beats referenced (x=100)"
+      echo "PASS: lusdcat: inherited class opinion (x=50) beats referenced (x=100)"
     else
-      echo "FAIL: tusdcat: expected inherits (x=50) to beat references (x=100)."
+      echo "FAIL: lusdcat: expected inherits (x=50) to beat references (x=100)."
       rc=1
     fi
   else
-    echo "FAIL: tusdcat --flatten failed on ${LIVRPS_MAIN}"; rc=1
+    echo "FAIL: lusdcat --flatten failed on ${LIVRPS_MAIN}"; rc=1
   fi
 fi
 

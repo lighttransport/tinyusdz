@@ -1060,7 +1060,7 @@ void EmitNextGraphValue(std::ostream& os, const Value& value) {
 }
 
 // Preserve the programmable MaterialX graph in the same compact JSON schema
-// consumed by the shared tusdview graph compiler. The next converter already
+// consumed by the shared lusdview graph compiler. The next converter already
 // resolves simple constants and images; this record retains the full utility
 // node topology for descriptor-backed renderers instead of silently baking it.
 std::string BuildNextMaterialXGraphJson(const Stage& stage,

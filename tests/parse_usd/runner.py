@@ -12,7 +12,7 @@ def run(config):
     cmd = config["app"]
 
     if not os.path.isfile(cmd) and shutil.which(cmd) is None:
-        raise FileNotFoundError(f"tusdcat executable not found: {cmd}")
+        raise FileNotFoundError(f"lusdcat executable not found: {cmd}")
 
     failure_cases = []
     success_cases = []
@@ -63,10 +63,10 @@ def main():
     parser = argparse.ArgumentParser(description='USD parse tester.')
     parser.add_argument('usd_path', type=str, nargs='?', default="../tests/usda",
                         help='Path to USD source tree')
-    parser.add_argument('--app', default=os.environ.get('TUSDCAT_PATH',
+    parser.add_argument('--app', default=os.environ.get('LUSDCAT_PATH',
                         os.path.join(os.path.dirname(__file__), '..', '..',
-                                     'build', 'tusdcat')),
-                        help='tusdcat executable (default: TUSDCAT_PATH or build/tusdcat)')
+                                     'build', 'lusdcat')),
+                        help='lusdcat executable (default: LUSDCAT_PATH or build/lusdcat)')
     parser.add_argument('--timeout', type=int, default=180,
                         help='Per-file timeout in seconds (default: 180)')
     parser.add_argument('--output', help='Write a JSON summary to this path')

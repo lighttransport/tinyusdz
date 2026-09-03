@@ -90,7 +90,7 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
   }
 
 #if defined(__EMSCRIPTEN__) || defined(__wasi__)
-  TUSDZ_LOG_E("Failed to find asssetPath: " << assetPath);
+  LIGHTUSD_LOG_E("Failed to find asssetPath: " << assetPath);
 
   return false;
 #else
@@ -208,7 +208,7 @@ std::string AssetResolutionResolver::resolve_literal(
     //DCOUT("assetPath = " << assetPath);
 
 #if defined(__EMSCRIPTEN__) || defined(__wasi__)
-    TUSDZ_LOG_E("Failed to resolve asssetPath: " << assetPath);
+    LIGHTUSD_LOG_E("Failed to resolve asssetPath: " << assetPath);
 #else
 
     auto cache_it = _cached_resolved_paths.find(assetPath);

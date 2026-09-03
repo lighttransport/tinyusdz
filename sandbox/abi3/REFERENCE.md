@@ -42,19 +42,19 @@ python examples/example_mesh_to_numpy.py [usd_file]
 ## Python API
 
 ```python
-import lightusd_abi3 as tusd
+import lightusd_abi3 as lightusd
 import numpy as np
 
 # Load USD file
-stage = tusd.Stage.load_from_file("scene.usd")
+stage = lightusd.Stage.load_from_file("scene.usd")
 print(stage.to_string())
 
 # Create objects
-prim = tusd.Prim("Mesh")
-val = tusd.Value.from_int(42)
+prim = lightusd.Prim("Mesh")
+val = lightusd.Value.from_int(42)
 
 # Detect format
-fmt = tusd.detect_format("file.usda")  # Returns "USDA"
+fmt = lightusd.detect_format("file.usda")  # Returns "USDA"
 
 # Future: Mesh data access (to be implemented)
 # mesh = stage.get_prim_at_path("/World/Mesh")
@@ -146,11 +146,11 @@ make test
 ### Using with NumPy
 
 ```python
-import lightusd_abi3 as tusd
+import lightusd_abi3 as lightusd
 import numpy as np
 
 # Load USD
-stage = tusd.Stage.load_from_file("mesh.usd")
+stage = lightusd.Stage.load_from_file("mesh.usd")
 
 # Get mesh data (when implemented)
 # positions = np.asarray(mesh.get_points())  # Zero-copy!

@@ -12,7 +12,7 @@ const repoRoot = path.resolve(demoRoot, '../..');
 const blender = process.env.BLENDER || '/mnt/nvme02/local/blender-5.2.1-linux-x64/blender';
 const output = path.join(demoRoot, 'public/assets/blender-hair-curves.usdc');
 const blend = process.env.HAIR_BLEND_OUTPUT || path.join('/tmp', 'lightusd-hair-curves.blend');
-const tusdcat = process.env.TUSDCAT || path.join(repoRoot, 'build_ninja/tusdcat');
+const lusdcat = process.env.LUSDCAT || path.join(repoRoot, 'build_ninja/lusdcat');
 const checkOnly = process.argv.includes('--check');
 
 async function check() {
@@ -83,7 +83,7 @@ if (!checkOnly) {
       }
 `);
     await writeFile(nativeUsd, usda);
-    const flatten = spawnSync(tusdcat, ['--output-format', 'usdc', '--compress-float-arrays',
+    const flatten = spawnSync(lusdcat, ['--output-format', 'usdc', '--compress-float-arrays',
       '-o', output, nativeUsd], { cwd: repoRoot, stdio: 'inherit' });
     if (flatten.status !== 0) throw new Error(`MaterialX export hook failed with exit code ${flatten.status}`);
   } finally {

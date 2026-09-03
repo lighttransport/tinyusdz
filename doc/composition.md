@@ -658,7 +658,7 @@ by `print_variantSetStmt()` in `src/pprinter.cc`; parsing by
 
 ```bash
 node tests/compare-usda.js --detailed-diff \
-  --tusdcat ./build/tusdcat --usdcat usdcat \
+  --lusdcat ./build/lusdcat --usdcat usdcat \
   tests/usda/variantSet-nested-001.usda
 ```
 

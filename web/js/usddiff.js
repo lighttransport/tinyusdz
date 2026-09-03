@@ -5,7 +5,7 @@
 //   - ULP-tolerant float compare (configurable: ULPs, eps, compare-metadata)
 //   - stage (layer) metadata diffs, and a navigable per-prim/-property report
 //
-// Files are diffed pre-composition (as Layers), mirroring `tusddiff`. Pure WASM
+// Files are diffed pre-composition (as Layers), mirroring `lusddiff`. Pure WASM
 // by default; an optional panel can drive the diff through a running MCP server
 // (mcp_server --port ...) for big-diff navigation (diff_tree / diff_paths).
 

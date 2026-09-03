@@ -423,7 +423,7 @@ uniform float uSheenRoughness;
 uniform float uThinFilmWeight;
 uniform float uThinFilmThickness;
 uniform float uThinFilmIor;
-// Native OpenGL MaterialX graph path. The node table mirrors tusdview's
+// Native OpenGL MaterialX graph path. The node table mirrors lusdview's
 // bounded runtime IR; graphs with UDIMs or more than eight resident images
 // remain on the existing semantic/baked fallback path.
 uniform bool uGraphUsable;

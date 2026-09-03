@@ -156,7 +156,7 @@ static const LayerMetas* g_current_layer_metas = nullptr;
 static const Attribute* g_current_attribute = nullptr;
 static const class Layer* g_current_layer = nullptr;
 
-// JavaScript fp16 library and TUSDZFloat16Array implementation
+// JavaScript fp16 library and LightUSDFloat16Array implementation
 static const char* fp16_library_js = R"(
 // Simple IEEE 754 half-precision (fp16) conversion utilities
 (function() {
@@ -240,8 +240,8 @@ static const char* fp16_library_js = R"(
     return floatView[0];
   }
 
-  // TUSDZFloat16Array class - similar interface to typed arrays
-  function TUSDZFloat16Array(arg) {
+  // LightUSDFloat16Array class - similar interface to typed arrays
+  function LightUSDFloat16Array(arg) {
     if (typeof arg === 'number') {
       // Create array of given length
       this.length = arg;
@@ -258,37 +258,37 @@ static const char* fp16_library_js = R"(
         }
       }
     } else {
-      throw new Error('Invalid argument to TUSDZFloat16Array constructor');
+      throw new Error('Invalid argument to LightUSDFloat16Array constructor');
     }
   }
 
-  TUSDZFloat16Array.prototype.get = function(index) {
+  LightUSDFloat16Array.prototype.get = function(index) {
     if (index < 0 || index >= this.length) {
       return undefined;
     }
     return halfToFloat32(this._buffer[index]);
   };
 
-  TUSDZFloat16Array.prototype.set = function(index, value) {
+  LightUSDFloat16Array.prototype.set = function(index, value) {
     if (index >= 0 && index < this.length) {
       this._buffer[index] = float32ToHalf(value);
     }
   };
 
-  TUSDZFloat16Array.prototype.getUint16 = function(index) {
+  LightUSDFloat16Array.prototype.getUint16 = function(index) {
     if (index < 0 || index >= this.length) {
       return undefined;
     }
     return this._buffer[index];
   };
 
-  TUSDZFloat16Array.prototype.setUint16 = function(index, value) {
+  LightUSDFloat16Array.prototype.setUint16 = function(index, value) {
     if (index >= 0 && index < this.length) {
       this._buffer[index] = value & 0xFFFF;
     }
   };
 
-  TUSDZFloat16Array.prototype.toArray = function() {
+  LightUSDFloat16Array.prototype.toArray = function() {
     var result = new Array(this.length);
     for (var i = 0; i < this.length; i++) {
       result[i] = this.get(i);
@@ -296,23 +296,23 @@ static const char* fp16_library_js = R"(
     return result;
   };
 
-  TUSDZFloat16Array.prototype.toUint16Array = function() {
+  LightUSDFloat16Array.prototype.toUint16Array = function() {
     return new Uint16Array(this._buffer);
   };
 
   // Static methods
-  TUSDZFloat16Array.fromFloat32Array = function(arr) {
-    return new TUSDZFloat16Array(arr);
+  LightUSDFloat16Array.fromFloat32Array = function(arr) {
+    return new LightUSDFloat16Array(arr);
   };
 
-  TUSDZFloat16Array.fromUint16Array = function(arr) {
-    var result = new TUSDZFloat16Array(arr.length);
+  LightUSDFloat16Array.fromUint16Array = function(arr) {
+    var result = new LightUSDFloat16Array(arr.length);
     result._buffer = new Uint16Array(arr);
     return result;
   };
 
   // Export to global scope
-  globalThis.TUSDZFloat16Array = TUSDZFloat16Array;
+  globalThis.LightUSDFloat16Array = LightUSDFloat16Array;
   globalThis.float32ToHalf = float32ToHalf;
   globalThis.halfToFloat32 = halfToFloat32;
 })();
@@ -839,7 +839,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
                tid == value::TypeTraits<std::vector<value::half2>>::type_id() ||
                tid == value::TypeTraits<std::vector<value::half3>>::type_id() ||
                tid == value::TypeTraits<std::vector<value::half4>>::type_id()) {
-      oss << "\"TUSDZFloat16Array\"";
+      oss << "\"LightUSDFloat16Array\"";
     } else {
       oss << "null";
     }

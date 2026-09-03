@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Set up the Vulkan loader + Khronos validation layers for debugging the
-  tusdview / tusdrender Vulkan backends on Windows.
+  lusdview / lusdrender Vulkan backends on Windows.
 
 .DESCRIPTION
   Two modes:
@@ -92,13 +92,13 @@ function Emit-Activation([string]$LayerManifestDir, [string]$LoaderBinDir, [stri
   Write-Host "Activate it in your shell with:" -ForegroundColor Green
   Write-Host "  . .\activate-vulkan-validation.ps1"
   Write-Host ""
-  Write-Host "Then run tusdview under validation, e.g.:" -ForegroundColor Green
-  Write-Host "  .\build-msvc\Release\tusdview.exe --headless --frames 2 --screenshot out.ppm models\cube.usdc"
+  Write-Host "Then run lusdview under validation, e.g.:" -ForegroundColor Green
+  Write-Host "  .\build-msvc\Release\lusdview.exe --headless --frames 2 --screenshot out.ppm models\cube.usdc"
   Write-Host "Validation errors print to stderr as 'VUID-...' messages (a clean run prints none)."
   Write-Host ""
   Write-Host "For shader-side faults (device loss / corrupt frame) enable GPU-Assisted Validation:" -ForegroundColor Green
   Write-Host "  `$env:VK_LAYER_SETTINGS_PATH = (Resolve-Path .\vk_layer_settings.txt)"
-  Write-Host "  (see scripts/setup-vulkan-validation.ps1 header / doc/tusdview.md)"
+  Write-Host "  (see scripts/setup-vulkan-validation.ps1 header / doc/lusdview.md)"
 }
 
 # Locate VkLayer_khronos_validation.json under a root (returns its directory).
@@ -256,7 +256,7 @@ function Setup-FromSource {
   New-Item -ItemType Directory -Force -Path $src | Out-Null
 
   # The validation layer is the goal. The Vulkan *loader* (vulkan-1.dll) is
-  # already present on any machine with a Vulkan driver, and tusdview loads it
+  # already present on any machine with a Vulkan driver, and lusdview loads it
   # at runtime via volk -- so we do NOT build the loader here (its UPDATE_DEPS
   # path is an extra failure point). Pass -BuildLoader to build it anyway.
   if ($BuildLoader) {

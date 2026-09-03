@@ -123,7 +123,7 @@ These files still parse correctly and can be used for testing MaterialX parsing,
 ### Native Build
 ```bash
 # Parse test
-./build/tusdcat models/openpbr-brick-sphere.usda
+./build/lusdcat models/openpbr-brick-sphere.usda
 
 # Note: OpenPBRSurface may show as "[???] Invalid ShaderNode" in output
 # This is a pprinter limitation, not a parsing error

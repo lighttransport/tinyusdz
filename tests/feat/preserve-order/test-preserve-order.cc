@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
           "opt-in flatten emits children in authored order (Zebra,Apple,Mango)");
   }
 
-  // (3) Layer-render path (what `tusdcat --preserve-order` emits): authored
+  // (3) Layer-render path (what `lusdcat --preserve-order` emits): authored
   // CHILD order, but ALPHABETICAL property order -- pxr/usdcat sorts properties
   // even though it preserves child order, so the property order must NOT follow
   // the authored sequence.

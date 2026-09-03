@@ -21,7 +21,7 @@
  *   Report.done();
  */
 
-import { showLoader, hideLoader, showLoaderProgress } from './tusd-loader.js';
+import { showLoader, hideLoader, showLoaderProgress } from './lightusd-loader.js';
 
 let errorPanel = null;
 let warnBadge = null;
@@ -32,7 +32,7 @@ let warnCount = 0;
 function ensureErrorPanel() {
   if (errorPanel) return errorPanel;
   errorPanel = document.createElement('div');
-  errorPanel.id = 'tusd-error';
+  errorPanel.id = 'lightusd-error';
   errorPanel.style.cssText =
     'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:100;' +
     'max-width:min(680px,calc(100vw-32px));width:100%;' +
@@ -44,17 +44,17 @@ function ensureErrorPanel() {
     'pointer-events:none';
   errorPanel.innerHTML = `
     <div style="padding:10px 12px;display:flex;align-items:flex-start;gap:10px">
-      <span style="flex:0 0 auto;font-size:1rem;color:#f08a8a;line-height:1.35" id="tusd-error-icon">✗</span>
-      <div style="flex:1;min-width:0" id="tusd-error-body">
-        <div style="color:#f08a8a;font-weight:600;margin-bottom:2px" id="tusd-error-title">Error</div>
-        <div style="color:#d4c5c5;font-size:.76rem;word-break:break-word" id="tusd-error-msg"></div>
+      <span style="flex:0 0 auto;font-size:1rem;color:#f08a8a;line-height:1.35" id="lightusd-error-icon">✗</span>
+      <div style="flex:1;min-width:0" id="lightusd-error-body">
+        <div style="color:#f08a8a;font-weight:600;margin-bottom:2px" id="lightusd-error-title">Error</div>
+        <div style="color:#d4c5c5;font-size:.76rem;word-break:break-word" id="lightusd-error-msg"></div>
       </div>
-      <button style="flex:0 0 auto;background:none;border:1px solid rgba(240,138,138,.3);border-radius:4px;color:#f08a8a;cursor:pointer;padding:3px 10px;font-size:.76rem;display:none" id="tusd-error-action">Retry</button>
-      <button style="flex:0 0 auto;background:none;border:none;color:#a08080;cursor:pointer;padding:3px;font-size:.9rem;line-height:1" id="tusd-error-close">✕</button>
+      <button style="flex:0 0 auto;background:none;border:1px solid rgba(240,138,138,.3);border-radius:4px;color:#f08a8a;cursor:pointer;padding:3px 10px;font-size:.76rem;display:none" id="lightusd-error-action">Retry</button>
+      <button style="flex:0 0 auto;background:none;border:none;color:#a08080;cursor:pointer;padding:3px;font-size:.9rem;line-height:1" id="lightusd-error-close">✕</button>
     </div>`;
   document.body.appendChild(errorPanel);
 
-  errorPanel.querySelector('#tusd-error-close').addEventListener('click', () => {
+  errorPanel.querySelector('#lightusd-error-close').addEventListener('click', () => {
     errorPanel.style.opacity = '0';
     errorPanel.style.transform = 'translateX(-50%) translateY(10px)';
     errorPanel.style.pointerEvents = 'none';
@@ -66,7 +66,7 @@ function ensureErrorPanel() {
 function ensureWarnBadge() {
   if (warnBadge) return warnBadge;
   warnBadge = document.createElement('div');
-  warnBadge.id = 'tusd-warn-badge';
+  warnBadge.id = 'lightusd-warn-badge';
   warnBadge.style.cssText =
     'position:fixed;top:12px;right:12px;z-index:100;' +
     'display:none;align-items:center;gap:5px;' +
@@ -74,9 +74,9 @@ function ensureWarnBadge() {
     'background:rgba(242,200,121,.12);border:1px solid rgba(242,200,121,.3);' +
     'color:#f2c879;font-family:system-ui;font-size:.72rem;font-weight:600;' +
     'cursor:pointer;transition:opacity .2s';
-  warnBadge.innerHTML = '⚠ <span id="tusd-warn-count">0</span> warnings';
+  warnBadge.innerHTML = '⚠ <span id="lightusd-warn-count">0</span> warnings';
   warnBadge.addEventListener('click', () => {
-    const list = document.getElementById('tusd-warn-list');
+    const list = document.getElementById('lightusd-warn-list');
     if (list) list.style.display = list.style.display === 'none' ? 'block' : 'none';
   });
   document.body.appendChild(warnBadge);
@@ -112,10 +112,10 @@ export const Report = {
   /** Show error panel. Returns object with .action() to add retry button. */
   err(error, context) {
     const panel = ensureErrorPanel();
-    const title = panel.querySelector('#tusd-error-title');
-    const msg = panel.querySelector('#tusd-error-msg');
-    const actionBtn = panel.querySelector('#tusd-error-action');
-    const icon = panel.querySelector('#tusd-error-icon');
+    const title = panel.querySelector('#lightusd-error-title');
+    const msg = panel.querySelector('#lightusd-error-msg');
+    const actionBtn = panel.querySelector('#lightusd-error-action');
+    const icon = panel.querySelector('#lightusd-error-icon');
 
     title.textContent = error?.message || String(error);
     msg.textContent = context ? `${context}: ${error?.message || error}` : '';
@@ -150,13 +150,13 @@ export const Report = {
     warnCount++;
     const badge = ensureWarnBadge();
     badge.style.display = 'flex';
-    badge.querySelector('#tusd-warn-count').textContent = String(warnCount);
+    badge.querySelector('#lightusd-warn-count').textContent = String(warnCount);
 
     // Build warning list
-    let list = document.getElementById('tusd-warn-list');
+    let list = document.getElementById('lightusd-warn-list');
     if (!list) {
       list = document.createElement('div');
-      list.id = 'tusd-warn-list';
+      list.id = 'lightusd-warn-list';
       list.style.cssText =
         'position:fixed;top:44px;right:12px;z-index:100;' +
         'max-width:420px;max-height:50vh;overflow-y:auto;' +
@@ -193,7 +193,7 @@ export const Report = {
   clear() {
     warnCount = 0;
     if (warnBadge) { warnBadge.style.display = 'none'; }
-    const list = document.getElementById('tusd-warn-list');
+    const list = document.getElementById('lightusd-warn-list');
     if (list) list.remove();
     this.dismiss();
   },

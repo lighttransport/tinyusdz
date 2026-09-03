@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Embed a TrueType font into a committed C header (imgui compressed-TTF format),
-# so tusdview ships the font inside the binary — no runtime .ttf dependency.
+# so lusdview ships the font inside the binary — no runtime .ttf dependency.
 # This regenerates examples/common/cascadia_mono.h, which app.cc loads via
 # ImGui::GetIO().Fonts->AddFontFromMemoryCompressedTTF(CascadiaMono_compressed_*).
 #

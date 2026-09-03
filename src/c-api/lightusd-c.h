@@ -5,14 +5,14 @@
  *
  * Design:
  * - C11, no exceptions cross the boundary (the core is built -fno-exceptions).
- * - Every fallible function returns tusd_status; details via the thread-local
- *   tusd_last_error(). Results go through out-params.
- * - Owning opaque handles (tusd_stage, tusd_value, tusd_string, tusd_strlist)
- *   are destroyed exactly once with their tusd_*_destroy function.
- * - tusd_prim is a small BY-VALUE handle (no allocation, nothing to destroy).
+ * - Every fallible function returns lightusd_status; details via the thread-local
+ *   lightusd_last_error(). Results go through out-params.
+ * - Owning opaque handles (lightusd_stage, lightusd_value, lightusd_string, lightusd_strlist)
+ *   are destroyed exactly once with their lightusd_*_destroy function.
+ * - lightusd_prim is a small BY-VALUE handle (no allocation, nothing to destroy).
  *   It stays valid until its stage is destroyed or structurally mutated
- *   (define/remove prim); tusd_stage_generation() lets bindings detect that.
- * - Borrowed views (tusd_sv, tusd_value_view) point into stage-owned storage:
+ *   (define/remove prim); lightusd_stage_generation() lets bindings detect that.
+ * - Borrowed views (lightusd_sv, lightusd_value_view) point into stage-owned storage:
  *   valid until the stage is destroyed or the owning prim/property is mutated.
  *
  * Threading:
@@ -20,8 +20,8 @@
  * - Concurrent READS of one stage are safe (internal lazy-decode is serialized
  *   by a private mutex).
  * - A WRITE (any set / define / remove / add function taking a mutable
- *   tusd_stage pointer) must not run concurrently with reads of that stage.
- * - tusd_last_error() is thread-local.
+ *   lightusd_stage pointer) must not run concurrently with reads of that stage.
+ * - lightusd_last_error() is thread-local.
  */
 
 #ifndef LIGHTUSD_C_H_
@@ -34,152 +34,152 @@
 extern "C" {
 #endif
 
-#ifndef TUSD_API
-#define TUSD_API
+#ifndef LIGHTUSD_API
+#define LIGHTUSD_API
 #endif
 
-#define TUSD_API_VERSION_MAJOR 1
-#define TUSD_API_VERSION_MINOR 0
-#define TUSD_API_VERSION_PATCH 0
+#define LIGHTUSD_API_VERSION_MAJOR 1
+#define LIGHTUSD_API_VERSION_MINOR 0
+#define LIGHTUSD_API_VERSION_PATCH 0
 
 /* ============================================================
  * Status / error handling
  * ============================================================ */
 
-typedef enum tusd_status {
-  TUSD_OK = 0,
-  TUSD_ERR_INVALID_ARG = -1,
-  TUSD_ERR_IO = -2,
-  TUSD_ERR_PARSE = -3,
-  TUSD_ERR_NOT_FOUND = -4,
-  TUSD_ERR_TYPE_MISMATCH = -5,
-  TUSD_ERR_OUT_OF_MEMORY = -6,
-  TUSD_ERR_UNSUPPORTED = -7,
-  TUSD_ERR_COMPOSITION = -8,
-  TUSD_ERR_INTERNAL = -99
-} tusd_status;
+typedef enum lightusd_status {
+  LIGHTUSD_OK = 0,
+  LIGHTUSD_ERR_INVALID_ARG = -1,
+  LIGHTUSD_ERR_IO = -2,
+  LIGHTUSD_ERR_PARSE = -3,
+  LIGHTUSD_ERR_NOT_FOUND = -4,
+  LIGHTUSD_ERR_TYPE_MISMATCH = -5,
+  LIGHTUSD_ERR_OUT_OF_MEMORY = -6,
+  LIGHTUSD_ERR_UNSUPPORTED = -7,
+  LIGHTUSD_ERR_COMPOSITION = -8,
+  LIGHTUSD_ERR_INTERNAL = -99
+} lightusd_status;
 
 /* (major << 16) | (minor << 8) | patch */
-TUSD_API uint32_t tusd_api_version(void);
-TUSD_API const char* tusd_version_string(void);
+LIGHTUSD_API uint32_t lightusd_api_version(void);
+LIGHTUSD_API const char* lightusd_version_string(void);
 
 /* Thread-local message for the most recent failing call on this thread.
  * Never NULL (empty string when no error). Valid until the next failing
  * call on the same thread. */
-TUSD_API const char* tusd_last_error(void);
+LIGHTUSD_API const char* lightusd_last_error(void);
 
 /* ============================================================
  * Strings
  * ============================================================ */
 
 /* Borrowed string view. `data` is NUL-terminated for stage-owned strings but
- * always carry `len` (export_usdc reuses tusd_string as a byte buffer). */
-typedef struct tusd_sv {
+ * always carry `len` (export_usdc reuses lightusd_string as a byte buffer). */
+typedef struct lightusd_sv {
   const char* data;
   size_t len;
-} tusd_sv;
+} lightusd_sv;
 
 /* Owned string / byte buffer. */
-typedef struct tusd_string tusd_string;
-TUSD_API tusd_sv tusd_string_view(const tusd_string* s);
-TUSD_API void tusd_string_destroy(tusd_string* s);
+typedef struct lightusd_string lightusd_string;
+LIGHTUSD_API lightusd_sv lightusd_string_view(const lightusd_string* s);
+LIGHTUSD_API void lightusd_string_destroy(lightusd_string* s);
 
 /* Owned list of strings. */
-typedef struct tusd_strlist tusd_strlist;
-TUSD_API size_t tusd_strlist_size(const tusd_strlist* l);
-TUSD_API tusd_sv tusd_strlist_get(const tusd_strlist* l, size_t index);
-TUSD_API void tusd_strlist_destroy(tusd_strlist* l);
+typedef struct lightusd_strlist lightusd_strlist;
+LIGHTUSD_API size_t lightusd_strlist_size(const lightusd_strlist* l);
+LIGHTUSD_API lightusd_sv lightusd_strlist_get(const lightusd_strlist* l, size_t index);
+LIGHTUSD_API void lightusd_strlist_destroy(lightusd_strlist* l);
 
 /* ============================================================
  * Types (mirrors lightusd::next::TypeId numerically)
  * ============================================================ */
 
-typedef uint16_t tusd_type;
+typedef uint16_t lightusd_type;
 
 enum {
-  TUSD_TYPE_INVALID = 0,
-  TUSD_TYPE_BOOL = 1,
-  TUSD_TYPE_INT = 2,
-  TUSD_TYPE_UINT = 3,
-  TUSD_TYPE_INT64 = 4,
-  TUSD_TYPE_UINT64 = 5,
-  TUSD_TYPE_HALF = 6,
-  TUSD_TYPE_FLOAT = 7,
-  TUSD_TYPE_DOUBLE = 8,
-  TUSD_TYPE_STRING = 9,
-  TUSD_TYPE_TOKEN = 10,
-  TUSD_TYPE_ASSET_PATH = 11,
-  TUSD_TYPE_INT2 = 12,
-  TUSD_TYPE_INT3 = 13,
-  TUSD_TYPE_INT4 = 14,
-  TUSD_TYPE_UINT2 = 15,
-  TUSD_TYPE_UINT3 = 16,
-  TUSD_TYPE_UINT4 = 17,
-  TUSD_TYPE_HALF2 = 18,
-  TUSD_TYPE_HALF3 = 19,
-  TUSD_TYPE_HALF4 = 20,
-  TUSD_TYPE_FLOAT2 = 21,
-  TUSD_TYPE_FLOAT3 = 22,
-  TUSD_TYPE_FLOAT4 = 23,
-  TUSD_TYPE_DOUBLE2 = 24,
-  TUSD_TYPE_DOUBLE3 = 25,
-  TUSD_TYPE_DOUBLE4 = 26,
-  TUSD_TYPE_QUATH = 27,
-  TUSD_TYPE_QUATF = 28,
-  TUSD_TYPE_QUATD = 29,
-  TUSD_TYPE_POINT3H = 30,
-  TUSD_TYPE_POINT3F = 31,
-  TUSD_TYPE_POINT3D = 32,
-  TUSD_TYPE_VECTOR3H = 33,
-  TUSD_TYPE_VECTOR3F = 34,
-  TUSD_TYPE_VECTOR3D = 35,
-  TUSD_TYPE_NORMAL3H = 36,
-  TUSD_TYPE_NORMAL3F = 37,
-  TUSD_TYPE_NORMAL3D = 38,
-  TUSD_TYPE_COLOR3H = 39,
-  TUSD_TYPE_COLOR3F = 40,
-  TUSD_TYPE_COLOR3D = 41,
-  TUSD_TYPE_COLOR4H = 42,
-  TUSD_TYPE_COLOR4F = 43,
-  TUSD_TYPE_COLOR4D = 44,
-  TUSD_TYPE_MATRIX2F = 45,
-  TUSD_TYPE_MATRIX2D = 46,
-  TUSD_TYPE_MATRIX3F = 47,
-  TUSD_TYPE_MATRIX3D = 48,
-  TUSD_TYPE_MATRIX4F = 49,
-  TUSD_TYPE_MATRIX4D = 50,
-  TUSD_TYPE_TEXCOORD2H = 51,
-  TUSD_TYPE_TEXCOORD2F = 52,
-  TUSD_TYPE_TEXCOORD2D = 53,
-  TUSD_TYPE_TEXCOORD3H = 54,
-  TUSD_TYPE_TEXCOORD3F = 55,
-  TUSD_TYPE_TEXCOORD3D = 56,
-  TUSD_TYPE_TIMECODE = 57,
-  TUSD_TYPE_EXTENT = 58,
-  TUSD_TYPE_DICTIONARY = 59
+  LIGHTUSD_TYPE_INVALID = 0,
+  LIGHTUSD_TYPE_BOOL = 1,
+  LIGHTUSD_TYPE_INT = 2,
+  LIGHTUSD_TYPE_UINT = 3,
+  LIGHTUSD_TYPE_INT64 = 4,
+  LIGHTUSD_TYPE_UINT64 = 5,
+  LIGHTUSD_TYPE_HALF = 6,
+  LIGHTUSD_TYPE_FLOAT = 7,
+  LIGHTUSD_TYPE_DOUBLE = 8,
+  LIGHTUSD_TYPE_STRING = 9,
+  LIGHTUSD_TYPE_TOKEN = 10,
+  LIGHTUSD_TYPE_ASSET_PATH = 11,
+  LIGHTUSD_TYPE_INT2 = 12,
+  LIGHTUSD_TYPE_INT3 = 13,
+  LIGHTUSD_TYPE_INT4 = 14,
+  LIGHTUSD_TYPE_UINT2 = 15,
+  LIGHTUSD_TYPE_UINT3 = 16,
+  LIGHTUSD_TYPE_UINT4 = 17,
+  LIGHTUSD_TYPE_HALF2 = 18,
+  LIGHTUSD_TYPE_HALF3 = 19,
+  LIGHTUSD_TYPE_HALF4 = 20,
+  LIGHTUSD_TYPE_FLOAT2 = 21,
+  LIGHTUSD_TYPE_FLOAT3 = 22,
+  LIGHTUSD_TYPE_FLOAT4 = 23,
+  LIGHTUSD_TYPE_DOUBLE2 = 24,
+  LIGHTUSD_TYPE_DOUBLE3 = 25,
+  LIGHTUSD_TYPE_DOUBLE4 = 26,
+  LIGHTUSD_TYPE_QUATH = 27,
+  LIGHTUSD_TYPE_QUATF = 28,
+  LIGHTUSD_TYPE_QUATD = 29,
+  LIGHTUSD_TYPE_POINT3H = 30,
+  LIGHTUSD_TYPE_POINT3F = 31,
+  LIGHTUSD_TYPE_POINT3D = 32,
+  LIGHTUSD_TYPE_VECTOR3H = 33,
+  LIGHTUSD_TYPE_VECTOR3F = 34,
+  LIGHTUSD_TYPE_VECTOR3D = 35,
+  LIGHTUSD_TYPE_NORMAL3H = 36,
+  LIGHTUSD_TYPE_NORMAL3F = 37,
+  LIGHTUSD_TYPE_NORMAL3D = 38,
+  LIGHTUSD_TYPE_COLOR3H = 39,
+  LIGHTUSD_TYPE_COLOR3F = 40,
+  LIGHTUSD_TYPE_COLOR3D = 41,
+  LIGHTUSD_TYPE_COLOR4H = 42,
+  LIGHTUSD_TYPE_COLOR4F = 43,
+  LIGHTUSD_TYPE_COLOR4D = 44,
+  LIGHTUSD_TYPE_MATRIX2F = 45,
+  LIGHTUSD_TYPE_MATRIX2D = 46,
+  LIGHTUSD_TYPE_MATRIX3F = 47,
+  LIGHTUSD_TYPE_MATRIX3D = 48,
+  LIGHTUSD_TYPE_MATRIX4F = 49,
+  LIGHTUSD_TYPE_MATRIX4D = 50,
+  LIGHTUSD_TYPE_TEXCOORD2H = 51,
+  LIGHTUSD_TYPE_TEXCOORD2F = 52,
+  LIGHTUSD_TYPE_TEXCOORD2D = 53,
+  LIGHTUSD_TYPE_TEXCOORD3H = 54,
+  LIGHTUSD_TYPE_TEXCOORD3F = 55,
+  LIGHTUSD_TYPE_TEXCOORD3D = 56,
+  LIGHTUSD_TYPE_TIMECODE = 57,
+  LIGHTUSD_TYPE_EXTENT = 58,
+  LIGHTUSD_TYPE_DICTIONARY = 59
 };
 
-/* Storage component type of a tusd_value_view / buffer. Half-element data is
- * materialized as float32 by the core, so TUSD_COMP_FLOAT16 never appears in
+/* Storage component type of a lightusd_value_view / buffer. Half-element data is
+ * materialized as float32 by the core, so LIGHTUSD_COMP_FLOAT16 never appears in
  * views today (kept for ABI completeness). */
-typedef enum tusd_component_type {
-  TUSD_COMP_NONE = 0, /* no POD buffer (string-family / dictionary / block) */
-  TUSD_COMP_UINT8 = 1,
-  TUSD_COMP_INT32 = 2,
-  TUSD_COMP_UINT32 = 3,
-  TUSD_COMP_INT64 = 4,
-  TUSD_COMP_UINT64 = 5,
-  TUSD_COMP_FLOAT16 = 6,
-  TUSD_COMP_FLOAT32 = 7,
-  TUSD_COMP_FLOAT64 = 8,
-  TUSD_COMP_UINT16 = 9,
-  TUSD_COMP_INT16 = 10
-} tusd_component_type;
+typedef enum lightusd_component_type {
+  LIGHTUSD_COMP_NONE = 0, /* no POD buffer (string-family / dictionary / block) */
+  LIGHTUSD_COMP_UINT8 = 1,
+  LIGHTUSD_COMP_INT32 = 2,
+  LIGHTUSD_COMP_UINT32 = 3,
+  LIGHTUSD_COMP_INT64 = 4,
+  LIGHTUSD_COMP_UINT64 = 5,
+  LIGHTUSD_COMP_FLOAT16 = 6,
+  LIGHTUSD_COMP_FLOAT32 = 7,
+  LIGHTUSD_COMP_FLOAT64 = 8,
+  LIGHTUSD_COMP_UINT16 = 9,
+  LIGHTUSD_COMP_INT16 = 10
+} lightusd_component_type;
 
-TUSD_API const char* tusd_type_name(tusd_type t);
-TUSD_API tusd_type tusd_type_from_name(const char* name);
-TUSD_API size_t tusd_type_size(tusd_type t);          /* bytes per element */
-TUSD_API size_t tusd_type_component_count(tusd_type t);
+LIGHTUSD_API const char* lightusd_type_name(lightusd_type t);
+LIGHTUSD_API lightusd_type lightusd_type_from_name(const char* name);
+LIGHTUSD_API size_t lightusd_type_size(lightusd_type t);          /* bytes per element */
+LIGHTUSD_API size_t lightusd_type_component_count(lightusd_type t);
 
 /* ============================================================
  * Value views
@@ -190,63 +190,63 @@ TUSD_API size_t tusd_type_component_count(tusd_type t);
  *   storage, tightly packed; `count` is 1 for scalars, the array length for
  *   arrays; `components` scalars per element of `storage` component type.
  * - String / token / asset-path scalars, token arrays, and dictionaries have
- *   data == NULL, storage == TUSD_COMP_NONE: fetch through
- *   tusd_attr_get_string / tusd_attr_get_token_array / dict cursor instead.
+ *   data == NULL, storage == LIGHTUSD_COMP_NONE: fetch through
+ *   lightusd_attr_get_string / lightusd_attr_get_token_array / dict cursor instead.
  */
-typedef struct tusd_value_view {
-  tusd_type type;
+typedef struct lightusd_value_view {
+  lightusd_type type;
   uint8_t is_array;
   uint8_t is_block; /* authored `= None` */
-  uint8_t storage;  /* tusd_component_type of `data` */
+  uint8_t storage;  /* lightusd_component_type of `data` */
   uint8_t components;
   size_t count;
   const void* data;
   size_t nbytes;
-} tusd_value_view;
+} lightusd_value_view;
 
 /* Owned value (results of interpolation / eval / metadata queries). */
-typedef struct tusd_value tusd_value;
-TUSD_API void tusd_value_destroy(tusd_value* v);
-/* View into the owned value; lifetime = the tusd_value's lifetime. */
-TUSD_API tusd_status tusd_value_get_view(const tusd_value* v,
-                                         tusd_value_view* out);
-TUSD_API tusd_status tusd_value_get_string(const tusd_value* v, tusd_sv* out);
-TUSD_API tusd_status tusd_value_get_token_array(const tusd_value* v,
-                                                tusd_strlist** out);
+typedef struct lightusd_value lightusd_value;
+LIGHTUSD_API void lightusd_value_destroy(lightusd_value* v);
+/* View into the owned value; lifetime = the lightusd_value's lifetime. */
+LIGHTUSD_API lightusd_status lightusd_value_get_view(const lightusd_value* v,
+                                         lightusd_value_view* out);
+LIGHTUSD_API lightusd_status lightusd_value_get_string(const lightusd_value* v, lightusd_sv* out);
+LIGHTUSD_API lightusd_status lightusd_value_get_token_array(const lightusd_value* v,
+                                                lightusd_strlist** out);
 
 /* Borrowed dictionary cursor (customData / assetInfo / customLayerData). */
-typedef struct tusd_dict_ref {
+typedef struct lightusd_dict_ref {
   const void* _dict; /* const next::Dict* */
-} tusd_dict_ref;
+} lightusd_dict_ref;
 
-TUSD_API int tusd_dict_is_valid(tusd_dict_ref d);
-TUSD_API size_t tusd_dict_size(tusd_dict_ref d);
+LIGHTUSD_API int lightusd_dict_is_valid(lightusd_dict_ref d);
+LIGHTUSD_API size_t lightusd_dict_size(lightusd_dict_ref d);
 /* Fetch entry i. Any out-param may be NULL. If the entry is itself a
- * dictionary, *subdict becomes valid and *val reports TUSD_TYPE_DICTIONARY.
+ * dictionary, *subdict becomes valid and *val reports LIGHTUSD_TYPE_DICTIONARY.
  * String-family entry values are returned via *sval. */
-TUSD_API tusd_status tusd_dict_entry(tusd_dict_ref d, size_t index,
-                                     tusd_sv* key, tusd_value_view* val,
-                                     tusd_sv* sval, tusd_dict_ref* subdict);
-TUSD_API tusd_status tusd_dict_find(tusd_dict_ref d, const char* key,
-                                    tusd_value_view* val, tusd_sv* sval,
-                                    tusd_dict_ref* subdict);
+LIGHTUSD_API lightusd_status lightusd_dict_entry(lightusd_dict_ref d, size_t index,
+                                     lightusd_sv* key, lightusd_value_view* val,
+                                     lightusd_sv* sval, lightusd_dict_ref* subdict);
+LIGHTUSD_API lightusd_status lightusd_dict_find(lightusd_dict_ref d, const char* key,
+                                    lightusd_value_view* val, lightusd_sv* sval,
+                                    lightusd_dict_ref* subdict);
 
 /* ============================================================
  * Stage: load / create / save
  * ============================================================ */
 
-typedef struct tusd_stage tusd_stage;
+typedef struct lightusd_stage lightusd_stage;
 
-typedef enum tusd_format {
-  TUSD_FORMAT_AUTO = 0,
-  TUSD_FORMAT_USDA = 1,
-  TUSD_FORMAT_USDC = 2,
-  TUSD_FORMAT_USDZ = 3
-} tusd_format;
+typedef enum lightusd_format {
+  LIGHTUSD_FORMAT_AUTO = 0,
+  LIGHTUSD_FORMAT_USDA = 1,
+  LIGHTUSD_FORMAT_USDC = 2,
+  LIGHTUSD_FORMAT_USDZ = 3
+} lightusd_format;
 
-typedef struct tusd_load_options {
-  uint32_t struct_size; /* = sizeof(tusd_load_options); enables ABI growth */
-  uint32_t format;      /* tusd_format; AUTO sniffs extension + content */
+typedef struct lightusd_load_options {
+  uint32_t struct_size; /* = sizeof(lightusd_load_options); enables ABI growth */
+  uint32_t format;      /* lightusd_format; AUTO sniffs extension + content */
   uint64_t max_memory;  /* per-input memory cap in bytes; 0 = unlimited */
   uint8_t composed;     /* 1: resolve composition arcs (LoadUSDComposed) */
   uint8_t load_payloads;
@@ -264,52 +264,52 @@ typedef struct tusd_load_options {
   const char* const* variant_sets;
   const char* const* variant_names;
   size_t variant_override_count;
-} tusd_load_options;
+} lightusd_load_options;
 
-TUSD_API void tusd_load_options_init(tusd_load_options* opts);
+LIGHTUSD_API void lightusd_load_options_init(lightusd_load_options* opts);
 
-TUSD_API tusd_status tusd_stage_load(const char* filename,
-                                     const tusd_load_options* opts, /* nullable */
-                                     tusd_stage** out);
+LIGHTUSD_API lightusd_status lightusd_stage_load(const char* filename,
+                                     const lightusd_load_options* opts, /* nullable */
+                                     lightusd_stage** out);
 /* Single-layer load from memory (no composition: no anchor for externals). */
-TUSD_API tusd_status tusd_stage_load_from_memory(const uint8_t* data,
+LIGHTUSD_API lightusd_status lightusd_stage_load_from_memory(const uint8_t* data,
                                                  size_t size,
-                                                 const tusd_load_options* opts,
-                                                 tusd_stage** out);
+                                                 const lightusd_load_options* opts,
+                                                 lightusd_stage** out);
 /* Empty stage ready for authoring. */
-TUSD_API tusd_status tusd_stage_create(tusd_stage** out);
-TUSD_API void tusd_stage_destroy(tusd_stage* stage);
+LIGHTUSD_API lightusd_status lightusd_stage_create(lightusd_stage** out);
+LIGHTUSD_API void lightusd_stage_destroy(lightusd_stage* stage);
 
 /* Drain warnings accumulated by load (empty string when none). */
-TUSD_API tusd_status tusd_stage_take_warnings(tusd_stage* stage,
-                                              tusd_string** out);
+LIGHTUSD_API lightusd_status lightusd_stage_take_warnings(lightusd_stage* stage,
+                                              lightusd_string** out);
 
 /* Bumped by every structural mutation (define/remove prim); lets bindings
- * detect stale tusd_prim handles cheaply. */
-TUSD_API uint64_t tusd_stage_generation(const tusd_stage* stage);
+ * detect stale lightusd_prim handles cheaply. */
+LIGHTUSD_API uint64_t lightusd_stage_generation(const lightusd_stage* stage);
 
-typedef struct tusd_save_options {
+typedef struct lightusd_save_options {
   uint32_t struct_size;
-  uint32_t format; /* tusd_format; AUTO derives from the file extension */
-} tusd_save_options;
+  uint32_t format; /* lightusd_format; AUTO derives from the file extension */
+} lightusd_save_options;
 
-TUSD_API void tusd_save_options_init(tusd_save_options* opts);
+LIGHTUSD_API void lightusd_save_options_init(lightusd_save_options* opts);
 
-TUSD_API tusd_status tusd_stage_save(const tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_stage_save(const lightusd_stage* stage,
                                      const char* filename,
-                                     const tusd_save_options* opts /* nullable */);
-TUSD_API tusd_status tusd_stage_export_usda(const tusd_stage* stage,
-                                            tusd_string** out);
-/* Crate bytes; use tusd_string_view() for (data, len). */
-TUSD_API tusd_status tusd_stage_export_usdc(const tusd_stage* stage,
-                                            tusd_string** out);
+                                     const lightusd_save_options* opts /* nullable */);
+LIGHTUSD_API lightusd_status lightusd_stage_export_usda(const lightusd_stage* stage,
+                                            lightusd_string** out);
+/* Crate bytes; use lightusd_string_view() for (data, len). */
+LIGHTUSD_API lightusd_status lightusd_stage_export_usdc(const lightusd_stage* stage,
+                                            lightusd_string** out);
 /* Flatten composition into a new single-layer stage. */
-TUSD_API tusd_status tusd_stage_flatten(const tusd_stage* stage,
-                                        tusd_stage** out);
+LIGHTUSD_API lightusd_status lightusd_stage_flatten(const lightusd_stage* stage,
+                                        lightusd_stage** out);
 /* Low-memory file->file flatten pipeline (lazy arrays passed through). */
-TUSD_API tusd_status tusd_flatten_file_to_usdc(const char* in_filename,
+LIGHTUSD_API lightusd_status lightusd_flatten_file_to_usdc(const char* in_filename,
                                                const char* out_filename,
-                                               const tusd_load_options* opts);
+                                               const lightusd_load_options* opts);
 
 /* ============================================================
  * Stage: metadata & stats
@@ -321,35 +321,35 @@ TUSD_API tusd_status tusd_flatten_file_to_usdc(const char* in_filename,
  *   "endTimeCode" (double), "framesPerSecond" (double),
  *   "kilogramsPerUnit" (double), "doc" (string), "comment" (string),
  *   "colorConfiguration" (asset), "colorManagementSystem" (token)
- * Get returns TUSD_ERR_NOT_FOUND for unknown keys. */
-TUSD_API tusd_status tusd_stage_get_metadata(const tusd_stage* stage,
+ * Get returns LIGHTUSD_ERR_NOT_FOUND for unknown keys. */
+LIGHTUSD_API lightusd_status lightusd_stage_get_metadata(const lightusd_stage* stage,
                                              const char* key,
-                                             tusd_value** out);
-TUSD_API tusd_status tusd_stage_set_metadata(tusd_stage* stage, const char* key,
-                                             tusd_type type, const void* data,
+                                             lightusd_value** out);
+LIGHTUSD_API lightusd_status lightusd_stage_set_metadata(lightusd_stage* stage, const char* key,
+                                             lightusd_type type, const void* data,
                                              size_t count);
 
-TUSD_API tusd_sv tusd_stage_default_prim_path(const tusd_stage* stage);
-TUSD_API tusd_status tusd_stage_set_default_prim(tusd_stage* stage,
+LIGHTUSD_API lightusd_sv lightusd_stage_default_prim_path(const lightusd_stage* stage);
+LIGHTUSD_API lightusd_status lightusd_stage_set_default_prim(lightusd_stage* stage,
                                                  const char* prim_name);
-TUSD_API tusd_status tusd_stage_sublayers(const tusd_stage* stage,
-                                          tusd_strlist** out);
-TUSD_API tusd_status tusd_stage_add_sublayer_path(tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_stage_sublayers(const lightusd_stage* stage,
+                                          lightusd_strlist** out);
+LIGHTUSD_API lightusd_status lightusd_stage_add_sublayer_path(lightusd_stage* stage,
                                                   const char* asset_path);
-TUSD_API tusd_status tusd_stage_custom_layer_data(const tusd_stage* stage,
-                                                  tusd_dict_ref* out);
+LIGHTUSD_API lightusd_status lightusd_stage_custom_layer_data(const lightusd_stage* stage,
+                                                  lightusd_dict_ref* out);
 
-typedef struct tusd_stage_stats {
+typedef struct lightusd_stage_stats {
   uint64_t prim_count;
   uint64_t layer_count;
   uint64_t total_properties;
   uint64_t memory_bytes;
-} tusd_stage_stats;
+} lightusd_stage_stats;
 
-TUSD_API tusd_status tusd_stage_get_stats(const tusd_stage* stage,
-                                          tusd_stage_stats* out);
-TUSD_API double tusd_stage_start_timecode(const tusd_stage* stage);
-TUSD_API double tusd_stage_end_timecode(const tusd_stage* stage);
+LIGHTUSD_API lightusd_status lightusd_stage_get_stats(const lightusd_stage* stage,
+                                          lightusd_stage_stats* out);
+LIGHTUSD_API double lightusd_stage_start_timecode(const lightusd_stage* stage);
+LIGHTUSD_API double lightusd_stage_end_timecode(const lightusd_stage* stage);
 
 /* ============================================================
  * Prim access & traversal
@@ -357,34 +357,34 @@ TUSD_API double tusd_stage_end_timecode(const tusd_stage* stage);
 
 /* By-value prim handle: mirrors next::UsdPrim. No allocation, no destroy.
  * Never touch the members directly. */
-typedef struct tusd_prim {
+typedef struct lightusd_prim {
   const void* _spec;
   const void* _layer;
   uint32_t _index;
   uint32_t _pad;
-} tusd_prim;
+} lightusd_prim;
 
-TUSD_API int tusd_prim_is_valid(tusd_prim p);
+LIGHTUSD_API int lightusd_prim_is_valid(lightusd_prim p);
 
-TUSD_API tusd_prim tusd_stage_pseudo_root(const tusd_stage* stage);
-TUSD_API tusd_prim tusd_stage_prim_at_path(const tusd_stage* stage,
+LIGHTUSD_API lightusd_prim lightusd_stage_pseudo_root(const lightusd_stage* stage);
+LIGHTUSD_API lightusd_prim lightusd_stage_prim_at_path(const lightusd_stage* stage,
                                            const char* path);
-TUSD_API tusd_prim tusd_stage_default_prim(const tusd_stage* stage);
-TUSD_API size_t tusd_stage_root_prim_count(const tusd_stage* stage);
-TUSD_API tusd_prim tusd_stage_root_prim(const tusd_stage* stage, size_t index);
-TUSD_API size_t tusd_stage_prim_count(const tusd_stage* stage);
+LIGHTUSD_API lightusd_prim lightusd_stage_default_prim(const lightusd_stage* stage);
+LIGHTUSD_API size_t lightusd_stage_root_prim_count(const lightusd_stage* stage);
+LIGHTUSD_API lightusd_prim lightusd_stage_root_prim(const lightusd_stage* stage, size_t index);
+LIGHTUSD_API size_t lightusd_stage_prim_count(const lightusd_stage* stage);
 
-TUSD_API tusd_sv tusd_prim_name(tusd_prim p);
-TUSD_API tusd_sv tusd_prim_type_name(tusd_prim p);
-TUSD_API tusd_sv tusd_prim_path(tusd_prim p);
+LIGHTUSD_API lightusd_sv lightusd_prim_name(lightusd_prim p);
+LIGHTUSD_API lightusd_sv lightusd_prim_type_name(lightusd_prim p);
+LIGHTUSD_API lightusd_sv lightusd_prim_path(lightusd_prim p);
 /* 0 = def, 1 = over, 2 = class */
-TUSD_API uint8_t tusd_prim_specifier(tusd_prim p);
-TUSD_API int tusd_prim_is_active(tusd_prim p);
+LIGHTUSD_API uint8_t lightusd_prim_specifier(lightusd_prim p);
+LIGHTUSD_API int lightusd_prim_is_active(lightusd_prim p);
 
-TUSD_API tusd_prim tusd_prim_parent(tusd_prim p);
-TUSD_API size_t tusd_prim_child_count(tusd_prim p);
-TUSD_API tusd_prim tusd_prim_child(tusd_prim p, size_t index);
-TUSD_API tusd_prim tusd_prim_child_by_name(tusd_prim p, const char* name);
+LIGHTUSD_API lightusd_prim lightusd_prim_parent(lightusd_prim p);
+LIGHTUSD_API size_t lightusd_prim_child_count(lightusd_prim p);
+LIGHTUSD_API lightusd_prim lightusd_prim_child(lightusd_prim p, size_t index);
+LIGHTUSD_API lightusd_prim lightusd_prim_child_by_name(lightusd_prim p, const char* name);
 
 /* ============================================================
  * Properties / attributes (read)
@@ -392,98 +392,98 @@ TUSD_API tusd_prim tusd_prim_child_by_name(tusd_prim p, const char* name);
 
 /* Property flags (mirror next::PropSlot flag bits). */
 enum {
-  TUSD_PROP_CUSTOM = 0x0001,
-  TUSD_PROP_UNIFORM = 0x0002,
-  TUSD_PROP_TIMESAMPLED = 0x0004,
-  TUSD_PROP_CONNECTION = 0x0008,
-  TUSD_PROP_RELATIONSHIP = 0x0010,
-  TUSD_PROP_ARRAY = 0x0020
+  LIGHTUSD_PROP_CUSTOM = 0x0001,
+  LIGHTUSD_PROP_UNIFORM = 0x0002,
+  LIGHTUSD_PROP_TIMESAMPLED = 0x0004,
+  LIGHTUSD_PROP_CONNECTION = 0x0008,
+  LIGHTUSD_PROP_RELATIONSHIP = 0x0010,
+  LIGHTUSD_PROP_ARRAY = 0x0020
 };
 
-TUSD_API size_t tusd_prim_property_count(tusd_prim p);
-TUSD_API tusd_sv tusd_prim_property_name(tusd_prim p, size_t index);
-TUSD_API uint16_t tusd_prim_property_flags_at(tusd_prim p, size_t index);
-TUSD_API int tusd_prim_has_property(tusd_prim p, const char* name);
-TUSD_API uint16_t tusd_prim_property_flags(tusd_prim p, const char* name);
+LIGHTUSD_API size_t lightusd_prim_property_count(lightusd_prim p);
+LIGHTUSD_API lightusd_sv lightusd_prim_property_name(lightusd_prim p, size_t index);
+LIGHTUSD_API uint16_t lightusd_prim_property_flags_at(lightusd_prim p, size_t index);
+LIGHTUSD_API int lightusd_prim_has_property(lightusd_prim p, const char* name);
+LIGHTUSD_API uint16_t lightusd_prim_property_flags(lightusd_prim p, const char* name);
 /* Declared USD type name (e.g. "color3f", "float[]"); empty if unrecorded. */
-TUSD_API tusd_sv tusd_prim_property_type_name(tusd_prim p, const char* name);
+LIGHTUSD_API lightusd_sv lightusd_prim_property_type_name(lightusd_prim p, const char* name);
 
 /* Zero-copy default-value view (materializes lazy crate arrays in place,
- * thread-safely). TUSD_ERR_NOT_FOUND if the property or its default value is
+ * thread-safely). LIGHTUSD_ERR_NOT_FOUND if the property or its default value is
  * absent. */
-TUSD_API tusd_status tusd_attr_get(tusd_prim p, const char* name,
-                                   tusd_value_view* out);
+LIGHTUSD_API lightusd_status lightusd_attr_get(lightusd_prim p, const char* name,
+                                   lightusd_value_view* out);
 /* String / token / asset-path scalar defaults. */
-TUSD_API tusd_status tusd_attr_get_string(tusd_prim p, const char* name,
-                                          tusd_sv* out);
+LIGHTUSD_API lightusd_status lightusd_attr_get_string(lightusd_prim p, const char* name,
+                                          lightusd_sv* out);
 /* Token/string array defaults (owned list, one call). */
-TUSD_API tusd_status tusd_attr_get_token_array(tusd_prim p, const char* name,
-                                               tusd_strlist** out);
+LIGHTUSD_API lightusd_status lightusd_attr_get_token_array(lightusd_prim p, const char* name,
+                                               lightusd_strlist** out);
 
 /* Property metadata by key. Supported keys: "interpolation", "elementSize",
  * "colorSpace", "displayName", "displayGroup", "doc", "hidden", "renderType",
  * "connectability", "bindMaterialAs", "weight", "customData" (dictionary).
- * TUSD_ERR_NOT_FOUND when the key was not authored. */
-TUSD_API tusd_status tusd_attr_metadata(tusd_prim p, const char* name,
-                                        const char* key, tusd_value** out);
-TUSD_API tusd_status tusd_attr_custom_data(tusd_prim p, const char* name,
-                                           tusd_dict_ref* out);
+ * LIGHTUSD_ERR_NOT_FOUND when the key was not authored. */
+LIGHTUSD_API lightusd_status lightusd_attr_metadata(lightusd_prim p, const char* name,
+                                        const char* key, lightusd_value** out);
+LIGHTUSD_API lightusd_status lightusd_attr_custom_data(lightusd_prim p, const char* name,
+                                           lightusd_dict_ref* out);
 
-TUSD_API size_t tusd_attr_connection_count(tusd_prim p, const char* name);
-TUSD_API tusd_sv tusd_attr_connection(tusd_prim p, const char* name,
+LIGHTUSD_API size_t lightusd_attr_connection_count(lightusd_prim p, const char* name);
+LIGHTUSD_API lightusd_sv lightusd_attr_connection(lightusd_prim p, const char* name,
                                       size_t index);
 
 /* Composition-time evaluation (follows connections, samples time). */
-TUSD_API tusd_status tusd_attr_eval(const tusd_stage* stage, tusd_prim p,
+LIGHTUSD_API lightusd_status lightusd_attr_eval(const lightusd_stage* stage, lightusd_prim p,
                                     const char* name, double time,
-                                    tusd_value** out);
+                                    lightusd_value** out);
 
-TUSD_API tusd_status tusd_prim_local_transform(tusd_prim p, double time,
+LIGHTUSD_API lightusd_status lightusd_prim_local_transform(lightusd_prim p, double time,
                                                double out16[16]);
-TUSD_API tusd_status tusd_prim_world_transform(const tusd_stage* stage,
-                                               tusd_prim p, double time,
+LIGHTUSD_API lightusd_status lightusd_prim_world_transform(const lightusd_stage* stage,
+                                               lightusd_prim p, double time,
                                                double out16[16]);
 
 /* ============================================================
  * Time samples
  * ============================================================ */
 
-TUSD_API int tusd_attr_has_timesamples(tusd_prim p, const char* name);
-TUSD_API size_t tusd_attr_timesample_count(tusd_prim p, const char* name);
+LIGHTUSD_API int lightusd_attr_has_timesamples(lightusd_prim p, const char* name);
+LIGHTUSD_API size_t lightusd_attr_timesample_count(lightusd_prim p, const char* name);
 /* Copy up to `cap` sample times into out. Returns total count via return
  * value regardless of cap (call with cap=0, out=NULL to size). */
-TUSD_API size_t tusd_attr_timesample_times(tusd_prim p, const char* name,
+LIGHTUSD_API size_t lightusd_attr_timesample_times(lightusd_prim p, const char* name,
                                            double* out, size_t cap);
 /* Zero-copy view of sample `index` (sorted by time). */
-TUSD_API tusd_status tusd_attr_timesample_at(tusd_prim p, const char* name,
+LIGHTUSD_API lightusd_status lightusd_attr_timesample_at(lightusd_prim p, const char* name,
                                              size_t index, double* time,
-                                             tusd_value_view* out);
+                                             lightusd_value_view* out);
 /* Interpolated value at `time` (owned). interp_mode: 0=held, 1=linear. */
-TUSD_API tusd_status tusd_attr_interpolate(tusd_prim p, const char* name,
+LIGHTUSD_API lightusd_status lightusd_attr_interpolate(lightusd_prim p, const char* name,
                                            double time, uint8_t interp_mode,
-                                           tusd_value** out);
+                                           lightusd_value** out);
 
 /* ============================================================
  * Relationships
  * ============================================================ */
 
-TUSD_API size_t tusd_prim_relationship_count(tusd_prim p);
-TUSD_API tusd_status tusd_prim_relationship_names(tusd_prim p,
-                                                  tusd_strlist** out);
-TUSD_API int tusd_prim_has_relationship(tusd_prim p, const char* name);
-TUSD_API size_t tusd_rel_target_count(tusd_prim p, const char* name);
-TUSD_API tusd_sv tusd_rel_target(tusd_prim p, const char* name, size_t index);
+LIGHTUSD_API size_t lightusd_prim_relationship_count(lightusd_prim p);
+LIGHTUSD_API lightusd_status lightusd_prim_relationship_names(lightusd_prim p,
+                                                  lightusd_strlist** out);
+LIGHTUSD_API int lightusd_prim_has_relationship(lightusd_prim p, const char* name);
+LIGHTUSD_API size_t lightusd_rel_target_count(lightusd_prim p, const char* name);
+LIGHTUSD_API lightusd_sv lightusd_rel_target(lightusd_prim p, const char* name, size_t index);
 
 /* ============================================================
  * Variants
  * ============================================================ */
 
-TUSD_API size_t tusd_prim_variant_set_count(tusd_prim p);
-TUSD_API tusd_sv tusd_prim_variant_set_name(tusd_prim p, size_t set_index);
-TUSD_API size_t tusd_variant_count(tusd_prim p, const char* set_name);
-TUSD_API tusd_sv tusd_variant_name(tusd_prim p, const char* set_name,
+LIGHTUSD_API size_t lightusd_prim_variant_set_count(lightusd_prim p);
+LIGHTUSD_API lightusd_sv lightusd_prim_variant_set_name(lightusd_prim p, size_t set_index);
+LIGHTUSD_API size_t lightusd_variant_count(lightusd_prim p, const char* set_name);
+LIGHTUSD_API lightusd_sv lightusd_variant_name(lightusd_prim p, const char* set_name,
                                    size_t index);
-TUSD_API tusd_sv tusd_variant_selection(tusd_prim p, const char* set_name);
+LIGHTUSD_API lightusd_sv lightusd_variant_selection(lightusd_prim p, const char* set_name);
 
 /* ============================================================
  * Prim metadata
@@ -492,12 +492,12 @@ TUSD_API tusd_sv tusd_variant_selection(tusd_prim p, const char* set_name);
 /* Key-based prim metadata. Supported keys: "active" (bool), "hidden" (bool),
  * "instanceable" (bool), "kind" (token), "doc" (string), "comment" (string),
  * "displayName" (string), "apiSchemas" (token[]).
- * TUSD_ERR_NOT_FOUND when unauthored / unknown. */
-TUSD_API tusd_status tusd_prim_get_metadata(tusd_prim p, const char* key,
-                                            tusd_value** out);
-TUSD_API tusd_status tusd_prim_custom_data(tusd_prim p, tusd_dict_ref* out);
-TUSD_API tusd_status tusd_prim_asset_info(tusd_prim p, tusd_dict_ref* out);
-TUSD_API tusd_sv tusd_prim_kind(tusd_prim p);
+ * LIGHTUSD_ERR_NOT_FOUND when unauthored / unknown. */
+LIGHTUSD_API lightusd_status lightusd_prim_get_metadata(lightusd_prim p, const char* key,
+                                            lightusd_value** out);
+LIGHTUSD_API lightusd_status lightusd_prim_custom_data(lightusd_prim p, lightusd_dict_ref* out);
+LIGHTUSD_API lightusd_status lightusd_prim_asset_info(lightusd_prim p, lightusd_dict_ref* out);
+LIGHTUSD_API lightusd_sv lightusd_prim_kind(lightusd_prim p);
 
 /* ============================================================
  * Authoring (path-addressed; all take the stage write lock and, when
@@ -505,91 +505,91 @@ TUSD_API tusd_sv tusd_prim_kind(tusd_prim p);
  * ============================================================ */
 
 /* specifier: 0=def, 1=over, 2=class */
-TUSD_API tusd_status tusd_stage_define_prim(tusd_stage* stage, const char* path,
+LIGHTUSD_API lightusd_status lightusd_stage_define_prim(lightusd_stage* stage, const char* path,
                                             const char* type_name, /* nullable */
                                             uint8_t specifier,
-                                            tusd_prim* out /* nullable */);
-TUSD_API tusd_status tusd_stage_remove_prim(tusd_stage* stage, const char* path);
+                                            lightusd_prim* out /* nullable */);
+LIGHTUSD_API lightusd_status lightusd_stage_remove_prim(lightusd_stage* stage, const char* path);
 
 /* Author a full typed value in ONE call.
  * - POD types: `data` points at `count` elements of `type` (count > 1 or
  *   is_array != 0 authors an array; count == 1 && !is_array a scalar).
- * - TUSD_TYPE_STRING/TOKEN/ASSET_PATH scalar: data = const char* (NUL-term).
- * `flags` = TUSD_PROP_* to OR onto the property (custom/uniform). */
-TUSD_API tusd_status tusd_attr_set(tusd_stage* stage, const char* prim_path,
-                                   const char* name, tusd_type type,
+ * - LIGHTUSD_TYPE_STRING/TOKEN/ASSET_PATH scalar: data = const char* (NUL-term).
+ * `flags` = LIGHTUSD_PROP_* to OR onto the property (custom/uniform). */
+LIGHTUSD_API lightusd_status lightusd_attr_set(lightusd_stage* stage, const char* prim_path,
+                                   const char* name, lightusd_type type,
                                    uint8_t is_array, const void* data,
                                    size_t count, uint16_t flags);
-TUSD_API tusd_status tusd_attr_set_token_array(tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_attr_set_token_array(lightusd_stage* stage,
                                                const char* prim_path,
                                                const char* name,
-                                               tusd_type type, /* TOKEN or STRING */
+                                               lightusd_type type, /* TOKEN or STRING */
                                                const char* const* items,
                                                size_t count, uint16_t flags);
-TUSD_API tusd_status tusd_attr_set_timesample(tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_attr_set_timesample(lightusd_stage* stage,
                                               const char* prim_path,
                                               const char* name, double time,
-                                              tusd_type type, uint8_t is_array,
+                                              lightusd_type type, uint8_t is_array,
                                               const void* data, size_t count);
-/* Set property metadata by key (same keys as tusd_attr_metadata; value
- * encoding as in tusd_attr_set). */
-TUSD_API tusd_status tusd_attr_set_metadata(tusd_stage* stage,
+/* Set property metadata by key (same keys as lightusd_attr_metadata; value
+ * encoding as in lightusd_attr_set). */
+LIGHTUSD_API lightusd_status lightusd_attr_set_metadata(lightusd_stage* stage,
                                             const char* prim_path,
                                             const char* name, const char* key,
-                                            tusd_type type, const void* data,
+                                            lightusd_type type, const void* data,
                                             size_t count);
-TUSD_API tusd_status tusd_attr_add_connection(tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_attr_add_connection(lightusd_stage* stage,
                                               const char* prim_path,
                                               const char* name,
                                               const char* target);
 /* Author a value block (`= None`). */
-TUSD_API tusd_status tusd_attr_block(tusd_stage* stage, const char* prim_path,
+LIGHTUSD_API lightusd_status lightusd_attr_block(lightusd_stage* stage, const char* prim_path,
                                      const char* name);
-TUSD_API tusd_status tusd_attr_remove(tusd_stage* stage, const char* prim_path,
+LIGHTUSD_API lightusd_status lightusd_attr_remove(lightusd_stage* stage, const char* prim_path,
                                       const char* name);
 
-TUSD_API tusd_status tusd_rel_add_target(tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_rel_add_target(lightusd_stage* stage,
                                          const char* prim_path,
                                          const char* rel_name,
                                          const char* target);
-TUSD_API tusd_status tusd_rel_set_targets(tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_rel_set_targets(lightusd_stage* stage,
                                           const char* prim_path,
                                           const char* rel_name,
                                           const char* const* targets,
                                           size_t count);
-TUSD_API tusd_status tusd_rel_remove(tusd_stage* stage, const char* prim_path,
+LIGHTUSD_API lightusd_status lightusd_rel_remove(lightusd_stage* stage, const char* prim_path,
                                      const char* rel_name);
 
 /* Composition arcs. arc_type: 0=reference, 1=payload, 2=inherit,
  * 3=specialize. `asset_path` may be NULL/empty for internal arcs;
  * `target_prim_path` may be NULL for default-prim targeting. */
 enum {
-  TUSD_ARC_REFERENCE = 0,
-  TUSD_ARC_PAYLOAD = 1,
-  TUSD_ARC_INHERIT = 2,
-  TUSD_ARC_SPECIALIZE = 3
+  LIGHTUSD_ARC_REFERENCE = 0,
+  LIGHTUSD_ARC_PAYLOAD = 1,
+  LIGHTUSD_ARC_INHERIT = 2,
+  LIGHTUSD_ARC_SPECIALIZE = 3
 };
 
-TUSD_API tusd_status tusd_prim_add_arc(tusd_stage* stage, const char* prim_path,
+LIGHTUSD_API lightusd_status lightusd_prim_add_arc(lightusd_stage* stage, const char* prim_path,
                                        uint8_t arc_type,
                                        const char* asset_path,      /* nullable */
                                        const char* target_prim_path /* nullable */);
 
-/* Prim metadata setters (same keys as tusd_prim_get_metadata). */
-TUSD_API tusd_status tusd_prim_set_metadata(tusd_stage* stage,
+/* Prim metadata setters (same keys as lightusd_prim_get_metadata). */
+LIGHTUSD_API lightusd_status lightusd_prim_set_metadata(lightusd_stage* stage,
                                             const char* prim_path,
-                                            const char* key, tusd_type type,
+                                            const char* key, lightusd_type type,
                                             const void* data, size_t count);
 
 /* Variant authoring. */
-TUSD_API tusd_status tusd_prim_add_variant_set(tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_prim_add_variant_set(lightusd_stage* stage,
                                                const char* prim_path,
                                                const char* set_name);
-TUSD_API tusd_status tusd_prim_add_variant(tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_prim_add_variant(lightusd_stage* stage,
                                            const char* prim_path,
                                            const char* set_name,
                                            const char* variant_name);
-TUSD_API tusd_status tusd_prim_set_variant_selection(tusd_stage* stage,
+LIGHTUSD_API lightusd_status lightusd_prim_set_variant_selection(lightusd_stage* stage,
                                                      const char* prim_path,
                                                      const char* set_name,
                                                      const char* variant_name);

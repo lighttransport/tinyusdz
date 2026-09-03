@@ -39,7 +39,7 @@ Coverage of OpenUSD schema domains in lightusd.
 | Capsule_1 | concrete | done | Updated capsule with separate top/bottom radii |
 | VisibilityAPI | API (single) | done | |
 | GeomModelAPI | API (single) | done | |
-| BackPlateAPI | API (multiple) | next schema | OpenUSD 26.08 registry/validation, typed extraction, render-camera propagation, tusdrender color/alpha/depth compositing, and camera-space depth-tested GL/Vulkan raster display for every authored instance |
+| BackPlateAPI | API (multiple) | next schema | OpenUSD 26.08 registry/validation, typed extraction, render-camera propagation, lusdrender color/alpha/depth compositing, and camera-space depth-tested GL/Vulkan raster display for every authored instance |
 | MotionAPI | API (single) | done | |
 | PrimvarsAPI | API (non-applied) | done | |
 | XformCommonAPI | API (non-applied) | done | |

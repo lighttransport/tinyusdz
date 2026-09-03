@@ -169,7 +169,7 @@ struct TextureFit {
 };
 
 // "modest"|"default"|"aggressive"|"never"|"always"|"<N>[KMG]".
-// Suffixes match tusdview's ParseByteCount. Returns false on anything else.
+// Suffixes match lusdview's ParseByteCount. Returns false on anything else.
 inline bool ParseTextureFit(const std::string& text, TextureFit* out) {
   if (!out || text.empty()) return false;
   if (text == "modest") { *out = {TextureFitPolicy::Modest, 0}; return true; }

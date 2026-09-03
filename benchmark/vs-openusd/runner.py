@@ -48,10 +48,10 @@ def main():
     ap.add_argument("--iters", type=int, default=10)
     args = ap.parse_args()
 
-    tiny = os.path.join(args.build_dir, "bench_lightusd")
+    lightusd = os.path.join(args.build_dir, "bench_lightusd")
     pxr = os.path.join(args.build_dir, "bench_openusd")
-    if not os.path.exists(tiny):
-        sys.exit(f"missing {tiny}; build the harness first (see README.md)")
+    if not os.path.exists(lightusd):
+        sys.exit(f"missing {lightusd}; build the harness first (see README.md)")
     has_pxr = os.path.exists(pxr)
     if not has_pxr:
         print("note: bench_openusd not found, reporting lightusd only\n")
@@ -66,7 +66,7 @@ def main():
     for f in files:
         size_kb = os.path.getsize(f) / 1024.0
         print(f"=== {f} ({size_kb:.1f} KB, median of {args.iters} runs) ===")
-        t = run_bench(tiny, f, args.iters)
+        t = run_bench(lightusd, f, args.iters)
         p = run_bench(pxr, f, args.iters) if has_pxr else {}
         print(header)
         for op in OPS:

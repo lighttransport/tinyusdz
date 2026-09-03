@@ -164,7 +164,7 @@ references it — essential for the tens of thousands of repeated prefab
 references in Caldera.
 
 For cold-load profiling across Caldera districts, use
-`examples/tusdview/tests/run-caldera-matrix.sh`. It defaults to the main
+`examples/lusdview/tests/run-caldera-matrix.sh`. It defaults to the main
 super-terrain, two season sub-scenes, chem factory, hotel, capital cliffs, and
 phosphate-mine cliffs, and writes a TSV summary while keeping the dataset
 outside the repository:
@@ -172,7 +172,7 @@ outside the repository:
 ```sh
 CALDERA_ROOT=/mnt/disk1/data/caldera \
   TIMEOUT_SECS=180 \
-  examples/tusdview/tests/run-caldera-matrix.sh
+  examples/lusdview/tests/run-caldera-matrix.sh
 ```
 
 Set `SCENES_FILE` to a newline-delimited custom scene list. The harness forces
@@ -181,7 +181,7 @@ composition, render-prim collection, geometry estimation, first useful frame,
 and full-upload timings separately.
 
 To inventory every USD layer, including generated geometry and support layers,
-run `examples/tusdview/tests/run-caldera-inventory.sh`. It performs bounded,
+run `examples/lusdview/tests/run-caldera-inventory.sh`. It performs bounded,
 parallel parse-only probes and writes one TSV row per file with its class,
 parse time, peak RSS, and parsed stage bytes. Use the inventory to select
 composed-root candidates for the full viewer matrix; leaf geometry files are
@@ -209,7 +209,7 @@ large-scene-load <scene.usd[a]> [--mode=none|all|budget] [--budget-mb=N]
 ### 2.5.1 ALab per-element geometry, textures, and procedurals
 
 Before loading the complete ALab set, representative elements were measured
-individually from `<asset-root>/alab/_merged_ALab` with `tusdview --next`,
+individually from `<asset-root>/alab/_merged_ALab` with `lusdview --next`,
 `--load-payloads`, the `alab` large-scene profile, one headless Vulkan frame at
 time 1004, and `--timing`. Geometry-only cases use the modelling fragment;
 full cases use the entity layer, which adds surfacing/lighting and filesystem
@@ -299,11 +299,11 @@ curve (**5 curves, 68,293,393 tessellated samples**). Curves that are only
 procedural placeholders (authored counts but no authored points or clip owner)
 are omitted without a false conversion warning.
 
-The same composed wrapper was also exercised through `tusdrender`'s next
+The same composed wrapper was also exercised through `lusdrender`'s next
 loader with CPU `-rtPreview`: it resolved the clip-backed data and built **10
 curve strands**, with no missing-asset or curve-conversion diagnostics. The
 Vulkan LightRT bridge does not expose the CUDA analytic curve primitive types,
-so `tusdrender -vk/-vkr` now builds the same round-linear LightRT curve scene
+so `lusdrender -vk/-vkr` now builds the same round-linear LightRT curve scene
 and tessellates it at the Vulkan upload boundary. The Vulkan curve-only smoke
 run rendered the same **10 curve strands** through the RTX GPU triangle path.
 This preserves GPU rendering for mixed triangle/round-curve scenes too;
@@ -314,7 +314,7 @@ exceeds the current Vulkan upload/engine budget after tessellation.
 The same GPU upload bridge now covers `UsdGeomPoints`: point widths become
 low-cost round point spheres, while authored point normals become double-sided
 disc geometry. This is used by the Vulkan, HIP, and D3D triangle backends. The
-minimal public regression fixture `tests/usda/tusdrender-points.usda` renders
+minimal public regression fixture `tests/usda/lusdrender-points.usda` renders
 on the NVIDIA Vulkan path as **160 GPU triangles**. In the LightRT path,
 authored-normal points are retained as analytic disk/oval records for CUDA,
 HIP, and Vulkan; points without normals retain the bounded sphere proxy. The
@@ -327,16 +327,16 @@ now reads positions, scales, orientations, opacity, and DC spherical-harmonic
 radiance, mapping each covariance ellipsoid to a batched oriented ellipse
 upload. A full triangleized upload reaches **15,314,240 triangles** and exceeds
 the current LightRT Vulkan engine/upload budget. An explicit
-`TUSDR_GAUSSIAN_MAX=N` budget is available for diagnosis; even a 10,000-splat
+`LUSDR_GAUSSIAN_MAX=N` budget is available for diagnosis; even a 10,000-splat
 ALab load still failed Vulkan engine creation in this run. The default does not
 silently truncate the asset.
 
-### 2.6.1 Rendering Caldera (tusdrender + tusdview, NVIDIA RTX 5060 Ti)
+### 2.6.1 Rendering Caldera (lusdrender + lusdview, NVIDIA RTX 5060 Ti)
 
 Both viewers compose Caldera through the `next` loader (`LoadUSDComposed`,
 payloads eager), which handles its `..`-relative payload paths and variant LOD.
 The **default Tydra loader rejects Caldera** ("Unsafe asset path" on the
-`..`-relative payloads), so tusdview must use `--next`.
+`..`-relative payloads), so lusdview must use `--next`.
 
 **Scene facts.** The default (root-authored) LOD is `districtLod = proxy`
 (12.67 M default-purpose triangles + ~26 M `purpose = guide` breadcrumb/endpoint
@@ -347,18 +347,18 @@ useless** — frame a scene camera instead (`layers/cameras.usd`:
 most cameras are `map_`-prefixed (`map_capital_square`, not `capital_square`);
 a name that doesn't match **silently falls back to auto-fit** (the useless
 whole-island shot). List them with
-`build/tusdcat layers/cameras.usd | grep 'def Camera'`. The guide Points
+`build/lusdcat layers/cameras.usd | grep 'def Camera'`. The guide Points
 triangulate into huge planes that engulf the camera, so they must be hidden
 (both viewers hide `guide` by default).
 
-**tusdrender** (ray tracing) — renders the proxy correctly on every backend at
+**lusdrender** (ray tracing) — renders the proxy correctly on every backend at
 1280×720, `~4–5 GiB` RSS:
 
 ```sh
 T=tests; M=<asset-root>/caldera/caldera.usda
-./build/tools/tusdrender/tusdrender $M cald_cpu.png -rtPreview -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14
-./build/tools/tusdrender/tusdrender $M cald_vk.png  -vk  -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU compute trace
-./build/tools/tusdrender/tusdrender $M cald_vkr.png -vkr -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU ray query
+./build/tools/lusdrender/lusdrender $M cald_cpu.png -rtPreview -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14
+./build/tools/lusdrender/lusdrender $M cald_vk.png  -vk  -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU compute trace
+./build/tools/lusdrender/lusdrender $M cald_vkr.png -vkr -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU ray query
 # full LOD: NOT  -variant districtLod=full  (no-op — root authors per-district proxy). See §2.6.2 (wrapper layer).
 ```
 
@@ -368,15 +368,15 @@ districts at the origin; they now reuse the CPU path's world-space,
 purpose-filtered, masked collection. (Native instances are not yet emitted on
 the GPU path — negligible for Caldera: ~29 K of 12.70 M tris.)
 
-**tusdview** (`--next`) — frame a scene camera with the new `--camera` flag:
+**lusdview** (`--next`) — frame a scene camera with the new `--camera` flag:
 
 ```sh
-./build/tusdview --headless --next --backend gl --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # best shading
-./build/tusdview --headless --next --backend vk --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # raster
+./build/lusdview --headless --next --backend gl --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # best shading
+./build/lusdview --headless --next --backend vk --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # raster
 ```
 
 - `--camera <name>` resolves the named USD Camera's world pose from the `--next`
-  stage and drives the orbit rig (tusdview otherwise auto-fits the whole scene
+  stage and drives the orbit rig (lusdview otherwise auto-fits the whole scene
   and ignores USD cameras).
 - The **GL** backend renders the district cleanly (buildings, terrain, the mine
   tank). The **VK rasterizer** renders the geometry correctly but with flat
@@ -385,18 +385,18 @@ the GPU path — negligible for Caldera: ~29 K of 12.70 M tris.)
   `normalize(vec3(0))` NaN in `mesh.vert` that clipped every zero-normal mesh
   (the `--next` flat preview stores zero normals); before the fix `--next`
   rasterized **nothing** on VK (even plain suzanne).
-- tusdview's 30 M default `--max-tris` budget **truncates** Caldera; raise it
+- lusdview's 30 M default `--max-tris` budget **truncates** Caldera; raise it
   (`--max-tris 40000000`) to load the whole proxy (the log prints `truncated`).
 
-**Known limitations (follow-ups).** ~~tusdview's VK ray-query (`--rt`) is
+**Known limitations (follow-ups).** ~~lusdview's VK ray-query (`--rt`) is
 blank on Caldera~~ — **fixed**: the RT TLAS included *every* USD purpose, so
 Caldera's ~26 M-tri `guide` breadcrumb planes (hidden in raster) engulfed the
 camera; the TLAS now skips purposes hidden in the UI and the mine district
 ray-traces correctly (see §2.8 for the measured recipe). The VK-raster flat
-shading still wants the smooth-normal + headlight treatment the tusdrender
+shading still wants the smooth-normal + headlight treatment the lusdrender
 preview already uses. For full LOD, see §2.6.2.
 
-### 2.6.1-a Island element composition and tusdview timings
+### 2.6.1-a Island element composition and lusdview timings
 
 The following table records each partial element under
 `<asset-root>/island/usd/elements/*/element.usda`. Each run used the `next`
@@ -410,8 +410,8 @@ variants. `Parse/source ms` is the next-core source-discovery and layer-load
 phase; `Compose s` is the composed-stage rebuild. `Extract s` combines point-
 instancer, traversal, points/curves, native-instance, render-prim, and
 post-extraction phases. `Convert s` is mesh flatten/batch conversion, and
-`Load total s` is tusdview's finalize total. `GPU upload s` and `Present ms`
-come from `TUSDVIEW_TIME_UPLOAD=1 TUSDVIEW_TIME_FRAME=1`.
+`Load total s` is lusdview's finalize total. `GPU upload s` and `Present ms`
+come from `LUSDVIEW_TIME_UPLOAD=1 LUSDVIEW_TIME_FRAME=1`.
 
 The initial smoke pass selected the NVIDIA RTX 5060 Ti for every element. The
 detailed timing pass below ran on Vulkan llvmpipe after the NVIDIA kernel driver
@@ -523,7 +523,7 @@ ISLAND=<asset-root>/island/usd/island.usda
 ```
 
 For interactive prefab timing, use
-`examples/tusdview/tests/run-large-scene-prefab-benchmark.sh`. It reports both
+`examples/lusdview/tests/run-large-scene-prefab-benchmark.sh`. It reports both
 the first useful frame and the full upload/presentation marker from `--timing`.
 The benchmark is opt-in because production scene assets are external.
 Set `PAYLOAD_MODE=defer PREVIEW_CACHE=off` for cold-load measurements; override
@@ -543,7 +543,7 @@ For comparisons between commits/branches:
 ### 2.6.2 Full LOD (`districtLod = full`) — per-shot, not whole-island
 
 **Whole-island full LOD does not fit, and the wall is host RAM, not VRAM.**
-Both viewers (and every tusdrender backend, including `-vk`/`-vkr`) *eagerly
+Both viewers (and every lusdrender backend, including `-vk`/`-vkr`) *eagerly
 compose all 45 districts' full payloads into host-RAM arrays and build a single
 in-memory triangle soup before anything is uploaded to the GPU.* On a 62 GiB
 host, promoting all districts to `full` climbs steadily during composition and
@@ -586,14 +586,14 @@ Render the wrapper exactly like the scene, framing the matching camera:
 
 ```sh
 W=caldera_mine_full.usda   # the wrapper above
-# tusdrender CPU ray tracing:
-./build/tools/tusdrender/tusdrender $W mine_cpu.png -rtPreview \
+# lusdrender CPU ray tracing:
+./build/tools/lusdrender/lusdrender $W mine_cpu.png -rtPreview \
     -camera phospate_mine_overview -w 1280 -height 720 -maxMem 45 -stats
-# tusdrender GPU ray query (hide guide: 'default' must be in the visible list):
-./build/tools/tusdrender/tusdrender $W mine_vkr.png -vkr \
+# lusdrender GPU ray query (hide guide: 'default' must be in the visible list):
+./build/tools/lusdrender/lusdrender $W mine_vkr.png -vkr \
     -camera phospate_mine_overview -purpose default,render,proxy -w 1280 -height 720 -maxMem 45
-# tusdview VK rasterizer (raise --max-tris; full mine is ~88 M unique / ~184 M effective tris):
-./build/tusdview --headless --next --backend vk --camera phospate_mine_overview \
+# lusdview VK rasterizer (raise --max-tris; full mine is ~88 M unique / ~184 M effective tris):
+./build/lusdview --headless --next --backend vk --camera phospate_mine_overview \
     --max-tris 60000000 --frames 4 --screenshot mine_vk.ppm $W
 ```
 
@@ -602,20 +602,20 @@ rest proxy):
 
 | Path | Result | Peak host RSS | Notes |
 |------|--------|--------------|-------|
-| tusdrender `-rtPreview` (CPU) | ✅ full detail | 11.9 GiB | 29.8 M default-purpose tris (vs 12.67 M proxy), 35 M unique |
-| tusdrender `-vkr` (GPU ray query) | ✅ full detail | 9.1 GiB | 35.3 M tris traced on the GPU; BLAS fits 16 GiB VRAM |
-| tusdview `--backend vk` (raster) | ✅ full detail | 15.3 GiB | 162.8 M tris drawn, 57 k instances; richest result |
-| tusdview `--rt` (VK ray query) | ⚠️ blank | 11.4 GiB | 30 M-tri cap truncates away the hero geometry (only guide lines remain) — the §2.6.1 large-scene VK-RT limitation |
+| lusdrender `-rtPreview` (CPU) | ✅ full detail | 11.9 GiB | 29.8 M default-purpose tris (vs 12.67 M proxy), 35 M unique |
+| lusdrender `-vkr` (GPU ray query) | ✅ full detail | 9.1 GiB | 35.3 M tris traced on the GPU; BLAS fits 16 GiB VRAM |
+| lusdview `--backend vk` (raster) | ✅ full detail | 15.3 GiB | 162.8 M tris drawn, 57 k instances; richest result |
+| lusdview `--rt` (VK ray query) | ⚠️ blank | 11.4 GiB | 30 M-tri cap truncates away the hero geometry (only guide lines remain) — the §2.6.1 large-scene VK-RT limitation |
 
 The mine at full LOD reveals geometry the proxy lacks — lattice crane towers,
 domed silos, palm trees, detailed buildings, the circular tank, rocks and
-pipework. Note tusdview counts ~88 M unique tris for the full mine (more than
-tusdrender's 35 M) because the `--next` converter expands instancing differently;
+pipework. Note lusdview counts ~88 M unique tris for the full mine (more than
+lusdrender's 35 M) because the `--next` converter expands instancing differently;
 its 30 M `--max-tris` default truncates heavily, so raise it for raster (which
 scales) but expect `--rt`/`--cuda` to stay capped on 16 GiB VRAM.
 
 **Per-district full-LOD gallery.** The same per-shot recipe (one district to
-`full`, frame its camera, `tusdrender -rtPreview`) renders any district at full
+`full`, frame its camera, `lusdrender -rtPreview`) renders any district at full
 detail within the host budget. Every district measured so far fits comfortably
 as a single promotion (18–50 M default-purpose tris, ≤21 GiB host RSS) — it is
 only the whole *island* at full that does not fit (see top of this section).
@@ -643,12 +643,12 @@ changes:
 | `map_airfield` (`map_airfield_waiting_room`) | 36.9 M | ![airfield waiting room](images/caldera/caldera-airfield-waiting-room-full.jpg) |
 | `map_arsenal` (`map_arsenal_overview`) | 24.1 M | ![arsenal overview](images/caldera/caldera-arsenal-overview-full.jpg) |
 
-(1280×720 `tusdrender -rtPreview -purpose default,render,proxy` shots, downscaled
+(1280×720 `lusdrender -rtPreview -purpose default,render,proxy` shots, downscaled
 to 512 px JPEG for the repo. The colored speckles in some frames are neighboring
 districts still at `proxy`, drawn with their `displayColor`. The default-tri
 count is per *district*, so it is identical across that district's cameras.)
 
-#### Per-district `tusdview --next` composition measurements
+#### Per-district `lusdview --next` composition measurements
 
 These measurements promote one district to `districtLod = "full"` in a stronger
 wrapper layer and leave the other 44 districts at their authored `proxy` LOD.
@@ -657,7 +657,7 @@ GB, including all USD and texture assets). Each run used `--load-payloads`,
 `--large-scene-profile balanced`, one headless Vulkan frame at time 1, and
 `--timing`. `Extract` is the sum of next-core extraction/collection phases;
 `Load total` is the finalize total; `Upload` and `Present` are from
-`TUSDVIEW_TIME_UPLOAD=1 TUSDVIEW_TIME_FRAME=1`.
+`LUSDVIEW_TIME_UPLOAD=1 LUSDVIEW_TIME_FRAME=1`.
 
 The NVIDIA RTX 5060 Ti smoke backend was unavailable during this run
 (`nvidia-smi` could not communicate with the driver), so the detailed timing
@@ -727,9 +727,9 @@ production streaming is generating these child wrappers from the 114 authored
 children and retaining the parent capital transform when assembling the
 results.
 
-### 2.6.3 `-lodStream`: automatic view-dependent district LOD (tusdrender)
+### 2.6.3 `-lodStream`: automatic view-dependent district LOD (lusdrender)
 
-The per-shot wrappers above pick the `full` district by hand. `tusdrender
+The per-shot wrappers above pick the `full` district by hand. `lusdrender
 -lodStream` does it automatically: a cheap **proxy pass** composes the scene,
 scores each district by **screen-space importance**, then promotes the
 top-scoring districts to `full` (via a generated wrapper layer) until a host-RSS
@@ -749,10 +749,10 @@ first at `align=0.98`.)
 ```sh
 M=<asset-root>/caldera/caldera.usda
 # CPU ray tracing, default budgets (host = 50% of MemAvailable):
-./build/tools/tusdrender/tusdrender $M out.png -lodStream -rtPreview \
+./build/tools/lusdrender/lusdrender $M out.png -lodStream -rtPreview \
     -camera map_capital_square -purpose default,render,proxy -w 1280 -height 720 -stats
 # GPU ray query also caps by VRAM (default = 50% of the device-local heap):
-./build/tools/tusdrender/tusdrender $M out.png -lodStream -vkr -camera map_capital_square ...
+./build/tools/lusdrender/lusdrender $M out.png -lodStream -vkr -camera map_capital_square ...
 ```
 
 Flags: `-maxMem <GiB>` (host budget, else 50% MemAvailable), `-maxVram <GiB>`
@@ -801,10 +801,10 @@ frame), the chosen set is composed in a single soup/BLAS (no eviction), and the
 cost charge ignores per-district size variation — so on a tight machine lower
 `-lodDistrictMem` (fewer promotions) or set `-maxMem` to a higher explicit cap.
 
-### 2.6.4 Realtime island preview: GPU-budget LOD + robust auto-framing (tusdview)
+### 2.6.4 Realtime island preview: GPU-budget LOD + robust auto-framing (lusdview)
 
-`-lodStream` (above) is a tusdrender, ray-tracing, load-time selection. The
-interactive **tusdview** rasterizer hits a different wall on a fully assembled
+`-lodStream` (above) is a lusdrender, ray-tracing, load-time selection. The
+interactive **lusdview** rasterizer hits a different wall on a fully assembled
 scene. The Moana island (`<asset-root>/island`) composes via `--next` to
 **83,801 draws / 42.9 M instances / 56.5 M unique tris**, and after instance
 dedup the geometry itself fits comfortably in 16 GiB VRAM (instance transforms
@@ -829,7 +829,7 @@ M=<asset-root>/island/usd/island.usda
 # 40 GiB host cgroup; keep the 4000 biggest meshes full, cap full VRAM at 16 GiB,
 # merge the other ~79.8 k meshes into one bbox proxy:
 systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
-  ./build/tusdview --headless --next --backend vk \
+  ./build/lusdview --headless --next --backend vk \
     --max-tris 80000000 --max-gpu-mem 16 --max-draw-meshes 4000 \
     --frames 2 --screenshot island.ppm $M
 ```
@@ -868,7 +868,7 @@ on the merged tail), and the full-mesh set is chosen by prototype size, not
 screen-space importance — a per-view promotion pass (à la `-lodStream`) is the
 follow-up.
 
-### 2.6.5 Per-frame view-dependent raster LOD (`--raster-lod`, tusdview)
+### 2.6.5 Per-frame view-dependent raster LOD (`--raster-lod`, lusdview)
 
 §2.6.4's GPU-budget LOD is a **load-time** decision: it bounds upload/VRAM by
 fixing one full/proxy split for the whole session. `--raster-lod` is the
@@ -902,7 +902,7 @@ M=<asset-root>/island/usd/island.usda
 # Whole island, VK raster, robust auto-frame; collapse anything under 48 px to a
 # box, drop anything under 1 px:
 systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
-  ./build/tusdview --headless --next --backend vk \
+  ./build/lusdview --headless --next --backend vk \
     --raster-lod --raster-lod-cull-px 1 --raster-lod-full-px 48 \
     --max-tris 80000000 --frames 4 --screenshot island.ppm $M
 ```
@@ -935,9 +935,9 @@ This is a per-frame raster analogue of the RT path's view-dependent LOD
 dither), box proxies are flat-shaded (no materials/textures), and `full-px` is a
 single global threshold rather than a per-prototype importance score.
 
-### 2.6.6 Realtime large-scene profiles (`--large-scene-profile`, tusdview)
+### 2.6.6 Realtime large-scene profiles (`--large-scene-profile`, lusdview)
 
-`tusdview --large-scene-profile off|auto|caldera|island|alab` is a preset layer
+`lusdview --large-scene-profile off|auto|caldera|island|alab` is a preset layer
 over the existing Vulkan large-scene flags. It is meant for repeatable Caldera,
 Island, and ALab smoke/performance runs without memorizing the full flag list:
 profiles enable `--next`, prefer the Vulkan backend, enable raster/RT LOD, set
@@ -965,29 +965,29 @@ Scene-specific defaults:
 Optional local harness:
 
 ```sh
-TUSDVIEW=./build_ninja/tusdview \
+LUSDVIEW=./build_ninja/lusdview \
 CALDERA=/path/to/caldera.usda \
 ISLAND=/path/to/island.usda \
 ALAB=/path/to/alab.usda \
-  bash examples/tusdview/tests/run-large-scene-profiles.sh
+  bash examples/lusdview/tests/run-large-scene-profiles.sh
 
-TUSDRENDER=./build_ninja/tools/tusdrender/tusdrender \
+LUSDRENDER=./build_ninja/tools/lusdrender/lusdrender \
 CALDERA=/path/to/caldera.usda \
 ISLAND=/path/to/island.usda \
 ALAB=/path/to/alab.usda \
-  bash tools/tusdrender/tests/run-large-scene-profiles.sh
+  bash tools/lusdrender/tests/run-large-scene-profiles.sh
 ```
 
 The harnesses skip scenes whose environment variables are unset, write one image
 and one log per scene, and check that the resolved profile settings appeared in
 the log. Each writes `summary.tsv` under `OUT_DIR` with profile, asset, exit
-code, elapsed seconds, image bytes, and log path. Use `TUSDVIEW_EXTRA_ARGS` or
-`TUSDRENDER_EXTRA_ARGS` to add per-run flags such as `--rt`, `--mode albedo`,
-`-stats`, or `-gpuShade preview`. `TUSDVIEW_SCENE_TIMEOUT` defaults to `10m` and
+code, elapsed seconds, image bytes, and log path. Use `LUSDVIEW_EXTRA_ARGS` or
+`LUSDRENDER_EXTRA_ARGS` to add per-run flags such as `--rt`, `--mode albedo`,
+`-stats`, or `-gpuShade preview`. `LUSDVIEW_SCENE_TIMEOUT` defaults to `10m` and
 bounds each viewer scene run. They are intentionally not required ctests because
 these large assets are not tracked in the repository.
 
-### 2.6.7 Ray-traced full island (tusdview `--hip`, AMD RX 9070 XT)
+### 2.6.7 Ray-traced full island (lusdview `--hip`, AMD RX 9070 XT)
 
 §2.6.4 is a *rasterizer* preview: it merges the long tail into a flat box-proxy so
 the per-mesh draw path stays cheap. The **HIP ray tracer** (`--hip`) takes the
@@ -1001,7 +1001,7 @@ over 30.0 M unique triangles (≈17.5 B effective), no LOD, no proxy.
 M=<asset-root>/island/usd/island.usda
 # Full island, HIP ray tracing, framed on the hero shot camera.
 # --max-instances 0 = unlimited (the 16 M default truncates by mesh order).
-./build/tusdview --headless --next --hip \
+./build/lusdview --headless --next --hip \
   --camera shotCam --max-instances 0 --rt-samples 2 \
   --frames 4 --screenshot island.ppm $M
 ```
@@ -1035,10 +1035,10 @@ Notes and gotchas:
 - **What makes it feasible.** Two earlier fixes: (1) the CPU scene build is
   parallelized (`rt_scene_build.cc` — per-mesh geometry, per-instance transforms,
   and TLAS all run multithreaded; byte-identical to the serial path); and (2) for
-  a headless `--hip` screenshot tusdview **skips the rasterizer's `uploadScene` /
+  a headless `--hip` screenshot lusdview **skips the rasterizer's `uploadScene` /
   per-frame `renderViewportScene`** (`rtOwnsScreenshot_`), which would otherwise
   spend minutes culling 42.9 M instances for a frame that is immediately
-  discarded. Set `TUSDVIEW_RT_TIMING=1` to print the `[rt_scene_build]` phase
+  discarded. Set `LUSDVIEW_RT_TIMING=1` to print the `[rt_scene_build]` phase
   breakdown and the retained host residency split (geometry, BVH/instances,
   analytic points, materials, textures, and volumes).
 
@@ -1047,7 +1047,7 @@ profile instead of allowing legacy point/curve triangle proxies to expand
 without a limit:
 
 ```sh
-./build/tusdview --headless --next --cuda --load-payloads \
+./build/lusdview --headless --next --cuda --load-payloads \
   --large-scene-profile instance-heavy --max-tris 20000000 \
   --max-instances 2000000 --vram-budget 12 --rt-samples 1 \
   --frames 1 --screenshot island-cuda.png $M
@@ -1128,12 +1128,12 @@ duplication, mesh compatibility, and hierarchy depth.
 
 GPU-backend review outcome (NVIDIA RTX 5060 Ti 16 GiB, driver-reported
 15.57 GiB device-local budget). Every row below was measured with
-`benchmark/tusdrender/bench_vram.sh` (true VRAM: `nvidia-smi` 100 ms peak polling minus
+`benchmark/lusdrender/bench_vram.sh` (true VRAM: `nvidia-smi` 100 ms peak polling minus
 idle baseline — earlier "VRAM" numbers in this doc that came from RSS are
 host RAM, not VRAM). The **6 GiB rows additionally completed unchanged under
-a 10 GiB VRAM ballast** (`benchmark/tusdrender/vram_ballast.py 10`), i.e. with only
+a 10 GiB VRAM ballast** (`benchmark/lusdrender/vram_ballast.py 10`), i.e. with only
 ~5.5 GiB of the card actually available. Cameras: island `shotCam`, caldera
-`phospate_mine_overview`. tusdview headless default 1469×1284; tusdrender
+`phospate_mine_overview`. lusdview headless default 1469×1284; lusdrender
 1280×720.
 
 Perf/VRAM changes this round (all image-neutral — byte-identical or
@@ -1144,29 +1144,29 @@ pass the cross-backend tolerance test):
   7153→5408 MiB **and** 49.6→31.7 s (the compaction rebuild batches BLAS
   builds in ≤512-proto waves — two submits per wave instead of one per
   prototype).
-- **tusdview Caldera `--rt` fixed** (purpose-filtered TLAS, see §2.6.1):
+- **lusdview Caldera `--rt` fixed** (purpose-filtered TLAS, see §2.6.1):
   BLAS build 1907→901 ms, RT VRAM 2.73→1.23 GiB, mine district now traces.
-- **tusdview device-local MDI instance mirror** (auto when
-  VK_EXT_memory_budget shows ≥20 % headroom; `TUSDVIEW_MDI_DEVLOCAL=0/1`
+- **lusdview device-local MDI instance mirror** (auto when
+  VK_EXT_memory_budget shows ≥20 % headroom; `LUSDVIEW_MDI_DEVLOCAL=0/1`
   forces): island no-LOD 843→766 ms/frame. No effect with `--raster-lod`
   (that frame is primitive-bound: 55 M drawn tris of non-instanced unique
   geometry, 63 visible instances). Costs 1.37 GB VRAM on island — the auto
   headroom check keeps it off in tight-VRAM situations.
-- **tusdrender flat GPU paths**: `-vkr` skips the unused CPU BVH (15.4→6.6 s
+- **lusdrender flat GPU paths**: `-vkr` skips the unused CPU BVH (15.4→6.6 s
   on caldera), `-vk` builds it threaded (15.2→8.5 s); shade/write is
   row-parallel; `-stats` prints per-stage `[gpu-stats]` timings.
 - **CUDA/HIP `--rt-samples`**: device-side accumulation, one readback at the
   end (was one `cuMemcpyDtoH` + host byte-loop per sample).
-- Live VRAM: tusdview logs `vram=used/budget GiB` in `[present]`/`[vk_rt]`
+- Live VRAM: lusdview logs `vram=used/budget GiB` in `[present]`/`[vk_rt]`
   lines (VK_EXT_memory_budget).
 
-**tusdview** (`T=./build/tusdview`, `ISL=<asset-root>/island/usd/island.usda`,
+**lusdview** (`T=./build/lusdview`, `ISL=<asset-root>/island/usd/island.usda`,
 `CAL=<asset-root>/caldera/caldera.usda`):
 
 | Config | Recipe | VRAM peak | Steady frame | Fits |
 |---|---|---|---|---|
 | Island raster, 15 GiB | `--next --camera shotCam` (mirror auto-on) | 1.55 GiB | 766 ms | 15 GiB |
-| Island raster, 6 GiB | `--next --camera shotCam --max-gpu-mem 4 --raster-lod --raster-lod-full-px 32 --raster-lod-cull-px 3` + `TUSDVIEW_MDI_DEVLOCAL=0` | 0.25 GiB | ~362 ms | both |
+| Island raster, 6 GiB | `--next --camera shotCam --max-gpu-mem 4 --raster-lod --raster-lod-full-px 32 --raster-lod-cull-px 3` + `LUSDVIEW_MDI_DEVLOCAL=0` | 0.25 GiB | ~362 ms | both |
 | Island RT, 15 GiB | `--next --rt --rt-lod --rt-lod-full-px 96 --rt-lod-cull-px 1 --camera shotCam` | 4.29 GiB | — | both |
 | Island RT, 6 GiB | `--next --rt --rt-lod --rt-lod-full-px 48 --rt-lod-cull-px 3 --camera shotCam` | 4.19 GiB | — | both (ballast-verified) |
 | Caldera raster | `--next --camera phospate_mine_overview --max-tris 40000000` | 0.18 GiB | — | both |
@@ -1177,17 +1177,17 @@ pass the cross-backend tolerance test):
 
 Notes: the island RT rt-lod px knobs barely move VRAM (4.19 vs 4.29 GiB —
 the grid + LOD-bound BLAS set is the resident cost); both fit 6 GiB but with
-little margin — the P2 tusdview BLAS-compaction port is the next lever. The
+little margin — the P2 lusdview BLAS-compaction port is the next lever. The
 caldera CUDA cliff between `--max-tris 13000000` (5.53 GiB, marginal) and
 `8000000` (1.98 GiB) is one huge district mesh crossing the cap; the 8 M cap
 renders the same visible content at this camera (identical image stats).
 
-**tusdrender** (`B=./build/tools/tusdrender/tusdrender`):
+**lusdrender** (`B=./build/tools/lusdrender/lusdrender`):
 
 | Config | Recipe | VRAM peak | Wall | Fits |
 |---|---|---|---|---|
-| Island full set, 15 GiB | `TUSDR_INST_BUDGET=45000000 $B $ISL out.png -vkInstanced -camera shotCam -w 1280 -height 720 -maxMem 24` | 5.41 GiB | 31.7 s | 15 GiB (6 GiB too marginal) |
-| Island, 6 GiB | `TUSDR_INST_BUDGET=16777216 LRT_VK_TLAS_SLICE=8388608 $B $ISL out.png -vkInstanced -rtLod -rtLodFullPx 48 -rtLodCullPx 3 -camera shotCam -w 1280 -height 720 -maxMem 14` | 0.40 GiB | 19.3 s | both (ballast-verified) |
+| Island full set, 15 GiB | `LUSDR_INST_BUDGET=45000000 $B $ISL out.png -vkInstanced -camera shotCam -w 1280 -height 720 -maxMem 24` | 5.41 GiB | 31.7 s | 15 GiB (6 GiB too marginal) |
+| Island, 6 GiB | `LUSDR_INST_BUDGET=16777216 LRT_VK_TLAS_SLICE=8388608 $B $ISL out.png -vkInstanced -rtLod -rtLodFullPx 48 -rtLodCullPx 3 -camera shotCam -w 1280 -height 720 -maxMem 14` | 0.40 GiB | 19.3 s | both (ballast-verified) |
 | Caldera | `$B $CAL out.png -vkInstanced -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14` | 0.52 GiB | 5.8 s | both (ballast-verified) |
 
 Avoid flat `-vkr` on caldera when `-vkInstanced` works (0.95 vs 0.52 GiB);
@@ -1199,13 +1199,13 @@ full-set row is the compaction headline: 42.8 M instances now render in
 
 **Remaining follow-ons (P2, unimplemented):** device-local node/block buffers for
 the `-vk` compute path; tiled ray/hit dispatch; TLAS `PREFER_FAST_BUILD` for
-settle rebuilds; a `--vram-budget <GiB>` umbrella flag for **tusdrender**
-(tusdview has it: `examples/tusdview/main.cc` — the one number the whole budget
+settle rebuilds; a `--vram-budget <GiB>` umbrella flag for **lusdrender**
+(lusdview has it: `examples/lusdview/main.cc` — the one number the whole budget
 tree descends from); raster LOD for *non-instanced* meshes (the island
 `--raster-lod` frame is bound by 55 M non-instanced drawn tris — the instanced
 side is already solved). The two headline follow-ons from the 2026-07 round are
-now done: the **tusdview BLAS-compaction port** (`TUSDVIEW_BLAS_COMPACT`,
-`examples/tusdview/vk/vk_renderer.cc`), and the island RT 4.2 → est. ~2.7 GiB
+now done: the **lusdview BLAS-compaction port** (`LUSDVIEW_BLAS_COMPACT`,
+`examples/lusdview/vk/vk_renderer.cc`), and the island RT 4.2 → est. ~2.7 GiB
 saving it was expected to deliver.
 
 ### 2.9 Host-memory matrix: weld ratio + texture cap (`--next`, 2026-07-11)
@@ -1216,7 +1216,7 @@ exist to catch two `--next` regressions no unit test can see — a weld key that
 over-splits (the memory win silently evaporates) and a texture cap that stops
 bounding decode. Xvfb + NVIDIA RTX 5060 Ti.
 
-Deferred-payload profiles (`examples/tusdview/tests/run-large-scene-profiles.sh`,
+Deferred-payload profiles (`examples/lusdview/tests/run-large-scene-profiles.sh`,
 all three PASS). Each resolves `backend=vk --next=on --raster-lod=on --rt-lod=on
 --max-gpu-mem=8.0` — the 8 GiB is `ComputeResourceBudget`'s half-of-16-GiB, not
 a hardcode:
@@ -1246,10 +1246,10 @@ in this configuration and still fits the 30 GiB host headroom.
 CALDERA=<asset-root>/caldera/caldera.usda \
 ISLAND=<asset-root>/island/usd/island.usda \
 ALAB=<asset-root>/alab/_merged_ALab/entry.usda \
-  bash examples/tusdview/tests/run-large-scene-profiles.sh
+  bash examples/lusdview/tests/run-large-scene-profiles.sh
 
 # The full-payload run (weld + texture cap), per scene:
-/usr/bin/time -v ./build/tusdview --headless --large-scene-profile procedural-heavy \
+/usr/bin/time -v ./build/lusdview --headless --large-scene-profile procedural-heavy \
   --load-payloads --frames 1 --screenshot alab.ppm \
   <asset-root>/alab/_merged_ALab/entry.usda
 # watch: 'next: weld N vertices from M points (Kx)'
@@ -1276,9 +1276,9 @@ batches keep the conservative scene box, since their vertices are a single pose)
 | `--raster-lod` on, before | 40.3 M | 100 801 / 100 801 |
 | `--raster-lod` on, after | **15.2 M** | 84 400 / 100 801 |
 
-Regression test: `tusdview-noninstanced-lod`.
+Regression test: `lusdview-noninstanced-lod`.
 
-### 2.11 tusdrender `-vk` compute trace: ray tiling, and the device-local BVH
+### 2.11 lusdrender `-vk` compute trace: ray tiling, and the device-local BVH
 that did not pay (2026-07-11)
 
 `lrt_vk_trace_scene` allocated the whole frame's rays and hits up front —
@@ -1307,7 +1307,7 @@ into VRAM spends ~1.9 GiB of the budget this work exists to reclaim. The
 reasoning still holds for a GPU whose traversal *is* bandwidth-bound, hence the
 flag — but measure before enabling it.
 
-Regression test: `tool-tusdrender-vk-ray-tiling` (4 tiles must be byte-identical
+Regression test: `tool-lusdrender-vk-ray-tiling` (4 tiles must be byte-identical
 to one whole-frame dispatch).
 
 ### 2.12 TLAS `PREFER_FAST_BUILD`: measured, rejected (2026-07-12)
@@ -1319,8 +1319,8 @@ instance array, not the TLAS. `PREFER_FAST_BUILD` would save ~1 ms of a rebuild
 that only happens when the camera settles, and charge for it on every
 accumulation frame afterwards.
 
-Left as a lever (`TUSDVIEW_TLAS_FAST_BUILD=1`) for a GPU or scene where the
-balance differs. `TUSDVIEW_RT_TIMING=1` now prints the AS-build time on its own
+Left as a lever (`LUSDVIEW_TLAS_FAST_BUILD=1`) for a GPU or scene where the
+balance differs. `LUSDVIEW_RT_TIMING=1` now prints the AS-build time on its own
 line, so the trade can be re-measured rather than re-argued.
 
 ---
@@ -1536,7 +1536,7 @@ Two UE-specific path pathologies, and the fixes (commit `3f314f0be`):
   miss: strip the un-anchorable prefix (leading `../` runs, Windows drive,
   `/`), then retry progressively shorter path suffixes — longest first, down to
   the basename — against the search paths (`Assets/mesh.usd` matches under the
-  scene root). Default on; `tusdcat --no-asset-path-fallback` opts out. Each
+  scene root). Default on; `lusdcat --no-asset-path-fallback` opts out. Each
   rebase is surfaced as a deduped warning, and total misses warn once per path.
 - **Drive-prefixed paths** (`@F:/USD_Exports/...@`): with
   `allow_parent_relative_paths`, the security validator now demotes the drive
@@ -1544,12 +1544,12 @@ Two UE-specific path pathologies, and the fixes (commit `3f314f0be`):
   rebases it.
 
 The fallback lives in `AssetResolutionResolver::resolve()` so every consumer —
-tusdcat/tusdzconvert flatten, `CompositionGraph`, and the wasm in-memory
+lusdcat/lusdzconvert flatten, `CompositionGraph`, and the wasm in-memory
 resolver (browser folder upload) — inherits it with no duplicated logic.
 
 ## 5. USDZ conversion at scale (texture pipeline + wasm heap)
 
-Findings from converting multi-GB scene folders to USDZ (native `tusdzconvert`,
+Findings from converting multi-GB scene folders to USDZ (native `lusdzconvert`,
 the Node/wasm CLI, and headless-Chrome in-tab):
 
 ### 5.1 Texture re-encode parallelization (commit `627d0472b`)
@@ -1560,7 +1560,7 @@ PNG re-encode of hundreds of 2k textures was the wall-clock bottleneck
 - **Native**: texture packing runs in three phases — sequential dedupe/UDIM/
   asset reads → `ProcessTexture` on a `std::thread` pool → sequential archive
   naming/stats — byte-identical output to the sequential order.
-  `UsdzConvertOptions::num_threads` (0 = all cores), `tusdzconvert -numThreads`.
+  `UsdzConvertOptions::num_threads` (0 = all cores), `lusdzconvert -numThreads`.
   Pair with `-DLIGHTUSD_WITH_FPNGE=ON` to replace the scalar-fpng encoder
   (`FPNG_NO_SSE=1`). A 731-texture 2.5 GB scene: **33 s** vs 43 m 53 s via the
   sequential wasm CLI.
@@ -1643,11 +1643,11 @@ decode at parse/clone, no giant-string copy. The §2 bounded loader is still the
 path to use when geometry must stay on disk entirely; the difference here is that
 a *full* flatten no longer carries gratuitous peak overhead.
 
-### 6.1 Native `next_usdcat` vs current `tusdcat` (2026-06-29)
+### 6.1 Native `next_usdcat` vs current `lusdcat` (2026-06-29)
 
 The table below is a LightUSD-vs-LightUSD snapshot of the native full-compose
 path on the public large scenes. `next_usdcat` uses the `src/next` PCP engine and
-streams the flattened USDA directly to a `FILE*`; `tusdcat` is the current
+streams the flattened USDA directly to a `FILE*`; `lusdcat` is the current
 library pipeline. Both write USDA to `/dev/null` so the output text is generated
 but not stored on disk. The `next_usdcat` numbers use a Release next build with
 chunked value streaming in the ASCII writer.
@@ -1659,16 +1659,16 @@ Commands:
   build-next-release/next_usdcat -f -o /dev/null <root.usda>
 
 /usr/bin/time -v \
-  build_ninja/tusdcat -f --memstat --output-format=usda -o /dev/null <root.usda>
+  build_ninja/lusdcat -f --memstat --output-format=usda -o /dev/null <root.usda>
 ```
 
 For trusted scenes with individual referenced USD layers larger than the current
-512 MiB composition safety cap, current `tusdcat` has an explicit opt-in cap
+512 MiB composition safety cap, current `lusdcat` has an explicit opt-in cap
 relaxation:
 
 ```sh
 /usr/bin/time -v \
-  build_ninja/tusdcat -f --relax-asset-cap --memstat \
+  build_ninja/lusdcat -f --relax-asset-cap --memstat \
   --output-format=usda -o /dev/null <root.usda>
 ```
 
@@ -1676,13 +1676,13 @@ relaxation:
 `--max-composition-asset-mb=N` when a tighter scene-specific cap is preferred.
 The default remains the 512 MiB security-policy cap for untrusted inputs.
 
-| Scene | `next_usdcat` load+compose | `next_usdcat` total | `next_usdcat` max RSS | current `tusdcat` result |
+| Scene | `next_usdcat` load+compose | `next_usdcat` total | `next_usdcat` max RSS | current `lusdcat` result |
 |---|---:|---:|---:|---|
 | Caldera `caldera.usda` | 3.53 s | 9.71 s | 2.93 GiB | 1:46.7 total, 10.37 GiB max RSS |
 | Moana Island `island.usda` | 15.38 s | 43.42 s | 9.67 GiB | failed after 11.6 s: `xgGroundCover.usd` exceeds the 512 MiB per-asset cap |
 | ALab `ALab/entry.usda` | 0.33 s | 0.36 s | 62 MiB | not comparable: resolver missed a referenced ALab asset and built only a 43 KiB stage |
 
-With `--relax-asset-cap`, current `tusdcat` passes the Moana Island cap failure:
+With `--relax-asset-cap`, current `lusdcat` passes the Moana Island cap failure:
 the run completed composition in 8 iterations, wrote USDA to `/dev/null`, and
 reported Stage in-use memory of 7.23 GiB. The measured full current pipeline was
 9:09.98 elapsed with 30,416,912 KiB max RSS on a RelWithDebInfo build. The run is
@@ -1729,13 +1729,13 @@ memory from composition:
   build-next-release/next_usdcat -l <caldera-build>/caldera.flattened.usdc
 
 /usr/bin/time -v \
-  build_ninja/tusdcat -l --memstat <caldera-build>/caldera.flattened.usdc
+  build_ninja/lusdcat -l --memstat <caldera-build>/caldera.flattened.usdc
 ```
 
 | Input | Parser | Load/elapsed | Max RSS | Notes |
 |---|---|---:|---:|---|
 | `caldera.flattened.usdc` | `next_usdcat -l` | 2.57 s load / 3.26 s elapsed | 1.77 GiB | 53,972 prims; warns for unsupported string arrays |
-| `caldera.flattened.usdc` | `tusdcat -l --memstat` | 7.38 s elapsed | 3.34 GiB | Stage in-use memory 2.53 GiB; USDC parser peak 189.8 MiB |
+| `caldera.flattened.usdc` | `lusdcat -l --memstat` | 7.38 s elapsed | 3.34 GiB | Stage in-use memory 2.53 GiB; USDC parser peak 189.8 MiB |
 
 The current `next` reader is therefore faster and lower-memory on this crate
 parse (~2.3x faster elapsed, ~47 % lower max RSS). On the full Caldera
@@ -1850,18 +1850,18 @@ not disk I/O.
 
 ### 6.4 Gaussian splat coverage
 
-The next/tusdview loader recognizes the public
+The next/lusdview loader recognizes the public
 `ParticleField3DGaussianSplat` schema as a point-like render carrier. It
 retains the ALab payload's 2,274,589 positions, uses the largest scale as the
 raster billboard diameter, and converts the DC spherical-harmonic coefficient
 plus opacity for display. NVIDIA Vulkan headless capture was verified on the
-full ALab payload and on `tests/usda/tusdview-gaussian-splat.usda`.
+full ALab payload and on `tests/usda/lusdview-gaussian-splat.usda`.
 
-The native LightRT CPU ellipse primitive is now connected to tusdrender's next
+The native LightRT CPU ellipse primitive is now connected to lusdrender's next
 RT-preview collector. Gaussian-only stages build an analytic ellipse BVH and
 render without triangle conversion; quaternion roll is retained in the leaf
-representation. `TUSDR_GAUSSIAN_MAX` bounds diagnostic loads. Large fields are
-split into 262,144-splat LightRT chunks (`TUSDR_GAUSSIAN_CHUNK` overrides the
+representation. `LUSDR_GAUSSIAN_MAX` bounds diagnostic loads. Large fields are
+split into 262,144-splat LightRT chunks (`LUSDR_GAUSSIAN_CHUNK` overrides the
 size); CPU tracing visits every chunk, while Vulkan traces chunks sequentially
 and retains the nearest hit per ray. CUDA's serialized
 point path consumes the same ellipse/roll fields, and the Vulkan compute BVH now
@@ -1871,7 +1871,7 @@ triangles; CPU chunked tracing was verified on the full ALAB payload
 (1,914,278 non-transparent splats) at 15 chunks; Vulkan uses the same chunking
 when the NVIDIA driver is available.
 
-The tusdview carrier path retains Gaussian radii, normals, and major-axis
+The lusdview carrier path retains Gaussian radii, normals, and major-axis
 orientation. Its CUDA and Vulkan ray-tracing scene builders upload native
 ellipse records and traverse a dedicated analytic point BVH; no triangle proxy
 is emitted. The minimal fixture and the full ALab payload were captured on
@@ -1882,8 +1882,8 @@ CUDA now discards an analytic point hit when the triangle traversal found a
 nearer surface, keeping Gaussian occlusion behavior consistent with Vulkan,
 HIP, and LightRT.
 
-The tusdview RT builders split the analytic point BVH into bounded chunks while
-retaining one compact attribute stream. `TUSDVIEW_GAUSSIAN_CHUNK=N` controls the
+The lusdview RT builders split the analytic point BVH into bounded chunks while
+retaining one compact attribute stream. `LUSDVIEW_GAUSSIAN_CHUNK=N` controls the
 per-BVH point limit (default 262,144); CUDA, HIP, and Vulkan traverse every
 chunk and choose the nearest valid ellipse. This limits BVH construction
 working memory and avoids a monolithic point-BVH allocation on large fields.
@@ -1893,7 +1893,7 @@ the record and BVH/order staging sizes alongside the point/chunk counts,
 making GPU residency visible when tuning for an 8-GiB device.
 
 Large Gaussian fields no longer pass through the general `RenderPoints` copy
-path in tusdview. Their lazy numeric arrays are read as views and emitted as
+path in lusdview. Their lazy numeric arrays are read as views and emitted as
 bounded 64K-sample `DrawPointsCPU` chunks (configurable through
 `LoadOptions::pointChunkSamples`), avoiding a second full positions/scales
 allocation and allowing the renderer to consume the field as multiple bounded
@@ -1917,7 +1917,7 @@ carrier. Curve conversion similarly skips retaining authored control points in
 the viewer-only `RenderCurves` result after tessellation, removing another full
 control-point allocation while preserving the default library API behavior.
 
-Progressive `tusdview --next` loads now apply the same bounded producer queue to
+Progressive `lusdview --next` loads now apply the same bounded producer queue to
 non-mesh carriers: each Points/Gaussian chunk and each Curves carrier is handed
 to the renderer as soon as conversion produces it. The completed `DrawScene`
 retains only carrier metadata and bounds for selection/purpose controls, rather
@@ -1951,15 +1951,15 @@ the IBL baker's working buffers.
 Non-instanced round and flat curve strands use bounded native BVHs as well.
 Curve points are read through the lazy array-view path, and complete strands are
 packed into chunks instead of duplicating the full source array for each BVH.
-`TUSDR_CURVE_CHUNK=N` controls the segment limit (default 262,144); the CPU
+`LUSDR_CURVE_CHUNK=N` controls the segment limit (default 262,144); the CPU
 integrator checks every chunk and Vulkan tessellates each round-curve chunk at
-the upload boundary. Tusdrender builds those chunks one curve prim at a time,
+the upload boundary. Lusdrender builds those chunks one curve prim at a time,
 so a scene with many large curve prims does not accumulate a second
 scene-wide transformed point/radius stream before chunking. Authored points are
 consumed directly from lazy float views; only value-clip curves require a
 bounded per-prim materialized fallback. Direct curve chunks default to 262,144
 segments; instanced prototype BLASes retain a 1,048,576-segment default when
-the variable is unset, and both paths honor `TUSDR_CURVE_CHUNK=N`. In `-stats`
+the variable is unset, and both paths honor `LUSDR_CURVE_CHUNK=N`. In `-stats`
 mode, inconsistent
 `curveVertexCounts`/`points` data is reported as `rt skipped curves` with an
 invalid-data count rather than being silently partially rendered. Curve hit
@@ -1976,26 +1976,26 @@ the GPU upload batch instead of copied a second time; indexed meshes and
 partial chunks retain sparse remapping and validation.
 
 The flat next-loader mesh path uses the same bounded native-BVH policy. Mesh
-triangles are split at `TUSDR_TRIANGLE_CHUNK=N` (default 262,144), with global
+triangles are split at `LUSDR_TRIANGLE_CHUNK=N` (default 262,144), with global
 material, UV, color, and normal indices preserved across chunks. Shadow and
 primary rays visit all chunks; `-stats` reports aggregate chunk memory.
 The Vulkan flat upload path independently bounds device residency with
-`TUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144). It uploads/traces one BLAS/AS
+`LUSDR_GPU_TRIANGLE_CHUNK=N` (default 262,144). It uploads/traces one BLAS/AS
 at a time and reduces nearest hits before shading, so a large non-instanced
 scene does not require one monolithic 8-GiB GPU allocation.
 Vulkan Gaussian splats are represented by bounded analytic BVH chunks. If the
-point descriptor/node buffers cannot be allocated, tusdview reports the
+point descriptor/node buffers cannot be allocated, lusdview reports the
 allocation failure and falls back to camera-facing raster splats instead of
-binding null Vulkan buffers. `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB=N` forces a
+binding null Vulkan buffers. `LUSDVIEW_GAUSSIAN_GPU_BUDGET_MB=N` forces a
 point-buffer ceiling for regression tests; when available, the Vulkan memory
 budget is also used to leave 256 MiB of headroom.
 For raster camera-facing helper geometry, Vulkan uses fence-retired upload
 buffers of at most 262,144 vertices per draw range; ranges are kept in separate
 buffers until the frame completes, avoiding unsafe reuse of a buffer recorded
 by multiple draw calls; any reusable monolithic helper buffer is released when
-the chunked path is selected. `TUSDVIEW_VK_HELPER_CHUNK_VERTS=N` overrides the
+the chunked path is selected. `LUSDVIEW_VK_HELPER_CHUNK_VERTS=N` overrides the
 per-range limit for diagnostics and regression tests.
-The `tusdrender` next-loader reports retained texture count and resident bytes
+The `lusdrender` next-loader reports retained texture count and resident bytes
 in `-stats` (`rt textures: N (resident X MiB)`), including UDIM tiles and
 generated mip capacities. It also releases large, non-time-sampled Mesh,
 curve, Points, point-instancer, and Gaussian source arrays after extraction and
@@ -2006,18 +2006,18 @@ All GPU backends reject aggregate triangle counts above the 32-bit hit-ID
 limit before allocation, with an explicit diagnostic instead of truncating
 chunk offsets.
 
-For tusdview CUDA/HIP scene builds, `TUSDVIEW_RT_BUILD_THREADS=N` bounds
+For lusdview CUDA/HIP scene builds, `LUSDVIEW_RT_BUILD_THREADS=N` bounds
 geometry extraction concurrency (default `min(host_threads, 8)`). Assembly now
 moves each completed mesh's SoA into the final scene and releases the consumed
 per-mesh storage immediately. Geometry extraction and assembly run in bounded
-worker-sized batches; `TUSDVIEW_RT_BUILD_BATCH_MESHES=N` overrides the default
+worker-sized batches; `LUSDVIEW_RT_BUILD_BATCH_MESHES=N` overrides the default
 of twice the worker count when a tighter CPU-memory ceiling is needed. This
 avoids retaining intermediate geometry for the entire scene while later meshes
 are still waiting for assembly.
 Points and curve CPU fallback proxies are also split at
-`TUSDVIEW_RT_PROXY_CHUNK_TRIS=N` (default 262,144), so a large non-analytic
+`LUSDVIEW_RT_PROXY_CHUNK_TRIS=N` (default 262,144), so a large non-analytic
 field cannot create one monolithic proxy before RT batching begins.
-After a static HIP RT build, tusdview also releases the uploaded CPU carriers
+After a static HIP RT build, lusdview also releases the uploaded CPU carriers
 for Points, Curves, and decoded/compressed texture payloads; deformable scenes
 retain the arrays required for pose/refit updates.
 When a HIP build does retain triangle refit state, the uploaded Gaussian point
@@ -2030,10 +2030,10 @@ source textures out of the compact texel and descriptor buffers. This avoids
 retaining disconnected decoded images in the 8-GiB-class GPU path while
 preserving source-to-table remapping for materials, lights, UDIMs, and mip
 chains. The diagnostic reports source count, packed descriptor count, packed
-MiB, and skipped unused sources; `tusdview_lightrt_bridge_test` covers the
+MiB, and skipped unused sources; `lusdview_lightrt_bridge_test` covers the
 compaction and mip/UDIM mapping behavior.
 
-Tusdrender now keeps the shared texture-budget lease alive for every retained
+Lusdrender now keeps the shared texture-budget lease alive for every retained
 base image and generated mip chain. Mip storage is charged before allocation;
 when `-texBudgetMb` is full, the renderer retains the base level and reports
 `rt texture mip fallbacks` instead of temporarily exceeding the texture cap.
@@ -2041,7 +2041,7 @@ This matters for scenes with many materials because decoder-time budgeting
 alone otherwise released its reservation as soon as each temporary decode
 object went out of scope.
 
-Tusdview's pre-finalization texture budget also counts the complete retained
+Lusdview's pre-finalization texture budget also counts the complete retained
 CPU payload: base images, authored mip levels, and compressed payloads. The
 budget pass therefore cannot measure only level zero and then exceed the cap
 when mip/compression processing runs.
@@ -2049,12 +2049,12 @@ The native RT texture table now receives that same byte budget for Vulkan,
 CUDA, and HIP. Entries that cannot fit are mapped to the backend fallback
 texture with an explicit budget-rejected diagnostic, rather than allowing the
 RT staging buffer to grow beyond the scene budget.
-Vulkan tusdview also keeps this table across TLAS-only rebuilds (camera/LOD
+Vulkan lusdview also keeps this table across TLAS-only rebuilds (camera/LOD
 changes); only texture uploads, budget changes, scene replacement, or RT
 re-enable rebuild it. This avoids repeatedly decoding and repacking the same
 large texture set during interactive traversal.
 
-Tusdrender's Vulkan mesh-chunk path similarly releases each source mesh's
+Lusdrender's Vulkan mesh-chunk path similarly releases each source mesh's
 positions, normals, UVs, and indices immediately after that mesh has been
 copied into its bounded GPU upload batch. Only the per-triangle shading data
 needed after all chunk traces is retained. This reduces the peak from source
@@ -2062,7 +2062,7 @@ geometry plus chunk staging plus shading arrays to source geometry plus the
 accumulated shading arrays, without changing nearest-hit reduction.
 
 The same shared bounded chunk builder is used by the HIP/ROCm backend. When
-`TUSDR_GPU_TRIANGLE_CHUNK=N` is exceeded, HIP traces one chunk at a time and
+`LUSDR_GPU_TRIANGLE_CHUNK=N` is exceeded, HIP traces one chunk at a time and
 reduces nearest hits before CPU shading, releasing consumed source geometry in
 the same way. If ROCm is unavailable, the backend reports the runtime error
 and exits cleanly rather than silently producing an incomplete image.
@@ -2070,7 +2070,7 @@ The Direct3D 11 backend now follows the same bounded upload and nearest-hit
 reduction policy, so its single-dispatch implementation no longer requires a
 monolithic scene/BVH allocation.
 Ordinary `UsdGeomPoints` are accumulated into bounded disc/sphere mesh chunks
-for the triangle backends; `TUSDR_GPU_TRIANGLE_CHUNK` therefore bounds
+for the triangle backends; `LUSDR_GPU_TRIANGLE_CHUNK` therefore bounds
 point-cloud geometry objects and descriptor count instead of creating one GPU
 mesh per point. Authored-normal points use the LightRT analytic ellipse carrier
 when that primitive is available, avoiding triangle expansion and reducing
@@ -2089,18 +2089,18 @@ tessellation.
 The fallback collector now reads Gaussian attributes through lazy array views,
 so positions, scales, orientations, opacity, and SH data are not copied into
 five full temporary vectors before tessellation.
-Both tusdview and tusdrender avoid decoding an oversized compressed SH array
+Both lusdview and lusdrender avoid decoding an oversized compressed SH array
 when only its DC color is needed for preview; they report the skipped optional
 payload and use the neutral fallback color instead. Small and zero-copy SH
 arrays retain their authored color.
 It also applies opacity to the fallback color buckets and rejects non-finite or
 near-zero opacity samples, matching native ellipse filtering. Each color bucket
-is flushed at `TUSDR_GPU_TRIANGLE_CHUNK`, preventing HIP/ROCm and D3D11 from
+is flushed at `LUSDR_GPU_TRIANGLE_CHUNK`, preventing HIP/ROCm and D3D11 from
 retaining a single multi-million-triangle proxy for a large field. Gaussian
 fallback chunks omit redundant per-vertex normals and dummy UVs; the GPU
 flattener recomputes geometric normals from the retained positions.
 The native HIP/AMD path also preflights the complete Gaussian buffer footprint
-against `TUSDVIEW_GAUSSIAN_GPU_BUDGET_MB` or live `hipMemGetInfo` free memory
+against `LUSDVIEW_GAUSSIAN_GPU_BUDGET_MB` or live `hipMemGetInfo` free memory
 (with 256 MiB headroom), reporting a bounded error before partial device upload
 when the field cannot fit.
 

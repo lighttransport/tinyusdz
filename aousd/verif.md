@@ -356,7 +356,7 @@ This is the most complex area. LightUSD has composition support in `src/composit
 - Allowed file types: .usda, .usdc, .usd, .png, .jpg/.jpeg, .exr, .m4a, .mp3, .wav
 
 **Test strategy**:
-- **USDA**: roundtrip every spec feature through tusdcat; compare with pxrUSD usdcat output
+- **USDA**: roundtrip every spec feature through lusdcat; compare with pxrUSD usdcat output
 - **USDC**: binary roundtrip; verify bootstrap/TOC/section structure; version compatibility
 - **USDZ**: create and read archives; verify alignment; verify allowed file types
 
@@ -364,9 +364,9 @@ This is the most complex area. LightUSD has composition support in `src/composit
 
 ## Verification Methods
 
-### Method A: Roundtrip Comparison (tusdcat vs usdcat)
+### Method A: Roundtrip Comparison (lusdcat vs usdcat)
 ```bash
-USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
+USDCAT_PATH=~/local/USD/dist/bin/usdcat LUSDCAT_PATH=./build/lusdcat \
   bash tests/run-usdcat-compare.sh
 ```
 

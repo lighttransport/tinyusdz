@@ -181,7 +181,7 @@ class TraceManager {
   TraceManager(const TraceManager&) = delete;
   TraceManager& operator=(const TraceManager&) = delete;
 
-  void setEnabled(bool enabled) TUSDZ_REQUIRES_NOT(mutex_) {
+  void setEnabled(bool enabled) LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     enabled_ = enabled;
   }
@@ -191,7 +191,7 @@ class TraceManager {
   }
 
   // Enable/disable tracing for specific tag (and optionally subtag)
-  void setTagEnabled(const std::string& tag, bool enabled, const std::string& subtag = "") TUSDZ_REQUIRES_NOT(mutex_) {
+  void setTagEnabled(const std::string& tag, bool enabled, const std::string& subtag = "") LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     std::string key = tag;
     if (!subtag.empty()) {
@@ -201,7 +201,7 @@ class TraceManager {
   }
 
   // Check if a specific tag (and optionally subtag) is enabled
-  bool isTagEnabled(const std::string& tag, const std::string& subtag = "") const TUSDZ_REQUIRES_NOT(mutex_) {
+  bool isTagEnabled(const std::string& tag, const std::string& subtag = "") const LIGHTUSD_REQUIRES_NOT(mutex_) {
     if (!enabled_) return false;  // Global disable overrides everything
 
     MutexLockGuard lock(mutex_);
@@ -227,49 +227,49 @@ class TraceManager {
   }
 
   // Clear all per-tag settings
-  void clearTagSettings() TUSDZ_REQUIRES_NOT(mutex_) {
+  void clearTagSettings() LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     tag_enabled_map_.clear();
   }
 
   // Get all tag settings
-  std::unordered_map<std::string, bool> getTagSettings() const TUSDZ_REQUIRES_NOT(mutex_) {
+  std::unordered_map<std::string, bool> getTagSettings() const LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     return tag_enabled_map_;
   }
 
   // Set report format
-  void setReportFormat(TraceReportFormat format) TUSDZ_REQUIRES_NOT(mutex_) {
+  void setReportFormat(TraceReportFormat format) LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     report_format_ = format;
   }
 
   // Get report format
-  TraceReportFormat getReportFormat() const TUSDZ_REQUIRES_NOT(mutex_) {
+  TraceReportFormat getReportFormat() const LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     return report_format_;
   }
 
   // Set event logging mode
-  void setEventLogging(TraceEventLogging mode) TUSDZ_REQUIRES_NOT(mutex_) {
+  void setEventLogging(TraceEventLogging mode) LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     event_logging_ = mode;
   }
 
   // Get event logging mode
-  TraceEventLogging getEventLogging() const TUSDZ_REQUIRES_NOT(mutex_) {
+  TraceEventLogging getEventLogging() const LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     return event_logging_;
   }
 
   // Set log level for trace events
-  void setEventLogLevel(LogLevel level) TUSDZ_REQUIRES_NOT(mutex_) {
+  void setEventLogLevel(LogLevel level) LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     event_log_level_ = level;
   }
 
   // Get log level for trace events
-  LogLevel getEventLogLevel() const TUSDZ_REQUIRES_NOT(mutex_) {
+  LogLevel getEventLogLevel() const LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     return event_log_level_;
   }
@@ -330,7 +330,7 @@ class TraceManager {
     }
   }
 
-  void addRecord(const TraceRecord& record) TUSDZ_REQUIRES_NOT(mutex_) {
+  void addRecord(const TraceRecord& record) LIGHTUSD_REQUIRES_NOT(mutex_) {
     if (!isTagEnabled(record.tag, record.subtag)) return;
 
     MutexLockGuard lock(mutex_);
@@ -341,12 +341,12 @@ class TraceManager {
     records_by_tag_[key].push_back(record);
   }
 
-  void clearRecords() TUSDZ_REQUIRES_NOT(mutex_) {
+  void clearRecords() LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
     records_by_tag_.clear();
   }
 
-  void printSummary(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
+  void printSummary(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_) {
     if (report_format_ == TraceReportFormat::JSON) {
       printSummaryJSON(out);
     } else {
@@ -354,7 +354,7 @@ class TraceManager {
     }
   }
 
-  void printSummaryPlainText(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
+  void printSummaryPlainText(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
 
     out << "\n=== Trace Summary ===\n";
@@ -385,7 +385,7 @@ class TraceManager {
     out << "====================\n";
   }
 
-  void printSummaryJSON(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
+  void printSummaryJSON(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
 
     out << "{\n";
@@ -428,7 +428,7 @@ class TraceManager {
   }
 
   // Get detailed records in JSON format
-  void printDetailedJSON(std::ostream& out = std::cout) TUSDZ_REQUIRES_NOT(mutex_) {
+  void printDetailedJSON(std::ostream& out = std::cout) LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
 
     out << "{\n";
@@ -512,7 +512,7 @@ class TraceManager {
  public:
 
   std::vector<TraceRecord> getRecords(const std::string& tag,
-                                      const std::string& subtag = "") const TUSDZ_REQUIRES_NOT(mutex_) {
+                                      const std::string& subtag = "") const LIGHTUSD_REQUIRES_NOT(mutex_) {
     MutexLockGuard lock(mutex_);
 
     std::string key = tag;
@@ -579,156 +579,156 @@ class Trace {
 } // namespace logging
 } // namespace lightusd
 
-// TUSDZ_LOG_I: Log at INFO level (unless building with WASI)
+// LIGHTUSD_LOG_I: Log at INFO level (unless building with WASI)
 #if defined(__wasi__)
-#define TUSDZ_LOG_I(x)
+#define LIGHTUSD_LOG_I(x)
 #else
-#define TUSDZ_LOG_I(x)                                                          \
+#define LIGHTUSD_LOG_I(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Info)) {           \
-      std::ostringstream _tusdz_oss;                                            \
-      _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(lightusd::logging::LogLevel::Info, __FILE__,           \
-                         __func__, __LINE__, _tusdz_oss.str());                 \
+    auto &_lightusd_logger = lightusd::logging::Logger::getInstance();             \
+    if (_lightusd_logger.shouldLog(lightusd::logging::LogLevel::Info)) {           \
+      std::ostringstream _lightusd_oss;                                            \
+      _lightusd_oss << x;                                                          \
+      _lightusd_logger.emit(lightusd::logging::LogLevel::Info, __FILE__,           \
+                         __func__, __LINE__, _lightusd_oss.str());                 \
     }                                                                           \
   } while (false)
 #endif
 
 // Additional log macros for other levels
 #if defined(__wasi__)
-#define TUSDZ_LOG_D(x)
-#define TUSDZ_LOG_W(x)
-#define TUSDZ_LOG_E(x)
-#define TUSDZ_LOG_C(x)
+#define LIGHTUSD_LOG_D(x)
+#define LIGHTUSD_LOG_W(x)
+#define LIGHTUSD_LOG_E(x)
+#define LIGHTUSD_LOG_C(x)
 #else
-#define TUSDZ_LOG_D(x)                                                          \
+#define LIGHTUSD_LOG_D(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Debug)) {          \
-      std::ostringstream _tusdz_oss;                                            \
-      _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(lightusd::logging::LogLevel::Debug, __FILE__,          \
-                         __func__, __LINE__, _tusdz_oss.str());                 \
+    auto &_lightusd_logger = lightusd::logging::Logger::getInstance();             \
+    if (_lightusd_logger.shouldLog(lightusd::logging::LogLevel::Debug)) {          \
+      std::ostringstream _lightusd_oss;                                            \
+      _lightusd_oss << x;                                                          \
+      _lightusd_logger.emit(lightusd::logging::LogLevel::Debug, __FILE__,          \
+                         __func__, __LINE__, _lightusd_oss.str());                 \
     }                                                                           \
   } while (false)
 
-#define TUSDZ_LOG_W(x)                                                          \
+#define LIGHTUSD_LOG_W(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Warn)) {           \
-      std::ostringstream _tusdz_oss;                                            \
-      _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(lightusd::logging::LogLevel::Warn, __FILE__,           \
-                         __func__, __LINE__, _tusdz_oss.str());                 \
+    auto &_lightusd_logger = lightusd::logging::Logger::getInstance();             \
+    if (_lightusd_logger.shouldLog(lightusd::logging::LogLevel::Warn)) {           \
+      std::ostringstream _lightusd_oss;                                            \
+      _lightusd_oss << x;                                                          \
+      _lightusd_logger.emit(lightusd::logging::LogLevel::Warn, __FILE__,           \
+                         __func__, __LINE__, _lightusd_oss.str());                 \
     }                                                                           \
   } while (false)
 
-#define TUSDZ_LOG_E(x)                                                          \
+#define LIGHTUSD_LOG_E(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Error)) {          \
-      std::ostringstream _tusdz_oss;                                            \
-      _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(lightusd::logging::LogLevel::Error, __FILE__,          \
-                         __func__, __LINE__, _tusdz_oss.str());                 \
+    auto &_lightusd_logger = lightusd::logging::Logger::getInstance();             \
+    if (_lightusd_logger.shouldLog(lightusd::logging::LogLevel::Error)) {          \
+      std::ostringstream _lightusd_oss;                                            \
+      _lightusd_oss << x;                                                          \
+      _lightusd_logger.emit(lightusd::logging::LogLevel::Error, __FILE__,          \
+                         __func__, __LINE__, _lightusd_oss.str());                 \
     }                                                                           \
   } while (false)
 
-#define TUSDZ_LOG_C(x)                                                          \
+#define LIGHTUSD_LOG_C(x)                                                          \
   do {                                                                          \
-    auto &_tusdz_logger = lightusd::logging::Logger::getInstance();             \
-    if (_tusdz_logger.shouldLog(lightusd::logging::LogLevel::Critical)) {       \
-      std::ostringstream _tusdz_oss;                                            \
-      _tusdz_oss << x;                                                          \
-      _tusdz_logger.emit(lightusd::logging::LogLevel::Critical, __FILE__,       \
-                         __func__, __LINE__, _tusdz_oss.str());                 \
+    auto &_lightusd_logger = lightusd::logging::Logger::getInstance();             \
+    if (_lightusd_logger.shouldLog(lightusd::logging::LogLevel::Critical)) {       \
+      std::ostringstream _lightusd_oss;                                            \
+      _lightusd_oss << x;                                                          \
+      _lightusd_logger.emit(lightusd::logging::LogLevel::Critical, __FILE__,       \
+                         __func__, __LINE__, _lightusd_oss.str());                 \
     }                                                                           \
   } while (false)
 #endif
 
 // Trace macros for function timing
 #if defined(__wasi__)
-#define TUSDZ_TRACE(tag)
-#define TUSDZ_TRACE_TAG(tag, subtag)
+#define LIGHTUSD_TRACE(tag)
+#define LIGHTUSD_TRACE_TAG(tag, subtag)
 #else
 // Basic trace macro with just tag
-#define TUSDZ_TRACE(tag) \
+#define LIGHTUSD_TRACE(tag) \
   lightusd::logging::Trace _trace_##__LINE__(tag, "", __func__, __FILE__, __LINE__)
 
 // Trace macro with tag and subtag for nested tracing
-#define TUSDZ_TRACE_TAG(tag, subtag) \
+#define LIGHTUSD_TRACE_TAG(tag, subtag) \
   lightusd::logging::Trace _trace_##__LINE__(tag, subtag, __func__, __FILE__, __LINE__)
 #endif
 
 // Helper macros for common trace operations
-#define TUSDZ_TRACE_ENABLE() \
+#define LIGHTUSD_TRACE_ENABLE() \
   lightusd::logging::TraceManager::getInstance().setEnabled(true)
 
-#define TUSDZ_TRACE_DISABLE() \
+#define LIGHTUSD_TRACE_DISABLE() \
   lightusd::logging::TraceManager::getInstance().setEnabled(false)
 
-#define TUSDZ_TRACE_CLEAR() \
+#define LIGHTUSD_TRACE_CLEAR() \
   lightusd::logging::TraceManager::getInstance().clearRecords()
 
-#define TUSDZ_TRACE_SUMMARY() \
+#define LIGHTUSD_TRACE_SUMMARY() \
   lightusd::logging::TraceManager::getInstance().printSummary()
 
-#define TUSDZ_TRACE_SUMMARY_TO(stream) \
+#define LIGHTUSD_TRACE_SUMMARY_TO(stream) \
   lightusd::logging::TraceManager::getInstance().printSummary(stream)
 
 // Per-tag enable/disable macros
-#define TUSDZ_TRACE_ENABLE_TAG(tag) \
+#define LIGHTUSD_TRACE_ENABLE_TAG(tag) \
   lightusd::logging::TraceManager::getInstance().setTagEnabled(tag, true)
 
-#define TUSDZ_TRACE_DISABLE_TAG(tag) \
+#define LIGHTUSD_TRACE_DISABLE_TAG(tag) \
   lightusd::logging::TraceManager::getInstance().setTagEnabled(tag, false)
 
-#define TUSDZ_TRACE_ENABLE_TAG_SUBTAG(tag, subtag) \
+#define LIGHTUSD_TRACE_ENABLE_TAG_SUBTAG(tag, subtag) \
   lightusd::logging::TraceManager::getInstance().setTagEnabled(tag, true, subtag)
 
-#define TUSDZ_TRACE_DISABLE_TAG_SUBTAG(tag, subtag) \
+#define LIGHTUSD_TRACE_DISABLE_TAG_SUBTAG(tag, subtag) \
   lightusd::logging::TraceManager::getInstance().setTagEnabled(tag, false, subtag)
 
-#define TUSDZ_TRACE_CLEAR_TAG_SETTINGS() \
+#define LIGHTUSD_TRACE_CLEAR_TAG_SETTINGS() \
   lightusd::logging::TraceManager::getInstance().clearTagSettings()
 
 // Report format macros
-#define TUSDZ_TRACE_SET_FORMAT_JSON() \
+#define LIGHTUSD_TRACE_SET_FORMAT_JSON() \
   lightusd::logging::TraceManager::getInstance().setReportFormat(lightusd::logging::TraceReportFormat::JSON)
 
-#define TUSDZ_TRACE_SET_FORMAT_TEXT() \
+#define LIGHTUSD_TRACE_SET_FORMAT_TEXT() \
   lightusd::logging::TraceManager::getInstance().setReportFormat(lightusd::logging::TraceReportFormat::PlainText)
 
-#define TUSDZ_TRACE_SUMMARY_JSON() \
+#define LIGHTUSD_TRACE_SUMMARY_JSON() \
   do { \
     lightusd::logging::TraceManager::getInstance().setReportFormat(lightusd::logging::TraceReportFormat::JSON); \
     lightusd::logging::TraceManager::getInstance().printSummary(); \
   } while(false)
 
-#define TUSDZ_TRACE_SUMMARY_JSON_TO(stream) \
+#define LIGHTUSD_TRACE_SUMMARY_JSON_TO(stream) \
   do { \
     lightusd::logging::TraceManager::getInstance().setReportFormat(lightusd::logging::TraceReportFormat::JSON); \
     lightusd::logging::TraceManager::getInstance().printSummary(stream); \
   } while(false)
 
-#define TUSDZ_TRACE_DETAILED_JSON() \
+#define LIGHTUSD_TRACE_DETAILED_JSON() \
   lightusd::logging::TraceManager::getInstance().printDetailedJSON()
 
-#define TUSDZ_TRACE_DETAILED_JSON_TO(stream) \
+#define LIGHTUSD_TRACE_DETAILED_JSON_TO(stream) \
   lightusd::logging::TraceManager::getInstance().printDetailedJSON(stream)
 
 // Event logging macros
-#define TUSDZ_TRACE_SET_EVENT_LOGGING_NONE() \
+#define LIGHTUSD_TRACE_SET_EVENT_LOGGING_NONE() \
   lightusd::logging::TraceManager::getInstance().setEventLogging(lightusd::logging::TraceEventLogging::None)
 
-#define TUSDZ_TRACE_SET_EVENT_LOGGING_TEXT() \
+#define LIGHTUSD_TRACE_SET_EVENT_LOGGING_TEXT() \
   lightusd::logging::TraceManager::getInstance().setEventLogging(lightusd::logging::TraceEventLogging::PlainText)
 
-#define TUSDZ_TRACE_SET_EVENT_LOGGING_JSON() \
+#define LIGHTUSD_TRACE_SET_EVENT_LOGGING_JSON() \
   lightusd::logging::TraceManager::getInstance().setEventLogging(lightusd::logging::TraceEventLogging::JSON)
 
-#define TUSDZ_TRACE_SET_EVENT_LOG_LEVEL(level) \
+#define LIGHTUSD_TRACE_SET_EVENT_LOG_LEVEL(level) \
   lightusd::logging::TraceManager::getInstance().setEventLogLevel(lightusd::logging::LogLevel::level)
 
 // Global flag to control DCOUT output. Set via LIGHTUSD_ENABLE_DCOUT environment variable.
