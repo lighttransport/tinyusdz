@@ -114,22 +114,34 @@ exr_result exr_read_deep_scanline_part(exr_reader *r, exr_int_part *p,
     uint32_t ci;
     int32_t *otab = NULL; /* per-chunk offset table scratch */
     size_t otab_cap = 0;
-    uint64_t total = 0;
+    size_t total = 0, owned_bytes = 0;
     uint64_t *starts = NULL, *totals = NULL; /* per-chunk sample start/count */
     exr_result *rcs = NULL;                   /* per-chunk pass-2 result */
     size_t nc;
     exr_result rc = EXR_SUCCESS;
 
-    for (c = 0; c < nch; ++c)
-        sample_size += exr_pixel_size(h->channels[c].pixel_type);
+    for (c = 0; c < nch; ++c) {
+        size_t next;
+        if (exr_add_ovf(sample_size,
+                        exr_pixel_size(h->channels[c].pixel_type), &next))
+            return EXR_ERROR_CORRUPT;
+        sample_size = next;
+    }
     if (sample_size == 0 || width <= 0 || height <= 0)
         return EXR_ERROR_CORRUPT;
 
     out->is_deep = 1;
     {
         size_t npix;
-        if (exr_mul_ovf((size_t)width, (size_t)height, &npix))
+        size_t count_bytes, ptr_bytes;
+        uint64_t limit = exr_reader_image_limit(r);
+        if (exr_mul_ovf((size_t)width, (size_t)height, &npix) ||
+            exr_mul_ovf(npix, sizeof(int32_t), &count_bytes) ||
+            exr_mul_ovf((size_t)nch, sizeof(void *), &ptr_bytes) ||
+            exr_add_ovf(count_bytes, ptr_bytes, &owned_bytes))
             return EXR_ERROR_CORRUPT;
+        if (limit && (uint64_t)owned_bytes > limit)
+            return EXR_ERROR_LIMIT_EXCEEDED;
         out->deep_sample_counts =
             (int32_t *)exr_calloc(a, npix, sizeof(int32_t));
     }
@@ -151,7 +163,7 @@ exr_result exr_read_deep_scanline_part(exr_reader *r, exr_int_part *p,
         size_t hsz = r->is_multipart ? 32 : 28;
         int32_t y0, nlines, r2, x;
         uint64_t pos, pots, psds, usds, prev;
-        size_t need;
+        size_t need, otab_bytes;
 
         rc = exr_reader_fetch(r, off, hsz, NULL, &hdr);
         if (!EXR_OK(rc)) goto done;
@@ -169,18 +181,24 @@ exr_result exr_read_deep_scanline_part(exr_reader *r, exr_int_part *p,
         nlines = lpb;
         if (y0 + nlines - 1 > ymax) nlines = ymax - y0 + 1;
 
-        need = (size_t)width * nlines;
-        if (need > otab_cap) {
-            exr_free(a, otab);
-            otab = (int32_t *)exr_malloc(a, need * sizeof(int32_t));
-            if (!otab) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
-            otab_cap = need;
+        {
+            if (exr_mul_ovf((size_t)width, (size_t)nlines, &need) ||
+                exr_mul_ovf(need, sizeof(int32_t), &otab_bytes)) {
+                rc = EXR_ERROR_CORRUPT;
+                goto done;
+            }
+            if (need > otab_cap) {
+                exr_free(a, otab);
+                otab = (int32_t *)exr_malloc(a, otab_bytes);
+                if (!otab) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
+                otab_cap = need;
+            }
         }
         pos = off + hsz;
         rc = exr_reader_fetch(r, pos, (size_t)pots, NULL, &packed);
         if (!EXR_OK(rc)) goto done;
         rc = deep_decompress(a, h->compression, packed, (size_t)pots,
-                             (uint8_t *)otab, need * sizeof(int32_t));
+                             (uint8_t *)otab, otab_bytes);
         if (!EXR_OK(rc)) goto done;
 
         prev = 0;
@@ -194,19 +212,29 @@ exr_result exr_read_deep_scanline_part(exr_reader *r, exr_int_part *p,
                 prev = (uint64_t)cum;
             }
         }
-        starts[ci] = total;  /* sample index where this chunk's data begins */
+        starts[ci] = (uint64_t)total; /* sample index for this chunk */
         totals[ci] = prev;   /* this chunk's sample count */
-        total += prev;
-    }
-
-    out->deep_total_samples = total;
-    for (c = 0; c < nch; ++c) {
-        size_t bytes;
-        if (exr_mul_ovf((size_t)total, exr_pixel_size(h->channels[c].pixel_type),
-                        &bytes)) {
+        if (prev > (uint64_t)SIZE_MAX ||
+            exr_add_ovf(total, (size_t)prev, &total)) {
             rc = EXR_ERROR_CORRUPT;
             goto done;
         }
+    }
+
+    out->deep_total_samples = (uint64_t)total;
+    for (c = 0; c < nch; ++c) {
+        size_t bytes, next_owned;
+        uint64_t limit = exr_reader_image_limit(r);
+        if (exr_mul_ovf(total, exr_pixel_size(h->channels[c].pixel_type),
+                        &bytes) || exr_add_ovf(owned_bytes, bytes, &next_owned)) {
+            rc = EXR_ERROR_CORRUPT;
+            goto done;
+        }
+        if (limit && (uint64_t)next_owned > limit) {
+            rc = EXR_ERROR_LIMIT_EXCEEDED;
+            goto done;
+        }
+        owned_bytes = next_owned;
         out->deep_images[c] = exr_calloc(a, bytes ? bytes : 1, 1);
         if (!out->deep_images[c]) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
     }
@@ -248,12 +276,14 @@ static size_t deep_chunk_hdr_size(const exr_reader *r, int is_tiled) {
 
 exr_result exr_deep_decode_counts(exr_reader *r, exr_int_part *p,
                                   int32_t part_idx, uint32_t idx, int bw, int bh,
-                                  int is_tiled, int32_t *counts) {
+                                  int is_tiled, int32_t *counts,
+                                  uint64_t *out_total_samples) {
     const exr_allocator *a = &r->alloc;
     const exr_header *h = &p->header;
     uint64_t off, pots;
     const uint8_t *hdr, *packed;
-    size_t hsz, need, i;
+    size_t hsz, need, bytes, i, total = 0;
+    uint64_t packed_pos;
     int32_t *otab;
     exr_result rc;
 
@@ -269,13 +299,19 @@ exr_result exr_deep_decode_counts(exr_reader *r, exr_int_part *p,
     }
     pots = is_tiled ? exr_rd_u64(hdr + 16) : exr_rd_u64(hdr + 4);
 
-    need = (size_t)bw * (size_t)bh;
-    otab = (int32_t *)exr_malloc(a, (need ? need : 1) * sizeof(int32_t));
+    if (exr_mul_ovf((size_t)bw, (size_t)bh, &need) ||
+        exr_mul_ovf(need ? need : 1, sizeof(int32_t), &bytes))
+        return EXR_ERROR_CORRUPT;
+    otab = (int32_t *)exr_malloc(a, bytes);
     if (!otab) return EXR_ERROR_OUT_OF_MEMORY;
-    rc = exr_reader_fetch(r, off + hsz, (size_t)pots, NULL, &packed);
+    if (pots > (uint64_t)SIZE_MAX || off > UINT64_MAX - (uint64_t)hsz) {
+        exr_free(a, otab); return EXR_ERROR_CORRUPT;
+    }
+    packed_pos = off + (uint64_t)hsz;
+    rc = exr_reader_fetch(r, packed_pos, (size_t)pots, NULL, &packed);
     if (!EXR_OK(rc)) { exr_free(a, otab); return rc; }
     rc = deep_decompress(a, h->compression, packed, (size_t)pots,
-                         (uint8_t *)otab, need * sizeof(int32_t));
+                         (uint8_t *)otab, bytes);
     if (!EXR_OK(rc)) { exr_free(a, otab); return rc; }
     /* Offset table is cumulative per row (resets each row); for scanline blocks
      * bh == 1 so this is identical to a flat cumulative scan. */
@@ -286,31 +322,41 @@ exr_result exr_deep_decode_counts(exr_reader *r, exr_int_part *p,
             size_t k = i * (size_t)bw + x;
             int64_t cum = otab[k], cnt = cum - rp;
             if (cnt < 0) { exr_free(a, otab); return EXR_ERROR_CORRUPT; }
+            if (exr_add_ovf(total, (size_t)cnt, &total)) {
+                exr_free(a, otab); return EXR_ERROR_CORRUPT;
+            }
             counts[k] = (int32_t)cnt;
             rp = cum;
         }
     }
+    *out_total_samples = (uint64_t)total;
     exr_free(a, otab);
     return EXR_SUCCESS;
 }
 
 exr_result exr_deep_decode_samples(exr_reader *r, exr_int_part *p,
                                    int32_t part_idx, uint32_t idx, int bw, int bh,
-                                   int is_tiled, void *const *chan_dst) {
+                                   int is_tiled, exr_buffer *chan_dst) {
     const exr_allocator *a = &r->alloc;
     const exr_header *h = &p->header;
     int nch = h->num_channels, c;
-    uint64_t off, pots, psds, usds, total = 0;
+    uint64_t off, pots, psds, usds;
     const uint8_t *hdr, *packed;
-    size_t hsz, need, sample_size = 0, soff;
+    size_t hsz, need, otab_bytes, sample_size = 0, soff, total = 0;
+    uint64_t packed_pos;
     int32_t *otab = NULL;
     uint8_t *sbuf = NULL;
     exr_result rc;
 
     if (idx >= p->num_chunks) return EXR_ERROR_INVALID_ARGUMENT;
     if (bw < 0 || bh < 0) return EXR_ERROR_CORRUPT;
-    for (c = 0; c < nch; ++c)
-        sample_size += exr_pixel_size(h->channels[c].pixel_type);
+    for (c = 0; c < nch; ++c) {
+        size_t next;
+        if (exr_add_ovf(sample_size,
+                        exr_pixel_size(h->channels[c].pixel_type), &next))
+            return EXR_ERROR_CORRUPT;
+        sample_size = next;
+    }
     off = p->offsets[idx];
     hsz = deep_chunk_hdr_size(r, is_tiled);
     rc = exr_reader_fetch(r, off, hsz, NULL, &hdr);
@@ -331,27 +377,59 @@ exr_result exr_deep_decode_samples(exr_reader *r, exr_int_part *p,
 
     /* The offset table is cumulative per row, so the block's total sample count
      * is the sum of each row's last cumulative entry (not the table's last). */
-    need = (size_t)bw * (size_t)bh;
-    otab = (int32_t *)exr_malloc(a, (need ? need : 1) * sizeof(int32_t));
+    if (exr_mul_ovf((size_t)bw, (size_t)bh, &need) ||
+        exr_mul_ovf(need ? need : 1, sizeof(int32_t), &otab_bytes))
+        return EXR_ERROR_CORRUPT;
+    otab = (int32_t *)exr_malloc(a, otab_bytes);
     if (!otab) return EXR_ERROR_OUT_OF_MEMORY;
-    rc = exr_reader_fetch(r, off + hsz, (size_t)pots, NULL, &packed);
+    if (pots > (uint64_t)SIZE_MAX || psds > (uint64_t)SIZE_MAX ||
+        usds > (uint64_t)SIZE_MAX || off > UINT64_MAX - (uint64_t)hsz) {
+        rc = EXR_ERROR_CORRUPT; goto done;
+    }
+    packed_pos = off + (uint64_t)hsz;
+    rc = exr_reader_fetch(r, packed_pos, (size_t)pots, NULL, &packed);
     if (!EXR_OK(rc)) goto done;
     rc = deep_decompress(a, h->compression, packed, (size_t)pots,
-                         (uint8_t *)otab, need * sizeof(int32_t));
+                         (uint8_t *)otab, otab_bytes);
     if (!EXR_OK(rc)) goto done;
     if (bw > 0) {
         int row;
         for (row = 0; row < bh; ++row) {
-            int32_t last = otab[(size_t)row * (size_t)bw + (size_t)(bw - 1)];
-            if (last < 0) { rc = EXR_ERROR_CORRUPT; goto done; }
-            total += (uint64_t)last;
+            int32_t last = 0;
+            int x;
+            for (x = 0; x < bw; ++x) {
+                int32_t cur = otab[(size_t)row * (size_t)bw + (size_t)x];
+                if (cur < last) { rc = EXR_ERROR_CORRUPT; goto done; }
+                last = cur;
+            }
+            if (exr_add_ovf(total, (size_t)last, &total)) {
+                rc = EXR_ERROR_CORRUPT; goto done;
+            }
         }
     }
-    if (usds != total * sample_size) { rc = EXR_ERROR_CORRUPT; goto done; }
+    {
+        size_t expected;
+        if (exr_mul_ovf(total, sample_size, &expected) ||
+            usds != (uint64_t)expected) {
+            rc = EXR_ERROR_CORRUPT; goto done;
+        }
+    }
+
+    for (c = 0; c < nch; ++c) {
+        size_t required;
+        if (exr_mul_ovf(total, exr_pixel_size(h->channels[c].pixel_type),
+                        &required)) {
+            rc = EXR_ERROR_CORRUPT; goto done;
+        }
+        if (chan_dst[c].size < required || (!chan_dst[c].data && required)) {
+            rc = EXR_ERROR_INVALID_ARGUMENT; goto done;
+        }
+    }
 
     sbuf = (uint8_t *)exr_malloc(a, (size_t)usds ? (size_t)usds : 1);
     if (!sbuf) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
-    rc = exr_reader_fetch(r, off + hsz + pots, (size_t)psds, NULL, &packed);
+    if (packed_pos > UINT64_MAX - pots) { rc = EXR_ERROR_CORRUPT; goto done; }
+    rc = exr_reader_fetch(r, packed_pos + pots, (size_t)psds, NULL, &packed);
     if (!EXR_OK(rc)) goto done;
     rc = deep_decompress(a, h->compression, packed, (size_t)psds, sbuf,
                          (size_t)usds);
@@ -370,8 +448,11 @@ exr_result exr_deep_decode_samples(exr_reader *r, exr_int_part *p,
             for (c = 0; c < nch; ++c) {
                 size_t ps = exr_pixel_size(h->channels[c].pixel_type);
                 size_t cb = (size_t)rt * ps;
-                if (chan_dst[c] && cb)
-                    memcpy((uint8_t *)chan_dst[c] + dest * ps, sbuf + soff, cb);
+                if (cb) {
+                    if (!chan_dst[c].data) { rc = EXR_ERROR_INVALID_ARGUMENT; goto done; }
+                    memcpy((uint8_t *)chan_dst[c].data + dest * ps,
+                           sbuf + soff, cb);
+                }
                 soff += cb;
             }
             dest += rt;
@@ -432,27 +513,41 @@ exr_result exr_deep_encode_block(const exr_allocator *a, exr_compression comp,
     exr_result rc = EXR_SUCCESS;
 
     *packed_off = *packed_samp = NULL;
-    for (c = 0; c < nch; ++c)
-        sample_size += exr_pixel_size(h->channels[c].pixel_type);
+    for (c = 0; c < nch; ++c) {
+        size_t next;
+        if (exr_add_ovf(sample_size,
+                        exr_pixel_size(h->channels[c].pixel_type), &next))
+            return EXR_ERROR_CORRUPT;
+        sample_size = next;
+    }
 
     /* offset table (cumulative within the block, row-major) */
-    notab = (size_t)width * nlines;
-    otab = (int32_t *)exr_malloc(a, notab * sizeof(int32_t));
+    if (exr_mul_ovf((size_t)width, (size_t)nlines, &notab) ||
+        exr_mul_ovf(notab, sizeof(int32_t), &usamp))
+        return EXR_ERROR_CORRUPT;
+    otab = (int32_t *)exr_malloc(a, usamp);
     if (!otab) return EXR_ERROR_OUT_OF_MEMORY;
     for (r2 = 0; r2 < nlines; ++r2) {
         int row = y0 - ymin + r2;
         for (x = 0; x < width; ++x) {
-            cum += (uint64_t)part->deep_sample_counts[(size_t)row * width + x];
+            int32_t cnt = part->deep_sample_counts[(size_t)row * width + x];
+            if (cnt < 0 || cum > (uint64_t)INT32_MAX - (uint64_t)cnt) {
+                rc = EXR_ERROR_INVALID_ARGUMENT; goto done;
+            }
+            cum += (uint64_t)cnt;
             otab[r2 * width + x] = (int32_t)cum;
         }
     }
-    *unpacked_off_size = notab * sizeof(int32_t);
-    rc = deep_compress(a, comp, (uint8_t *)otab, notab * sizeof(int32_t),
+    *unpacked_off_size = (uint64_t)usamp;
+    rc = deep_compress(a, comp, (uint8_t *)otab, usamp,
                        packed_off, packed_off_size);
     if (!EXR_OK(rc)) goto done;
 
     /* sample data (channel-planar over the block's pixels) */
-    usamp = (size_t)cum * sample_size;
+    if (cum > (uint64_t)SIZE_MAX ||
+        exr_mul_ovf((size_t)cum, sample_size, &usamp)) {
+        rc = EXR_ERROR_CORRUPT; goto done;
+    }
     sd = (uint8_t *)exr_malloc(a, usamp ? usamp : 1);
     if (!sd) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
     sp = sd;
@@ -505,12 +600,12 @@ static void deep_t2_one(deep_t2_ctx *c, uint32_t idx) {
     int tw = (c->tx < c->width - txi * c->tx) ? c->tx : (c->width - txi * c->tx);
     int th = (c->ty < c->height - tyi * c->ty) ? c->ty : (c->height - tyi * c->ty);
     size_t hsz = c->is_multipart ? 44 : 40;
-    uint64_t off = c->offsets[idx], pots, psds, usds, tile_total = 0;
+    uint64_t off = c->offsets[idx], pots, psds, usds;
     const uint8_t *hdr, *packed;
     uint8_t *sbuf;
     exr_result rc;
     int rr, x, cc;
-    size_t soff = 0;
+    size_t soff = 0, tile_total = 0;
     rc = exr_reader_fetch(c->r, off, hsz, NULL, &hdr);
     if (!EXR_OK(rc)) { c->rcs[idx] = rc; return; }
     if (c->is_multipart) hdr += 4;
@@ -518,10 +613,21 @@ static void deep_t2_one(deep_t2_ctx *c, uint32_t idx) {
     psds = exr_rd_u64(hdr + 24);
     usds = exr_rd_u64(hdr + 32);
     for (rr = 0; rr < th; ++rr)
-        for (x = 0; x < tw; ++x)
-            tile_total += (uint64_t)c->counts[(size_t)(tyi * c->ty + rr) *
-                                                  c->width + (txi * c->tx + x)];
-    if (usds != tile_total * c->sample_size) { c->rcs[idx] = EXR_ERROR_CORRUPT; return; }
+        for (x = 0; x < tw; ++x) {
+            int32_t count = c->counts[(size_t)(tyi * c->ty + rr) * c->width +
+                                      (txi * c->tx + x)];
+            if (count < 0 || exr_add_ovf(tile_total, (size_t)count,
+                                         &tile_total)) {
+                c->rcs[idx] = EXR_ERROR_CORRUPT; return;
+            }
+        }
+    {
+        size_t expected;
+        if (exr_mul_ovf(tile_total, c->sample_size, &expected) ||
+            usds != (uint64_t)expected) {
+            c->rcs[idx] = EXR_ERROR_CORRUPT; return;
+        }
+    }
     sbuf = (uint8_t *)exr_malloc(a, (size_t)usds ? (size_t)usds : 1);
     if (!sbuf) { c->rcs[idx] = EXR_ERROR_OUT_OF_MEMORY; return; }
     rc = exr_reader_fetch(c->r, off + hsz + pots, (size_t)psds, NULL, &packed);
@@ -562,23 +668,35 @@ exr_result exr_read_deep_tiled_part(exr_reader *r, exr_int_part *p,
     int tx = (int)h->tile_x_size, ty = (int)h->tile_y_size;
     int nxt, nyt, txi, tyi, c;
     size_t sample_size = 0, npix;
-    uint64_t total = 0, *prefix = NULL;
+    size_t total = 0, owned_bytes = 0;
+    uint64_t *prefix = NULL;
     int32_t *otab = NULL;
     size_t otab_cap = 0;
     exr_result *rcs = NULL; /* per-tile pass-2 result */
     exr_result rc = EXR_SUCCESS;
 
     if (tx <= 0 || ty <= 0 || width <= 0 || height <= 0) return EXR_ERROR_CORRUPT;
-    nxt = (width + tx - 1) / tx;
-    nyt = (height + ty - 1) / ty;
-    for (c = 0; c < nch; ++c)
-        sample_size += exr_pixel_size(h->channels[c].pixel_type);
+    nxt = exr_ceil_div_pos(width, tx);
+    nyt = exr_ceil_div_pos(height, ty);
+    for (c = 0; c < nch; ++c) {
+        size_t next;
+        if (exr_add_ovf(sample_size,
+                        exr_pixel_size(h->channels[c].pixel_type), &next))
+            return EXR_ERROR_CORRUPT;
+        sample_size = next;
+    }
     if (sample_size == 0) return EXR_ERROR_CORRUPT;
     {
-        size_t prefix_bytes;
+        size_t prefix_bytes, count_bytes, ptr_bytes;
+        uint64_t limit = exr_reader_image_limit(r);
         if (exr_mul_ovf((size_t)width, (size_t)height, &npix) ||
-            exr_mul_ovf(npix, sizeof(uint64_t), &prefix_bytes))
+            exr_mul_ovf(npix, sizeof(uint64_t), &prefix_bytes) ||
+            exr_mul_ovf(npix, sizeof(int32_t), &count_bytes) ||
+            exr_mul_ovf((size_t)nch, sizeof(void *), &ptr_bytes) ||
+            exr_add_ovf(count_bytes, ptr_bytes, &owned_bytes))
             return EXR_ERROR_CORRUPT;
+        if (limit && (uint64_t)owned_bytes > limit)
+            return EXR_ERROR_LIMIT_EXCEEDED;
         prefix = (uint64_t *)exr_malloc(a, prefix_bytes ? prefix_bytes : 1);
     }
 
@@ -601,7 +719,7 @@ exr_result exr_read_deep_tiled_part(exr_reader *r, exr_int_part *p,
             size_t hsz = r->is_multipart ? 44 : 40;
             int tw = (tx < width - txi * tx) ? tx : (width - txi * tx);
             int th = (ty < height - tyi * ty) ? ty : (height - tyi * ty);
-            size_t need;
+            size_t need, otab_bytes;
             int rr, x;
 
             if (idx >= p->num_chunks) { rc = EXR_ERROR_CORRUPT; goto done; }
@@ -625,19 +743,21 @@ exr_result exr_read_deep_tiled_part(exr_reader *r, exr_int_part *p,
                 rc = EXR_ERROR_CORRUPT; goto done;
             }
             if (need > otab_cap) {
-                size_t nb;
-                if (exr_mul_ovf(need, sizeof(int32_t), &nb)) {
+                if (exr_mul_ovf(need, sizeof(int32_t), &otab_bytes)) {
                     rc = EXR_ERROR_CORRUPT; goto done;
                 }
                 exr_free(a, otab);
-                otab = (int32_t *)exr_malloc(a, nb);
+                otab = (int32_t *)exr_malloc(a, otab_bytes);
                 if (!otab) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
                 otab_cap = need;
+            }
+            if (exr_mul_ovf(need, sizeof(int32_t), &otab_bytes)) {
+                rc = EXR_ERROR_CORRUPT; goto done;
             }
             rc = exr_reader_fetch(r, off + hsz, (size_t)pots, NULL, &packed);
             if (!EXR_OK(rc)) goto done;
             rc = deep_decompress(a, h->compression, packed, (size_t)pots,
-                                 (uint8_t *)otab, need * sizeof(int32_t));
+                                 (uint8_t *)otab, otab_bytes);
             if (!EXR_OK(rc)) goto done;
             /* The sample-count table is cumulative per scanline row (it resets
              * at the start of each row of the tile), matching OpenEXR. */
@@ -654,19 +774,38 @@ exr_result exr_read_deep_tiled_part(exr_reader *r, exr_int_part *p,
                     out->deep_sample_counts[pix] = (int32_t)cnt;
                     prev = (uint64_t)cum;
                 }
-                total += prev;
+                if (prev > (uint64_t)SIZE_MAX ||
+                    exr_add_ovf(total, (size_t)prev, &total)) {
+                    rc = EXR_ERROR_CORRUPT;
+                    goto done;
+                }
             }
         }
     }
 
-    { size_t i; uint64_t acc = 0;
-      for (i = 0; i < npix; ++i) { prefix[i] = acc; acc += (uint64_t)out->deep_sample_counts[i]; } }
-    out->deep_total_samples = total;
+    { size_t i, acc = 0;
+      for (i = 0; i < npix; ++i) {
+          size_t next;
+          prefix[i] = (uint64_t)acc;
+          if (exr_add_ovf(acc, (size_t)out->deep_sample_counts[i], &next)) {
+              rc = EXR_ERROR_CORRUPT; goto done;
+          }
+          acc = next;
+      }
+      if (acc != total) { rc = EXR_ERROR_CORRUPT; goto done; }
+    }
+    out->deep_total_samples = (uint64_t)total;
     for (c = 0; c < nch; ++c) {
-        size_t bytes;
-        if (exr_mul_ovf((size_t)total, exr_pixel_size(h->channels[c].pixel_type), &bytes)) {
+        size_t bytes, next_owned;
+        uint64_t limit = exr_reader_image_limit(r);
+        if (exr_mul_ovf(total, exr_pixel_size(h->channels[c].pixel_type), &bytes) ||
+            exr_add_ovf(owned_bytes, bytes, &next_owned)) {
             rc = EXR_ERROR_CORRUPT; goto done;
         }
+        if (limit && (uint64_t)next_owned > limit) {
+            rc = EXR_ERROR_LIMIT_EXCEEDED; goto done;
+        }
+        owned_bytes = next_owned;
         out->deep_images[c] = exr_calloc(a, bytes ? bytes : 1, 1);
         if (!out->deep_images[c]) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
     }
@@ -718,11 +857,18 @@ exr_result exr_deep_encode_tile(const exr_allocator *a, exr_compression comp,
     exr_result rc = EXR_SUCCESS;
 
     *packed_off = *packed_samp = NULL;
-    for (c = 0; c < nch; ++c)
-        sample_size += exr_pixel_size(h->channels[c].pixel_type);
+    for (c = 0; c < nch; ++c) {
+        size_t next;
+        if (exr_add_ovf(sample_size,
+                        exr_pixel_size(h->channels[c].pixel_type), &next))
+            return EXR_ERROR_CORRUPT;
+        sample_size = next;
+    }
 
-    notab = (size_t)tile_w * tile_h;
-    otab = (int32_t *)exr_malloc(a, notab * sizeof(int32_t));
+    if (exr_mul_ovf((size_t)tile_w, (size_t)tile_h, &notab) ||
+        exr_mul_ovf(notab, sizeof(int32_t), &usamp))
+        return EXR_ERROR_CORRUPT;
+    otab = (int32_t *)exr_malloc(a, usamp);
     if (!otab) return EXR_ERROR_OUT_OF_MEMORY;
     /* Offset table is cumulative per scanline row (resets each row), matching
      * OpenEXR; `cum` separately tracks the tile's grand total for the sample
@@ -730,18 +876,28 @@ exr_result exr_deep_encode_tile(const exr_allocator *a, exr_compression comp,
     for (rr = 0; rr < tile_h; ++rr) {
         uint64_t rowcum = 0;
         for (x = 0; x < tile_w; ++x) {
-            uint64_t cnt = (uint64_t)part->deep_sample_counts[(size_t)(y0 + rr) * width + (x0 + x)];
+            int32_t signed_cnt =
+                part->deep_sample_counts[(size_t)(y0 + rr) * width + (x0 + x)];
+            uint64_t cnt;
+            if (signed_cnt < 0) { rc = EXR_ERROR_INVALID_ARGUMENT; goto done; }
+            cnt = (uint64_t)signed_cnt;
+            if (rowcum > (uint64_t)INT32_MAX - cnt || cum > UINT64_MAX - cnt) {
+                rc = EXR_ERROR_INVALID_ARGUMENT; goto done;
+            }
             rowcum += cnt;
             cum += cnt;
             otab[rr * tile_w + x] = (int32_t)rowcum;
         }
     }
-    *unpacked_off_size = notab * sizeof(int32_t);
-    rc = deep_compress(a, comp, (uint8_t *)otab, notab * sizeof(int32_t),
+    *unpacked_off_size = (uint64_t)usamp;
+    rc = deep_compress(a, comp, (uint8_t *)otab, usamp,
                        packed_off, packed_off_size);
     if (!EXR_OK(rc)) goto done;
 
-    usamp = (size_t)cum * sample_size;
+    if (cum > (uint64_t)SIZE_MAX ||
+        exr_mul_ovf((size_t)cum, sample_size, &usamp)) {
+        rc = EXR_ERROR_CORRUPT; goto done;
+    }
     sd = (uint8_t *)exr_malloc(a, usamp ? usamp : 1);
     if (!sd) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
     sp = sd;
@@ -773,7 +929,7 @@ exr_result exr_deep_build_level(const exr_allocator *a, const exr_part *src,
                                 exr_part *out) {
     int W = src->width, H = src->height, nch = src->header.num_channels, c, x, y;
     size_t npix;
-    uint64_t total = 0;
+    size_t total = 0;
     exr_result rc = EXR_SUCCESS;
 
     memset(out, 0, sizeof(*out));
@@ -796,16 +952,18 @@ exr_result exr_deep_build_level(const exr_allocator *a, const exr_part *src,
             int sx = (int)((int64_t)x * W / lw), cnt;
             if (sx >= W) sx = W - 1;
             cnt = src->deep_sample_counts[(size_t)sy * W + sx];
+            if (cnt < 0 || exr_add_ovf(total, (size_t)cnt, &total)) {
+                rc = EXR_ERROR_CORRUPT; goto fail;
+            }
             out->deep_sample_counts[(size_t)y * lw + x] = cnt;
-            total += (uint64_t)cnt;
         }
     }
-    out->deep_total_samples = total;
+    out->deep_total_samples = (uint64_t)total;
     for (c = 0; c < nch; ++c) {
         size_t ps = exr_pixel_size(src->header.channels[c].pixel_type);
         size_t off = 0, bytes;
         uint8_t *dst;
-        if (exr_mul_ovf((size_t)total, ps, &bytes)) { rc = EXR_ERROR_CORRUPT; goto fail; }
+        if (exr_mul_ovf(total, ps, &bytes)) { rc = EXR_ERROR_CORRUPT; goto fail; }
         out->deep_images[c] = exr_malloc(a, bytes ? bytes : 1);
         if (!out->deep_images[c]) { rc = EXR_ERROR_OUT_OF_MEMORY; goto fail; }
         dst = (uint8_t *)out->deep_images[c];

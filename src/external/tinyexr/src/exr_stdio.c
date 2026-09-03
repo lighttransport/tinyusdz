@@ -10,17 +10,49 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+#if !defined(_WIN32)
+#ifndef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200112L
+#endif
+#endif
+
 #include "exr_internal.h"
 
 #include <stdio.h>
+
+#if defined(_WIN32)
+#define EXR_FSEEK _fseeki64
+#define EXR_FTELL _ftelli64
+typedef __int64 exr_file_offset;
+#else
+#include <sys/types.h>
+#define EXR_FSEEK fseeko
+#define EXR_FTELL ftello
+typedef off_t exr_file_offset;
+#endif
+
+static exr_result checked_file_size(FILE *fp, const exr_context *context,
+                                    size_t *out) {
+    exr_file_offset sz;
+    uint64_t lim = exr_context_max_file_bytes(context);
+    if (EXR_FSEEK(fp, 0, SEEK_END) != 0) return EXR_ERROR_IO;
+    sz = EXR_FTELL(fp);
+    if (sz < 0 || EXR_FSEEK(fp, 0, SEEK_SET) != 0) return EXR_ERROR_IO;
+    if ((uint64_t)sz > (uint64_t)SIZE_MAX || (lim && (uint64_t)sz > lim))
+        return EXR_ERROR_LIMIT_EXCEEDED;
+    *out = (size_t)sz;
+    return EXR_SUCCESS;
+}
 
 /* ---- whole-file load --------------------------------------------------- */
 
 exr_result exr_load_from_file_ctx(exr_context *context, const char *path,
                                   const exr_allocator *alloc, exr_image *out) {
     FILE *fp;
-    long sz;
-    size_t n;
+    size_t sz, n;
     uint8_t *buf;
     exr_result rc;
 
@@ -30,17 +62,15 @@ exr_result exr_load_from_file_ctx(exr_context *context, const char *path,
 
     fp = fopen(path, "rb");
     if (!fp) return EXR_ERROR_IO;
-    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return EXR_ERROR_IO; }
-    sz = ftell(fp);
-    if (sz < 0) { fclose(fp); return EXR_ERROR_IO; }
-    if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return EXR_ERROR_IO; }
-    buf = (uint8_t *)exr_malloc(alloc, (size_t)sz);
+    rc = checked_file_size(fp, context, &sz);
+    if (!EXR_OK(rc)) { fclose(fp); return rc; }
+    buf = (uint8_t *)exr_malloc(alloc, sz);
     if (!buf) { fclose(fp); return EXR_ERROR_OUT_OF_MEMORY; }
-    n = fread(buf, 1, (size_t)sz, fp);
+    n = fread(buf, 1, sz, fp);
     fclose(fp);
-    if (n != (size_t)sz) { exr_free(alloc, buf); return EXR_ERROR_IO; }
+    if (n != sz) { exr_free(alloc, buf); return EXR_ERROR_IO; }
 
-    rc = exr_load_from_memory_ctx(context, buf, (size_t)sz, alloc, out);
+    rc = exr_load_from_memory_ctx(context, buf, sz, alloc, out);
     exr_free(alloc, buf);
     return rc;
 }
@@ -56,8 +86,7 @@ exr_result exr_reader_open_file_ctx(exr_context *context, const char *path,
                                     const exr_allocator *alloc,
                                     exr_reader **out) {
     FILE *fp;
-    long sz;
-    size_t n;
+    size_t sz, n;
     uint8_t *buf;
     exr_result rc;
 
@@ -66,17 +95,15 @@ exr_result exr_reader_open_file_ctx(exr_context *context, const char *path,
 
     fp = fopen(path, "rb");
     if (!fp) return EXR_ERROR_IO;
-    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return EXR_ERROR_IO; }
-    sz = ftell(fp);
-    if (sz < 0) { fclose(fp); return EXR_ERROR_IO; }
-    if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return EXR_ERROR_IO; }
-    buf = (uint8_t *)exr_malloc(alloc, (size_t)sz);
+    rc = checked_file_size(fp, context, &sz);
+    if (!EXR_OK(rc)) { fclose(fp); return rc; }
+    buf = (uint8_t *)exr_malloc(alloc, sz);
     if (!buf) { fclose(fp); return EXR_ERROR_OUT_OF_MEMORY; }
-    n = fread(buf, 1, (size_t)sz, fp);
+    n = fread(buf, 1, sz, fp);
     fclose(fp);
-    if (n != (size_t)sz) { exr_free(alloc, buf); return EXR_ERROR_IO; }
+    if (n != sz) { exr_free(alloc, buf); return EXR_ERROR_IO; }
 
-    rc = exr_reader_open_memory_ctx(context, buf, (size_t)sz, alloc, out);
+    rc = exr_reader_open_memory_ctx(context, buf, sz, alloc, out);
     if (!EXR_OK(rc)) { exr_free(alloc, buf); return rc; }
     (*out)->free_mem = 1; /* hand buffer ownership to the reader */
     return EXR_SUCCESS;
@@ -142,7 +169,9 @@ static exr_result file_sink_write(void *user, const void *data, size_t len) {
 }
 static exr_result file_sink_seek(void *user, uint64_t off) {
     FILE *fp = (FILE *)user;
-    if (fseek(fp, (long)off, SEEK_SET) != 0) return EXR_ERROR_IO;
+    exr_file_offset pos = (exr_file_offset)off;
+    if (pos < 0 || (uint64_t)pos != off || EXR_FSEEK(fp, pos, SEEK_SET) != 0)
+        return EXR_ERROR_IO;
     return EXR_SUCCESS;
 }
 static exr_result file_sink_close(void *user) {

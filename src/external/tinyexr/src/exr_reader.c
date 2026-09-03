@@ -11,6 +11,11 @@
 
 #include "exr_internal.h"
 
+uint64_t exr_reader_image_limit(const exr_reader *r) {
+    if (r && r->has_image_limit_override) return r->image_limit_override;
+    return exr_context_max_image_bytes(r ? r->context : NULL);
+}
+
 
 /* ============================================================================
  * Open / close
@@ -21,7 +26,13 @@ exr_result exr_reader_open_memory_ctx(exr_context *context, const void *data,
                                       exr_reader **out) {
     exr_reader *r;
     if (!data || !out) return EXR_ERROR_INVALID_ARGUMENT;
+    *out = NULL;
     if (!alloc) alloc = exr_default_allocator();
+    if (!exr_allocator_valid(alloc)) return EXR_ERROR_INVALID_ARGUMENT;
+    {
+        uint64_t lim = exr_context_max_file_bytes(context);
+        if (lim && (uint64_t)size > lim) return EXR_ERROR_LIMIT_EXCEEDED;
+    }
     r = (exr_reader *)exr_calloc(alloc, 1, sizeof(*r));
     if (!r) return EXR_ERROR_OUT_OF_MEMORY;
     r->alloc = *alloc;
@@ -47,12 +58,20 @@ exr_result exr_reader_open_source_ctx(exr_context *context,
     uint8_t *buf;
     exr_result rc;
     if (!src || !src->read || !out) return EXR_ERROR_INVALID_ARGUMENT;
+    *out = NULL;
     if (!alloc) alloc = exr_default_allocator();
+    if (!exr_allocator_valid(alloc)) return EXR_ERROR_INVALID_ARGUMENT;
 
     /* The whole file is buffered into `mem` incrementally; the source `read`
      * callback may return EXR_WOULD_BLOCK, in which case the host fetches the
      * pending range and feeds it via exr_reader_supply(). */
     if (src->total_size == 0) return EXR_ERROR_UNSUPPORTED;
+    if (src->total_size > (uint64_t)SIZE_MAX)
+        return EXR_ERROR_LIMIT_EXCEEDED;
+    {
+        uint64_t lim = exr_context_max_file_bytes(context);
+        if (lim && src->total_size > lim) return EXR_ERROR_LIMIT_EXCEEDED;
+    }
     buf = (uint8_t *)exr_malloc(alloc, (size_t)src->total_size);
     if (!buf) return EXR_ERROR_OUT_OF_MEMORY;
     r = (exr_reader *)exr_calloc(alloc, 1, sizeof(*r));
@@ -82,6 +101,7 @@ exr_result exr_reader_open_source(const exr_data_source *src,
  * r->pending set) when the source has no more bytes available right now. */
 exr_result exr_reader_ensure_buffered(exr_reader *r) {
     if (r->kind != EXR_SRC_CALLBACK) return EXR_SUCCESS;
+    if (r->have_pending) return EXR_WOULD_BLOCK;
     while (r->filled < r->mem_size) {
         uint64_t off = r->filled, len = r->mem_size - r->filled;
         exr_result rc = r->src.read(r->src.user, off, len,
@@ -119,6 +139,24 @@ void exr_reader_close(exr_reader *r) {
     }
     if (r->free_mem) exr_free(a, (void *)r->mem);
     exr_free(a, r);
+}
+
+static void reader_free_parts(exr_reader *r) {
+    const exr_allocator *a = &r->alloc;
+    int32_t i;
+    for (i = 0; i < r->num_parts; ++i) {
+        exr_int_part *p = &r->parts[i];
+        exr_free(a, p->offsets);
+        exr_free(a, p->level_width);
+        exr_free(a, p->level_height);
+        exr_free(a, p->level_x_tiles);
+        exr_free(a, p->level_y_tiles);
+        exr_header_free(a, &p->header);
+    }
+    exr_free(a, r->parts);
+    r->parts = NULL;
+    r->num_parts = 0;
+    r->parts_cap = 0;
 }
 
 /* ============================================================================
@@ -201,6 +239,42 @@ exr_result exr_attr_list_append(const exr_allocator *a, exr_attr_list *list,
     return EXR_SUCCESS;
 }
 
+static exr_result attr_list_sort_unique(const exr_allocator *a,
+                                        exr_attr_list *list) {
+    exr_attr *tmp;
+    size_t width;
+    uint32_t i;
+    if (list->count < 2) return EXR_SUCCESS;
+    tmp = (exr_attr *)exr_calloc(a, list->count, sizeof(*tmp));
+    if (!tmp) return EXR_ERROR_OUT_OF_MEMORY;
+    for (width = 1; width < list->count; width *= 2) {
+        size_t base;
+        for (base = 0; base < list->count; base += width * 2) {
+            size_t l = base, m = base + width, k = base;
+            size_t le = m < list->count ? m : list->count;
+            size_t re = m + width < list->count ? m + width : list->count;
+            if (m > list->count) m = list->count;
+            while (l < le && m < re) {
+                if (strcmp(list->items[l].name, list->items[m].name) <= 0)
+                    tmp[k++] = list->items[l++];
+                else
+                    tmp[k++] = list->items[m++];
+            }
+            while (l < le) tmp[k++] = list->items[l++];
+            while (m < re) tmp[k++] = list->items[m++];
+        }
+        memcpy(list->items, tmp, (size_t)list->count * sizeof(*tmp));
+        if (width > list->count / 2) break;
+    }
+    for (i = 1; i < list->count; ++i) {
+        if (strcmp(list->items[i - 1].name, list->items[i].name) == 0) {
+            exr_free(a, tmp); return EXR_ERROR_CORRUPT;
+        }
+    }
+    exr_free(a, tmp);
+    return EXR_SUCCESS;
+}
+
 /* Parse one header's attribute list (until empty-name terminator). */
 static exr_result parse_one_header(exr_reader *r, cursor *c,
                                    exr_int_part *part) {
@@ -233,12 +307,28 @@ static exr_result parse_one_header(exr_reader *r, cursor *c,
         c->pos += 4;
         if (sz < 0 || (uint32_t)sz > EXR_MAX_ATTR_SIZE) return EXR_ERROR_CORRUPT;
         if (!cur_need(c, (size_t)sz)) return EXR_ERROR_CORRUPT;
+        {
+            uint64_t lim = exr_context_max_header_bytes(r->context);
+            uint64_t next = (uint64_t)c->pos + (uint64_t)(uint32_t)sz;
+            if (next < (uint64_t)c->pos || (lim && next > lim))
+                return EXR_ERROR_LIMIT_EXCEEDED;
+        }
         rc = exr_attr_list_append(a, list, name, name_len, type, type_len,
                                   c->p + c->pos, (uint32_t)sz);
         if (!EXR_OK(rc)) return rc;
         c->pos += (size_t)sz;
+        r->metadata_bytes = (uint64_t)c->pos;
+        {
+            uint64_t lim = exr_context_max_header_bytes(r->context);
+            if (lim && r->metadata_bytes > lim)
+                return EXR_ERROR_LIMIT_EXCEEDED;
+        }
     }
-    return EXR_SUCCESS;
+    return attr_list_sort_unique(a, list);
+}
+
+static int attr_schema(const exr_attr *a, const char *type, uint32_t size) {
+    return a && strcmp(a->type_name, type) == 0 && a->size == size;
 }
 
 /* Interpret the standard attributes into header fields. */
@@ -246,20 +336,12 @@ static exr_result interpret_header(exr_reader *r, exr_int_part *part) {
     const exr_allocator *a = &r->alloc;
     exr_header *h = &part->header;
     const exr_attr *at;
-    int has_data_window = 0;
-
-    /* defaults */
-    h->compression = EXR_COMPRESSION_NONE;
-    h->line_order = EXR_LINEORDER_INCREASING_Y;
-    h->pixel_aspect_ratio = 1.0f;
-    h->screen_window_width = 1.0f;
-    h->screen_window_center_x = 0.0f;
-    h->screen_window_center_y = 0.0f;
+    /* Standard image attributes are mandatory and have exact wire schemas. */
     h->name[0] = '\0';
 
     /* channels */
     at = exr_attr_find(h->attrs, "channels");
-    if (!at) return EXR_ERROR_CORRUPT;
+    if (!at || strcmp(at->type_name, "chlist") != 0) return EXR_ERROR_CORRUPT;
     {
         exr_result rc = exr_parse_chlist(a, at->data, at->size, &h->channels,
                                          &h->num_channels);
@@ -267,51 +349,52 @@ static exr_result interpret_header(exr_reader *r, exr_int_part *part) {
     }
 
     at = exr_attr_find(h->attrs, "compression");
-    if (at && at->size >= 1) {
-        if (at->data[0] > 12) return EXR_ERROR_CORRUPT;
-        h->compression = (exr_compression)at->data[0];
-    }
+    if (!attr_schema(at, "compression", 1) ||
+        at->data[0] > EXR_COMPRESSION_ZSTD) return EXR_ERROR_CORRUPT;
+    h->compression = (exr_compression)at->data[0];
 
     at = exr_attr_find(h->attrs, "dataWindow");
-    if (at && at->size >= 16) {
+    if (attr_schema(at, "box2i", 16)) {
         h->data_window.min_x = exr_rd_i32(at->data);
         h->data_window.min_y = exr_rd_i32(at->data + 4);
         h->data_window.max_x = exr_rd_i32(at->data + 8);
         h->data_window.max_y = exr_rd_i32(at->data + 12);
-        has_data_window = 1;
     }
-    if (!has_data_window) return EXR_ERROR_CORRUPT;
+    else return EXR_ERROR_CORRUPT;
 
     at = exr_attr_find(h->attrs, "displayWindow");
-    if (at && at->size >= 16) {
+    if (attr_schema(at, "box2i", 16)) {
         h->display_window.min_x = exr_rd_i32(at->data);
         h->display_window.min_y = exr_rd_i32(at->data + 4);
         h->display_window.max_x = exr_rd_i32(at->data + 8);
         h->display_window.max_y = exr_rd_i32(at->data + 12);
-    } else {
-        h->display_window = h->data_window;
-    }
+    } else return EXR_ERROR_CORRUPT;
 
     at = exr_attr_find(h->attrs, "lineOrder");
-    if (at && at->size >= 1 && at->data[0] <= 2)
-        h->line_order = (exr_line_order)at->data[0];
+    if (!attr_schema(at, "lineOrder", 1) || at->data[0] > 2)
+        return EXR_ERROR_CORRUPT;
+    h->line_order = (exr_line_order)at->data[0];
 
     at = exr_attr_find(h->attrs, "pixelAspectRatio");
-    if (at && at->size >= 4) h->pixel_aspect_ratio = exr_rd_f32(at->data);
+    if (!attr_schema(at, "float", 4)) return EXR_ERROR_CORRUPT;
+    h->pixel_aspect_ratio = exr_rd_f32(at->data);
 
     at = exr_attr_find(h->attrs, "screenWindowCenter");
-    if (at && at->size >= 8) {
+    if (attr_schema(at, "v2f", 8)) {
         h->screen_window_center_x = exr_rd_f32(at->data);
         h->screen_window_center_y = exr_rd_f32(at->data + 4);
-    }
+    } else return EXR_ERROR_CORRUPT;
 
     at = exr_attr_find(h->attrs, "screenWindowWidth");
-    if (at && at->size >= 4) h->screen_window_width = exr_rd_f32(at->data);
+    if (!attr_schema(at, "float", 4)) return EXR_ERROR_CORRUPT;
+    h->screen_window_width = exr_rd_f32(at->data);
 
     /* chromaticities: 8 floats (red/green/blue/white xy). Used to derive
      * luminance weights for luminance-chroma (Y/RY/BY) reconstruction. */
     at = exr_attr_find(h->attrs, "chromaticities");
-    if (at && at->size >= 32) {
+    if (at && !attr_schema(at, "chromaticities", 32))
+        return EXR_ERROR_CORRUPT;
+    if (at) {
         int i;
         for (i = 0; i < 8; ++i)
             h->chromaticities[i] = exr_rd_f32(at->data + (uint32_t)i * 4);
@@ -320,26 +403,32 @@ static exr_result interpret_header(exr_reader *r, exr_int_part *part) {
 
     /* tiles */
     at = exr_attr_find(h->attrs, "tiles");
-    if (at && at->size >= 9) {
+    if (at && !attr_schema(at, "tiledesc", 9)) return EXR_ERROR_CORRUPT;
+    if (at) {
         h->tiled = 1;
         h->tile_x_size = exr_rd_u32(at->data);
         h->tile_y_size = exr_rd_u32(at->data + 4);
         h->level_mode = (exr_tile_level_mode)(at->data[8] & 0x0f);
         h->rounding_mode = (exr_tile_rounding_mode)((at->data[8] >> 4) & 0x0f);
-        if (h->level_mode > EXR_TILE_RIPMAP_LEVELS) return EXR_ERROR_CORRUPT;
+        if (h->level_mode > EXR_TILE_RIPMAP_LEVELS ||
+            h->rounding_mode > EXR_TILE_ROUND_UP) return EXR_ERROR_CORRUPT;
     }
 
     /* name */
     at = exr_attr_find(h->attrs, "name");
+    if (at && strcmp(at->type_name, "string") != 0)
+        return EXR_ERROR_CORRUPT;
     if (at && at->size > 0) {
         uint32_t n = at->size;
-        if (n >= EXR_MAX_NAME) n = EXR_MAX_NAME - 1;
+        if (n >= EXR_MAX_NAME) return EXR_ERROR_CORRUPT;
         memcpy(h->name, at->data, n);
         h->name[n] = '\0';
     }
 
     /* part type: from "type" attribute, else from version flags */
     at = exr_attr_find(h->attrs, "type");
+    if (at && strcmp(at->type_name, "string") != 0)
+        return EXR_ERROR_CORRUPT;
     if (at && at->size > 0) {
         const char *t = (const char *)at->data;
         size_t n = at->size;
@@ -353,8 +442,7 @@ static exr_result interpret_header(exr_reader *r, exr_int_part *part) {
         else if (n == 8 && memcmp(t, "deeptile", 8) == 0) {
             h->part_type = EXR_PART_DEEP_TILED;
             h->tiled = 1;
-        } else
-            h->part_type = h->tiled ? EXR_PART_TILED : EXR_PART_SCANLINE;
+        } else return EXR_ERROR_CORRUPT;
     } else {
         if (r->is_deep)
             h->part_type =
@@ -363,21 +451,31 @@ static exr_result interpret_header(exr_reader *r, exr_int_part *part) {
             h->part_type = h->tiled ? EXR_PART_TILED : EXR_PART_SCANLINE;
     }
 
-    /* geometry */
-    {
-        int64_t w = (int64_t)h->data_window.max_x - h->data_window.min_x + 1;
-        int64_t hh = (int64_t)h->data_window.max_y - h->data_window.min_y + 1;
-        if (w <= 0 || hh <= 0 || w > EXR_MAX_DIMENSION || hh > EXR_MAX_DIMENSION)
-            return EXR_ERROR_CORRUPT;
-        part->width = (int32_t)w;
-        part->height = (int32_t)hh;
+    if ((r->is_multipart || r->is_deep) &&
+        !exr_attr_find(h->attrs, "type"))
+        return EXR_ERROR_CORRUPT;
+    if (r->is_multipart && (!at || h->name[0] == '\0')) {
+        /* `at` above is the type attribute; test name explicitly here. */
+        const exr_attr *nm = exr_attr_find(h->attrs, "name");
+        if (!nm || nm->size == 0) return EXR_ERROR_CORRUPT;
     }
-    return EXR_SUCCESS;
+    if (!!h->tiled != (h->part_type == EXR_PART_TILED ||
+                       h->part_type == EXR_PART_DEEP_TILED))
+        return EXR_ERROR_CORRUPT;
+    {
+        const exr_attr *ms = exr_attr_find(h->attrs, "maxSamplesPerPixel");
+        if (ms && (!attr_schema(ms, "int", 4) ||
+                   exr_rd_i32(ms->data) < 0))
+            return EXR_ERROR_CORRUPT;
+    }
+
+    return exr_header_validate(h, !r->long_names, &part->width, &part->height,
+                               NULL);
 }
 
 /* Dimensions and tile counts of one tile level. */
-static void tiled_level_size(const exr_int_part *p, int lx, int ly, int *w,
-                             int *h, int *nxt, int *nyt) {
+static exr_result tiled_level_size(const exr_int_part *p, int lx, int ly, int *w,
+                                   int *h, int *nxt, int *nyt) {
     int lw = p->width, lh = p->height, i;
     int up = (p->header.rounding_mode == EXR_TILE_ROUND_UP);
     int tx = (int)p->header.tile_x_size, ty = (int)p->header.tile_y_size;
@@ -392,10 +490,13 @@ static void tiled_level_size(const exr_int_part *p, int lx, int ly, int *w,
         for (i = 0; i < lx; ++i) { lw = up ? (lw + 1) / 2 : lw / 2; if (lw < 1) lw = 1; }
         for (i = 0; i < ly; ++i) { lh = up ? (lh + 1) / 2 : lh / 2; if (lh < 1) lh = 1; }
     }
+    if (tx <= 0 || ty <= 0 || lw <= 0 || lh <= 0)
+        return EXR_ERROR_CORRUPT;
     if (w) *w = lw;
     if (h) *h = lh;
-    if (tx > 0 && nxt) *nxt = (lw + tx - 1) / tx;
-    if (ty > 0 && nyt) *nyt = (lh + ty - 1) / ty;
+    if (tx > 0 && nxt) *nxt = exr_ceil_div_pos(lw, tx);
+    if (nyt) *nyt = exr_ceil_div_pos(lh, ty);
+    return EXR_SUCCESS;
 }
 
 /* Total chunk count of a tiled part; also fills num_x/y_levels. */
@@ -409,12 +510,13 @@ static exr_result tiled_total_chunks(exr_int_part *p, uint32_t *out) {
     p->num_y_levels = 1;
 
     if (p->header.level_mode == EXR_TILE_ONE_LEVEL) {
-        int nx = (p->width + tx - 1) / tx, ny = (p->height + ty - 1) / ty;
+        int nx = exr_ceil_div_pos(p->width, tx);
+        int ny = exr_ceil_div_pos(p->height, ty);
         total = (uint64_t)nx * (uint64_t)ny;
     } else if (p->header.level_mode == EXR_TILE_MIPMAP_LEVELS) {
         int w = p->width, h = p->height, levels = 0;
         for (;;) {
-            int nx = (w + tx - 1) / tx, ny = (h + ty - 1) / ty;
+            int nx = exr_ceil_div_pos(w, tx), ny = exr_ceil_div_pos(h, ty);
             total += (uint64_t)nx * (uint64_t)ny;
             levels++;
             if (w <= 1 && h <= 1) break;
@@ -434,7 +536,9 @@ static exr_result tiled_total_chunks(exr_int_part *p, uint32_t *out) {
         for (ly = 0; ly < nyl; ++ly)
             for (lx = 0; lx < nxl; ++lx) {
                 int nxt, nyt;
-                tiled_level_size(p, lx, ly, NULL, NULL, &nxt, &nyt);
+                if (!EXR_OK(tiled_level_size(p, lx, ly, NULL, NULL,
+                                             &nxt, &nyt)))
+                    return EXR_ERROR_CORRUPT;
                 total += (uint64_t)nxt * (uint64_t)nyt;
             }
     }
@@ -448,22 +552,31 @@ static exr_result part_chunk_count(exr_reader *r, exr_int_part *part,
                                    uint32_t *out_count) {
     const exr_header *h = &part->header;
     const exr_attr *cc = exr_attr_find(h->attrs, "chunkCount");
-    (void)r;
+    uint32_t expected;
+    if (cc && !attr_schema(cc, "int", 4)) return EXR_ERROR_CORRUPT;
     if (h->part_type == EXR_PART_TILED || h->part_type == EXR_PART_DEEP_TILED) {
         /* Tiled offset tables always have an entry per tile across all levels;
          * compute it (and the level counts) directly. */
-        return tiled_total_chunks(part, out_count);
-    }
-    if (cc && cc->size >= 4) {
-        int32_t v = exr_rd_i32(cc->data);
-        if (v < 0) return EXR_ERROR_CORRUPT;
-        *out_count = (uint32_t)v;
+        exr_result rc = tiled_total_chunks(part, &expected);
+        if (!EXR_OK(rc)) return rc;
+        if (r->is_multipart && !cc)
+            return EXR_ERROR_CORRUPT;
+        if (cc && (exr_rd_i32(cc->data) < 0 ||
+                   (uint32_t)exr_rd_i32(cc->data) != expected))
+            return EXR_ERROR_CORRUPT;
+        *out_count = expected;
         return EXR_SUCCESS;
     }
     if (h->part_type == EXR_PART_SCANLINE ||
         h->part_type == EXR_PART_DEEP_SCANLINE) {
         int lpb = exr_lines_per_block(h->compression);
-        *out_count = (uint32_t)(((int64_t)part->height + lpb - 1) / lpb);
+        expected = (uint32_t)(((int64_t)part->height + lpb - 1) / lpb);
+        if (r->is_multipart && !cc)
+            return EXR_ERROR_CORRUPT;
+        if (cc && (exr_rd_i32(cc->data) < 0 ||
+                   (uint32_t)exr_rd_i32(cc->data) != expected))
+            return EXR_ERROR_CORRUPT;
+        *out_count = expected;
         return EXR_SUCCESS;
     }
     return EXR_ERROR_UNSUPPORTED;
@@ -479,18 +592,31 @@ exr_result exr_reader_parse_header(exr_reader *r) {
     int vnum;
     int32_t i;
     exr_result rc;
-    int32_t cap = 0;
 
     if (!r) return EXR_ERROR_INVALID_ARGUMENT;
-    if (r->parsed) return EXR_SUCCESS;
+    if (r->parse_done) return r->parse_rc;
     rc = exr_reader_ensure_buffered(r);
-    if (rc != EXR_SUCCESS) return rc; /* EXR_WOULD_BLOCK or error */
+    if (rc == EXR_WOULD_BLOCK) return rc;
+    if (rc != EXR_SUCCESS) goto fail;
 
-    if (r->mem_size < 8) return EXR_ERROR_INVALID_FILE;
-    if (exr_rd_u32(r->mem) != EXR_MAGIC) return EXR_ERROR_INVALID_FILE;
+    if (r->mem_size < 8) { rc = EXR_ERROR_INVALID_FILE; goto fail; }
+    if (exr_rd_u32(r->mem) != EXR_MAGIC) {
+        rc = EXR_ERROR_INVALID_FILE;
+        goto fail;
+    }
     ver = exr_rd_u32(r->mem + 4);
     vnum = (int)(ver & 0xff);
-    if (vnum > EXR_VERSION_NUMBER) return EXR_ERROR_UNSUPPORTED;
+    if (vnum < 1) { rc = EXR_ERROR_INVALID_FILE; goto fail; }
+    if (vnum > EXR_VERSION_NUMBER) { rc = EXR_ERROR_UNSUPPORTED; goto fail; }
+    if (ver & ~(UINT32_C(0xff) | EXR_VERSION_FLAG_TILED |
+                EXR_VERSION_FLAG_LONG_NAMES | EXR_VERSION_FLAG_NON_IMAGE |
+                EXR_VERSION_FLAG_MULTIPART)) {
+        rc = EXR_ERROR_UNSUPPORTED; goto fail;
+    }
+    if ((ver & EXR_VERSION_FLAG_MULTIPART) &&
+        (ver & EXR_VERSION_FLAG_TILED)) {
+        rc = EXR_ERROR_CORRUPT; goto fail;
+    }
 
     r->version_flags = ver;
     r->is_tiled = (ver & EXR_VERSION_FLAG_TILED) != 0;
@@ -519,8 +645,8 @@ exr_result exr_reader_parse_header(exr_reader *r) {
             rc = EXR_ERROR_CORRUPT;
             goto fail;
         }
-        if (r->num_parts == cap) {
-            int32_t ncap = cap ? cap * 2 : 1;
+        if (r->num_parts == r->parts_cap) {
+            int32_t ncap = r->parts_cap ? r->parts_cap * 2 : 1;
             exr_int_part *npb = (exr_int_part *)exr_calloc(
                 &r->alloc, (size_t)ncap, sizeof(exr_int_part));
             if (!npb) {
@@ -533,7 +659,7 @@ exr_result exr_reader_parse_header(exr_reader *r) {
                 exr_free(&r->alloc, r->parts);
             }
             r->parts = npb;
-            cap = ncap;
+            r->parts_cap = ncap;
         }
         np = &r->parts[r->num_parts];
         memset(np, 0, sizeof(*np));
@@ -556,6 +682,16 @@ exr_result exr_reader_parse_header(exr_reader *r) {
         goto fail;
     }
 
+    if (r->is_multipart) {
+        int32_t a, b;
+        for (a = 0; a < r->num_parts; ++a)
+            for (b = 0; b < a; ++b)
+                if (strcmp(r->parts[a].header.name,
+                           r->parts[b].header.name) == 0) {
+                    rc = EXR_ERROR_CORRUPT; goto fail;
+                }
+    }
+
     /* Offset tables, in part order. */
     for (i = 0; i < r->num_parts; ++i) {
         exr_int_part *p = &r->parts[i];
@@ -575,6 +711,14 @@ exr_result exr_reader_parse_header(exr_reader *r) {
             rc = EXR_ERROR_CORRUPT;
             goto fail;
         }
+        {
+            uint64_t lim = exr_context_max_header_bytes(r->context);
+            uint64_t next = (uint64_t)c.pos + (uint64_t)need;
+            if (next < (uint64_t)c.pos || (lim && next > lim)) {
+                rc = EXR_ERROR_LIMIT_EXCEEDED; goto fail;
+            }
+            r->metadata_bytes = next;
+        }
         p->offsets = (uint64_t *)exr_calloc(&r->alloc, n ? n : 1, sizeof(uint64_t));
         if (!p->offsets) {
             rc = EXR_ERROR_OUT_OF_MEMORY;
@@ -586,19 +730,37 @@ exr_result exr_reader_parse_header(exr_reader *r) {
         c.pos += need;
     }
 
+    for (i = 0; i < r->num_parts; ++i) {
+        exr_int_part *p = &r->parts[i];
+        uint32_t k;
+        for (k = 0; k < p->num_chunks; ++k) {
+            uint64_t off = p->offsets[k];
+            if (off < (uint64_t)c.pos || off >= (uint64_t)r->mem_size) {
+                rc = EXR_ERROR_CORRUPT; goto fail;
+            }
+        }
+    }
+
     r->parsed = 1;
+    r->parse_done = 1;
+    r->parse_rc = EXR_SUCCESS;
     return EXR_SUCCESS;
 
 fail:
+    reader_free_parts(r);
+    if (rc != EXR_WOULD_BLOCK) {
+        r->parse_done = 1;
+        r->parse_rc = rc;
+    }
     return rc;
 }
 
 int32_t exr_reader_num_parts(const exr_reader *r) {
-    return r ? r->num_parts : 0;
+    return (r && r->parsed) ? r->num_parts : 0;
 }
 
 const exr_header *exr_reader_part_header(const exr_reader *r, int32_t part) {
-    if (!r || part < 0 || part >= r->num_parts) return NULL;
+    if (!r || !r->parsed || part < 0 || part >= r->num_parts) return NULL;
     return &r->parts[part].header;
 }
 
@@ -606,14 +768,45 @@ const exr_header *exr_reader_part_header(const exr_reader *r, int32_t part) {
  * Scanline read
  * ========================================================================== */
 
-static int64_t floordiv64(int64_t a, int64_t b) {
-    int64_t q = a / b, rem = a % b;
-    if ((rem != 0) && ((rem < 0) != (b < 0))) q--;
-    return q;
-}
 static int nsamp(int lo, int hi, int s) {
-    if (s <= 1) return hi - lo + 1;
-    return (int)(floordiv64(hi, s) - floordiv64((int64_t)lo - 1, s));
+    return exr_num_samples(lo, hi, s);
+}
+
+static exr_result flat_output_size(const exr_header *h, int x0, int y0,
+                                   int width, int height, size_t *out) {
+    size_t total, ptr_bytes;
+    int c;
+    if (width <= 0 || height <= 0 || h->num_channels <= 0)
+        return EXR_ERROR_CORRUPT;
+    if (exr_mul_ovf((size_t)h->num_channels, sizeof(void *), &ptr_bytes))
+        return EXR_ERROR_CORRUPT;
+    total = ptr_bytes;
+    for (c = 0; c < h->num_channels; ++c) {
+        int nx = exr_num_samples(x0, x0 + width - 1,
+                                 h->channels[c].x_sampling);
+        int ny = exr_num_samples(y0, y0 + height - 1,
+                                 h->channels[c].y_sampling);
+        size_t samples, bytes;
+        if (nx < 0 || ny < 0 ||
+            exr_mul_ovf((size_t)nx, (size_t)ny, &samples) ||
+            exr_mul_ovf(samples, exr_pixel_size(h->channels[c].pixel_type),
+                        &bytes) ||
+            exr_add_ovf(total, bytes, &total))
+            return EXR_ERROR_CORRUPT;
+    }
+    *out = total;
+    return EXR_SUCCESS;
+}
+
+static exr_result check_flat_output_limit(const exr_reader *r,
+                                          const exr_header *h, int x0, int y0,
+                                          int width, int height) {
+    uint64_t limit = exr_reader_image_limit(r);
+    size_t bytes;
+    exr_result rc = flat_output_size(h, x0, y0, width, height, &bytes);
+    if (!EXR_OK(rc)) return rc;
+    if (limit && (uint64_t)bytes > limit) return EXR_ERROR_LIMIT_EXCEEDED;
+    return EXR_SUCCESS;
 }
 
 /* Per-channel sampled width/height of a part's data window. */
@@ -984,8 +1177,14 @@ static exr_result read_tiled_part(exr_reader *r, exr_int_part *p,
     exr_result rc = EXR_SUCCESS;
 
     if (tx <= 0 || ty <= 0) return EXR_ERROR_CORRUPT;
-    nxt = (p->width + tx - 1) / tx;
-    nyt = (p->height + ty - 1) / ty;
+    nxt = exr_ceil_div_pos(p->width, tx);
+    nyt = exr_ceil_div_pos(p->height, ty);
+    /* For ONE_LEVEL the chunk count must match the grid exactly. For
+     * mipmap/ripmap the caller must use exr_reader_read_tile() for non-zero
+     * levels; read_tiled_part reads only level 0. */
+    if (h->level_mode == EXR_TILE_ONE_LEVEL &&
+        p->num_chunks != (uint32_t)nxt * (uint32_t)nyt)
+        return EXR_ERROR_CORRUPT;
 
     out->images = (void **)exr_calloc(a, (size_t)h->num_channels, sizeof(void *));
     if (!out->images) return EXR_ERROR_OUT_OF_MEMORY;
@@ -1112,6 +1311,15 @@ exr_result exr_reader_read_part(exr_reader *r, int32_t part, exr_part *out) {
     if (part < 0 || part >= r->num_parts) return EXR_ERROR_INVALID_ARGUMENT;
     p = &r->parts[part];
 
+    if (p->header.part_type == EXR_PART_SCANLINE ||
+        p->header.part_type == EXR_PART_TILED) {
+        rc = check_flat_output_limit(r, &p->header,
+                                     p->header.data_window.min_x,
+                                     p->header.data_window.min_y,
+                                     p->width, p->height);
+        if (!EXR_OK(rc)) return rc;
+    }
+
     memset(out, 0, sizeof(*out));
     rc = exr_header_copy(&r->alloc, &out->header, &p->header);
     if (!EXR_OK(rc)) return rc;
@@ -1162,15 +1370,25 @@ exr_result exr_reader_read_scanlines(exr_reader *r, int32_t part,
 
     ymin = h->data_window.min_y;
     ymax = h->data_window.max_y;
-    if (y_count <= 0 || y_start < ymin || y_start + y_count - 1 > ymax)
+    if (y_count <= 0 || y_start < ymin ||
+        (int64_t)y_start + y_count - 1 > ymax)
         return EXR_ERROR_INVALID_ARGUMENT;
-    y_end = y_start + y_count - 1;
+    y_end = (int)((int64_t)y_start + y_count - 1);
+
+    rc = check_flat_output_limit(r, h, h->data_window.min_x, y_start,
+                                 p->width, y_count);
+    if (!EXR_OK(rc)) return rc;
 
     memset(out, 0, sizeof(*out));
     rc = exr_header_copy(a, &out->header, h);
     if (!EXR_OK(rc)) return rc;
     out->width = p->width;
     out->height = y_count;
+
+    /* cw/ch per channel for use in the scatter loop below. */
+    int *chans = (int *)exr_calloc(a, (size_t)h->num_channels, sizeof(int));
+    int *cws = (int *)exr_calloc(a, (size_t)h->num_channels, sizeof(int));
+    if (!chans || !cws) { rc = EXR_ERROR_OUT_OF_MEMORY; goto fail; }
 
     out->images = (void **)exr_calloc(a, (size_t)h->num_channels, sizeof(void *));
     if (!out->images) { rc = EXR_ERROR_OUT_OF_MEMORY; goto fail; }
@@ -1188,6 +1406,8 @@ exr_result exr_reader_read_scanlines(exr_reader *r, int32_t part,
         }
         out->images[c] = exr_calloc(a, bytes ? bytes : 1, 1);
         if (!out->images[c]) { rc = EXR_ERROR_OUT_OF_MEMORY; goto fail; }
+        chans[c] = ch;
+        cws[c] = cw;
     }
 
     lpb = exr_lines_per_block(h->compression);
@@ -1257,6 +1477,7 @@ exr_result exr_reader_read_scanlines(exr_reader *r, int32_t part,
                 if (boff + bytes > dst_size) { rc = EXR_ERROR_CORRUPT; goto fail; }
                 if (yy >= y_start && yy <= y_end) {
                     row = nsamp(y_start, yy, ys) - 1;
+                    if (row < 0 || row >= chans[c]) { rc = EXR_ERROR_CORRUPT; goto fail; }
                     memcpy((uint8_t *)out->images[c] + (size_t)row * cw * ps,
                            block + boff, bytes);
                 }
@@ -1265,10 +1486,14 @@ exr_result exr_reader_read_scanlines(exr_reader *r, int32_t part,
         }
     }
     exr_free(a, block);
+    exr_free(a, chans);
+    exr_free(a, cws);
     return EXR_SUCCESS;
 
 fail:
     exr_free(a, block);
+    exr_free(a, chans);
+    exr_free(a, cws);
     exr_part_free(a, out); /* on error, out owns nothing */
     return rc;
 }
@@ -1333,7 +1558,8 @@ exr_result exr_reader_read_tile(exr_reader *r, int32_t part, int32_t tile_x,
         level_y >= p->num_y_levels)
         return EXR_ERROR_INVALID_ARGUMENT;
 
-    tiled_level_size(p, level_x, level_y, &lw, &lh, &nxt, &nyt);
+    rc = tiled_level_size(p, level_x, level_y, &lw, &lh, &nxt, &nyt);
+    if (!EXR_OK(rc)) return rc;
     if (tile_x < 0 || tile_x >= nxt || tile_y < 0 || tile_y >= nyt)
         return EXR_ERROR_INVALID_ARGUMENT;
     tx = (int)h->tile_x_size;
@@ -1342,6 +1568,9 @@ exr_result exr_reader_read_tile(exr_reader *r, int32_t part, int32_t tile_x,
     th = (ty < lh - tile_y * ty) ? ty : (lh - tile_y * ty);
     abs_x0 = h->data_window.min_x + tile_x * tx;
     abs_y0 = h->data_window.min_y + tile_y * ty;
+
+    rc = check_flat_output_limit(r, h, abs_x0, abs_y0, tw, th);
+    if (!EXR_OK(rc)) return rc;
 
     idx = tile_index(p, tile_x, tile_y, level_x, level_y);
     if (idx >= p->num_chunks) return EXR_ERROR_CORRUPT;
@@ -1447,7 +1676,8 @@ static exr_result block_locate(const exr_int_part *p, uint32_t idx, int *out_lx,
         int l;
         for (l = 0; l < p->num_x_levels; ++l) {
             uint32_t cnt;
-            tiled_level_size(p, l, l, NULL, NULL, &nxt, &nyt);
+            if (!EXR_OK(tiled_level_size(p, l, l, NULL, NULL, &nxt, &nyt)))
+                return EXR_ERROR_CORRUPT;
             cnt = (uint32_t)nxt * (uint32_t)nyt;
             if (idx < base + cnt) {
                 uint32_t w = idx - base;
@@ -1463,7 +1693,9 @@ static exr_result block_locate(const exr_int_part *p, uint32_t idx, int *out_lx,
         for (ly = 0; ly < p->num_y_levels; ++ly)
             for (lx = 0; lx < p->num_x_levels; ++lx) {
                 uint32_t cnt;
-                tiled_level_size(p, lx, ly, NULL, NULL, &nxt, &nyt);
+                if (!EXR_OK(tiled_level_size(p, lx, ly, NULL, NULL,
+                                             &nxt, &nyt)))
+                    return EXR_ERROR_CORRUPT;
                 cnt = (uint32_t)nxt * (uint32_t)nyt;
                 if (idx < base + cnt) {
                     uint32_t w = idx - base;
@@ -1475,7 +1707,8 @@ static exr_result block_locate(const exr_int_part *p, uint32_t idx, int *out_lx,
                 base += cnt;
             }
     } else { /* ONE_LEVEL */
-        tiled_level_size(p, 0, 0, NULL, NULL, &nxt, &nyt);
+        if (!EXR_OK(tiled_level_size(p, 0, 0, NULL, NULL, &nxt, &nyt)))
+            return EXR_ERROR_CORRUPT;
         if (nxt <= 0) return EXR_ERROR_CORRUPT;
         *out_lx = 0; *out_ly = 0;
         *out_tx = (int)(idx % (uint32_t)nxt);
@@ -1498,7 +1731,8 @@ static exr_result block_geometry(const exr_int_part *p, uint32_t idx,
         int lx, ly, tx, ty, lw, lh, nxt, nyt, tsx, tsy, x0l, y0l, tw, th;
         exr_result rc = block_locate(p, idx, &lx, &ly, &tx, &ty);
         if (!EXR_OK(rc)) return rc;
-        tiled_level_size(p, lx, ly, &lw, &lh, &nxt, &nyt);
+        rc = tiled_level_size(p, lx, ly, &lw, &lh, &nxt, &nyt);
+        if (!EXR_OK(rc)) return rc;
         tsx = (int)h->tile_x_size;
         tsy = (int)h->tile_y_size;
         if (tsx <= 0 || tsy <= 0) return EXR_ERROR_CORRUPT;
@@ -1660,7 +1894,7 @@ exr_result exr_reader_decode_block(exr_reader *r, int32_t part, uint32_t idx,
 exr_result exr_block_extract_channel(const exr_header *h,
                                      const exr_block_info *bi, const void *block,
                                      size_t block_size, int32_t channel,
-                                     void *dst) {
+                                     void *dst, size_t dst_size) {
     const uint8_t *b = (const uint8_t *)block;
     size_t off = 0;
     int line, c, x0, y0, w, hgt;
@@ -1668,6 +1902,17 @@ exr_result exr_block_extract_channel(const exr_header *h,
     if (channel < 0 || channel >= h->num_channels)
         return EXR_ERROR_INVALID_ARGUMENT;
     x0 = bi->x0; y0 = bi->y0; w = bi->width; hgt = bi->height;
+    {
+        const exr_channel *ch = &h->channels[channel];
+        int nx = exr_num_samples(x0, x0 + w - 1, ch->x_sampling);
+        int ny = exr_num_samples(y0, y0 + hgt - 1, ch->y_sampling);
+        size_t samples, required;
+        if (nx < 0 || ny < 0 ||
+            exr_mul_ovf((size_t)nx, (size_t)ny, &samples) ||
+            exr_mul_ovf(samples, exr_pixel_size(ch->pixel_type), &required))
+            return EXR_ERROR_CORRUPT;
+        if (dst_size < required) return EXR_ERROR_INVALID_ARGUMENT;
+    }
     for (line = 0; line < hgt; ++line) {
         int yy = y0 + line;
         for (c = 0; c < h->num_channels; ++c) {
@@ -1681,7 +1926,8 @@ exr_result exr_block_extract_channel(const exr_header *h,
             nx = nsamp(x0, x0 + w - 1, xs);
             if (nx <= 0) continue;
             bytes = (size_t)nx * ps;
-            if (off + bytes > block_size) return EXR_ERROR_CORRUPT;
+            if (off > block_size || bytes > block_size - off)
+                return EXR_ERROR_CORRUPT;
             if (c == channel) {
                 row = nsamp(y0, yy, ys) - 1;
                 memcpy((uint8_t *)dst + (size_t)row * (size_t)nx * ps, b + off,
@@ -1694,11 +1940,15 @@ exr_result exr_block_extract_channel(const exr_header *h,
 }
 
 exr_result exr_reader_decode_deep_counts(exr_reader *r, int32_t part,
-                                         uint32_t idx, int32_t *counts) {
+                                         uint32_t idx, int32_t *counts,
+                                         size_t counts_capacity,
+                                         uint64_t *out_total_samples) {
     exr_int_part *p;
     exr_block_info bi;
     exr_result rc;
-    if (!r || !counts) return EXR_ERROR_INVALID_ARGUMENT;
+    size_t need;
+    if (!r || !counts || !out_total_samples) return EXR_ERROR_INVALID_ARGUMENT;
+    *out_total_samples = 0;
     rc = exr_reader_parse_header(r);
     if (rc != EXR_SUCCESS) return rc;
     if (part < 0 || part >= r->num_parts) return EXR_ERROR_INVALID_ARGUMENT;
@@ -1708,12 +1958,16 @@ exr_result exr_reader_decode_deep_counts(exr_reader *r, int32_t part,
         return EXR_ERROR_INVALID_ARGUMENT;
     rc = block_geometry(p, idx, &bi);
     if (!EXR_OK(rc)) return rc;
+    if (exr_mul_ovf((size_t)bi.width, (size_t)bi.height, &need))
+        return EXR_ERROR_CORRUPT;
+    if (counts_capacity < need) return EXR_ERROR_INVALID_ARGUMENT;
     return exr_deep_decode_counts(r, p, part, idx, bi.width, bi.height,
-                                  bi.is_tiled, counts);
+                                  bi.is_tiled, counts, out_total_samples);
 }
 
 exr_result exr_reader_decode_deep_samples(exr_reader *r, int32_t part,
-                                          uint32_t idx, void *const *chan_dst) {
+                                          uint32_t idx, exr_buffer *chan_dst,
+                                          size_t channel_count) {
     exr_int_part *p;
     exr_block_info bi;
     exr_result rc;
@@ -1724,6 +1978,8 @@ exr_result exr_reader_decode_deep_samples(exr_reader *r, int32_t part,
     p = &r->parts[part];
     if (p->header.part_type != EXR_PART_DEEP_SCANLINE &&
         p->header.part_type != EXR_PART_DEEP_TILED)
+        return EXR_ERROR_INVALID_ARGUMENT;
+    if (channel_count != (size_t)p->header.num_channels)
         return EXR_ERROR_INVALID_ARGUMENT;
     rc = block_geometry(p, idx, &bi);
     if (!EXR_OK(rc)) return rc;
@@ -1741,19 +1997,25 @@ exr_result exr_reader_decode_deep_samples(exr_reader *r, int32_t part,
 
 exr_result exr_reader_pending(const exr_reader *r, exr_pending_read *out) {
     if (!r || !out) return EXR_ERROR_INVALID_ARGUMENT;
+    if (r->parse_done && r->parse_rc != EXR_SUCCESS) return r->parse_rc;
     if (!r->have_pending) return EXR_ERROR_INVALID_ARGUMENT;
     *out = r->pending;
     return EXR_SUCCESS;
 }
 
-exr_result exr_reader_supply(exr_reader *r, const void *data, size_t size) {
+exr_result exr_reader_supply(exr_reader *r, uint64_t offset,
+                             const void *data, size_t size) {
     if (!r || (!data && size)) return EXR_ERROR_INVALID_ARGUMENT;
+    if (r->parse_done && r->parse_rc != EXR_SUCCESS) return r->parse_rc;
     if (r->kind != EXR_SRC_CALLBACK) return EXR_ERROR_INVALID_ARGUMENT;
-    /* Append the fetched bytes to the streaming buffer (host may feed the
-     * pending range in pieces). Then re-call the reader function to resume. */
-    if (size > r->mem_size - r->filled) return EXR_ERROR_INVALID_ARGUMENT;
+    if (!r->have_pending || size == 0 || offset != r->pending.offset ||
+        offset != (uint64_t)r->filled || size > r->pending.size ||
+        size > r->mem_size - r->filled)
+        return EXR_ERROR_INVALID_ARGUMENT;
     memcpy((uint8_t *)r->mem + r->filled, data, size);
     r->filled += size;
-    r->have_pending = 0;
+    r->pending.offset += size;
+    r->pending.size -= size;
+    if (r->pending.size == 0) r->have_pending = 0;
     return EXR_SUCCESS;
 }

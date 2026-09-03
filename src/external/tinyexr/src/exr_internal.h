@@ -74,6 +74,10 @@ static inline int exr_add_ovf(size_t a, size_t b, size_t *out) {
 #endif
 }
 
+static inline int exr_ceil_div_pos(int value, int divisor) {
+    return (int)(((int64_t)value + (int64_t)divisor - 1) / divisor);
+}
+
 /* Function attribute that suppresses UBSan's signed-integer-overflow check.
  * The reversible 5/3 wavelet lifting steps are defined to wrap modulo 2^64
  * (two's complement); this is exact for real coefficient ranges and only trips
@@ -136,6 +140,7 @@ static inline void exr_wr_f32(uint8_t *p, float f) {
  * ========================================================================== */
 
 const exr_allocator *exr_default_allocator(void);
+int exr_allocator_valid(const exr_allocator *a);
 void *exr_malloc(const exr_allocator *a, size_t size);
 void *exr_calloc(const exr_allocator *a, size_t count, size_t size);
 void exr_free(const exr_allocator *a, void *ptr);
@@ -497,8 +502,11 @@ static inline int64_t exr_floordiv(int64_t a, int64_t b) {
     return q;
 }
 static inline int exr_num_samples(int lo, int hi, int s) {
-    if (s <= 1) return hi - lo + 1;
-    return (int)(exr_floordiv(hi, s) - exr_floordiv((int64_t)lo - 1, s));
+    int64_t n;
+    if (s <= 0 || hi < lo) return 0;
+    if (s == 1) n = (int64_t)hi - lo + 1;
+    else n = exr_floordiv(hi, s) - exr_floordiv((int64_t)lo - 1, s);
+    return (n > 0 && n <= INT32_MAX) ? (int)n : 0;
 }
 
 /* Scanlines compressed together per chunk for a given compression. */
@@ -544,6 +552,9 @@ exr_result exr_parse_chlist(const exr_allocator *a, const uint8_t *data,
 exr_result exr_header_copy(const exr_allocator *a, exr_header *dst,
                            const exr_header *src);
 void exr_header_free(const exr_allocator *a, exr_header *hdr);
+exr_result exr_header_validate(const exr_header *hdr, int enforce_short_names,
+                               int32_t *out_width, int32_t *out_height,
+                               int *out_requires_long_names);
 
 /* The allocator a writer was created with (exr_stdio.c frees finalize buffers
  * with it). exr_writer is opaque outside exr_writer.c. */
@@ -593,6 +604,11 @@ struct exr_reader {
     exr_data_source src; /* callback path */
 
     int parsed;
+    int parse_done;
+    exr_result parse_rc;
+    uint64_t metadata_bytes;
+    uint64_t image_limit_override;
+    int has_image_limit_override;
     uint32_t version_flags;
     int is_tiled;
     int is_multipart;
@@ -601,6 +617,7 @@ struct exr_reader {
 
     exr_int_part *parts;
     int32_t num_parts;
+    int32_t parts_cap;
 
     /* streaming suspend state (callback path). The whole file is buffered into
      * `mem` incrementally; `filled` bytes are valid so far. */
@@ -668,10 +685,11 @@ exr_result exr_read_deep_tiled_part(exr_reader *r, exr_int_part *p,
  * _samples fills chan_dst[c] with sum(counts) contiguous samples per channel. */
 exr_result exr_deep_decode_counts(exr_reader *r, exr_int_part *p,
                                   int32_t part_idx, uint32_t idx, int bw, int bh,
-                                  int is_tiled, int32_t *counts);
+                                  int is_tiled, int32_t *counts,
+                                  uint64_t *out_total_samples);
 exr_result exr_deep_decode_samples(exr_reader *r, exr_int_part *p,
                                    int32_t part_idx, uint32_t idx, int bw, int bh,
-                                   int is_tiled, void *const *chan_dst);
+                                   int is_tiled, exr_buffer *chan_dst);
 
 /* Build a temporary deep part for tile level (lw x lh) by point-subsampling the
  * source: level pixel (x,y) takes the samples of source pixel
@@ -729,6 +747,10 @@ void **exr_context_jph_slot(exr_context *ctx);
 void exr_piz_context_free(exr_context *ctx);
 void **exr_context_piz_slot(exr_context *ctx);
 const exr_allocator *exr_context_allocator(const exr_context *ctx);
+uint64_t exr_context_max_image_bytes(const exr_context *ctx);
+uint64_t exr_context_max_file_bytes(const exr_context *ctx);
+uint64_t exr_context_max_header_bytes(const exr_context *ctx);
+uint64_t exr_reader_image_limit(const exr_reader *r);
 
 /* Decompress `src_size` bytes from `src` into `dst` (capacity dst_size, which
  * must equal the exact uncompressed block size). */

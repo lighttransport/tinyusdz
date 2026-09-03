@@ -50,20 +50,25 @@ static const uint64_t kBaselineData[286] = {
 static int compute_code_lengths(const exr_allocator *alloc, const uint64_t *freqs,
                                 size_t n, uint8_t *min_limit, uint8_t *max_limit,
                                 uint8_t *nbits) {
-    size_t precision = 0, i, sym, slots;
+    size_t precision = 0, i, sym, slots, rows, cells, bytes;
     uint64_t freqsum = 0, infty;
     uint64_t *dynp;
     size_t off;
     for (i = 0; i < n; i++) {
+        if (freqsum > UINT64_MAX - freqs[i]) return 0;
         freqsum += freqs[i];
         if (min_limit[i] < 1) min_limit[i] = 1;
         if (max_limit[i] > precision) precision = max_limit[i];
     }
+    if (precision >= sizeof(size_t) * 8 ||
+        (precision && freqsum > UINT64_MAX / precision)) return 0;
     infty = freqsum * precision;
     slots = (((size_t)1 << precision) + 1);
-    dynp = (uint64_t *)exr_malloc(alloc, slots * (n + 1) * sizeof(uint64_t));
+    if (exr_add_ovf(n, 1, &rows) || exr_mul_ovf(slots, rows, &cells) ||
+        exr_mul_ovf(cells, sizeof(uint64_t), &bytes)) return 0;
+    dynp = (uint64_t *)exr_malloc(alloc, bytes);
     if (!dynp) return 0;
-    for (i = 0; i < slots * (n + 1); i++) dynp[i] = infty;
+    for (i = 0; i < cells; i++) dynp[i] = infty;
 #define D(s, o) dynp[(s) * slots + (o)]
     D(0, 0) = 0;
     for (sym = 0; sym < n; sym++) {

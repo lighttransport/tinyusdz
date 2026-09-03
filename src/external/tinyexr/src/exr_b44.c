@@ -420,13 +420,24 @@ exr_result exr_b44_compress(const exr_codec_ctx *ctx, const uint8_t *block,
         ch[c] = h;
         if (ctx->channels[c].pixel_type == EXR_PIXEL_HALF) {
             int nbx = (w + 3) / 4, nby = (h + 3) / 4;
-            maxout += (size_t)nbx * nby * 14;
-            hp[c] = (uint16_t *)exr_calloc(a, (size_t)(w ? w : 1) * (h ? h : 1),
+            size_t blocks, add, pixels;
+            if (exr_mul_ovf((size_t)nbx, (size_t)nby, &blocks) ||
+                exr_mul_ovf(blocks, 14, &add) ||
+                exr_add_ovf(maxout, add, &maxout) ||
+                exr_mul_ovf((size_t)(w ? w : 1), (size_t)(h ? h : 1), &pixels)) {
+                rc = EXR_ERROR_CORRUPT; goto done;
+            }
+            hp[c] = (uint16_t *)exr_calloc(a, pixels,
                                            sizeof(uint16_t));
             if (!hp[c]) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
         } else {
-            maxout += (size_t)w * h * 4;
-            np[c] = (uint8_t *)exr_calloc(a, (size_t)(w ? w : 1) * (h ? h : 1) * 4, 1);
+            size_t pixels, add;
+            if (exr_mul_ovf((size_t)(w ? w : 1), (size_t)(h ? h : 1),
+                            &pixels) || exr_mul_ovf(pixels, 4, &add) ||
+                exr_add_ovf(maxout, add, &maxout)) {
+                rc = EXR_ERROR_CORRUPT; goto done;
+            }
+            np[c] = (uint8_t *)exr_calloc(a, add, 1);
             if (!np[c]) { rc = EXR_ERROR_OUT_OF_MEMORY; goto done; }
         }
     }

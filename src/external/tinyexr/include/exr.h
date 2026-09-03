@@ -45,6 +45,7 @@ typedef enum exr_result {
     EXR_ERROR_OUT_OF_MEMORY = -4,
     EXR_ERROR_IO = -5,              /* file open/read/write failure */
     EXR_ERROR_CORRUPT = -6,         /* bounds/overflow/decode failure */
+    EXR_ERROR_LIMIT_EXCEEDED = -7,  /* configured resource limit exceeded */
 } exr_result;
 
 #define EXR_OK(r) ((int)(r) >= 0)
@@ -69,6 +70,16 @@ typedef struct exr_context exr_context;
 
 exr_result exr_context_create(const exr_allocator *alloc, exr_context **out);
 void exr_context_destroy(exr_context *ctx);
+/* Resource limits used by operations carrying this context. Both default to
+ * 1 GiB. A value of zero explicitly disables that limit. */
+exr_result exr_context_set_max_image_bytes(exr_context *ctx,
+                                           uint64_t max_bytes);
+exr_result exr_context_set_max_file_bytes(exr_context *ctx,
+                                          uint64_t max_bytes);
+/* Maximum cumulative header/metadata bytes. Defaults to 64 MiB; zero disables
+ * this limit. This includes parsed attribute storage and chunk offset tables. */
+exr_result exr_context_set_max_header_bytes(exr_context *ctx,
+                                            uint64_t max_bytes);
 
 /* ============================================================================
  * Enumerations mirroring the OpenEXR format
@@ -127,6 +138,17 @@ typedef enum exr_tile_rounding_mode {
 typedef struct exr_box2i {
     int32_t min_x, min_y, max_x, max_y;
 } exr_box2i;
+
+/* Sized caller-owned buffers used by block APIs. */
+typedef struct exr_buffer {
+    void *data;
+    size_t size;
+} exr_buffer;
+
+typedef struct exr_const_buffer {
+    const void *data;
+    size_t size;
+} exr_const_buffer;
 
 /* ============================================================================
  * Channel / header / part / image (plain data; caller may read fields)
@@ -376,8 +398,10 @@ typedef struct exr_pending_read {
 
 /* When a reader call returns EXR_WOULD_BLOCK, query the bytes it needs. */
 exr_result exr_reader_pending(const exr_reader *r, exr_pending_read *out);
-/* Hand the fetched bytes back, then re-call the same reader function. */
-exr_result exr_reader_supply(exr_reader *r, const void *data, size_t size);
+/* Hand back a prefix of the current pending range. `offset` must equal the
+ * pending offset; partial supplies advance the pending range. */
+exr_result exr_reader_supply(exr_reader *r, uint64_t offset,
+                             const void *data, size_t size);
 
 /* ============================================================================
  * Mid-level writer
@@ -445,22 +469,28 @@ exr_result exr_reader_decode_block(exr_reader *r, int32_t part, uint32_t idx,
                                    void *dst, size_t dst_size);
 
 /* Copy one channel out of a decoded canonical flat block into a tight planar
- * buffer: exr_num_samples(x0,x0+w-1,xs) * exr_num_samples(y0,y0+h-1,ys) elements
- * of that channel's pixel type, row-major. `channel` indexes the name-sorted
- * channel order (== header->channels order). */
+ * buffer containing the samples in the block's inclusive x/y ranges at that
+ * channel's sampling rates. `channel` indexes the name-sorted channel order
+ * (== header->channels order); dst_size is checked before copying. */
 exr_result exr_block_extract_channel(const exr_header *h,
                                      const exr_block_info *info,
                                      const void *block, size_t block_size,
-                                     int32_t channel, void *dst);
+                                     int32_t channel, void *dst,
+                                     size_t dst_size);
 
 /* Deep parts: counts must be known before sample buffers can be sized, so decode
  * is two-step. `counts` holds info.width*info.height per-pixel counts (block
- * row-major). After summing them, size chan_dst[c] to sum(counts) elements of
- * channel c's pixel type and call _decode_deep_samples. Both may WOULD_BLOCK. */
+ * row-major); counts_capacity is measured in int32_t elements. On success,
+ * out_total_samples receives their checked sum. Size chan_dst[c] to that many
+ * elements of channel c's pixel type and call _decode_deep_samples. Both may
+ * return WOULD_BLOCK. */
 exr_result exr_reader_decode_deep_counts(exr_reader *r, int32_t part,
-                                         uint32_t idx, int32_t *counts);
+                                         uint32_t idx, int32_t *counts,
+                                         size_t counts_capacity,
+                                         uint64_t *out_total_samples);
 exr_result exr_reader_decode_deep_samples(exr_reader *r, int32_t part,
-                                          uint32_t idx, void *const *chan_dst);
+                                          uint32_t idx, exr_buffer *chan_dst,
+                                          size_t channel_count);
 
 /* ---- streaming encode ---- */
 
@@ -489,30 +519,37 @@ exr_result exr_writer_begin_stream_file(exr_writer *w, const char *path,
                                         exr_compression comp);
 
 /* Feed one flat scanline block. y0 must be a block boundary. channel_rows[c]
- * points to this block's planar samples for channel c (header->channels order):
+ * describes this block's planar samples for channel c (header->channels order):
  * exr_num_samples(xmin,xmax,xs) * exr_num_samples(y0,y0+nlines-1,ys) elements. */
 exr_result exr_writer_write_scanline_block(exr_writer *w, int32_t part,
                                            int32_t y0,
-                                           const void *const *channel_rows);
+                                           const exr_const_buffer *channel_rows,
+                                           size_t channel_count);
 
 /* Feed one flat tile at level (level_x,level_y) (0,0 for ONE_LEVEL). For
  * mipmap/ripmap the caller supplies every (tile,level) itself (no pyramid
- * auto-generation). channel_data[c] is the tile's planar samples for channel c. */
+ * auto-generation). channel_data[c] describes the tile's planar samples for
+ * channel c. */
 exr_result exr_writer_write_tile(exr_writer *w, int32_t part, int32_t tile_x,
                                  int32_t tile_y, int32_t level_x, int32_t level_y,
-                                 const void *const *channel_data);
+                                 const exr_const_buffer *channel_data,
+                                 size_t channel_count);
 
 /* Deep variants. counts[] holds width*height per-pixel sample counts (block
- * row-major); chan_samp[c] holds the block's contiguous samples for channel c
- * in pixel row-major order. */
+ * row-major); chan_samp[c] describes the block's contiguous samples for channel
+ * c in pixel row-major order. */
 exr_result exr_writer_write_deep_scanline_block(exr_writer *w, int32_t part,
                                                 int32_t y0, const int32_t *counts,
-                                                const void *const *chan_samp);
+                                                size_t counts_capacity,
+                                                const exr_const_buffer *chan_samp,
+                                                size_t channel_count);
 exr_result exr_writer_write_deep_tile(exr_writer *w, int32_t part,
                                       int32_t tile_x, int32_t tile_y,
                                       int32_t level_x, int32_t level_y,
                                       const int32_t *counts,
-                                      const void *const *chan_samp);
+                                      size_t counts_capacity,
+                                      const exr_const_buffer *chan_samp,
+                                      size_t channel_count);
 
 /* Backpatch every offset table (seek + write) and flush. For the file-backed
  * sink this also closes the file. */

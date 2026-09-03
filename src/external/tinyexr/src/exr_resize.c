@@ -218,6 +218,7 @@ struct exr_resizer {
     int ring_cap;
     float **ring;   /* [ring_cap] */
     int *ring_srcy; /* [ring_cap] source row resident in each slot, -1 empty */
+    int next_src;   /* expected next src_y (must be >= this value) */
     float *srcf;    /* sw*channels widen scratch */
     float *accum;   /* dw*channels vertical scratch */
     int cur_dst;
@@ -265,6 +266,7 @@ exr_result exr_resizer_create(const exr_allocator *a, int sw, int sh, int dw,
     r->channels = channels;
     r->io_type = io_type;
     r->cur_dst = 0;
+    r->next_src = 0;
 
     rc = axisfilter_build(a, sw, dw, filter, edge, &r->fx);
     if (!EXR_OK(rc)) goto fail;
@@ -315,6 +317,8 @@ static void hresample(exr_resizer *r, int src_y, const float *srcf) {
 exr_result exr_resizer_push_row(exr_resizer *r, int src_y, const void *src_row) {
     if (!r || !src_row || src_y < 0 || src_y >= r->sh)
         return EXR_ERROR_INVALID_ARGUMENT;
+    if (src_y < r->next_src) return EXR_ERROR_INVALID_ARGUMENT;
+    r->next_src = src_y + 1;
     widen_row(r->srcf, src_row, (size_t)r->sw * r->channels, r->io_type);
     hresample(r, src_y, r->srcf);
     return EXR_SUCCESS;

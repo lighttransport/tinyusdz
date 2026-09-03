@@ -89,7 +89,37 @@ void exr_parallel_for(int nthreads, int njobs, exr_par_fn fn, void *ctx) {
 
 #elif defined(EXR_USE_THREADS)
 
+#if defined(EXR_THREADS_PTHREAD)
+#include <pthread.h>
+typedef pthread_t exr_thread_t;
+typedef pthread_mutex_t exr_mutex_t;
+typedef void *exr_thread_ret;
+#define EXR_THREAD_RET_OK NULL
+static int exr_mutex_init(exr_mutex_t *m) { return pthread_mutex_init(m, NULL) == 0; }
+static void exr_mutex_lock(exr_mutex_t *m) { (void)pthread_mutex_lock(m); }
+static void exr_mutex_unlock(exr_mutex_t *m) { (void)pthread_mutex_unlock(m); }
+static void exr_mutex_destroy(exr_mutex_t *m) { (void)pthread_mutex_destroy(m); }
+static int exr_thread_create(exr_thread_t *t, exr_thread_ret (*fn)(void *),
+                             void *arg) {
+    return pthread_create(t, NULL, fn, arg) == 0;
+}
+static void exr_thread_join(exr_thread_t t) { (void)pthread_join(t, NULL); }
+#else
 #include <threads.h>
+typedef thrd_t exr_thread_t;
+typedef mtx_t exr_mutex_t;
+typedef int exr_thread_ret;
+#define EXR_THREAD_RET_OK 0
+static int exr_mutex_init(exr_mutex_t *m) { return mtx_init(m, mtx_plain) == thrd_success; }
+static void exr_mutex_lock(exr_mutex_t *m) { (void)mtx_lock(m); }
+static void exr_mutex_unlock(exr_mutex_t *m) { (void)mtx_unlock(m); }
+static void exr_mutex_destroy(exr_mutex_t *m) { mtx_destroy(m); }
+static int exr_thread_create(exr_thread_t *t, exr_thread_ret (*fn)(void *),
+                             void *arg) {
+    return thrd_create(t, fn, arg) == thrd_success;
+}
+static void exr_thread_join(exr_thread_t t) { (void)thrd_join(t, NULL); }
+#endif
 
 /* Upper bound on workers, so the thread handle array can live on the stack and
  * a pathological count cannot exhaust resources. */
@@ -100,25 +130,25 @@ typedef struct {
     void *ctx;
     int njobs;
     int next; /* next unclaimed job index, guarded by lock */
-    mtx_t lock;
+    exr_mutex_t lock;
 } par_state;
 
-static int par_worker(void *arg) {
+static exr_thread_ret par_worker(void *arg) {
     par_state *st = (par_state *)arg;
     for (;;) {
         int job;
-        mtx_lock(&st->lock);
+        exr_mutex_lock(&st->lock);
         job = (st->next < st->njobs) ? st->next++ : -1;
-        mtx_unlock(&st->lock);
+        exr_mutex_unlock(&st->lock);
         if (job < 0) break;
         st->fn(st->ctx, job);
     }
-    return 0;
+    return EXR_THREAD_RET_OK;
 }
 
 void exr_parallel_for(int nthreads, int njobs, exr_par_fn fn, void *ctx) {
     par_state st;
-    thrd_t threads[EXR_THREAD_CAP];
+    exr_thread_t threads[EXR_THREAD_CAP];
     int spawned = 0, i;
 
     if (njobs <= 0) return;
@@ -133,7 +163,7 @@ void exr_parallel_for(int nthreads, int njobs, exr_par_fn fn, void *ctx) {
     st.ctx = ctx;
     st.njobs = njobs;
     st.next = 0;
-    if (mtx_init(&st.lock, mtx_plain) != thrd_success) {
+    if (!exr_mutex_init(&st.lock)) {
         for (i = 0; i < njobs; ++i) fn(ctx, i); /* fallback: serial */
         return;
     }
@@ -142,14 +172,14 @@ void exr_parallel_for(int nthreads, int njobs, exr_par_fn fn, void *ctx) {
      * If a spawn fails we simply have fewer workers - correctness is unaffected
      * because every worker drains the same shared job counter. */
     for (i = 0; i < nthreads - 1; ++i) {
-        if (thrd_create(&threads[spawned], par_worker, &st) == thrd_success)
+        if (exr_thread_create(&threads[spawned], par_worker, &st))
             ++spawned;
     }
 
     par_worker(&st); /* calling thread participates */
 
-    for (i = 0; i < spawned; ++i) thrd_join(threads[i], NULL);
-    mtx_destroy(&st.lock);
+    for (i = 0; i < spawned; ++i) exr_thread_join(threads[i]);
+    exr_mutex_destroy(&st.lock);
 }
 
 #else /* !EXR_USE_THREADS : serial, no <threads.h> (freestanding-safe) */

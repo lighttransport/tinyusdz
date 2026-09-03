@@ -50,7 +50,9 @@ exr_result exr_parse_chlist(const exr_allocator *a, const uint8_t *data,
         ch.p_linear = data[pos + 4];
         ch.x_sampling = exr_rd_i32(data + pos + 8);
         ch.y_sampling = exr_rd_i32(data + pos + 12);
-        if (ch.x_sampling <= 0 || ch.y_sampling <= 0) goto corrupt;
+        if (ch.p_linear > 1 || data[pos + 5] || data[pos + 6] || data[pos + 7] ||
+            ch.x_sampling <= 0 || ch.y_sampling <= 0)
+            goto corrupt;
         pos += 16;
 
         if (count >= EXR_MAX_CHANNELS) goto corrupt;
@@ -69,6 +71,8 @@ exr_result exr_parse_chlist(const exr_allocator *a, const uint8_t *data,
             chans = nc;
             cap = ncap;
         }
+        if (count > 0 && strcmp(chans[count - 1].name, ch.name) >= 0)
+            goto corrupt;
         chans[count++] = ch;
     }
 
