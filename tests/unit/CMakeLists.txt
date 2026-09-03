@@ -6,6 +6,7 @@ set(TEST_SOURCES
 	unit-ascii-parse.cc
 	unit-customdata.cc
 	unit-handle-allocator.cc
+	unit-logger.cc
 	unit-prim-types.cc
 	unit-primvar.cc
 	unit-pathutil.cc

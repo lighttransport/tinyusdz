@@ -22,8 +22,8 @@ namespace logging {
 
 enum class LogLevel {
   Debug = 0,
-  Warn = 1,
-  Info = 2,
+  Info = 1,
+  Warn = 2,
   Error = 3,
   Critical = 4,
   Off = 5

@@ -7,9 +7,10 @@ assignees: ''
 
 ---
 
-**You should first investigate your issue using your coding agent, and prepare minimal reproducible codes/scenes**
+**You should first investigate your issue using your coding agent**
 **We don't provide free-of-charge issue investigation**
-**Users must research issues thoroughly before posting a report, or they will have a chance to be blocked**
+
+**Please research existing issues thoroughly before submitting a new report. When posting, you must follow the issue template and include a minimal, reproducible example (code and/or scene) in a standalone format. Failure to do so will result in the immediate deletion of your issue and may lead to your account being blocked.**
 
 **Describe the bug**
 A clear and concise description of what the bug is.

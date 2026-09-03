@@ -24,6 +24,7 @@
 #include "unit-ioutil.h"
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
+#include "unit-logger.h"
 #include "unit-fp-parse-print.h"
 #include "unit-pprint.h"
 #include "unit-materialx.h"
@@ -181,6 +182,7 @@ TEST_LIST = {
   { "strutil_parse_helpers_test", strutil_parse_helpers_test },
   { "fp_string_conversion_test", fp_string_conversion_test },
   { "timesamples_test", timesamples_test },
+  { "logger_test", logger_test },
   { "fp_roundtrip_basic_test", fp_roundtrip_basic_test },
   { "fp_roundtrip_edge_cases_test", fp_roundtrip_edge_cases_test },
   { "fp_roundtrip_special_values_test", fp_roundtrip_special_values_test },
