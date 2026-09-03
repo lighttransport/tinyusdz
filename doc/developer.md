@@ -172,8 +172,8 @@ npm run build:wasm
    git push origin vX.Y.Z        # PyPI wheels.yml triggers here
    ```
 
-5. Watch `wheels.yml`; confirm the `publish` job ran for final tags (or that
-   the artifacts were produced for RCs).
+5. Watch `wheels.yml`; confirm the `publish` job uploaded final or RC artifacts
+   to PyPI. RC tags such as `v1.0.0-rc4` are normalized to `1.0.0rc4`.
 6. Trigger `wasmPublish.yml` manually (UI or `gh workflow run`, §4.1) with the
    matching `release_version` and `npm_tag` (`latest` for stable).
 7. Confirm on PyPI (https://pypi.org/p/tinyusdz) and npm
@@ -184,7 +184,7 @@ npm run build:wasm
 
 | Symptom | Cause / fix |
 |---|---|
-| `wheels.yml` built but nothing on PyPI | Tag contains `-` (pre-release) → publish skipped by design; upload artifacts manually or use a final tag |
+| `wheels.yml` built but nothing on PyPI | Confirm the run was triggered by a pushed `v*.*.*` tag and that the PyPI trusted-publisher environment approved the publish job |
 | `HTTP 422: Unexpected inputs provided` | `gh workflow run` resolved `wasmPublish.yml` from the wrong ref (e.g. `release` lacks the inputs); pass `--ref dev` |
 | Wheel version wrong | `setuptools_scm` reads the git tag — push the tag first, use `fetch-depth: 0` locally (`git fetch --tags`), never hand-edit `python/tinyusdz/_version.py` |
 | npm publish needs auth/provenance | OIDC provenance must be configured for the org/package; locally you cannot publish from a dev machine without an npm token (not supported by this workflow) |

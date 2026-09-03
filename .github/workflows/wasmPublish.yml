@@ -114,11 +114,7 @@ jobs:
           name: 'tinyusdz-npm-${{ github.event.inputs.release_version }}'
           path: ${{ github.workspace }}/web/npm/dist
 
-      # Skip npm publish for pre-release versions (hyphenated suffix such as
-      # -rc*, -dev*, -alpha*, -beta*). The package is still built, validated and
-      # uploaded as a run artifact above; only the registry publish is skipped.
       - name: Publish package
-        if: ${{ !contains(github.event.inputs.release_version, '-') }}
         working-directory: ${{ github.workspace }}/web/npm/dist
         run: |
           npm publish --provenance --access public --tag ${{ github.event.inputs.npm_tag }}

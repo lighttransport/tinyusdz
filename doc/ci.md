@@ -111,19 +111,18 @@ If the publish step fails after wheels build successfully, wheels are kept as wo
 
 ### Pre-release / RC tags
 
-The `v*.*.*` tag pattern matches pre-release tags too (`v0.9.9-rc1`), but the
-**`publish` job skips any tag containing `-`** (`.github/workflows/wheels.yml`:
-`!contains(github.ref, '-')`) — pre-release wheels/sdist are still built and
-kept as run artifacts, they are just not uploaded to PyPI. Only final
-`vX.Y.Z` tags reach PyPI. To make a real RC (built and artifacted, npm-published
-to `preview`, not PyPI-published):
+The `v*.*.*` tag pattern matches pre-release tags too (`v1.0.0-rc4`). The
+`publish` job uploads both final and pre-release tags. `setuptools_scm`
+normalizes the hyphenated Git tag to PEP 440 form, so `v1.0.0-rc4` is published
+to PyPI as `1.0.0rc4`. To publish an RC to both PyPI and npm:
 
-1. Set `version_rev = "rc1"` in `src/tinyusdz.hh` (cosmetic; C++ side only).
-2. Set `"version": "0.9.9-rc1"` in `web/npm/package.json` and `web/js/package.json` (npm/semver uses the hyphenated pre-release form; do not strip the hyphen).
-3. Push tag `v0.9.9-rc1` — by convention RC tags are cut from `dev`, not `release`. Stable tags (`vX.Y.Z` with no suffix) still come from `release`.
-4. Install with `pip install tinyusdz --pre` only after a manual PyPI upload of the workflow artifacts (the automated publish intentionally skips).
+1. Set `version_rev = "rc4"` in `src/tinyusdz.hh` (cosmetic; C++ side only).
+2. Set `"version": "1.0.0-rc4"` in `web/npm/package.json` and `web/js/package.json` (npm/semver uses the hyphenated pre-release form; do not strip the hyphen).
+3. Push tag `v1.0.0-rc4` — by convention RC tags are cut from `dev`, not `release`. Stable tags (`vX.Y.Z` with no suffix) still come from `release`.
+4. After the trusted-publishing workflow succeeds, install it with `pip install --pre tinyusdz==1.0.0rc4`.
 
-Confirmed shipped example: `v0.9.9-rc1` → npm `tinyusdz@0.9.9-rc1` under `dist-tags.preview`; PyPI did not receive the RC (by design).
+Use the hyphenated SemVer form (`1.0.0-rc4`) for Git and npm. Do not manually
+strip the hyphen for Python; `setuptools_scm` performs the PEP 440 normalization.
 
 ## 4. NPM publish — manual workflow dispatch
 
