@@ -1633,18 +1633,14 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
       }
       std::vector<float> next(dst.data.size() / sizeof(float));
       std::memcpy(next.data(), dst.data.data(), dst.data.size());
-      DrawCompressedImageCPU level;
 #if defined(LUSDVIEW_TEXTURE_GPU)
+      DrawCompressedImageCPU level;
       if (!GpuCompressHDRData(opt, next.data(), next.size(), nextWidth,
                               nextHeight, &level) ||
           level.format != DrawCompressedFormat::BC6H) {
         tex.compressed.mips.clear();
         return false;
       }
-#else
-      tex.compressed.mips.clear();
-      return false;
-#endif
       DrawCompressedMipCPU mip;
       mip.width = level.width;
       mip.height = level.height;
@@ -1653,6 +1649,10 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
       current = std::move(next);
       width = nextWidth;
       height = nextHeight;
+#else
+      tex.compressed.mips.clear();
+      return false;
+#endif
     }
     return true;
   };
