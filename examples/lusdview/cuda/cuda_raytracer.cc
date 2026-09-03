@@ -25,6 +25,9 @@
 #include "log.hh"
 #include "lightrt_mtlx_bridge.hh"
 #include "rt_scene_build.hh"  // Node, Inst, HostScene, BuildHostScene (shared)
+#if defined(LUSDVIEW_HAVE_OPTIX)
+#include "lusdview_optix_device_ir.hh"
+#endif
 
 #if defined(_MSC_VER)
 #include "kernel_resource.hh"
@@ -47,6 +50,49 @@ struct Cam {
   float pathLimits[4]; // SSS events, volume events, motion segments, variance
   float context[4];    // MaterialX time, frame, reserved, reserved
 };
+
+#if defined(LUSDVIEW_HAVE_OPTIX)
+struct alignas(8) OptixPreviewParams {
+  uintptr_t output;
+  uint64_t traversable;
+  uintptr_t normals;
+  uintptr_t colors;
+  uintptr_t materials;
+  uintptr_t materialPbr;
+  uintptr_t materialBase;
+  uintptr_t materialOpenPbr;
+  uintptr_t uvs;
+  uintptr_t materialTextures;
+  uintptr_t materialTextureParams;
+  uintptr_t texels;
+  uintptr_t textures;
+  uintptr_t accumulation;
+  uintptr_t lights;
+  uintptr_t triangles;
+  uintptr_t instances;
+  uintptr_t faces;
+  uint32_t width;
+  uint32_t height;
+  uint32_t background;
+  uint32_t validationMode;
+  float invViewProjection[16];
+  float lightDirection[4];
+  float sceneMin[4];
+  float sceneExtent[4];
+  uint32_t renderMode;
+  uint32_t numMaterials;
+  uint32_t maxDepth;
+  uint32_t numTextures;
+  uint32_t sampleIndex;
+  uint32_t totalSamples;
+  uint32_t pathMode;
+  uint32_t pathSeed;
+  uint32_t numLights;
+  uint32_t numInstances;
+};
+static_assert(sizeof(OptixPreviewParams) == 312,
+              "OptiX launch parameter ABI changed");
+#endif
 
 // Trace kernel source, shared with the HIP backend (compiled at runtime by
 // NVRTC here, hiprtc there).
@@ -265,14 +311,72 @@ CudaRayTracer::~CudaRayTracer() {
 }
 
 void CudaRayTracer::freeRuntime() {
+#if defined(LUSDVIEW_HAVE_OPTIX)
+  // OptiX borrows ctx_, so destroy its device context before the CUDA context.
+  optixRuntime_.unload();
+  optixStatus_ = "not initialized";
+#endif
   if (ctx_) {
     freeScene();
+    if (stream_) cuStreamDestroy(reinterpret_cast<CUstream>(stream_));
+    if (hostOut_) cuMemFreeHost(hostOut_);
     if (module_) cuModuleUnload(reinterpret_cast<CUmodule>(module_));
     cuCtxDestroy(reinterpret_cast<CUcontext>(ctx_));
   }
   kernel_ = nullptr;
   module_ = nullptr;
+  stream_ = nullptr;
+  hostOut_ = nullptr;
+  hostOutCap_ = 0;
   ctx_ = nullptr;
+}
+
+bool CudaRayTracer::enumerateDevices(std::vector<std::string>* names,
+                                     std::string* err) {
+  if (names) names->clear();
+  if (cuewInit(CUEW_INIT_CUDA) != CUEW_SUCCESS) {
+    if (err) *err = "cuew: CUDA driver not available";
+    return false;
+  }
+  CU_OK(cuInit(0), "cuInit");
+  int count = 0;
+  CU_OK(cuDeviceGetCount(&count), "cuDeviceGetCount");
+  for (int i = 0; i < count; ++i) {
+    CUdevice dev = 0;
+    if (cuDeviceGet(&dev, i) != CUDA_SUCCESS) continue;
+    char name[256] = {};
+    if (cuDeviceGetName(name, sizeof(name), dev) != CUDA_SUCCESS)
+      std::snprintf(name, sizeof(name), "CUDA device %d", i);
+    if (names) names->push_back(std::to_string(i) + ": " + name);
+  }
+  if (!names || names->empty()) {
+    if (err) *err = "no CUDA device";
+    return false;
+  }
+  return true;
+}
+
+bool CudaRayTracer::selectDevice(int index, std::string* err) {
+  std::vector<std::string> names;
+  if (!enumerateDevices(&names, err)) return false;
+  if (index < 0 || static_cast<size_t>(index) >= names.size()) {
+    if (err) *err = "CUDA device index is out of range";
+    return false;
+  }
+  if (ctx_ && index == device_) return true;
+  const int previous = device_;
+  const bool hadRuntime = ctx_ != nullptr;
+  freeRuntime();
+  device_ = index;
+  if (init(err)) return true;
+  freeRuntime();
+  device_ = previous;
+  if (hadRuntime) {
+    std::string restoreError;
+    if (!init(&restoreError) && err)
+      *err += "; restoring previous CUDA device also failed: " + restoreError;
+  }
+  return false;
 }
 
 void CudaRayTracer::freeScene() {
@@ -283,6 +387,25 @@ void CudaRayTracer::freeScene() {
   F(dMatTexParam_); F(dLightParams_);
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_); F(dAccum_);
+  for (uintptr_t gas : dOptixGases_) {
+    if (gas) cuMemFree(static_cast<CUdeviceptr>(gas));
+  }
+  dOptixGases_.clear();
+  optixGasHandles_.clear();
+  optixGasOutputBytes_.clear();
+  optixGasBytes_ = 0;
+  optixGasUpdateEnabled_ = false;
+  optixRefitLogged_ = false;
+  F(dOptixInstances_);
+  F(dOptixIas_);
+  F(dOptixSbt_);
+  optixSbtMissOffset_ = 0;
+  optixSbtHitOffset_ = 0;
+  optixSbtHitStride_ = 0;
+  optixSbtHitCount_ = 0;
+  optixIasHandle_ = 0;
+  optixIasBytes_ = 0;
+  optixCameraProbeDone_ = false;
   F(dVolDens_); F(dVolParams_);
   F(dPointCenters_); F(dPointMajorAxes_); F(dPointNormals_);
   F(dPointRadii_); F(dPointColors_);
@@ -292,6 +415,7 @@ void CudaRayTracer::freeScene() {
   numMats_ = 0;
   numLights_ = 0;
   numTextures_ = 0;
+  sceneHasMaterialGraphs_ = false;
   pointCount_ = 0;
   pointChunkCount_ = 0;
   outCap_ = 0; accumCap_ = 0; pointDepthCap_ = 0;
@@ -299,6 +423,8 @@ void CudaRayTracer::freeScene() {
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
   pointPaging_ = false;
   pointHost_.reset();
+  retained_.reset();
+  refitMap_ = RefitMap{};
 }
 
 bool CudaRayTracer::init(std::string* err) {
@@ -316,7 +442,8 @@ bool CudaRayTracer::init(std::string* err) {
   CU_OK(cuDeviceGetCount(&count), "cuDeviceGetCount");
   if (count < 1) { if (err) *err = "no CUDA device"; return false; }
   CUdevice dev;
-  CU_OK(cuDeviceGet(&dev, 0), "cuDeviceGet");
+  if (device_ < 0 || device_ >= count) device_ = 0;
+  CU_OK(cuDeviceGet(&dev, device_), "cuDeviceGet");
   device_ = dev;
   char name[256] = {0};
   cuDeviceGetName(name, sizeof(name), dev);
@@ -327,6 +454,32 @@ bool CudaRayTracer::init(std::string* err) {
   CUcontext ctx;
   CU_OK(cuCtxCreate(&ctx, 0, dev), "cuCtxCreate");
   ctx_ = ctx;
+  CUstream stream = nullptr;
+  CU_OK(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING), "cuStreamCreate");
+  stream_ = stream;
+#if defined(LUSDVIEW_HAVE_OPTIX)
+  // OptiX is an optional acceleration transport. A missing/incompatible OptiX
+  // runtime must never make the software CUDA BVH unavailable in AUTO mode.
+  std::string optixError;
+  if (optixRuntime_.attachCudaContext(ctx_, &optixError)) {
+    if (!optixRuntime_.createPreviewPipeline(
+            kLusdviewOptixDeviceIr, kLusdviewOptixDeviceIrSize,
+            &optixError)) {
+      optixStatus_ = "context available, pipeline failed: " + optixError;
+    } else {
+      optixStatus_ = "available (ABI " +
+                     std::to_string(optixRuntime_.abiVersion()) + ")";
+    }
+    LOGI("CUDA device %d OptiX transport probe: %s", device_,
+         optixStatus_.c_str());
+  } else {
+    optixStatus_ = optixError.empty() ? "unavailable" : optixError;
+    LOGW("CUDA device %d OptiX transport probe: %s; software BVH remains active",
+         device_, optixStatus_.c_str());
+  }
+#else
+  optixStatus_ = "not built";
+#endif
 
   int compileArch = major * 10 + minor;
   int nvrtcMajor = 0;
@@ -529,7 +682,9 @@ bool CudaRayTracer::reloadKernel(const std::string& sourcePath,
 
 bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
                           size_t maxInstances, std::string* err,
-                          float displacementScale, BuildProgress* progress) {
+                          float displacementScale, BuildProgress* progress,
+                          bool retainForRefit,
+                          uint32_t purposeVisibleMask) {
   if (!ctx_) { if (err) *err = "CUDA not initialized"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   freeScene();
@@ -537,10 +692,18 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   deviceTotalBytes_ = 0;
 
   // Build the host scene (parallel per-mesh geometry + TLAS) -- shared with HIP.
-  HostScene hs;
+  retained_.reset();
+  refitMap_ = RefitMap{};
+  HostScene local;
+  if (retainForRefit) retained_.reset(new HostScene());
+  HostScene& hs = retained_ ? *retained_ : local;
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs, err,
-                      progress, nullptr, textureBudgetBytes_)) {
+                      progress, retained_ ? &refitMap_ : nullptr,
+                      textureBudgetBytes_, nullptr,
+                      purposeVisibleMask)) {
     if (err) *err = "CUDA: " + *err;
+    retained_.reset();
+    refitMap_ = RefitMap{};
     return false;
   }
   truncated_ = hs.truncated;
@@ -695,6 +858,18 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
           &dMatLightRt_)) return false;
   if (!up(hs.matGraph.data(), hs.matGraph.size() * sizeof(float),
           &dMatGraph_)) return false;
+  sceneHasMaterialGraphs_ = false;
+  for (int material = 0; material < hs.numMats && !sceneHasMaterialGraphs_;
+       ++material) {
+    const size_t base = static_cast<size_t>(material) *
+                        static_cast<size_t>(kRtMaterialGraphFloats);
+    for (int route = 0; route < kRtMaterialGraphOutputCount; ++route) {
+      if (hs.matGraph[base + 1u + static_cast<size_t>(route)] >= 0.0f) {
+        sceneHasMaterialGraphs_ = true;
+        break;
+      }
+    }
+  }
   {
     std::vector<HostGeomPropDesc> desc;
     std::vector<float> values;
@@ -717,6 +892,269 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   }
   if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
           &dLightParams_)) return false;
+#if defined(LUSDVIEW_HAVE_OPTIX)
+  if (optixRuntime_.attached() && triCount_ > 0) {
+    optixGasUpdateEnabled_ = retainForRefit;
+    size_t originalGasBytes = 0;
+    bool complete = !hs.prototypes.empty();
+    dOptixGases_.reserve(hs.prototypes.size());
+    optixGasHandles_.reserve(hs.prototypes.size());
+    for (const HostPrototype& prototype : hs.prototypes) {
+      const uintptr_t vertices = dTris_ + prototype.triOffset * 9u * sizeof(float);
+      OptixAccelSizes gasSizes;
+      std::string gasError;
+      if (prototype.triCount == 0 ||
+          !optixRuntime_.triangleGasSizes(vertices, prototype.triCount,
+                                          &gasSizes, &gasError,
+                                          optixGasUpdateEnabled_)) {
+        complete = false;
+        LOGW("OptiX prototype GAS sizing failed: %s",
+             gasError.empty() ? "empty prototype" : gasError.c_str());
+        break;
+      }
+      CUdeviceptr temporary = 0;
+      CUdeviceptr gas = 0;
+      CUdeviceptr compactedSizeDevice = 0;
+      const CUresult tempResult = cuMemAlloc(&temporary, gasSizes.temporaryBytes);
+      const CUresult gasResult = tempResult == CUDA_SUCCESS
+                                     ? cuMemAlloc(&gas, gasSizes.outputBytes)
+                                     : CUDA_ERROR_OUT_OF_MEMORY;
+      const CUresult sizeResult = gasResult == CUDA_SUCCESS &&
+                                          !optixGasUpdateEnabled_
+                                      ? cuMemAlloc(&compactedSizeDevice,
+                                                   sizeof(uint64_t))
+                                      : gasResult;
+      if (tempResult == CUDA_SUCCESS && gasResult == CUDA_SUCCESS &&
+          sizeResult == CUDA_SUCCESS &&
+          optixRuntime_.buildTriangleGas(
+              reinterpret_cast<uintptr_t>(stream_), vertices,
+              prototype.triCount,
+              static_cast<uintptr_t>(temporary), gasSizes.temporaryBytes,
+              static_cast<uintptr_t>(gas), gasSizes.outputBytes,
+              static_cast<uintptr_t>(compactedSizeDevice),
+              &optixGasHandles_.emplace_back(),
+              &gasError, optixGasUpdateEnabled_)) {
+        uint64_t compactedBytes = 0;
+        const bool haveCompactedSize = optixGasUpdateEnabled_
+            ? (cuStreamSynchronize(reinterpret_cast<CUstream>(stream_)) ==
+               CUDA_SUCCESS)
+            : (cuStreamSynchronize(reinterpret_cast<CUstream>(stream_)) ==
+                   CUDA_SUCCESS &&
+               cuMemcpyDtoH(&compactedBytes, compactedSizeDevice,
+                            sizeof(compactedBytes)) == CUDA_SUCCESS);
+        bool compacted = false;
+        if (!optixGasUpdateEnabled_ && haveCompactedSize && compactedBytes > 0 &&
+            compactedBytes < gasSizes.outputBytes) {
+          CUdeviceptr compactedGas = 0;
+          uint64_t compactedHandle = 0;
+          std::string compactError;
+          if (cuMemAlloc(&compactedGas, static_cast<size_t>(compactedBytes)) ==
+                  CUDA_SUCCESS &&
+              optixRuntime_.compactGas(
+                  reinterpret_cast<uintptr_t>(stream_), optixGasHandles_.back(),
+                  static_cast<uintptr_t>(compactedGas),
+                  static_cast<size_t>(compactedBytes), &compactedHandle,
+                  &compactError) &&
+              cuStreamSynchronize(reinterpret_cast<CUstream>(stream_)) ==
+                  CUDA_SUCCESS) {
+            cuMemFree(gas);
+            gas = compactedGas;
+            optixGasHandles_.back() = compactedHandle;
+            compactedGas = 0;
+            compacted = true;
+          }
+          if (compactedGas) cuMemFree(compactedGas);
+        }
+        dOptixGases_.push_back(static_cast<uintptr_t>(gas));
+        optixGasOutputBytes_.push_back(gasSizes.outputBytes);
+        originalGasBytes += gasSizes.outputBytes;
+        optixGasBytes_ += compacted ? static_cast<size_t>(compactedBytes)
+                                    : gasSizes.outputBytes;
+      } else {
+        if (optixGasHandles_.size() > dOptixGases_.size())
+          optixGasHandles_.pop_back();
+        if (gas) cuMemFree(gas);
+        complete = false;
+        LOGW("OptiX prototype GAS build failed: %s",
+             gasError.empty() ? "CUDA allocation failed" : gasError.c_str());
+      }
+      if (compactedSizeDevice) cuMemFree(compactedSizeDevice);
+      if (temporary) cuMemFree(temporary);
+      if (!complete) break;
+    }
+    if (!complete) {
+      for (uintptr_t gas : dOptixGases_) {
+        if (gas) cuMemFree(static_cast<CUdeviceptr>(gas));
+      }
+      dOptixGases_.clear();
+      optixGasHandles_.clear();
+      optixGasOutputBytes_.clear();
+      optixGasBytes_ = 0;
+      optixGasUpdateEnabled_ = false;
+      LOGW("OptiX prototype acceleration incomplete; software BVH remains active");
+    } else {
+      const double ratio = originalGasBytes > 0
+                               ? 100.0 * double(optixGasBytes_) /
+                                     double(originalGasBytes)
+                               : 100.0;
+      LOGI("OptiX prototype GAS: %zu structure(s), %zu tris, %.2f MiB "
+           "(%.1f%% of %.2f MiB, %s)",
+           dOptixGases_.size(), triCount_,
+           double(optixGasBytes_) / (1024.0 * 1024.0), ratio,
+           double(originalGasBytes) / (1024.0 * 1024.0),
+           optixGasUpdateEnabled_ ? "update-capable" : "compacted");
+
+      std::vector<OptixInstanceInput> instanceInputs(hs.instances.size());
+      bool validInstances =
+          hs.instancePrototype.size() == hs.instances.size();
+      for (size_t i = 0; validInstances && i < hs.instances.size(); ++i) {
+        const uint32_t prototype = hs.instancePrototype[i];
+        if (prototype >= optixGasHandles_.size()) {
+          validInstances = false;
+          break;
+        }
+        std::memcpy(instanceInputs[i].transform, hs.instances[i].o2w,
+                    sizeof(instanceInputs[i].transform));
+        instanceInputs[i].instanceId =
+            static_cast<uint32_t>(hs.instances[i].instId);
+        instanceInputs[i].sbtOffset = prototype;
+        instanceInputs[i].traversable = optixGasHandles_[prototype];
+      }
+      std::vector<uint8_t> packedInstances;
+      std::string iasError;
+      if (validInstances &&
+          optixRuntime_.packInstances(instanceInputs, &packedInstances,
+                                      &iasError)) {
+        CUdeviceptr instancesDevice = 0;
+        CUdeviceptr temporary = 0;
+        CUdeviceptr ias = 0;
+        if (cuMemAlloc(&instancesDevice, packedInstances.size()) == CUDA_SUCCESS &&
+            cuMemcpyHtoD(instancesDevice, packedInstances.data(),
+                         packedInstances.size()) == CUDA_SUCCESS) {
+          OptixAccelSizes iasSizes;
+          if (optixRuntime_.instanceAccelSizes(
+                  static_cast<uintptr_t>(instancesDevice), hs.instances.size(),
+                  &iasSizes, &iasError) &&
+              cuMemAlloc(&temporary, iasSizes.temporaryBytes) == CUDA_SUCCESS &&
+              cuMemAlloc(&ias, iasSizes.outputBytes) == CUDA_SUCCESS &&
+              optixRuntime_.buildInstanceAccel(
+                  reinterpret_cast<uintptr_t>(stream_),
+                  static_cast<uintptr_t>(instancesDevice), hs.instances.size(),
+                  static_cast<uintptr_t>(temporary), iasSizes.temporaryBytes,
+                  static_cast<uintptr_t>(ias), iasSizes.outputBytes,
+                  &optixIasHandle_, &iasError) &&
+              cuStreamSynchronize(reinterpret_cast<CUstream>(stream_)) ==
+                  CUDA_SUCCESS) {
+            dOptixInstances_ = static_cast<uintptr_t>(instancesDevice);
+            dOptixIas_ = static_cast<uintptr_t>(ias);
+            optixIasBytes_ = iasSizes.outputBytes;
+            instancesDevice = 0;
+            ias = 0;
+            LOGI("OptiX IAS built: %zu instance(s), %.2f MiB",
+                 hs.instances.size(),
+                 double(optixIasBytes_) / (1024.0 * 1024.0));
+
+            std::vector<uint8_t> sbt;
+            std::vector<uint64_t> triangleOffsets;
+            triangleOffsets.reserve(hs.prototypes.size());
+            for (const HostPrototype& prototype : hs.prototypes)
+              triangleOffsets.push_back(prototype.triOffset);
+            if (optixRuntime_.packPreviewSbt(
+                    triangleOffsets, &sbt, &optixSbtMissOffset_,
+                    &optixSbtHitOffset_, &optixSbtHitStride_, &iasError)) {
+              optixSbtHitCount_ = static_cast<uint32_t>(triangleOffsets.size());
+              CUdeviceptr sbtDevice = 0;
+              CUdeviceptr paramsDevice = 0;
+              CUdeviceptr previewOutput = 0;
+              constexpr uint32_t kPreviewWidth = 32;
+              constexpr uint32_t kPreviewHeight = 32;
+              constexpr uint32_t kBackground = 0x00101010u;
+              OptixPreviewParams params{};
+              params.traversable = optixIasHandle_;
+              params.normals = dNrms_;
+              params.colors = dCols_;
+              params.materials = dMat_;
+              params.materialPbr = dMatPbr_;
+              params.materialBase = dMatBase_;
+              params.materialOpenPbr = dMatLightRt_;
+              params.uvs = dUV_;
+              params.materialTextures = dMatTex_;
+              params.materialTextureParams = dMatTexParam_;
+              params.texels = dTexels_;
+              params.textures = dTextures_;
+              params.triangles = dTris_;
+              params.numMaterials = static_cast<uint32_t>(numMats_);
+              params.maxDepth = 6;
+              params.lightDirection[0] = 0.0f;
+              params.lightDirection[1] = 0.0f;
+              params.lightDirection[2] = 1.0f;
+              params.renderMode = 2;
+              params.width = kPreviewWidth;
+              params.height = kPreviewHeight;
+              params.background = kBackground;
+              params.validationMode = 1;
+              const size_t previewBytes =
+                  static_cast<size_t>(kPreviewWidth) * kPreviewHeight * 4u;
+              bool launched =
+                  cuMemAlloc(&sbtDevice, sbt.size()) == CUDA_SUCCESS &&
+                  cuMemcpyHtoD(sbtDevice, sbt.data(), sbt.size()) ==
+                      CUDA_SUCCESS &&
+                  cuMemAlloc(&previewOutput, previewBytes) == CUDA_SUCCESS;
+              params.output = static_cast<uintptr_t>(previewOutput);
+              launched = launched &&
+                  cuMemAlloc(&paramsDevice, sizeof(params)) == CUDA_SUCCESS &&
+                  cuMemcpyHtoD(paramsDevice, &params, sizeof(params)) ==
+                      CUDA_SUCCESS &&
+                  optixRuntime_.launchPreview(
+                      reinterpret_cast<uintptr_t>(stream_),
+                      static_cast<uintptr_t>(paramsDevice), sizeof(params),
+                      static_cast<uintptr_t>(sbtDevice), optixSbtMissOffset_,
+                      optixSbtHitOffset_, optixSbtHitStride_,
+                      optixSbtHitCount_, kPreviewWidth, kPreviewHeight,
+                      &iasError) &&
+                  cuStreamSynchronize(reinterpret_cast<CUstream>(stream_)) ==
+                      CUDA_SUCCESS;
+              std::vector<uint32_t> previewPixels(
+                  static_cast<size_t>(kPreviewWidth) * kPreviewHeight);
+              launched = launched &&
+                  cuMemcpyDtoH(previewPixels.data(), previewOutput,
+                               previewBytes) == CUDA_SUCCESS;
+              size_t hitPixels = 0;
+              if (launched) {
+                for (uint32_t pixel : previewPixels) {
+                  if ((pixel & 0x00ffffffu) != kBackground) ++hitPixels;
+                }
+              }
+              if (launched && hitPixels > 0) {
+                dOptixSbt_ = static_cast<uintptr_t>(sbtDevice);
+                sbtDevice = 0;
+                LOGI("OptiX traversal launch verified: %zu/%u hit pixels",
+                     hitPixels, kPreviewWidth * kPreviewHeight);
+              } else {
+                if (iasError.empty())
+                  iasError = launched ? "validation launch produced no hits"
+                                      : "CUDA launch allocation/copy failed";
+                LOGW("OptiX traversal validation failed: %s; software BVH "
+                     "remains active", iasError.c_str());
+              }
+              if (previewOutput) cuMemFree(previewOutput);
+              if (paramsDevice) cuMemFree(paramsDevice);
+              if (sbtDevice) cuMemFree(sbtDevice);
+            }
+          }
+        }
+        if (temporary) cuMemFree(temporary);
+        if (ias) cuMemFree(ias);
+        if (instancesDevice) cuMemFree(instancesDevice);
+      }
+      if (!optixIasHandle_) {
+        LOGW("OptiX IAS build skipped: %s; software BVH remains active",
+             iasError.empty() ? "invalid prototype mapping or CUDA allocation failure"
+                              : iasError.c_str());
+      }
+    }
+  }
+#endif
   if (cuMemGetInfo) {
     size_t freeBytes = 0, totalBytes = 0;
     if (cuMemGetInfo(&freeBytes, &totalBytes) == CUDA_SUCCESS) {
@@ -758,6 +1196,130 @@ bool CudaRayTracer::updateMaterialConstants(
   return true;
 }
 
+bool CudaRayTracer::refit(const DrawScene& scene, std::string* err) {
+  if (!ctx_ || !dTris_) {
+    if (err) *err = "CUDA scene not built";
+    return false;
+  }
+  if (!canRefit()) {
+    if (err) *err = "scene was not built with refit retained";
+    return false;
+  }
+  CU_OK(cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_)),
+        "cuCtxSetCurrent(refit)");
+  HostScene& hs = *retained_;
+  if (!RefitHostScene(scene, refitMap_, &hs, err)) return false;
+  CU_OK(cuMemcpyHtoD(static_cast<CUdeviceptr>(dTris_), hs.tris.data(),
+                     hs.tris.size() * sizeof(float)),
+        "cuMemcpyHtoD(refit tris)");
+  CU_OK(cuMemcpyHtoD(static_cast<CUdeviceptr>(dNrms_), hs.nrms.data(),
+                     hs.nrms.size() * sizeof(float)),
+        "cuMemcpyHtoD(refit normals)");
+  CU_OK(cuMemcpyHtoD(static_cast<CUdeviceptr>(dBlasNodes_), hs.blas.data(),
+                     hs.blas.size() * sizeof(Node)),
+        "cuMemcpyHtoD(refit BLAS)");
+  CU_OK(cuMemcpyHtoD(static_cast<CUdeviceptr>(dTlasNodes_), hs.tlas.data(),
+                     hs.tlas.size() * sizeof(Node)),
+        "cuMemcpyHtoD(refit TLAS)");
+#if defined(LUSDVIEW_HAVE_OPTIX)
+  if (optixIasHandle_) {
+    bool updated = optixGasUpdateEnabled_ &&
+                   hs.prototypes.size() == dOptixGases_.size() &&
+                   dOptixGases_.size() == optixGasOutputBytes_.size();
+    std::string updateError;
+    for (size_t i = 0; updated && i < hs.prototypes.size(); ++i) {
+      const HostPrototype& prototype = hs.prototypes[i];
+      const uintptr_t vertices =
+          dTris_ + prototype.triOffset * 9u * sizeof(float);
+      OptixAccelSizes sizes;
+      CUdeviceptr temporary = 0;
+      updated = optixRuntime_.triangleGasSizes(
+                    vertices, prototype.triCount, &sizes, &updateError, true) &&
+                cuMemAlloc(&temporary, sizes.temporaryBytes) == CUDA_SUCCESS &&
+                optixRuntime_.updateTriangleGas(
+                    reinterpret_cast<uintptr_t>(stream_), vertices,
+                    prototype.triCount, static_cast<uintptr_t>(temporary),
+                    sizes.temporaryBytes, dOptixGases_[i],
+                    optixGasOutputBytes_[i], &optixGasHandles_[i],
+                    &updateError);
+      if (temporary) cuMemFree(temporary);
+    }
+    // Child bounds changed even though instance transforms did not. Rebuild
+    // the small IAS in-place so it encloses the updated GAS bounds.
+    if (updated) {
+      std::vector<OptixInstanceInput> instanceInputs(hs.instances.size());
+      updated = hs.instancePrototype.size() == hs.instances.size();
+      for (size_t i = 0; updated && i < hs.instances.size(); ++i) {
+        const uint32_t prototype = hs.instancePrototype[i];
+        if (prototype >= optixGasHandles_.size()) {
+          updated = false;
+          break;
+        }
+        std::memcpy(instanceInputs[i].transform, hs.instances[i].o2w,
+                    sizeof(instanceInputs[i].transform));
+        instanceInputs[i].instanceId =
+            static_cast<uint32_t>(hs.instances[i].instId);
+        instanceInputs[i].sbtOffset = prototype;
+        instanceInputs[i].traversable = optixGasHandles_[prototype];
+      }
+      std::vector<uint8_t> packedInstances;
+      updated = updated && optixRuntime_.packInstances(
+                               instanceInputs, &packedInstances, &updateError) &&
+                cuMemcpyHtoD(static_cast<CUdeviceptr>(dOptixInstances_),
+                             packedInstances.data(), packedInstances.size()) ==
+                    CUDA_SUCCESS;
+    }
+    if (updated) {
+      OptixAccelSizes sizes;
+      CUdeviceptr temporary = 0;
+      updated = optixRuntime_.instanceAccelSizes(
+                    dOptixInstances_, hs.instances.size(), &sizes,
+                    &updateError) &&
+                sizes.outputBytes <= optixIasBytes_ &&
+                cuMemAlloc(&temporary, sizes.temporaryBytes) == CUDA_SUCCESS &&
+                optixRuntime_.buildInstanceAccel(
+                    reinterpret_cast<uintptr_t>(stream_), dOptixInstances_,
+                    hs.instances.size(), static_cast<uintptr_t>(temporary),
+                    sizes.temporaryBytes, dOptixIas_, optixIasBytes_,
+                    &optixIasHandle_, &updateError) &&
+                cuStreamSynchronize(reinterpret_cast<CUstream>(stream_)) ==
+                    CUDA_SUCCESS;
+      if (temporary) cuMemFree(temporary);
+    }
+    if (updated) {
+      if (!optixRefitLogged_) {
+        LOGI("OptiX refit active: updating %zu GAS and rebuilding IAS in place",
+             dOptixGases_.size());
+        optixRefitLogged_ = true;
+      }
+    } else {
+      // Never retain partially updated acceleration. Software BVH was already
+      // refitted above and is the authoritative safe fallback.
+      for (uintptr_t gas : dOptixGases_)
+        if (gas) cuMemFree(static_cast<CUdeviceptr>(gas));
+      dOptixGases_.clear();
+      optixGasHandles_.clear();
+      optixGasOutputBytes_.clear();
+      optixGasBytes_ = 0;
+      optixGasUpdateEnabled_ = false;
+      if (dOptixInstances_)
+        cuMemFree(static_cast<CUdeviceptr>(dOptixInstances_));
+      if (dOptixIas_) cuMemFree(static_cast<CUdeviceptr>(dOptixIas_));
+      if (dOptixSbt_) cuMemFree(static_cast<CUdeviceptr>(dOptixSbt_));
+      dOptixInstances_ = dOptixIas_ = dOptixSbt_ = 0;
+      optixIasHandle_ = 0;
+      optixIasBytes_ = 0;
+      optixSbtHitCount_ = 0;
+      LOGW("OptiX deformation update failed (%s); Auto uses the updated CUDA "
+           "software BVH until the next scene rebuild",
+           updateError.empty() ? "update-capable GAS unavailable"
+                               : updateError.c_str());
+    }
+  }
+#endif
+  return true;
+}
+
 bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           const float camPos[3],
                           const float lightDir[3], const float clearColor[3],
@@ -769,9 +1331,83 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           const PathTraceSettings* pathTrace,
                           std::vector<float>* linearRgba,
                           uint32_t* renderedSamples,
-                          float sceneTime, float sceneFrame) {
+                          float sceneTime, float sceneFrame,
+                          uint32_t accumulationStart) {
+  const auto traceStarted = std::chrono::steady_clock::now();
   if (!ctx_ || (!dTris_ && pointCount_ == 0)) { if (err) *err = "CUDA scene not built"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
+#if defined(LUSDVIEW_HAVE_OPTIX)
+  if (!optixCameraProbeDone_ && optixIasHandle_ && dOptixSbt_) {
+    optixCameraProbeDone_ = true;
+    constexpr uint32_t kProbeWidth = 32;
+    constexpr uint32_t kProbeHeight = 32;
+    constexpr uint32_t kProbeBackground = 0x00101010u;
+    const size_t probeBytes =
+        static_cast<size_t>(kProbeWidth) * kProbeHeight * 4u;
+    CUdeviceptr probeOutput = 0;
+    CUdeviceptr probeParams = 0;
+    OptixPreviewParams params{};
+    params.traversable = optixIasHandle_;
+    params.normals = dNrms_;
+    params.colors = dCols_;
+    params.materials = dMat_;
+    params.materialPbr = dMatPbr_;
+    params.materialBase = dMatBase_;
+    params.materialOpenPbr = dMatLightRt_;
+    params.uvs = dUV_;
+    params.materialTextures = dMatTex_;
+    params.materialTextureParams = dMatTexParam_;
+    params.texels = dTexels_;
+    params.textures = dTextures_;
+    params.triangles = dTris_;
+    params.numMaterials = static_cast<uint32_t>(numMats_);
+    params.maxDepth = 6;
+    params.width = kProbeWidth;
+    params.height = kProbeHeight;
+    params.background = kProbeBackground;
+    params.lightDirection[0] = lightDir[0];
+    params.lightDirection[1] = lightDir[1];
+    params.lightDirection[2] = lightDir[2];
+    params.lightDirection[3] = depthScale;
+    for (int axis = 0; axis < 3; ++axis) {
+      params.sceneMin[axis] = sceneMin[axis];
+      params.sceneExtent[axis] = sceneExtent[axis];
+    }
+    params.renderMode = static_cast<uint32_t>(renderMode);
+    std::memcpy(params.invViewProjection, invViewProj,
+                sizeof(params.invViewProjection));
+    std::string probeError;
+    bool launched = cuMemAlloc(&probeOutput, probeBytes) == CUDA_SUCCESS;
+    params.output = static_cast<uintptr_t>(probeOutput);
+    launched = launched &&
+        cuMemAlloc(&probeParams, sizeof(params)) == CUDA_SUCCESS &&
+        cuMemcpyHtoD(probeParams, &params, sizeof(params)) == CUDA_SUCCESS &&
+        optixRuntime_.launchPreview(
+            reinterpret_cast<uintptr_t>(stream_),
+            static_cast<uintptr_t>(probeParams), sizeof(params), dOptixSbt_,
+            optixSbtMissOffset_, optixSbtHitOffset_, optixSbtHitStride_,
+            optixSbtHitCount_, kProbeWidth, kProbeHeight, &probeError) &&
+        cuStreamSynchronize(reinterpret_cast<CUstream>(stream_)) == CUDA_SUCCESS;
+    std::vector<uint32_t> pixels(
+        static_cast<size_t>(kProbeWidth) * kProbeHeight);
+    launched = launched &&
+        cuMemcpyDtoH(pixels.data(), probeOutput, probeBytes) == CUDA_SUCCESS;
+    if (launched) {
+      size_t hits = 0;
+      for (uint32_t pixel : pixels) {
+        if ((pixel & 0x00ffffffu) != kProbeBackground) ++hits;
+      }
+      LOGI("OptiX real-camera traversal verified: %zu/%u hit pixels",
+           hits, kProbeWidth * kProbeHeight);
+    } else {
+      LOGW("OptiX real-camera traversal failed: %s; software BVH remains active",
+           probeError.empty() ? "CUDA allocation/copy failure"
+                              : probeError.c_str());
+    }
+    if (probeParams) cuMemFree(probeParams);
+    if (probeOutput) cuMemFree(probeOutput);
+  }
+#endif
   const size_t bytes = size_t(w) * h * 4;
   if (outCap_ < bytes) {
     if (dOut_) cuMemFree(static_cast<CUdeviceptr>(dOut_));
@@ -844,7 +1480,10 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   if (renderedSamples) *renderedSamples = static_cast<uint32_t>(samples);
   CUdeviceptr dAcc = (samples > 1 || productionPath) ? dAccum_ : 0;
   int sampleIdx = 0;
-  int numSamples = samples;
+  const uint32_t start = productionPath ? accumulationStart : 0u;
+  const uint32_t total = start + static_cast<uint32_t>(samples);
+  int numSamples = static_cast<int>(std::min<uint32_t>(
+      total, static_cast<uint32_t>(std::numeric_limits<int>::max())));
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,backMats,matPbr,matBase,
   // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
   // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
@@ -859,6 +1498,200 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                   &dGeomPropDesc_, &dGeomPropValues_, &geomPropCount_};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   rgba->resize(bytes);
+  if (hostOutCap_ < bytes) {
+    if (hostOut_) cuMemFreeHost(hostOut_);
+    hostOut_ = nullptr;
+    CU_OK(cuMemAllocHost(&hostOut_, bytes), "cuMemAllocHost(output)");
+    hostOutCap_ = bytes;
+  }
+  lastUsedOptix_ = false;
+  optixFallbackReason_.clear();
+  const auto optixSupportsMode = [](int mode) {
+    switch (mode) {
+      case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
+      case 8: case 9: case 10: case 11: case 12: case 13: case 14:
+      case 15: case 16: case 23: case 26: case 30: case 34: case 39:
+      case 40: return true;
+      default: return false;
+    }
+  };
+  const bool optixCompatible = optixSupportsMode(renderMode) &&
+                               !sceneHasMaterialGraphs_;
+  bool optixReady = false;
+#if defined(LUSDVIEW_HAVE_OPTIX)
+  optixReady = optixIasHandle_ && dOptixSbt_ && optixRuntime_.pipelineReady();
+#endif
+  if (rtBackend_ == CudaRtBackend::SoftwareBvh) {
+    optixFallbackReason_ = "software BVH explicitly selected";
+  } else if (rtBackend_ == CudaRtBackend::Auto) {
+    if (sceneHasMaterialGraphs_) {
+      optixFallbackReason_ = "MaterialX graph evaluation requires software BVH";
+    } else if (!optixSupportsMode(renderMode)) {
+      optixFallbackReason_ = "selected AOV is not implemented by OptiX";
+    } else if (pointCount_ != 0) {
+      optixFallbackReason_ = "analytic point/curve carriers require software BVH";
+    } else if (numVols_ != 0) {
+      optixFallbackReason_ = "volume traversal requires software BVH";
+    } else if (!optixReady) {
+      optixFallbackReason_ = optixStatus_.empty()
+                                 ? "OptiX pipeline or acceleration is unavailable"
+                                 : optixStatus_;
+    }
+  }
+  const bool useOptix = rtBackend_ == CudaRtBackend::Optix ||
+                        (rtBackend_ == CudaRtBackend::Auto && optixCompatible &&
+                         optixReady && pointCount_ == 0 && numVols_ == 0);
+  if (useOptix) {
+#if defined(LUSDVIEW_HAVE_OPTIX)
+    if (!optixIasHandle_ || !dOptixSbt_ || !optixRuntime_.pipelineReady()) {
+      optixFallbackReason_ = "forced OptiX pipeline/IAS unavailable";
+      if (err) *err = "OptiX transport was forced but its pipeline/IAS is unavailable: " +
+                      optixStatus_;
+      return false;
+    }
+    if (!optixSupportsMode(renderMode)) {
+      optixFallbackReason_ = "forced OptiX does not support the selected AOV";
+      if (err) *err = "OptiX transport does not yet support the selected AOV; "
+                      "use --cuda-rt-backend auto/software for this mode";
+      return false;
+    }
+    if (sceneHasMaterialGraphs_) {
+      optixFallbackReason_ = "forced OptiX does not support MaterialX graphs";
+      if (err) *err = "OptiX transport was forced for a MaterialX graph scene; "
+                      "use auto/software until graph callables are enabled";
+      return false;
+    }
+    lastUsedOptix_ = true;
+    auto byteColor = [](float value) {
+      return static_cast<uint32_t>(
+          std::max(0.0f, std::min(255.0f, value * 255.0f)));
+    };
+    const uint32_t background = byteColor(clearColor[0]) |
+                                (byteColor(clearColor[1]) << 8u) |
+                                (byteColor(clearColor[2]) << 16u);
+    OptixPreviewParams params{};
+    params.output = dOut_;
+    params.traversable = optixIasHandle_;
+    params.normals = dNrms_;
+    params.colors = dCols_;
+    params.materials = dMat_;
+    params.materialPbr = dMatPbr_;
+    params.materialBase = dMatBase_;
+    params.materialOpenPbr = dMatLightRt_;
+    params.uvs = dUV_;
+    params.materialTextures = dMatTex_;
+    params.materialTextureParams = dMatTexParam_;
+    params.texels = dTexels_;
+    params.textures = dTextures_;
+    params.numMaterials = static_cast<uint32_t>(numMats_);
+    params.numTextures = static_cast<uint32_t>(numTextures_);
+    params.maxDepth = productionPath && pathTrace
+                          ? std::max<uint32_t>(1u, pathTrace->maxDepth)
+                          : 8u;
+    params.accumulation = productionPath ? dAccum_ : 0;
+    params.lights = dLightParams_;
+    params.triangles = dTris_;
+    params.instances = dInstances_;
+    params.faces = dFace_;
+    params.totalSamples = total;
+    params.pathMode = productionPath ? 1u : 0u;
+    params.pathSeed = pathTrace ? pathTrace->seed : 0u;
+    params.numLights = static_cast<uint32_t>(numLights_);
+    params.numInstances = static_cast<uint32_t>(instCount_);
+    params.width = static_cast<uint32_t>(w);
+    params.height = static_cast<uint32_t>(h);
+    params.background = background;
+    params.lightDirection[0] = lightDir[0];
+    params.lightDirection[1] = lightDir[1];
+    params.lightDirection[2] = lightDir[2];
+    params.lightDirection[3] = depthScale;
+    for (int axis = 0; axis < 3; ++axis) {
+      params.sceneMin[axis] = sceneMin[axis];
+      params.sceneExtent[axis] = sceneExtent[axis];
+    }
+    params.renderMode = static_cast<uint32_t>(renderMode);
+    std::memcpy(params.invViewProjection, invViewProj,
+                sizeof(params.invViewProjection));
+    CUdeviceptr paramsDevice = 0;
+    CU_OK(cuMemAlloc(&paramsDevice, sizeof(params)),
+          "cuMemAlloc(OptiX launch params)");
+    const CUresult copyResult = cuMemcpyHtoD(paramsDevice, &params, sizeof(params));
+    if (copyResult != CUDA_SUCCESS) {
+      cuMemFree(paramsDevice);
+      if (err) *err = "CUDA OptiX launch-parameter upload failed";
+      return false;
+    }
+    bool launched = true;
+    const int launchCount = productionPath ? samples : 1;
+    for (int sample = 0; sample < launchCount; ++sample) {
+      params.sampleIndex = start + static_cast<uint32_t>(sample);
+      if (cuMemcpyHtoDAsync(paramsDevice, &params, sizeof(params),
+                            reinterpret_cast<CUstream>(stream_)) != CUDA_SUCCESS ||
+          !optixRuntime_.launchPreview(
+              reinterpret_cast<uintptr_t>(stream_),
+              static_cast<uintptr_t>(paramsDevice), sizeof(params), dOptixSbt_,
+              optixSbtMissOffset_, optixSbtHitOffset_, optixSbtHitStride_,
+              optixSbtHitCount_, static_cast<unsigned int>(w),
+              static_cast<unsigned int>(h), err)) {
+        launched = false;
+        break;
+      }
+    }
+    if (!launched) {
+      cuMemFree(paramsDevice);
+      return false;
+    }
+    const CUresult readbackResult = cuMemcpyDtoHAsync(
+        hostOut_, static_cast<CUdeviceptr>(dOut_), bytes,
+        reinterpret_cast<CUstream>(stream_));
+    if (readbackResult != CUDA_SUCCESS) {
+      cuMemFree(paramsDevice);
+      if (err) *err = "CUDA OptiX output readback failed";
+      return false;
+    }
+    const CUresult syncResult =
+        cuStreamSynchronize(reinterpret_cast<CUstream>(stream_));
+    if (syncResult != CUDA_SUCCESS) {
+      cuMemFree(paramsDevice);
+      if (err) *err = "CUDA OptiX output synchronization failed";
+      return false;
+    }
+    cuMemFree(paramsDevice);
+    std::memcpy(rgba->data(), hostOut_, bytes);
+    if (renderedSamples)
+      *renderedSamples = productionPath ? total : 1u;
+    if (linearRgba && productionPath) {
+      linearRgba->resize(size_t(w) * size_t(h) * 4u);
+      const CUresult linearResult = cuMemcpyDtoH(
+          linearRgba->data(), static_cast<CUdeviceptr>(dAccum_),
+          linearRgba->size() * sizeof(float));
+      if (linearResult != CUDA_SUCCESS) {
+        if (err) *err = "CUDA OptiX linear accumulation readback failed";
+        return false;
+      }
+      const float inverseSamples = 1.0f / static_cast<float>(total);
+      for (size_t i = 0; i < linearRgba->size(); i += 4) {
+        (*linearRgba)[i] *= inverseSamples;
+        (*linearRgba)[i + 1] *= inverseSamples;
+        (*linearRgba)[i + 2] *= inverseSamples;
+        (*linearRgba)[i + 3] = 1.0f;
+      }
+    } else if (linearRgba) {
+      linearRgba->clear();
+    }
+    lastTraceMs_ = std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - traceStarted)
+                       .count();
+    if (std::getenv("LUSDVIEW_RT_TIMING"))
+      std::fprintf(stderr, "[cuda_optix_rt] trace %.3f ms (%.1f fps, %d spp)\n",
+                   lastTraceMs_, lastTraceMs_ > 0.0 ? 1000.0 / lastTraceMs_ : 0.0,
+                   productionPath ? samples : 1);
+    return true;
+#else
+    if (err) *err = "OptiX transport was requested but this build has no OptiX support";
+    return false;
+#endif
+  }
   if (pointPaging_ && pointHost_ && !pointHost_->pointChunks.empty()) {
     const size_t pixels = size_t(w) * size_t(h);
     if (pointDepthCap_ < pixels) {
@@ -972,6 +1805,12 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
       (*rgba)[pidx * 4 + 2] = static_cast<uint8_t>(sums[pidx * 3 + 2] / samples);
       (*rgba)[pidx * 4 + 3] = 255;
     }
+    lastTraceMs_ = std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - traceStarted).count();
+    if (std::getenv("LUSDVIEW_RT_TIMING"))
+      std::fprintf(stderr, "[cuda_rt] trace %.3f ms (%.1f fps, %d spp)\n",
+                   lastTraceMs_, lastTraceMs_ > 0.0 ? 1000.0 / lastTraceMs_ : 0.0,
+                   samples);
     return true;
   }
   // Launch one kernel per Halton-jittered sample; the kernel accumulates on the
@@ -981,21 +1820,22 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   int completedSamples = samples;
   std::vector<float> convergencePrevious;
   std::vector<float> convergenceCurrent;
-  const bool adaptive = productionPath && linearRgba && pathTrace &&
+  const bool adaptive = start == 0 && productionPath && linearRgba && pathTrace &&
                         pathTrace->varianceThreshold > 0.0f &&
                         samples > static_cast<int>(pathTrace->minSamples);
   const int convergenceInterval =
       std::max(8, static_cast<int>(pathTrace ? pathTrace->minSamples / 4u : 8u));
   for (int s = 0; s < samples; ++s) {
     float jx, jy;
-    RtPixelJitter(s, samples, &jx, &jy);
+    const int absoluteSample = static_cast<int>(start) + s;
+    RtPixelJitter(absoluteSample, numSamples, &jx, &jy);
     cam.sceneMin[3] = jx;
     cam.sceneExtent[3] = jy;
-    sampleIdx = s;
+    sampleIdx = absoluteSample;
     CU_OK(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel_), gx, gy, 1, 8, 8, 1, 0,
-                         nullptr, args, nullptr),
+                         reinterpret_cast<CUstream>(stream_), args, nullptr),
           "cuLaunchKernel");
-    const int completed = s + 1;
+    const int completed = absoluteSample + 1;
     if (adaptive && completed >= static_cast<int>(pathTrace->minSamples) &&
         completed % convergenceInterval == 0) {
       CU_OK(cuCtxSynchronize(), "cuCtxSynchronize convergence");
@@ -1023,15 +1863,18 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
       }
     }
   }
-  CU_OK(cuCtxSynchronize(), "cuCtxSynchronize");
-  CU_OK(cuMemcpyDtoH(rgba->data(), static_cast<CUdeviceptr>(dOut_), bytes),
-        "cuMemcpyDtoH");
+  CU_OK(cuMemcpyDtoHAsync(hostOut_, static_cast<CUdeviceptr>(dOut_), bytes,
+                          reinterpret_cast<CUstream>(stream_)),
+        "cuMemcpyDtoHAsync");
+  CU_OK(cuStreamSynchronize(reinterpret_cast<CUstream>(stream_)),
+        "cuStreamSynchronize");
+  std::memcpy(rgba->data(), hostOut_, bytes);
   if (linearRgba && pathTrace && pathTrace->enabled) {
     linearRgba->resize(size_t(w) * size_t(h) * 4u);
     CU_OK(cuMemcpyDtoH(linearRgba->data(), static_cast<CUdeviceptr>(dAccum_),
                        linearRgba->size() * sizeof(float)),
           "cuMemcpyDtoH(linear accumulation)");
-    const float inv = 1.0f / static_cast<float>(completedSamples);
+    const float inv = 1.0f / static_cast<float>(start + completedSamples);
     for (size_t i = 0; i < linearRgba->size(); i += 4) {
       (*linearRgba)[i] *= inv;
       (*linearRgba)[i + 1] *= inv;
@@ -1040,7 +1883,13 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     }
   }
   if (renderedSamples)
-    *renderedSamples = static_cast<uint32_t>(completedSamples);
+    *renderedSamples = start + static_cast<uint32_t>(completedSamples);
+  lastTraceMs_ = std::chrono::duration<double, std::milli>(
+                     std::chrono::steady_clock::now() - traceStarted).count();
+  if (std::getenv("LUSDVIEW_RT_TIMING"))
+    std::fprintf(stderr, "[cuda_rt] trace %.3f ms (%.1f fps, %d spp)\n",
+                 lastTraceMs_, lastTraceMs_ > 0.0 ? 1000.0 / lastTraceMs_ : 0.0,
+                 completedSamples);
   return true;
 }
 

@@ -68,6 +68,15 @@ struct Inst {
   uint32_t shadowLightMask;
 };
 
+// Stable prototype geometry span for hardware RT acceleration builders.
+// `triOffset`/`triCount` address HostScene's triangle-parallel arrays; instances
+// refer to this table through HostScene::instancePrototype without changing the
+// packed software-kernel Inst ABI.
+struct HostPrototype {
+  size_t triOffset{0};
+  size_t triCount{0};
+};
+
 // Per-volume params (must match `VolParam` in the trace kernel).
 struct HostVolParam {
   float invModel[16];
@@ -182,6 +191,8 @@ struct HostScene {
   std::vector<Node> blas;       // BLAS nodes, rebased to the global arrays
   std::vector<Node> tlas;       // TLAS nodes (root at 0)
   std::vector<Inst> instances;  // leaf-order (matches the TLAS)
+  std::vector<HostPrototype> prototypes;
+  std::vector<uint32_t> instancePrototype;
   std::vector<float> matPbr;
   std::vector<float> matBase;  // 3 floats/material; base color constant
   // 80 floats/material: vec4-friendly LightRT/OpenPBR constant fallback.
@@ -239,7 +250,9 @@ struct RefitMap {
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     float displacementScale, HostScene* out, std::string* err,
                     BuildProgress* progress = nullptr, RefitMap* refitOut = nullptr,
-                    size_t textureBudgetBytes = 0);
+                    size_t textureBudgetBytes = 0,
+                    const std::vector<uint8_t>* meshVisible = nullptr,
+                    uint32_t purposeVisibleMask = 0x3u);
 
 // Re-pose `hs` in place from `scene`'s CURRENT vertex data: rewrite tris/nrms
 // in the recorded leaf order, then refit every BLAS/TLAS node bound over the

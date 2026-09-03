@@ -227,6 +227,126 @@ bounding-box proxies. Interactive quality retains the profile's RT LOD policy.
 
 ## CUDA ray-tracing run test (verified working on NVIDIA)
 
+### Optional OptiX build boundary
+
+The default CUDA renderer uses lusdview's software BVH and requires no OptiX
+development files. Experimental OptiX integration is compile-time optional and
+loads the driver-provided `libnvoptix.so.1`/`nvoptix.dll` function table at
+runtime; it does not link or vendor the OptiX runtime. Point CMake at a pinned
+local `NVIDIA/optix-dev` checkout:
+
+```sh
+git clone --depth 1 --branch v9.1.0 \
+  https://github.com/NVIDIA/optix-dev.git /path/to/optix-dev
+cmake -S . -B build_ninja -G Ninja \
+  -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
+  -DLIGHTUSD_LUSDVIEW_OPTIX=ON \
+  -DOptiX_ROOT=/path/to/optix-dev
+```
+
+`LIGHTUSD_LUSDVIEW_OPTIX` accepts `AUTO` (default), `ON`, or `OFF`. `AUTO`
+quietly leaves OptiX out when its headers or CUDA headers are unavailable; `ON`
+turns missing development files into a configure error. The separately built
+`lusdview_optix_runtime_test` returns CTest skip code 77 when the machine has no
+OptiX-capable NVIDIA driver. No GPU reset is performed.
+
+When enabled, CUDA initialization probes OptiX against the selected CUDA device
+context. Scene upload builds and compacts one trace-optimized triangle GAS per
+prototype directly from the existing CUDA vertex allocation, then builds an IAS
+from the shared host-scene instance transforms and stable IDs. The build embeds
+an OptiX IR module generated from lusdview's own device source and runtime code
+creates raygen, miss, and closest-hit program groups plus the linked pipeline.
+It also packs and uploads the initial SBT, launches a small traversal validation
+image through the IAS, and verifies closest-hit readback. During the first
+normal trace it performs a second small launch using the viewer's actual inverse
+view-projection matrix, validating camera ray reconstruction independently of
+the fixed startup test. Forced OptiX rendering uses the same resident CUDA
+geometry and constant OpenPBR material buffers as the software tracer; startup
+logs distinguish the capability probe from the selected active transport.
+
+Hit records are prototype-indexed and carry the prototype's triangle-array
+offset. Instances choose the corresponding record through `sbtOffset`, allowing
+closest-hit to interpolate the correct shared vertex normals and transform them
+into world space.
+
+Use `--optix` (equivalent to `--cuda --cuda-rt-backend optix`) to select the
+hardware traversal explicitly, or `--no-optix` (equivalent to `--cuda
+--cuda-rt-backend software`) to force lusdview's CUDA software BVH. The current
+OptiX milestone renders
+full-resolution shaded images and common diagnostic AOVs through the regular pinned CUDA
+readback path. Shaded mode resolves constant OpenPBR base color, emission,
+opacity, transmission color, IOR, thin-walled state, and transmission scatter.
+It also interpolates the shared triangle-corner UV stream and samples the
+compact CUDA RGBA8 texture table with authored UV transforms, wrap modes,
+bilinear filtering, sRGB decoding, UDIM selection, Ptex atlas lookup by source
+face, and roughness-guided mip selection. Metallic, roughness, emissive, and
+opacity semantic textures use their authored transforms/channels/scale/bias.
+Alpha-blended glass
+splits authored surface coverage from the energy continuing through refraction.
+Ray generation iterates up to eight OptiX traces, tracks an eight-level
+instance-aware dielectric medium stack, refracts through entry/exit boundaries,
+handles total internal reflection, and applies Beer attenuation over measured
+in-medium ray distance. Full MaterialX graph evaluation and the remaining
+OptiX-native diagnostics include wireframe, shading/geometric normals,
+material/primitive/mesh/instance/source-face IDs, UV/UDIM/checker, depth,
+position, albedo, facing, roughness, metallic, emissive, opacity,
+barycentrics, specular F0, and IOR F0. Other debug AOVs are not yet at
+software-CUDA parity and Auto selects the software BVH for them. OptiX production
+path tracing is supported: it uses per-sample camera jitter, exact dielectric
+Fresnel reflection/refraction selection, cosine diffuse continuation, Russian
+roulette, stochastic alpha coverage, authored dome SH miss radiance, and the
+shared scene-linear float accumulation buffer. Authored analytic lights add a
+direct diffuse estimate with OptiX visibility traversal; shadow rays pass
+through up to eight constant-opacity/transmission layers with colored
+transmission. Sphere, disk, rectangle/portal, and cylinder emitters are sampled
+over their authored surfaces with area and emitter-cosine weighting, producing
+soft-shadow convergence instead of point-light approximations. Geometry lights
+use area-weighted triangle reservoir selection followed by uniform barycentric
+surface sampling from shared prototype geometry and instance transforms. Light
+and shadow collection masks, shaping cone/softness/focus, and the authored
+shadow-enable flag are honored. Unsupported AOVs
+still report an explicit error when OptiX is forced.
+Render-report JSON and MCP `render_stats` expose the requested/effective CUDA
+transport, OptiX availability/status/ABI, compacted GAS and IAS byte counts,
+their total acceleration footprint, and the exact automatic-fallback reason.
+The versioned `caps:` log line appends the effective CUDA transport and the
+same ABI/acceleration summary after a headless CUDA trace.
+Topology-stable skeletal and blendshape deformation builds GAS with
+`ALLOW_UPDATE`; each pose updates the shared vertex allocation and GAS in
+place, refreshes child handles in the instance buffer, and rebuilds the small
+IAS into its retained allocation. If any update fails, the complete OptiX
+acceleration set is discarded and Auto safely continues on the already-refitted
+CUDA software BVH.
+
+When OptiX development files were available at configure time, CTest registers
+`lusdview-optix-integration`. It skips with code 77 on hosts without usable
+OptiX hardware; otherwise it requires forced OptiX geometric-normal output,
+the explicit `--no-optix` software path, automatic unsupported-AOV fallback,
+complete transport/ABI/acceleration JSON,
+and animated update-capable GAS under Xvfb when available:
+
+```sh
+ctest --test-dir build_ninja -R '^lusdview-optix' --output-on-failure
+```
+MaterialX graph scenes currently form an explicit compatibility boundary:
+Auto selects the full CUDA software interpreter, while forced OptiX reports the
+limitation rather than silently ignoring graph outputs. Embedding the complete
+120-opcode interpreter directly in raygen was rejected because OptiX IR
+generation exceeded a three-minute build ceiling even out-of-line and at `-O0`;
+a separately compiled callable module remains the intended implementation.
+The same choice is available dynamically under View > Render Technique > CUDA
+traversal. OptiX is disabled in that submenu until the selected CUDA device has
+successfully created an OptiX context and pipeline; changing traversal clears
+the progressive accumulation state but reuses the resident scene buffers.
+Auto dynamically uses OptiX for compatible triangle shaded, path-traced, and
+normal frames, while retaining the software BVH for other AOVs and native
+point/volume workloads. Render reports distinguish the requested policy from
+the transport actually used.
+Deformation refits immediately invalidate compacted OptiX GAS/IAS before any
+subsequent trace, so Auto uses the freshly refitted software BVH rather than
+rendering stale geometry. A future update-capable GAS allocation can replace
+this correctness fallback.
+
 `--cuda` traces the loaded scene's BVH on the GPU using the **CUDA driver API +
 NVRTC loaded at runtime via cuew** (`examples/common/cuew/`) — there is **no
 link-time dependency on the CUDA toolkit**; only the NVIDIA driver
@@ -342,9 +462,33 @@ entries gray out only *after* a failed switch attempt (`App::cudaProbe_`/
 `hipProbe_`), not proactively at startup — both tracers' `init()` compiles an
 NVRTC/hiprtc kernel, which is too slow to probe speculatively.
 
+The same **Render Technique** menu contains **CUDA device** and **ROCm/HIP
+device** submenus populated from the live driver. Selecting a different GPU at
+runtime tears down only that compute tracer, compiles its kernel for the newly
+selected architecture, and rebuilds the RT scene; the GL/Vulkan window and the
+other compute backend remain alive. Device changes are rejected while a scene
+build is in flight so the worker cannot race context destruction.
+
 `--cuda` / `--hip` without `--headless` now drive the viewport interactively
 (build once, retrace on the orbit camera) instead of only writing a one-shot
 screenshot; the screenshot path is unchanged for `--headless --screenshot`.
+
+The HIP device does not need a connected display. On a hybrid workstation the
+window owner can be the display-attached NVIDIA Vulkan device while HIP runs on
+a headless AMD card; lusdview synchronously reads back the completed HIP frame
+and uploads it to the primary renderer's viewport texture:
+
+```sh
+env VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+    __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    ./build_ninja/lusdview --backend vk --vk-device nvidia \
+    --hip --path-trace --envmap studio.hdr scene.usda
+```
+
+Startup reports both endpoints, for example `AMD Radeon RX 9070 XT compute ->
+primary Vulkan viewport blit`. This transport intentionally uses a host staging
+copy rather than requiring Vulkan external-memory compatibility between vendors.
+Headless HIP (`--headless --hip`) bypasses the presentation upload entirely.
 
 **CPU RT** (`--cpu-rt`, or `R` while the viewport is hovered — toggles it on/off,
 restoring the prior technique) is a new backend, `examples/lusdview/cpu/
@@ -466,12 +610,25 @@ Vulkan `--path-trace` resolves both explicit OpenPBR transmission and
 UsdPreviewSurface glass authored as Blend opacity plus a dielectric IOR.
 Dielectric paths use Fresnel-weighted reflection/refraction, front/back medium
 tracking, total-internal reflection, optional dispersion, and Beer absorption
-from transmission depth or volume density. The compute-BVH path also accumulates
-bounded colored visibility through transparent shadow layers. Hardware ray-query
-shadows retain their compact alpha-mask visibility query to avoid a known
-pathological NVIDIA compiler expansion; camera and BSDF refraction are shared by
-both paths. Ordinary IOR=1 alpha blends remain stochastic coverage rather than
-being misclassified as glass.
+from transmission depth or volume density. Hardware ray-query and compute-BVH
+paths both accumulate bounded colored visibility through transparent shadow
+layers; material evaluation remains outside the ray-query candidate loop to
+avoid pathological NVIDIA compiler expansion. Camera and BSDF refraction are
+shared by both paths. Ordinary IOR=1 alpha blends remain stochastic coverage
+rather than being misclassified as glass.
+
+OpenPBR `geometry_thin_walled` is retained in the shared 80-float material ABI.
+Thin sheets transmit without bending the continuation ray or entering a volume;
+closed glass uses an eight-entry nested-medium stack in Vulkan, CUDA, and HIP.
+High-quality Vulkan raster interprets `transmission_color` at
+`transmission_depth` using Beer-Lambert attenuation; a zero depth remains the
+OpenPBR interface-tint convention. The authored depth is never treated as
+object thickness: the current raster fallback estimates a scene-relative
+normal shell thickness, increases ray travel by `1/cos(theta)`, and clamps the
+grazing result. This preserves scale and view-angle response until a measured
+backface-distance sample is available. PreviewSurface Blend opacity is used to
+classify legacy glass, but is not applied again as volume extinction, preventing
+the washed-out semi-transparent metal/glass mixture seen on shared ALab atlases.
 
 The combined hardware ray-query compute module can block inside NVIDIA's
 `vkCreateComputePipelines` for minutes, and a device-wide Vulkan cache file does

@@ -16,6 +16,19 @@ namespace lusdview {
 namespace {
 inline void TransformPoint(const float m[12], const float p[3], float out[3]);
 inline void TransformNormal(const float m[12], const float p[3], float out[3]);
+
+inline float FresnelDielectric(float cosThetaI, float etaI, float etaT) {
+  const float ci = std::clamp(std::fabs(cosThetaI), 0.0f, 1.0f);
+  const float eta = etaI / std::max(etaT, 1.0e-6f);
+  const float sinThetaT2 = eta * eta * std::max(0.0f, 1.0f - ci * ci);
+  if (sinThetaT2 >= 1.0f) return 1.0f;
+  const float ct = std::sqrt(std::max(0.0f, 1.0f - sinThetaT2));
+  const float rs = (etaI * ci - etaT * ct) /
+                   std::max(etaI * ci + etaT * ct, 1.0e-6f);
+  const float rp = (etaT * ci - etaI * ct) /
+                   std::max(etaT * ci + etaI * ct, 1.0e-6f);
+  return 0.5f * (rs * rs + rp * rp);
+}
 }
 
 CpuRayTracer::~CpuRayTracer() { freeScene(); }
@@ -36,11 +49,13 @@ void CpuRayTracer::freeScene() {
 
 bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                          std::string* err, float displacementScale,
-                         BuildProgress* progress) {
+                         BuildProgress* progress,
+                         uint32_t purposeVisibleMask) {
   freeScene();
   hs_ = HostScene();  // drop the previous flatten before building the next one
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs_, err,
-                      progress, /*refitOut=*/nullptr, textureBudgetBytes_)) {
+                      progress, /*refitOut=*/nullptr, textureBudgetBytes_, nullptr,
+                      purposeVisibleMask)) {
     return false;
   }
   truncated_ = hs_.truncated;
@@ -140,7 +155,11 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
   const size_t expandedTriCount = cpuTris_.size() / 9;
 
   lrt_tri_build_options opts{};
-  opts.quality = LRT_TRI_BUILD_FAST;  // interactive-priority, not final-quality
+  // CPU RT is the correctness/reference path. Use binned SAH rather than the
+  // preview-oriented LBVH. Spatial-split HQ is serial and can take minutes on
+  // overlapping production meshes; it changes traversal cost, not hit
+  // correctness, so DEFAULT is the better reference-render tradeoff.
+  opts.quality = LRT_TRI_BUILD_DEFAULT;
   opts.layout = LRT_TRI_LAYOUT_AUTO;
   opts.max_leaf_size = 0;  // default
   opts.num_threads = static_cast<unsigned>(
@@ -1263,11 +1282,12 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       if (instance >= 0 && static_cast<size_t>(instance) < hs_.instances.size())
         alpha *= hs_.instances[static_cast<size_t>(instance)].tint[3];
     }
+    int opacityTex = -1;
     if (mid >= 0 && !hs_.matTex.empty() &&
         static_cast<size_t>(mid) * kRtMaterialTexSlots + 5 < hs_.matTex.size() &&
         tri * 6 + 5 < static_cast<int>(cpuUv_.size())) {
-      const int opacityTex = hs_.matTex[static_cast<size_t>(mid) *
-                                        kRtMaterialTexSlots + 5];
+      opacityTex = hs_.matTex[static_cast<size_t>(mid) *
+                              kRtMaterialTexSlots + 5];
       if (opacityTex >= 0) {
         float uv[2];
         Interp6(&cpuUv_[static_cast<size_t>(tri) * 6], bu, bv, uv);
@@ -1288,6 +1308,20 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       }
     }
     alpha = std::clamp(alpha, 0.0f, 1.0f);
+    const float authoredOpacity =
+        static_cast<size_t>(mid) * kLightRtOpenPBRFloats + 51 <
+                hs_.matLightRt.size() &&
+            hs_.matLightRt[static_cast<size_t>(mid) *
+                               kLightRtOpenPBRFloats + 51] > 0.5f
+            ? hs_.matLightRt[static_cast<size_t>(mid) *
+                                 kLightRtOpenPBRFloats + 39]
+            : hs_.matPbr[static_cast<size_t>(mid) * 6 + 5];
+    // Match Vulkan raster/RT mixed-atlas classification: painted coverage in
+    // a Blend atlas is opaque, while an authored fractional material remains
+    // true glass. Without this split the CPU reference ghosts the whole prop.
+    if (mode > 1.5f && opacityTex >= 0 && authoredOpacity >= 0.999f &&
+        alpha >= 0.5f)
+      alpha = 1.0f;
     if (mode > 0.5f && mode < 1.5f) alpha = alpha >= cutoff ? 1.0f : 0.0f;
     return alpha;
   };
@@ -1423,7 +1457,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         color[2] * scale * (1.0f - diffusion) + subsurfaceColor[2] * diffusion + coatColor[2] * coatSpec};
   };
 
-  auto cpuLayerTransmission = [&](int tri) {
+  auto cpuLayerTransmission = [&](int tri, float travelDistance) {
     std::array<float, 3> tint{1.0f, 1.0f, 1.0f};
     if (tri < 0 || static_cast<size_t>(tri) >= cpuMat_.size()) return tint;
     const int mid = cpuMat_[static_cast<size_t>(tri)];
@@ -1439,8 +1473,17 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       const float scatter = base + 12 + static_cast<size_t>(c) < hs_.matLightRt.size()
                                 ? std::max(hs_.matLightRt[base + 12 + c], 0.0f)
                                 : 0.0f;
-      tint[c] = std::exp(-weight * depth *
-                         (std::max(0.0f, 1.0f - color) + 0.25f * scatter));
+      // OpenPBR transmission_color is the transmittance after `depth` scene
+      // units. Apply it only after an exit hit provides the actual distance;
+      // depth==0 retains the specification's one-time interface tint.
+      const float attenuation = depth > 0.0f
+          ? (travelDistance > 0.0f
+                 ? std::exp(std::log(std::max(color, 1.0e-6f)) *
+                            (travelDistance / depth) -
+                            0.25f * scatter * travelDistance / depth)
+                 : 1.0f)
+          : color;
+      tint[c] = 1.0f - weight + weight * attenuation;
     }
     // Match the CUDA/Vulkan OpenPBR transmission dispersion approximation.
     // The compact material lane stores the authored dispersion strength and
@@ -1464,14 +1507,20 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
     return tint;
   };
 
-  auto cpuLayerTransmissionWeight = [&](int tri) {
+  auto cpuLayerTransmissionWeight = [&](int tri, float bu, float bv) {
     if (tri < 0 || static_cast<size_t>(tri) >= cpuMat_.size()) return 0.0f;
     const int mid = cpuMat_[static_cast<size_t>(tri)];
     if (mid < 0) return 0.0f;
     const size_t base = static_cast<size_t>(mid) * kLightRtOpenPBRFloats;
-    return base + 11 < hs_.matLightRt.size()
-               ? std::clamp(hs_.matLightRt[base + 11], 0.0f, 1.0f)
-               : 0.0f;
+    if (base + 54 >= hs_.matLightRt.size()) return 0.0f;
+    float transmission = std::clamp(hs_.matLightRt[base + 11], 0.0f, 1.0f);
+    const float authoredOpacity = hs_.matLightRt[base + 51] > 0.5f
+                                      ? hs_.matLightRt[base + 39]
+                                      : hs_.matPbr[static_cast<size_t>(mid) * 6 + 5];
+    if (hs_.matLightRt[base + 54] > 1.5f &&
+        hs_.matLightRt[base + 43] > 1.01f && authoredOpacity < 0.999f)
+      transmission = std::max(transmission, 1.0f - cpuLayerAlpha(tri, bu, bv));
+    return transmission;
   };
 
   struct CpuRefractResult {
@@ -1511,6 +1560,20 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       const float nl = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
       if (nl <= 1.0e-8f) return result;
       for (float& v : n) v /= nl;
+      if (static_cast<size_t>(currentTri) * 9 + 8 < cpuNrms_.size()) {
+        float smooth[3];
+        Interp9(&cpuNrms_[static_cast<size_t>(currentTri) * 9], currentBu,
+                currentBv, smooth);
+        const float smoothLen = std::sqrt(smooth[0] * smooth[0] +
+                                          smooth[1] * smooth[1] +
+                                          smooth[2] * smooth[2]);
+        if (smoothLen > 1.0e-8f) {
+          for (float& value : smooth) value /= smoothLen;
+          if (smooth[0] * n[0] + smooth[1] * n[1] + smooth[2] * n[2] < 0.0f)
+            for (float& value : smooth) value = -value;
+          std::copy(smooth, smooth + 3, n);
+        }
+      }
       const float normalDir = n[0] * currentDir[0] +
                               n[1] * currentDir[1] +
                               n[2] * currentDir[2];
@@ -1527,12 +1590,16 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       const float ior = mb + 43 < hs_.matLightRt.size()
                             ? std::max(hs_.matLightRt[mb + 43], 1.0f)
                             : 1.0f;
-      const float eta = entering ? 1.0f / ior : ior;
+      const bool thinWalled = mb + 71 < hs_.matLightRt.size() &&
+                              hs_.matLightRt[mb + 71] >= 0.5f;
+      const float eta = thinWalled ? 1.0f : (entering ? 1.0f / ior : ior);
       const float cosi = -(n[0] * currentDir[0] + n[1] * currentDir[1] +
                            n[2] * currentDir[2]);
       const float k = 1.0f - eta * eta * (1.0f - cosi * cosi);
       float refr[3];
-      if (k < 0.0f) {
+      if (thinWalled) {
+        for (int c = 0; c < 3; ++c) refr[c] = currentDir[c];
+      } else if (k < 0.0f) {
         const float dot = n[0] * currentDir[0] + n[1] * currentDir[1] +
                           n[2] * currentDir[2];
         for (int c = 0; c < 3; ++c) refr[c] = currentDir[c] - 2.0f * dot * n[c];
@@ -1544,8 +1611,6 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                  refr[2] * refr[2]);
       if (rl <= 1.0e-8f) return result;
       for (float& v : refr) v /= rl;
-      const auto tint = cpuLayerTransmission(currentTri);
-      for (int c = 0; c < 3; ++c) throughput[c] *= tint[c];
       float hit[3] = {p0[0] * (1.0f - currentBu - currentBv) +
                           p1[0] * currentBu + p2[0] * currentBv,
                       p0[1] * (1.0f - currentBu - currentBv) +
@@ -1570,17 +1635,88 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
       if (!lrt_tri_intersect1(scene_, &nextRay, &nextHit) ||
           nextHit.prim_id == LRT_TRI_NO_HIT)
         return result;
+      const auto tint = cpuLayerTransmission(currentTri, nextHit.t);
+      for (int c = 0; c < 3; ++c) throughput[c] *= tint[c];
       currentTri = static_cast<int>(nextHit.prim_id);
       currentBu = nextHit.u;
       currentBv = nextHit.v;
       std::copy(refr, refr + 3, currentDir);
-      if (bounce == 2) {
+      if (cpuLayerTransmissionWeight(currentTri, currentBu, currentBv) <=
+              1.0e-4f ||
+          bounce == 2) {
         const auto color = cpuLayerColor(currentTri, currentBu, currentBv);
         result.color = {color[0] * throughput[0], color[1] * throughput[1],
                         color[2] * throughput[2]};
         return result;
       }
     }
+    return result;
+  };
+
+  // Sample authored dome lights for miss rays and glossy reflection. HostScene
+  // retains the source lat-long texture and the packed world->environment
+  // rotation, so the CPU reference need not fall back to a flat clear color.
+  auto cpuEnvironment = [&](const float worldDir[3]) {
+    std::array<float, 3> result{0.0f, 0.0f, 0.0f};
+    bool found = false;
+    for (int li = 0; li < hs_.numLights; ++li) {
+      const float* lp = &hs_.lightParams[static_cast<size_t>(li) *
+                                          kRtLightParamFloats];
+      if (static_cast<int>(lp[0] + 0.5f) !=
+              static_cast<int>(DrawLightCPU::Type::Dome) ||
+          static_cast<int>(lp[1] + 0.5f) == 0)
+        continue;
+      float d[3] = {
+          lp[40] * worldDir[0] + lp[41] * worldDir[1] + lp[42] * worldDir[2],
+          lp[44] * worldDir[0] + lp[45] * worldDir[1] + lp[46] * worldDir[2],
+          lp[48] * worldDir[0] + lp[49] * worldDir[1] + lp[50] * worldDir[2]};
+      Normalize3(d);
+      float radiance[3] = {1.0f, 1.0f, 1.0f};
+      const int textureId = static_cast<int>(std::floor(lp[2] + 0.5f));
+      if (textureId >= 0) {
+        constexpr float kInvTwoPi = 0.15915494309189535f;
+        constexpr float kInvPi = 0.31830988618379067f;
+        const float u = std::atan2(d[0], -d[2]) * kInvTwoPi + 0.5f;
+        const float v = std::acos(std::clamp(d[1], -1.0f, 1.0f)) * kInvPi;
+        SampleTextureBilinear(hs_.textures, hs_.texels, textureId, u, v,
+                              radiance);
+      }
+      for (int c = 0; c < 3; ++c)
+        result[c] += radiance[c] * std::max(lp[16 + c], 0.0f);
+      found = true;
+    }
+    if (!found)
+      result = {clearColor[0], clearColor[1], clearColor[2]};
+    return result;
+  };
+
+  auto cpuDomeIrradiance = [&](const float worldNormal[3]) {
+    std::array<float, 3> result{0.0f, 0.0f, 0.0f};
+    for (int li = 0; li < hs_.numLights; ++li) {
+      const float* lp = &hs_.lightParams[static_cast<size_t>(li) *
+                                          kRtLightParamFloats];
+      if (static_cast<int>(lp[0] + 0.5f) !=
+              static_cast<int>(DrawLightCPU::Type::Dome) ||
+          (static_cast<int>(lp[1] + 0.5f) & (1 << 7)) == 0)
+        continue;
+      float n[3] = {
+          lp[40] * worldNormal[0] + lp[41] * worldNormal[1] + lp[42] * worldNormal[2],
+          lp[44] * worldNormal[0] + lp[45] * worldNormal[1] + lp[46] * worldNormal[2],
+          lp[48] * worldNormal[0] + lp[49] * worldNormal[1] + lp[50] * worldNormal[2]};
+      Normalize3(n);
+      const float basis[9] = {
+          0.282095f, 0.488603f * n[1], 0.488603f * n[2],
+          0.488603f * n[0], 1.092548f * n[0] * n[1],
+          1.092548f * n[1] * n[2],
+          0.315392f * (3.0f * n[2] * n[2] - 1.0f),
+          1.092548f * n[0] * n[2],
+          0.546274f * (n[0] * n[0] - n[1] * n[1])};
+      for (int k = 0; k < 9; ++k)
+        for (int c = 0; c < 3; ++c)
+          result[c] += basis[k] * lp[52 + k * 3 + c] *
+                       std::max(lp[16 + c], 0.0f);
+    }
+    for (float& c : result) c = std::max(c, 0.0f);
     return result;
   };
 
@@ -1652,9 +1788,20 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         uint8_t* px = pixels + (static_cast<size_t>(y) * w + x) * 4;
         lrt_hit hit{};
         if (!lrt_tri_intersect1(scene_, &ray, &hit) || hit.prim_id == LRT_TRI_NO_HIT) {
-          px[0] = static_cast<uint8_t>(std::clamp(clearColor[0] * 255.0f, 0.0f, 255.0f));
-          px[1] = static_cast<uint8_t>(std::clamp(clearColor[1] * 255.0f, 0.0f, 255.0f));
-          px[2] = static_cast<uint8_t>(std::clamp(clearColor[2] * 255.0f, 0.0f, 255.0f));
+          const auto environment = cpuEnvironment(dir);
+          const auto encode = [](float value) {
+            value = std::max(value, 0.0f);
+            value = std::clamp(
+                value * (2.51f * value + 0.03f) /
+                    (value * (2.43f * value + 0.59f) + 0.14f),
+                0.0f, 1.0f);
+            return value <= 0.0031308f
+                       ? value * 12.92f
+                       : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+          };
+          px[0] = static_cast<uint8_t>(encode(environment[0]) * 255.0f);
+          px[1] = static_cast<uint8_t>(encode(environment[1]) * 255.0f);
+          px[2] = static_cast<uint8_t>(encode(environment[2]) * 255.0f);
           px[3] = 255;
           continue;
         }
@@ -1820,7 +1967,115 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 shadowLinked = (hs_.instances[static_cast<size_t>(instanceIndex)].shadowLightMask &
                                 (1u << li)) != 0;
               }
-              if (shadowLinked && lrt_tri_occluded1(scene_, &shadowRay)) shadow = 0.0f;
+              if (shadowLinked) {
+                // Reference-quality colored transmission shadows. The old
+                // any-hit query made a 1%-opaque decal or glass globe cast the
+                // same black shadow as solid metal.
+                float transmittance[3] = {1.0f, 1.0f, 1.0f};
+                float cursor = shadowRay.tmin;
+                struct ShadowMedium {
+                  int instance{-1};
+                  int entryTri{-1};
+                };
+                std::array<ShadowMedium, 8> media{};
+                int mediumDepth = 0;
+                for (int layer = 0; layer < 12; ++layer) {
+                  shadowRay.tmin = cursor;
+                  lrt_hit shadowHit{};
+                  if (!lrt_tri_intersect1(scene_, &shadowRay, &shadowHit) ||
+                      shadowHit.prim_id == LRT_TRI_NO_HIT) {
+                    // Finite local/area lights can end inside a volume. Apply
+                    // the remaining segment; an unmatched directional-light
+                    // shell is treated as malformed/open and keeps fallback
+                    // interface behavior instead of attenuating over infinity.
+                    if (mediumDepth > 0 && maxShadowT < 1.0e20f) {
+                      const auto volumeTint = cpuLayerTransmission(
+                          media[static_cast<size_t>(mediumDepth)].entryTri,
+                          std::max(0.0f, maxShadowT - cursor));
+                      for (int c = 0; c < 3; ++c)
+                        transmittance[c] *= volumeTint[c];
+                    }
+                    break;
+                  }
+                  const int shadowTri = static_cast<int>(shadowHit.prim_id);
+                  if (mediumDepth > 0) {
+                    const auto volumeTint = cpuLayerTransmission(
+                        media[static_cast<size_t>(mediumDepth)].entryTri,
+                        std::max(0.0f, shadowHit.t - cursor));
+                    for (int c = 0; c < 3; ++c)
+                      transmittance[c] *= volumeTint[c];
+                  }
+                  const float alpha = cpuLayerAlpha(shadowTri, shadowHit.u,
+                                                    shadowHit.v);
+                  // Zero-depth OpenPBR color is an interface tint. For a
+                  // positive depth this is unity; attenuation was applied to
+                  // the measured segment above.
+                  const auto tint = cpuLayerTransmission(shadowTri, 0.0f);
+                  const float transmissionWeight =
+                      cpuLayerTransmissionWeight(shadowTri, shadowHit.u,
+                                                 shadowHit.v);
+                  for (int c = 0; c < 3; ++c) {
+                    const float through = transmissionWeight > 0.0f
+                                              ? tint[c] * (1.0f - alpha)
+                                              : (1.0f - alpha);
+                    transmittance[c] *= std::clamp(through, 0.0f, 1.0f);
+                  }
+                  const int shadowInstance =
+                      static_cast<size_t>(shadowTri) < cpuInstance_.size()
+                          ? cpuInstance_[static_cast<size_t>(shadowTri)] : -1;
+                  const int shadowMaterial =
+                      static_cast<size_t>(shadowTri) < cpuMat_.size()
+                          ? cpuMat_[static_cast<size_t>(shadowTri)] : -1;
+                  const size_t shadowMb = shadowMaterial >= 0
+                      ? static_cast<size_t>(shadowMaterial) *
+                            kLightRtOpenPBRFloats
+                      : hs_.matLightRt.size();
+                  const bool thinWalled = shadowMb + 71 < hs_.matLightRt.size() &&
+                      hs_.matLightRt[shadowMb + 71] >= 0.5f;
+                  bool frontFacing = true;
+                  const size_t tb = static_cast<size_t>(shadowTri) * 9;
+                  if (tb + 8 < cpuTris_.size()) {
+                    const float* tv = &cpuTris_[tb];
+                    const float e1[3] = {tv[3] - tv[0], tv[4] - tv[1],
+                                         tv[5] - tv[2]};
+                    const float e2[3] = {tv[6] - tv[0], tv[7] - tv[1],
+                                         tv[8] - tv[2]};
+                    const float gn[3] = {
+                        e1[1] * e2[2] - e1[2] * e2[1],
+                        e1[2] * e2[0] - e1[0] * e2[2],
+                        e1[0] * e2[1] - e1[1] * e2[0]};
+                    frontFacing = gn[0] * L[0] + gn[1] * L[1] +
+                                      gn[2] * L[2] < 0.0f;
+                  }
+                  if (transmissionWeight > 1.0e-4f && !thinWalled) {
+                    int matched = -1;
+                    for (int level = mediumDepth; level > 0; --level) {
+                      if (media[static_cast<size_t>(level)].instance ==
+                          shadowInstance) {
+                        matched = level;
+                        break;
+                      }
+                    }
+                    const bool exiting = matched > 0 ||
+                                         (!frontFacing && mediumDepth == 0);
+                    if (!exiting && mediumDepth < 7) {
+                      ++mediumDepth;
+                      media[static_cast<size_t>(mediumDepth)] =
+                          {shadowInstance, shadowTri};
+                    } else if (matched > 0) {
+                      mediumDepth = matched - 1;
+                    }
+                  }
+                  if (transmittance[0] + transmittance[1] +
+                          transmittance[2] < 0.003f)
+                    break;
+                  cursor = shadowHit.t + 1.0e-4f;
+                  if (cursor >= shadowRay.tmax) break;
+                }
+                shadow = 0.2126f * transmittance[0] +
+                         0.7152f * transmittance[1] +
+                         0.0722f * transmittance[2];
+              }
             }
             const float lightToPoint[3] = {-L[0], -L[1], -L[2]};
             const float radiance = std::max(0.0f, emitter[0]) * 0.3333333f +
@@ -1949,8 +2204,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
             }
           }
           const float f0 = std::pow((ior - 1.0f) / (ior + 1.0f), 2.0f);
-          const float fresnel = f0 + (1.0f - f0) *
-              std::pow(1.0f - std::clamp(nv, 0.0f, 1.0f), 5.0f);
+          const float fresnel = FresnelDielectric(nv, 1.0f, ior);
           if (thinFilmWeight > 0.0f && thinFilmThickness > 0.0f) {
             const float phase = 6.28318530718f * thinFilmIor *
                                 thinFilmThickness *
@@ -2002,6 +2256,29 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                        sheenColor[1] * sheen + coat + emission[1]) * exposureMul;
           outCol[2] = (base[2] * lit + specColor[2] * specular +
                        sheenColor[2] * sheen + coat + emission[2]) * exposureMul;
+          // Dome diffuse irradiance and view-dependent reflection make CPU RT
+          // a useful visual reference for the raster and ray-query paths. SH
+          // supplies the low-frequency diffuse term; the authored dome texture
+          // supplies a sharp reflection, attenuated as roughness increases.
+          const auto domeDiffuse = cpuDomeIrradiance(nrm);
+          float viewDir[3] = {(camPos[0] - hitP[0]) / std::max(viewLen, 1.0e-4f),
+                              (camPos[1] - hitP[1]) / std::max(viewLen, 1.0e-4f),
+                              (camPos[2] - hitP[2]) / std::max(viewLen, 1.0e-4f)};
+          const float vn = viewDir[0] * nrm[0] + viewDir[1] * nrm[1] +
+                           viewDir[2] * nrm[2];
+          float reflected[3] = {-viewDir[0] + 2.0f * vn * nrm[0],
+                                -viewDir[1] + 2.0f * vn * nrm[1],
+                                -viewDir[2] + 2.0f * vn * nrm[2]};
+          Normalize3(reflected);
+          const auto domeSpecular = cpuEnvironment(reflected);
+          const float envSpecWeight = specWeight *
+              (fresnel * (1.0f - metallic) + metallic) *
+              (1.0f - 0.75f * roughness);
+          for (int c = 0; c < 3; ++c) {
+            outCol[c] += exposureMul *
+                (base[c] * diffuseWeight * domeDiffuse[c] * 0.31830988618f +
+                 specColor[c] * domeSpecular[c] * envSpecWeight);
+          }
           if (renderMode == 0) {
             const int mid = (tri < cpuMat_.size()) ? cpuMat_[tri] : -1;
             float alphaMode = 0.0f;
@@ -2017,9 +2294,10 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               const float topColor[3] = {outCol[0], outCol[1], outCol[2]};
               const auto refracted = cpuLayerRefracted(
                   static_cast<int>(tri), hit.u, hit.v, rayOrg, dir);
-              const auto topTint = cpuLayerTransmission(static_cast<int>(tri));
+              const auto topTint =
+                  cpuLayerTransmission(static_cast<int>(tri), 0.0f);
               const float topTransmission = cpuLayerTransmissionWeight(
-                  static_cast<int>(tri));
+                  static_cast<int>(tri), hit.u, hit.v);
               float underAccum[3] = {0.0f, 0.0f, 0.0f};
               float throughput[3] = {1.0f, 1.0f, 1.0f};
               // Continue the underlayer walk from the last refracted interface.
@@ -2055,14 +2333,15 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 underAccum[0] += layerColor[0] * throughput[0] * layerAlpha;
                 underAccum[1] += layerColor[1] * throughput[1] * layerAlpha;
                 underAccum[2] += layerColor[2] * throughput[2] * layerAlpha;
-                const auto layerTint = cpuLayerTransmission(nextTri);
+                const auto layerTint = cpuLayerTransmission(nextTri, 0.0f);
                 for (int c = 0; c < 3; ++c)
                   throughput[c] *= layerTint[c] * (1.0f - layerAlpha);
                 // Intermediate transparent interfaces can change the
                 // direction of the remaining walk.  Propagate that bounded
                 // refraction instead of continuing every layer along the
                 // previous ray; opaque/alpha-only layers remain straight.
-                if (cpuLayerTransmissionWeight(nextTri) > 0.0f) {
+                if (cpuLayerTransmissionWeight(nextTri, nextHit.u,
+                                               nextHit.v) > 0.0f) {
                   const auto layerRefracted = cpuLayerRefracted(
                       nextTri, nextHit.u, nextHit.v, walkOrigin, walkDir);
                   std::copy(layerRefracted.origin.begin(),
@@ -2089,9 +2368,28 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
             }
           }
         }
-        px[0] = static_cast<uint8_t>(std::clamp(outCol[0] * 255.0f, 0.0f, 255.0f));
-        px[1] = static_cast<uint8_t>(std::clamp(outCol[1] * 255.0f, 0.0f, 255.0f));
-        px[2] = static_cast<uint8_t>(std::clamp(outCol[2] * 255.0f, 0.0f, 255.0f));
+        // Shading is accumulated in linear light; encode only the final color
+        // for the RGBA8 viewport. Previously CPU RT wrote linear values straight
+        // to UNORM, making it systematically darker than both Vulkan paths.
+        auto linearToSrgb = [](float value) {
+          value = std::max(value, 0.0f);
+          value = std::clamp(
+              value * (2.51f * value + 0.03f) /
+                  (value * (2.43f * value + 0.59f) + 0.14f),
+              0.0f, 1.0f);
+          return value <= 0.0031308f ? value * 12.92f
+                                    : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+        };
+        const bool encodeSrgb = renderMode == 0;
+        px[0] = static_cast<uint8_t>(std::clamp(
+            (encodeSrgb ? linearToSrgb(outCol[0]) : outCol[0]) * 255.0f,
+            0.0f, 255.0f));
+        px[1] = static_cast<uint8_t>(std::clamp(
+            (encodeSrgb ? linearToSrgb(outCol[1]) : outCol[1]) * 255.0f,
+            0.0f, 255.0f));
+        px[2] = static_cast<uint8_t>(std::clamp(
+            (encodeSrgb ? linearToSrgb(outCol[2]) : outCol[2]) * 255.0f,
+            0.0f, 255.0f));
         px[3] = 255;
       }
     }

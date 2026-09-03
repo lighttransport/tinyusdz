@@ -224,6 +224,19 @@ bool ParseConfigFile(const fs::path& path, StartupConfig* cfg,
       }
       cfg->transparency = value;
     }
+    if (const json* cudaBackend =
+            FindMember(*render, {"cuda_rt_backend", "cuda-rt-backend"})) {
+      if (!cudaBackend->is_string()) {
+        *err = "render.cuda_rt_backend must be auto, optix, or software";
+        return false;
+      }
+      const std::string value = cudaBackend->get<std::string>();
+      if (value != "auto" && value != "optix" && value != "software") {
+        *err = "render.cuda_rt_backend must be auto, optix, or software";
+        return false;
+      }
+      cfg->cudaRtBackend = value;
+    }
     if (const json* maxShader = FindMember(
             *render, {"materialx_vulkan_shader_max_kib",
                       "materialx-vulkan-shader-max-kib"})) {

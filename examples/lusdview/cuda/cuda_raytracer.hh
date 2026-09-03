@@ -18,13 +18,15 @@
 #include <vector>
 
 #include "gpu_scene.hh"
+#include "renderer.hh"
 #include "rt_camera.hh"
 #include "path_trace.hh"
+#include "rt_scene_build.hh"  // BuildProgress, HostScene, RefitMap
+#if defined(LUSDVIEW_HAVE_OPTIX)
+#include "cuda/optix_runtime.hh"
+#endif
 
 namespace lusdview {
-
-struct BuildProgress;  // rt_scene_build.hh (background-build progress)
-struct HostScene;      // rt_scene_build.hh (paged Gaussian host storage)
 
 class CudaRayTracer {
  public:
@@ -38,7 +40,34 @@ class CudaRayTracer {
   // kernel. Returns false (with *err set) if anything is missing. Safe to call
   // once; subsequent calls are no-ops returning the cached result.
   bool init(std::string* err);
+  static bool enumerateDevices(std::vector<std::string>* names,
+                               std::string* err);
+  bool selectDevice(int index, std::string* err);
+  int deviceIndex() const { return device_; }
   bool initialized() const { return ctx_ != nullptr; }
+  bool optixAvailable() const {
+#if defined(LUSDVIEW_HAVE_OPTIX)
+    return optixRuntime_.attached();
+#else
+    return false;
+#endif
+  }
+  const std::string& optixStatus() const { return optixStatus_; }
+  int optixAbiVersion() const {
+#if defined(LUSDVIEW_HAVE_OPTIX)
+    return optixRuntime_.loaded() ? optixRuntime_.abiVersion() : 0;
+#else
+    return 0;
+#endif
+  }
+  size_t optixGasBytes() const { return optixGasBytes_; }
+  size_t optixIasBytes() const { return optixIasBytes_; }
+  size_t optixAccelerationBytes() const {
+    return optixGasBytes_ + optixIasBytes_;
+  }
+  const std::string& optixFallbackReason() const {
+    return optixFallbackReason_;
+  }
   // Compile `sourcePath` with NVRTC and atomically replace only the module and
   // trace entry point. Device scene/BVH/texture buffers remain resident; a
   // compile or module-validation failure keeps the previous kernel active.
@@ -49,6 +78,9 @@ class CudaRayTracer {
   // keeps the platform default (for example ~/.cache/lusdview/cuda on Linux).
   void setCacheDirectory(const std::string& path) { cacheDirectory_ = path; }
   void setTextureBudgetBytes(size_t bytes) { textureBudgetBytes_ = bytes; }
+  void setRtBackend(CudaRtBackend backend) { rtBackend_ = backend; }
+  CudaRtBackend rtBackend() const { return rtBackend_; }
+  bool usesOptixTransport() const { return lastUsedOptix_; }
 
   // Build prototype-local BLASes plus a world-space instance TLAS and upload
   // everything to the device. `maxTris` caps unique prototype triangles; 0 = no
@@ -59,7 +91,11 @@ class CudaRayTracer {
   // be a shader effect here). 0 = no displacement.
   bool build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
              std::string* err, float displacementScale = 0.0f,
-             BuildProgress* progress = nullptr);
+             BuildProgress* progress = nullptr,
+             bool retainForRefit = false,
+             uint32_t purposeVisibleMask = 0x3u);
+  bool refit(const DrawScene& scene, std::string* err);
+  bool canRefit() const { return retained_ != nullptr && refitMap_.valid; }
   bool updateMaterialConstants(int materialId,
                                const DrawMaterialCPU& material,
                                std::string* err);
@@ -67,6 +103,7 @@ class CudaRayTracer {
   bool truncated() const { return truncated_; }
   size_t deviceUsedBytes() const { return deviceUsedBytes_; }
   size_t deviceTotalBytes() const { return deviceTotalBytes_; }
+  double lastTraceMs() const { return lastTraceMs_; }
 
   // Trace one frame. `invViewProj` is the column-major inverse(proj*view) (16
   // floats), `camPos`/`lightDir` are 3-float world vectors (lightDir points toward
@@ -84,7 +121,8 @@ class CudaRayTracer {
              const PathTraceSettings* pathTrace = nullptr,
              std::vector<float>* linearRgba = nullptr,
              uint32_t* renderedSamples = nullptr,
-             float sceneTime = 0.0f, float sceneFrame = 0.0f);
+             float sceneTime = 0.0f, float sceneFrame = 0.0f,
+             uint32_t accumulationStart = 0);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
@@ -96,10 +134,14 @@ class CudaRayTracer {
   void* ctx_{nullptr};       // CUcontext
   void* module_{nullptr};    // CUmodule
   void* kernel_{nullptr};    // CUfunction (trace)
+  void* stream_{nullptr};    // non-default CUstream for trace + readback
+  void* hostOut_{nullptr};   // page-locked RGBA readback buffer
+  size_t hostOutCap_{0};
   int device_{0};
   int compileArch_{0};
   uint64_t kernelGeneration_{0};
   double lastKernelCompileMs_{0.0};
+  double lastTraceMs_{0.0};
 
   // Device buffers (CUdeviceptr stored as uintptr_t).
   uintptr_t dTris_{0};       // float[9] positions per tri
@@ -135,6 +177,22 @@ class CudaRayTracer {
   uintptr_t dBlasNodes_{0};  // concatenated BLAS nodes (local-space geometry)
   uintptr_t dTlasNodes_{0};  // TLAS nodes over instance world AABBs
   uintptr_t dInstances_{0};  // Inst[] table (w2o,o2w,tint,blasRoot,instId)
+  std::vector<uintptr_t> dOptixGases_;
+  std::vector<uint64_t> optixGasHandles_;
+  std::vector<size_t> optixGasOutputBytes_;
+  size_t optixGasBytes_{0};
+  bool optixGasUpdateEnabled_{false};
+  uintptr_t dOptixInstances_{0};
+  uintptr_t dOptixIas_{0};
+  uint64_t optixIasHandle_{0};
+  size_t optixIasBytes_{0};
+  uintptr_t dOptixSbt_{0};
+  uint32_t optixSbtMissOffset_{0};
+  uint32_t optixSbtHitOffset_{0};
+  uint32_t optixSbtHitStride_{0};
+  uint32_t optixSbtHitCount_{0};
+  bool optixCameraProbeDone_{false};
+  bool optixRefitLogged_{false};
   uintptr_t dVolDens_{0};    // UsdVol: concatenated dense float density grids
   uintptr_t dVolParams_{0};  // UsdVol: VolParam[] (one per volume)
   uintptr_t dPointCenters_{0};
@@ -162,12 +220,22 @@ class CudaRayTracer {
   size_t nodeCount_{0};
   bool truncated_{false};
   std::string deviceName_;
+  std::string optixStatus_{"not built"};
+  std::string optixFallbackReason_;
+  CudaRtBackend rtBackend_{CudaRtBackend::Auto};
+  bool lastUsedOptix_{false};
+  bool sceneHasMaterialGraphs_{false};
+#if defined(LUSDVIEW_HAVE_OPTIX)
+  OptixRuntime optixRuntime_;
+#endif
   std::string cacheDirectory_;
   size_t textureBudgetBytes_{0};
   size_t deviceUsedBytes_{0};
   size_t deviceTotalBytes_{0};
   bool pointPaging_{false};
   std::unique_ptr<HostScene> pointHost_;
+  std::unique_ptr<HostScene> retained_;
+  RefitMap refitMap_;
 };
 
 }  // namespace lusdview

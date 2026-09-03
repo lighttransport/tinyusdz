@@ -474,6 +474,71 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
 
 }  // namespace
 
+static float RtSrgbToLinear(float value) {
+  return value <= 0.04045f ? value / 12.92f
+                           : std::pow((value + 0.055f) / 1.055f, 2.4f);
+}
+
+static void CachePackedDomeTextureProposal(const HostScene& scene, float* p) {
+  if (!p) return;
+  const int textureId = static_cast<int>(p[2] + 0.5f);
+  if (textureId < 0 || static_cast<size_t>(textureId) >= scene.textures.size())
+    return;
+  const HostTextureDesc& td = scene.textures[static_cast<size_t>(textureId)];
+  if (td.width < 1 || td.height < 1 || td.offset < 0) return;
+  const size_t required = static_cast<size_t>(td.offset) +
+      static_cast<size_t>(td.width) * static_cast<size_t>(td.height) * 4u;
+  if (required > scene.texels.size()) return;
+  const bool rgbe = (static_cast<int>(p[1] + 0.5f) & (1 << 8)) != 0;
+  auto texel = [&](int x, int y, int channel) {
+    x = (x % td.width + td.width) % td.width;
+    y = std::max(0, std::min(td.height - 1, y));
+    const uint8_t* q = &scene.texels[static_cast<size_t>(td.offset) +
+        (static_cast<size_t>(y) * td.width + x) * 4u];
+    if (rgbe) {
+      if (q[3] == 0) return 0.0f;
+      return (static_cast<float>(q[channel]) + 0.5f) *
+             std::ldexp(1.0f, static_cast<int>(q[3]) - 136);
+    }
+    float value = static_cast<float>(q[channel]) / 255.0f;
+    return td.srgb ? RtSrgbToLinear(value) : value;
+  };
+  float total = 0.0f;
+  float maximum = 0.0f;
+  for (int cell = 0; cell < 32; ++cell) {
+    const int zCell = cell / 8;
+    const int phiCell = cell - zCell * 8;
+    const float z = -1.0f + 2.0f * (static_cast<float>(zCell) + 0.5f) / 4.0f;
+    const float phi = 6.28318530718f *
+                      (static_cast<float>(phiCell) + 0.5f) / 8.0f;
+    const float radial = std::sqrt(std::max(0.0f, 1.0f - z * z));
+    const float dx = radial * std::cos(phi);
+    const float dy = radial * std::sin(phi);
+    const float dz = z;
+    float ex = p[40] * dx + p[41] * dy + p[42] * dz;
+    float ey = p[44] * dx + p[45] * dy + p[46] * dz;
+    float ez = p[48] * dx + p[49] * dy + p[50] * dz;
+    const float len = std::sqrt(ex * ex + ey * ey + ez * ez);
+    if (len > 1.0e-12f) { ex /= len; ey /= len; ez /= len; }
+    float u = std::atan2(ex, -ez) * 0.15915494309f + 0.5f;
+    float v = std::acos(std::max(-1.0f, std::min(1.0f, ey))) *
+              0.31830988618f;
+    const int x = std::min(td.width - 1,
+        std::max(0, static_cast<int>(u * static_cast<float>(td.width))));
+    const int y = std::min(td.height - 1,
+        std::max(0, static_cast<int>(v * static_cast<float>(td.height))));
+    const float r = texel(x, y, 0) * p[16];
+    const float g = texel(x, y, 1) * p[17];
+    const float b = texel(x, y, 2) * p[18];
+    const float weight = std::max(1.0e-6f,
+        0.2126f * r + 0.7152f * g + 0.0722f * b);
+    total += weight;
+    maximum = std::max(maximum, weight);
+  }
+  p[51] = std::max(maximum, 1.0e-6f);
+  p[79] = std::max(total, 1.0e-20f);
+}
+
 void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
                        float* p) {
   if (!p) return;
@@ -560,6 +625,45 @@ void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
     for (int i = 0; i < 27; ++i) {
       p[52 + i] = light.ibl.shIrradiance[static_cast<size_t>(i)];
     }
+    // p[79] caches the normalization and p[51] the maximum cell weight of the
+    // CUDA/HIP path tracer's 8x4 environment proposal. Both are invariant for
+    // the packed dome; computing them here removes the per-path normalization
+    // scan and enables exact low-cost rejection sampling.
+    float total = 0.0f;
+    float maxWeight = 0.0f;
+    for (int cell = 0; cell < 32; ++cell) {
+      const int zCell = cell / 8;
+      const int phiCell = cell - zCell * 8;
+      const float z = -1.0f + 2.0f * (float(zCell) + 0.5f) / 4.0f;
+      const float phi = 6.28318530718f * (float(phiCell) + 0.5f) / 8.0f;
+      const float radial = std::sqrt(std::max(0.0f, 1.0f - z * z));
+      const float dx = radial * std::cos(phi);
+      const float dy = radial * std::sin(phi);
+      const float dz = z;
+      const float ex = p[40] * dx + p[41] * dy + p[42] * dz;
+      const float ey = p[44] * dx + p[45] * dy + p[46] * dz;
+      const float ez = p[48] * dx + p[49] * dy + p[50] * dz;
+      const float b[9] = {
+          0.282095f, 0.488603f * ey, 0.488603f * ez, 0.488603f * ex,
+          1.092548f * ex * ey, 1.092548f * ey * ez,
+          0.315392f * (3.0f * ez * ez - 1.0f),
+          1.092548f * ex * ez, 0.546274f * (ex * ex - ey * ey)};
+      float rgb[3] = {0.0f, 0.0f, 0.0f};
+      for (int k = 0; k < 9; ++k)
+        for (int c = 0; c < 3; ++c) rgb[c] += b[k] * p[52 + k * 3 + c];
+      for (int c = 0; c < 3; ++c)
+        rgb[c] = std::max(rgb[c], 0.0f) * p[16 + c];
+      const float weight = std::max(0.2126f * rgb[0] + 0.7152f * rgb[1] +
+                                        0.0722f * rgb[2],
+                                    1.0e-6f);
+      total += weight;
+      maxWeight = std::max(maxWeight, weight);
+    }
+    // The fourth component of the final rotation row is padding. Cache the
+    // rejection envelope there so GPU environment sampling need not rescan all
+    // 32 SH cells on every bounce.
+    p[51] = std::max(maxWeight, 1.0e-6f);
+    p[79] = std::max(total, 1.0e-20f);
   } else if (light.iesValid) {
     // IES profiles use the same seven trailing vec4 rows as a compact 6x4
     // angular LUT. Dome lights retain the order-2 SH payload above; ordinary
@@ -946,7 +1050,7 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
     PackRtMaterialTextureParams(
         dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
   }
-  LOGI("RT texture table: %zu source texture(s), %zu descriptor(s), %.2f MiB "
+  LOGD("RT texture table: %zu source texture(s), %zu descriptor(s), %.2f MiB "
        "packed, skipped %zu unused / %zu budget-rejected source texture(s), "
        "deduplicated %zu%s",
        sourceTextures.size(), out->textures.size(),
@@ -1314,7 +1418,9 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     float displacementScale, HostScene* out, std::string* err,
                     BuildProgress* progress, RefitMap* refitOut,
-                    size_t textureBudgetBytes) {
+                    size_t textureBudgetBytes,
+                    const std::vector<uint8_t>* meshVisible,
+                    uint32_t purposeVisibleMask) {
   if (refitOut) {
     refitOut->valid = false;
     refitOut->meshes.clear();
@@ -1580,9 +1686,21 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
          "(sample budget=%zu, max-tris=%zu)", compactPointBudget, maxTris);
   }
   std::vector<const DrawMeshCPU*> sourceMeshes;
+  std::vector<int> sourceSceneMesh;
   sourceMeshes.reserve(scene.meshes.size() + nonMeshProxies.size());
-  for (const DrawMeshCPU& mesh : scene.meshes) sourceMeshes.push_back(&mesh);
-  for (const DrawMeshCPU& mesh : nonMeshProxies) sourceMeshes.push_back(&mesh);
+  sourceSceneMesh.reserve(scene.meshes.size() + nonMeshProxies.size());
+  for (size_t i = 0; i < scene.meshes.size(); ++i) {
+    const DrawMeshCPU& mesh = scene.meshes[i];
+    if (meshVisible && i < meshVisible->size() && !(*meshVisible)[i]) continue;
+    const uint32_t purpose = static_cast<uint32_t>(PurposeId(mesh.purpose)) & 3u;
+    if (((purposeVisibleMask >> purpose) & 1u) == 0u) continue;
+    sourceMeshes.push_back(&mesh);
+    sourceSceneMesh.push_back(static_cast<int>(i));
+  }
+  for (const DrawMeshCPU& mesh : nonMeshProxies) {
+    sourceMeshes.push_back(&mesh);
+    sourceSceneMesh.push_back(-1);
+  }
   out->geomProps.clear();
   for (const DrawMeshCPU* mesh : sourceMeshes) {
     for (const DrawGeomPropCPU& source : mesh->geomProps) {
@@ -1622,7 +1740,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     if (end != env && parsed > 0)
       buildBatchMeshes = static_cast<size_t>(parsed);
   }
-  LOGI("RT geometry build: %zu mesh(es), %u worker(s), batch %zu",
+  LOGD("RT geometry build: %zu mesh(es), %u worker(s), batch %zu",
        sourceMeshes.size(), RtBuildWorkerLimit(), buildBatchMeshes);
 
   // Phase B1: assemble geometry in mesh order (offsets/caps identical to the
@@ -1658,9 +1776,9 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     if (isrc.size() >= instCap) { out->truncated = true; break; }
     const size_t triOff = out->tris.size() / 9;
     sourceTriOffsets[mbi] = triOff;
-    if (recordRefit && mbi < scene.meshes.size()) {
+    if (recordRefit && sourceSceneMesh[mbi] >= 0) {
       RefitMeshMap rm;
-      rm.sceneMesh = mbi;
+      rm.sceneMesh = static_cast<size_t>(sourceSceneMesh[mbi]);
       rm.triOffset = triOff;
       rm.leafOrder = std::move(mb.leafOrder);
       refitOut->meshes.push_back(std::move(rm));
@@ -1708,6 +1826,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     std::vector<Node>().swap(mb.blas);
     const int proto = static_cast<int>(protoBox.size());
     protoBox.push_back({mb.lo[0], mb.lo[1], mb.lo[2], mb.hi[0], mb.hi[1], mb.hi[2]});
+    out->prototypes.push_back(HostPrototype{triOff, mbTriCount});
     const size_t np = mb.instTint.size() / 4;
     for (size_t k = 0; k < np && isrc.size() < instCap; ++k) {
       InstSrc s{};
@@ -1718,7 +1837,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       s.tint[3] = mb.instTint[k * 4 + 3];
       s.blasRoot = blasRoot;
       s.proto = proto;
-      s.meshIndex = mbi < scene.meshes.size() ? static_cast<int>(mbi) : -1;
+      s.meshIndex = sourceSceneMesh[mbi];
       isrc.push_back(s);
     }
     if (np > 0 && isrc.size() >= instCap) out->truncated = true;
@@ -1730,6 +1849,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // result is identical to the serial sequential assignment).
   std::vector<float> instAabb(isrc.size() * 6);
   out->instances.resize(isrc.size());
+  out->instancePrototype.resize(isrc.size());
   ParallelFor(isrc.size(), [&](size_t i) {
     const InstSrc& s = isrc[i];
     Inst& I = out->instances[i];
@@ -1743,6 +1863,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
         scene.lights, s.meshIndex, false);
     I.shadowLightMask = RtLightCollectionMaskForMesh(
         scene.lights, s.meshIndex, true);
+    out->instancePrototype[i] = static_cast<uint32_t>(s.proto);
     const auto& box = protoBox[s.proto];
     float wlo[3], whi[3];
     O2WAabb(s.o2w, box.data(), box.data() + 3, wlo, whi);
@@ -1895,6 +2016,38 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   HostTextureTable textureTable;
   BuildHostTextureTable(scene.textures, scene.materials, &textureTable,
                         &scene.lights, textureBudgetBytes);
+  // Runtime domes are baked directly to IBL data and therefore have no entry
+  // in DrawScene::textures. Append their compact RGBE latlong here so CUDA/HIP
+  // can render HDR misses/reflections without duplicating the float cubemap.
+  std::vector<int> packedDomeTextures(packedLights.size(), -1);
+  for (size_t li = 0; li < packedLights.size(); ++li) {
+    const DrawLightCPU& light = packedLights[li];
+    if (light.type != DrawLightCPU::Type::Dome || light.envmapTexture >= 0 ||
+        light.ibl.envLatlongWidth <= 0 || light.ibl.envLatlongHeight <= 0 ||
+        light.ibl.envLatlongRgbe.empty())
+      continue;
+    const size_t bytes = light.ibl.envLatlongRgbe.size();
+    if (textureBudgetBytes > 0 &&
+        (bytes > textureBudgetBytes || textureTable.texels.size() >
+             textureBudgetBytes - bytes))
+      continue;
+    if (textureTable.texels.size() > size_t(std::numeric_limits<int>::max()) ||
+        bytes > size_t(std::numeric_limits<int>::max()) - textureTable.texels.size())
+      continue;
+    HostTextureDesc td;
+    td.offset = static_cast<int>(textureTable.texels.size());
+    td.width = light.ibl.envLatlongWidth;
+    td.height = light.ibl.envLatlongHeight;
+    td.wrapS = static_cast<int>(WrapMode::Repeat);
+    td.wrapT = static_cast<int>(WrapMode::ClampToEdge);
+    td.srgb = 0;
+    for (int& layer : td.udimLayer) layer = -1;
+    packedDomeTextures[li] = static_cast<int>(textureTable.textures.size());
+    textureTable.texels.insert(textureTable.texels.end(),
+                               light.ibl.envLatlongRgbe.begin(),
+                               light.ibl.envLatlongRgbe.end());
+    textureTable.textures.push_back(td);
+  }
   out->texels = std::move(textureTable.texels);
   out->textures = std::move(textureTable.textures);
   out->matTex = std::move(textureTable.matTex);
@@ -1921,8 +2074,16 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                           0.0f);
   for (size_t i = 0; i < packedLights.size(); ++i) {
     const DrawLightCPU& light = packedLights[i];
-    PackRtLightParams(light, mapTex(light.envmapTexture),
+    const int mapped = light.envmapTexture >= 0
+                           ? mapTex(light.envmapTexture)
+                           : packedDomeTextures[i];
+    PackRtLightParams(light, mapped,
                       &out->lightParams[i * kRtLightParamFloats]);
+    if (packedDomeTextures[i] >= 0)
+      out->lightParams[i * kRtLightParamFloats + 1] += float(1 << 8);
+    if (light.type == DrawLightCPU::Type::Dome && mapped >= 0)
+      CachePackedDomeTextureProposal(
+          *out, &out->lightParams[i * kRtLightParamFloats]);
   }
   if (recordRefit) refitOut->valid = true;
   return true;

@@ -24,6 +24,9 @@
 #ifndef LUSDVIEW_RT_DISABLE_MTLX_PROCEDURAL
 #define LUSDVIEW_RT_DISABLE_MTLX_PROCEDURAL 0
 #endif
+#ifndef LUSDVIEW_RT_INTERACTIVE_ONLY
+#define LUSDVIEW_RT_INTERACTIVE_ONLY 0
+#endif
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -294,7 +297,9 @@ vec3 rtDomeRadiance(vec3 direction) {
     if (int(light(li, 0u).x + 0.5) != 6) continue;
     if ((int(light(li, 0u).y + 0.5) & (1 << 7)) == 0)
       return max(light(li, 4u).rgb, vec3(0.0));
-    vec3 d = normalize(direction);
+    vec3 d = normalize(vec3(dot(light(li, 10u).xyz, direction),
+                            dot(light(li, 11u).xyz, direction),
+                            dot(light(li, 12u).xyz, direction)));
     float b[9];
     b[0] = 0.282095;
     b[1] = 0.488603 * d.y;
@@ -629,6 +634,19 @@ float ggxG1Aniso(float nv, float vT, float vB, float roughness,
 }
 vec3 fresnelSchlick(float vh, vec3 f0) {
   return f0 + (vec3(1.0) - f0) * pow(1.0 - clamp(vh, 0.0, 1.0), 5.0);
+}
+
+float fresnelDielectric(float cosThetaI, float etaI, float etaT) {
+  float ci = clamp(abs(cosThetaI), 0.0, 1.0);
+  float eta = etaI / max(etaT, 1.0e-6);
+  float sinThetaT2 = eta * eta * max(0.0, 1.0 - ci * ci);
+  if (sinThetaT2 >= 1.0) return 1.0;
+  float ct = sqrt(max(0.0, 1.0 - sinThetaT2));
+  float rs = (etaI * ci - etaT * ct) /
+             max(etaI * ci + etaT * ct, 1.0e-6);
+  float rp = (etaT * ci - etaI * ct) /
+             max(etaT * ci + etaI * ct, 1.0e-6);
+  return 0.5 * (rs * rs + rp * rp);
 }
 
 vec3 applyThinFilm(vec3 f0, float cosTheta, float weight,
@@ -1378,6 +1396,15 @@ float materialOpacityAtHit(uint iid, int prim, vec2 bc, bool frontFace,
     alpha = evalMaterialXGraph(mid, 3, uv0, uv1, uint(max(prim, 0))).x *
             ii.tint.a;
   alpha = clamp(alpha, 0.0, 1.0);
+  // Match raster's mixed opaque/glass atlas split. Painted-metal coverage in
+  // these atlases is often 0.6--0.8 rather than exactly one; treating it as
+  // fractional Blend alpha makes the entire prop ghosted. Authored fractional
+  // opacity identifies the glass material variant and bypasses this promotion.
+  float authoredOpacity = lrt(mid, 12u).w > 0.5
+                              ? lrt(mid, 9u).w : mat(mid, 0u).a;
+  bool mixedOpacityAtlas = alphaMode > 1.5 && opacityTex >= 0 &&
+                           authoredOpacity >= 0.999;
+  if (mixedOpacityAtlas && alpha >= 0.5) alpha = 1.0;
   if (alphaMode > 0.5 && alphaMode < 1.5)
     alpha = alpha >= mat(mid, 1u).w ? 1.0 : 0.0;
   return alpha;
@@ -1423,6 +1450,7 @@ bool traceAcceptedPrimary(vec3 o, vec3 d, float minT, float maxT,
   return found;
 }
 
+#if !LUSDVIEW_RT_INTERACTIVE_ONLY
 vec3 approximatePrimaryLayerColor(uint iid, int prim, vec2 bc, bool front,
                                   mat4x3 o2w) {
   InstInfo ii = insts[iid];
@@ -1570,6 +1598,48 @@ vec3 approximatePrimaryLayerColor(uint iid, int prim, vec2 bc, bool front,
   }
   return base * ii.tint.rgb * 0.35 + emission;
 }
+#else
+// The interactive compositor only needs a stable terminal color after its
+// bounded glass walk. Pulling the full secondary-hit BRDF into this variant
+// makes NVIDIA spend tens of seconds compiling code that is rarely reached.
+// Texture + emission preserves the visible object behind glass while the
+// primary surface still receives the complete direct and split-sum IBL path.
+vec3 approximatePrimaryLayerColor(uint iid, int prim, vec2 bc, bool front,
+                                  mat4x3 o2w) {
+  InstInfo ii = insts[iid];
+  MeshDesc md = meshes[ii.meshId];
+  uint mid = selectedMaterial(md, prim, front);
+  if (!hasMaterial(ii) || mid == 0xffffffffu) return vec3(0.21) * ii.tint.rgb;
+  Verts vb = Verts(md.vtxAddr);
+  Idx ib = Idx(md.idxAddr);
+  uint i0 = ib.i[uint(prim) * 3u + 0u];
+  uint i1 = ib.i[uint(prim) * 3u + 1u];
+  uint i2 = ib.i[uint(prim) * 3u + 2u];
+  float w0 = 1.0 - bc.x - bc.y;
+  vec2 uv0 = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
+             fetchUV(vb, i2) * bc.y;
+  vec2 uv1 = uv0;
+  if (md.uv1Addr != 0ul) {
+    UV1s ub = UV1s(md.uv1Addr);
+    uv1 = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x +
+          fetchUV1(ub, i2) * bc.y;
+  }
+  uint tb = mid * 12u;
+  uint pb = mid * 155u;
+  vec2 buv = materialUv(mid, 0, uv0, uv1);
+  vec3 base = mat(mid, 0u).rgb *
+      sampleRtMaterialTexture(matTexIds[tb], buv, uint(max(prim, 0)),
+                              rtTextureLod(matTexIds[tb], buv, 0.0),
+                              vec4(1.0)).rgb;
+  base = base * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                     matTexParams[pb + 38u]) +
+         vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
+              matTexParams[pb + 42u]);
+  vec3 emission = lrt(mid, 12u).w > 0.5
+                      ? lrt(mid, 8u).rgb * lrt(mid, 8u).w : vec3(0.0);
+  return (base * 0.35 + emission) * ii.tint.rgb;
+}
+#endif
 
 vec3 primaryLayerTransmissionTint(uint iid, int prim, vec2 bc, bool front) {
   InstInfo ii = insts[iid];
@@ -1593,8 +1663,16 @@ float primaryLayerTransmissionWeight(uint iid, int prim, bool front, vec2 bc) {
   InstInfo ii = insts[iid];
   MeshDesc md = meshes[ii.meshId];
   uint mid = selectedMaterial(md, prim, front);
-  return (hasMaterial(ii) && mid != 0xffffffffu)
-             ? clamp(lrt(mid, 2u).w, 0.0, 1.0) : 0.0;
+  if (!hasMaterial(ii) || mid == 0xffffffffu) return 0.0;
+  float transmission = clamp(lrt(mid, 2u).w, 0.0, 1.0);
+  float authoredOpacity = lrt(mid, 12u).w > 0.5
+                              ? lrt(mid, 9u).w : mat(mid, 0u).a;
+  if (max(lrt(mid, 10u).w, 1.0) > 1.01 && authoredOpacity < 0.999) {
+    float mode = 0.0;
+    float opacity = materialOpacityAtHit(iid, prim, bc, front, mode);
+    if (mode > 1.5) transmission = max(transmission, 1.0 - opacity);
+  }
+  return transmission;
 }
 
 vec3 primaryLayerRefractedColor(uint iid, int prim, vec2 bc, bool front,
@@ -1628,7 +1706,13 @@ vec3 primaryLayerRefractedColor(uint iid, int prim, vec2 bc, bool front,
     vec3 p1 = currentO2w * vec4(fetchPos(vb, i1), 1.0);
     vec3 p2 = currentO2w * vec4(fetchPos(vb, i2), 1.0);
     vec3 hit = p0 * w0 + p1 * currentBc.x + p2 * currentBc.y;
-    vec3 N = normalize(cross(p1 - p0, p2 - p0));
+    vec3 geometricN = normalize(cross(p1 - p0, p2 - p0));
+    vec3 smoothObj = fetchNrm(vb, i0) * w0 + fetchNrm(vb, i1) * currentBc.x +
+                     fetchNrm(vb, i2) * currentBc.y;
+    vec3 smoothWorld = mat3(currentO2w) * smoothObj;
+    vec3 N = dot(smoothWorld, smoothWorld) > 1.0e-8
+                 ? normalize(smoothWorld) : geometricN;
+    if (dot(N, geometricN) < 0.0) N = -N;
     if (!currentFront) N = -N;
     float ior = max(lrt(currentMid, 10u).w, 1.0);
     float eta = currentFront ? 1.0 / ior : ior;
@@ -1651,7 +1735,12 @@ vec3 primaryLayerRefractedColor(uint iid, int prim, vec2 bc, bool front,
     currentBc = nextBc;
     currentFront = nextFront;
     currentO2w = nextO2w;
-    if (bounce == 2)
+    // Stop as soon as refraction reaches an opaque surface. Previously every
+    // accepted hit was treated as another dielectric interface; the terminal
+    // sample could therefore be the glass material itself, producing the
+    // milky white globe seen in the interactive Lantern capture.
+    if (primaryLayerTransmissionWeight(currentIid, currentPrim, currentFront,
+                                       currentBc) <= 1.0e-4)
       return throughput * approximatePrimaryLayerColor(
           currentIid, currentPrim, currentBc, currentFront, currentO2w);
   }
@@ -1711,6 +1800,7 @@ float tracePointEllipses(vec3 o, vec3 d, out int hit, out float gaussianWeight) 
 
 // Material state used only by the production integrator. Preview shading keeps
 // its established path below, so enabling this mode cannot perturb RT goldens.
+#if !LUSDVIEW_RT_INTERACTIVE_ONLY
 struct PtSurface {
   vec3 p; vec3 n; vec3 coatN; vec3 tangent; vec3 bitangent;
   vec3 base; vec3 emission;
@@ -1724,9 +1814,10 @@ struct PtSurface {
   float coatAnisotropy; float coatRotation;
   float thinFilmWeight; float thinFilmThickness; float thinFilmIor;
   float dispersion; float dispersionAbbe;
-  vec3 transmissionScatter; float transmissionDepth;
+  vec3 transmissionScatter; float transmissionDepth; bool thinWalled;
   vec3 volumeAlbedo; vec3 volumeEmission; float volumeDensity;
 };
+#endif
 
 // The instance transform is stored as object->world. Normals need the
 // inverse-transpose of its linear 3x3, especially for non-uniform instance
@@ -1741,6 +1832,7 @@ mat3 instanceNormalMatrix(mat4x3 o2w) {
   return mat3(cross(c1, c2), cross(c2, c0), cross(c0, c1)) / det;
 }
 
+#if !LUSDVIEW_RT_INTERACTIVE_ONLY
 void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
                       out PtSurface s) {
   InstInfo ii = insts[iid];
@@ -1783,6 +1875,7 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
   s.thinFilmWeight = 0.0; s.thinFilmThickness = 0.0; s.thinFilmIor = 1.5;
   s.dispersion = 0.0; s.dispersionAbbe = 0.0;
   s.transmissionScatter = vec3(0.0); s.transmissionDepth = 0.0;
+  s.thinWalled = false;
   s.volumeAlbedo = vec3(1.0); s.volumeEmission = vec3(0.0);
   s.volumeDensity = 0.0;
   s.coatN = s.n;
@@ -1817,6 +1910,7 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
     s.transmission = clamp(lrt(mid, 2u).w, 0.0, 1.0);
     s.transmissionScatter = max(lrt(mid, 3u).rgb, vec3(0.0));
     s.transmissionDepth = max(lrt(mid, 3u).w, 0.0);
+    s.thinWalled = lrt(mid, 17u).w > 0.5;
     s.subsurfaceColor = max(lrt(mid, 4u).rgb, vec3(0.0));
     s.subsurface = clamp(lrt(mid, 4u).w, 0.0, 1.0);
     s.subsurfaceRadius = max(lrt(mid, 5u).rgb * lrt(mid, 5u).w,
@@ -1965,7 +2059,9 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
   float resolvedMode = 0.0;
   float resolvedOpacity = materialOpacityAtHit(iid, prim, bc, front,
                                                 resolvedMode);
-  if (resolvedMode > 1.5 && s.ior > 1.01)
+  float authoredOpacity = lrt(mid, 12u).w > 0.5
+                              ? lrt(mid, 9u).w : mat(mid, 0u).a;
+  if (resolvedMode > 1.5 && s.ior > 1.01 && authoredOpacity < 0.999)
     s.transmission = max(s.transmission, 1.0 - resolvedOpacity);
   s.base *= ii.tint.rgb;
 }
@@ -2143,13 +2239,30 @@ float ptEnvironmentCellWeight(int cell) {
       ptEnvironmentCellDirection(cell, vec2(0.5)))), 1.0e-6);
 }
 
+vec2 ptEnvironmentProposalBounds() {
+  uint count = uint(lightRows.length()) / RT_LIGHT_ROWS;
+  for (uint li = 0u; li < count; ++li) {
+    if (int(light(li, 0u).x + 0.5) != 6) continue;
+    // p[79] = 8x4 proposal normalization, p[51] = maximum cell
+    // weight. Both are packed on the CPU from the same rotated SH function.
+    return vec2(light(li, 19u).w, light(li, 12u).w);
+  }
+  return vec2(0.0);
+}
+
 vec3 ptSampleEnvironment(inout uint seed, out float pdf) {
-  float total = 0.0; int selected = 0;
+  float total = 0.0, selectedWeight = 1.0e-6;
+  int selected = 0;
+  // The light record's legacy bounds are projected from SH and are not a valid
+  // rejection envelope for a sharp HDR texture. Scan the actual HDR proposal;
+  // this keeps selection and MIS PDFs identical until the uploaded alias table
+  // path is available.
   [[dont_unroll]] for (int cell = 0; cell < 32; ++cell) {
     float w = ptEnvironmentCellWeight(cell); total += w;
-    if (rnd(seed) < w / total) selected = cell;
+    if (rnd(seed) < w / total) {
+      selected = cell; selectedWeight = w;
+    }
   }
-  float selectedWeight = ptEnvironmentCellWeight(selected);
   // Each z/phi cell spans exactly 4*pi/32 steradians.
   pdf = selectedWeight / max(total, 1.0e-20) *
         2.5464790894703255;  // 32 / (4*pi)
@@ -2172,34 +2285,48 @@ float ptEnvironmentPdf(vec3 direction) {
 
 vec3 ptShadowVisibility(PtSurface s, vec3 direction, float maxT,
                         uint lightIndex, int lightFlags) {
-  // Keep this visibility query deliberately compact. Full colored multilayer
-  // visibility is handled by the compute-BVH path; embedding material
-  // evaluation in a hardware ray-query candidate loop causes pathological
-  // NVIDIA pipeline compilation. Alpha masks are still candidate-filtered and
-  // dielectric transport remains correct on camera/BSDF paths.
-  for (uint chunk = 0u; chunk < tlasChunkCount(); ++chunk) {
-    rayQueryEXT query;
-    rayQueryInitializeEXT(query, TLAS[chunk],
-                          gl_RayFlagsTerminateOnFirstHitEXT, 0xff,
-                          s.p + s.n * 1.0e-4, 1.0e-4, direction, maxT);
-    while (rayQueryProceedEXT(query)) {
-      if (rayQueryGetIntersectionTypeEXT(query, false) !=
-          gl_RayQueryCandidateIntersectionTriangleEXT) continue;
-      uint si = globalInstanceId(
-          chunk, rayQueryGetIntersectionInstanceIdEXT(query, false));
-      int sp = rayQueryGetIntersectionPrimitiveIndexEXT(query, false);
-      vec2 sb = rayQueryGetIntersectionBarycentricsEXT(query, false);
-      bool sf = rayQueryGetIntersectionFrontFaceEXT(query, false);
-      bool linked = lightIndex < 32u
-          ? (insts[si].shadowLightMask & (1u << lightIndex)) != 0u
-          : (lightFlags & (1 << 6)) != 0;
-      if (linked && materialAllowsHit(si, sp, sb, sf))
-        rayQueryConfirmIntersectionEXT(query);
+  // Evaluate a committed hit after each compact ray query. Keeping the full
+  // material interpreter outside the candidate loop avoids the pathological
+  // NVIDIA compile expansion while matching compute-BVH colored visibility.
+  vec3 origin = s.p + s.n * 1.0e-4;
+  float cursor = 1.0e-4;
+  vec3 visibility = vec3(1.0);
+  [[dont_unroll]] for (int pass = 0; pass < 32; ++pass) {
+    uint iid = 0u; int prim = -1; vec2 bc = vec2(0.0); bool front = true;
+    mat4x3 o2w; float hitT = maxT;
+    if (!traceAcceptedPrimary(origin, direction, cursor, maxT, iid, prim, bc,
+                              front, o2w, hitT))
+      return visibility;
+    cursor = hitT + 1.0e-4;
+    bool linked = lightIndex < 32u
+        ? (insts[iid].shadowLightMask & (1u << lightIndex)) != 0u
+        : (lightFlags & (1 << 6)) != 0;
+    if (!linked) continue;
+    float mode = 0.0;
+    float alpha = materialOpacityAtHit(iid, prim, bc, front, mode);
+    if (mode > 0.5 && mode < 1.5 && alpha <= 0.0) continue;
+    if (mode > 1.5) {
+      MeshDesc md = meshes[insts[iid].meshId];
+      uint mid = selectedMaterial(md, prim, front);
+      float transmission = mid != 0xffffffffu
+          ? clamp(lrt(mid, 2u).w, 0.0, 1.0) : 0.0;
+      float ior = mid != 0xffffffffu ? max(lrt(mid, 10u).w, 1.0) : 1.0;
+      float authoredOpacity = mid != 0xffffffffu
+          ? (lrt(mid, 12u).w > 0.5 ? lrt(mid, 9u).w : mat(mid, 0u).a)
+          : 1.0;
+      if (ior > 1.01 && authoredOpacity < 0.999)
+        transmission = max(transmission, 1.0 - alpha);
+      vec3 tint = mid != 0xffffffffu
+          ? max(lrt(mid, 2u).rgb, vec3(0.0)) : vec3(1.0);
+      float f0 = pow((ior - 1.0) / max(ior + 1.0, 1.0e-5), 2.0);
+      visibility *= mix(vec3(1.0 - alpha), tint * (1.0 - f0), transmission);
+      if (max(max(visibility.r, visibility.g), visibility.b) < 1.0e-3)
+        return vec3(0.0);
+      continue;
     }
-    if (rayQueryGetIntersectionTypeEXT(query, true) !=
-        gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.0);
+    return vec3(0.0);
   }
-  return vec3(1.0);
+  return vec3(0.0);  // conservative overflow: never leak light
 }
 
 vec3 ptSampleDirect(PtSurface s, uint iid, vec3 viewDir, inout uint seed) {
@@ -2306,8 +2433,8 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
   float subsurfaceG = 0.0;
   float previousBsdfPdf = 0.0, previousEnvironmentPdf = 0.0;
   bool previousDelta = true;
-  float mediumIor[4]; vec3 mediumSigma[4]; vec3 mediumEmission[4];
-  int mediumInstance[4]; int mediumDepth = 0; int heroChannel = -1;
+  float mediumIor[8]; vec3 mediumSigma[8]; vec3 mediumEmission[8];
+  int mediumInstance[8]; int mediumDepth = 0; int heroChannel = -1;
   mediumIor[0] = 1.0; mediumSigma[0] = vec3(0.0);
   mediumEmission[0] = vec3(0.0); mediumInstance[0] = -1;
   for (uint bounce = 0u; bounce < maxDepth; ++bounce) {
@@ -2348,8 +2475,13 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
             ? 0.0 : clamp(lrt(alphaMid, 2u).w, 0.0, 1.0);
         float materialIor = alphaMid == 0xffffffffu
             ? 1.0 : max(lrt(alphaMid, 10u).w, 1.0);
+        float authoredOpacity = alphaMid == 0xffffffffu
+            ? 1.0
+            : (lrt(alphaMid, 12u).w > 0.5
+                   ? lrt(alphaMid, 9u).w : mat(alphaMid, 0u).a);
         bool dielectricBlend = explicitTransmission > 1.0e-4 ||
-                               (materialIor > 1.01 && opacity < 0.999);
+                               (materialIor > 1.01 &&
+                                authoredOpacity < 0.999);
         if (!dielectricBlend && opacity < 1.0 && rnd(seed) >= opacity) {
           ro += rd * (hitT + 1.0e-4);
           ++transparentEvents;
@@ -2399,7 +2531,21 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
         ? vec3(1.0) : s.transmissionColor;
     vec3 transmissionCoefficient = interfaceTransmission * s.transmission *
                                    (1.0 - s.metallic);
-    vec3 interfaceF = fresnelSchlick(max(dot(s.n, -rd), 0.0), f0);
+    bool boundaryExiting =
+        (mediumDepth > 0 && mediumInstance[mediumDepth] == int(iid)) ||
+        (!front && mediumDepth == 0);
+    float interfaceEtaI = boundaryExiting && mediumDepth == 0
+        ? s.ior : mediumIor[mediumDepth];
+    float interfaceEtaT = boundaryExiting
+        ? mediumIor[max(mediumDepth - 1, 0)] : s.ior;
+    float interfaceFr = fresnelDielectric(
+        max(dot(s.n, -rd), 0.0), interfaceEtaI, interfaceEtaT);
+    // Scale the authored normal-incidence dielectric lobe by the exact
+    // angle-dependent Fresnel ratio. This retains OpenPBR specular weight,
+    // color and thin-film modulation instead of replacing them with an
+    // unconditionally white interface.
+    vec3 interfaceF = clamp(f0 *
+        (interfaceFr / max(dielectricF0, 1.0e-6)), vec3(0.0), vec3(1.0));
     transmissionCoefficient *= vec3(1.0) - interfaceF;
     // OpenPBR subsurface_color is observed multiple-scatter reflectance. It is
     // converted to collision albedo when the random walk begins, so do not
@@ -2463,20 +2609,20 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
       float materialIor = ptSpectralIor(
           s.ior, s.dispersionAbbe, s.dispersion,
           heroChannel < 0 ? 1 : heroChannel);
-      float outsideIor = mediumIor[mediumDepth];
-      float insideIor = materialIor;
-      if (!front && mediumDepth > 0) {
-        insideIor = mediumIor[mediumDepth];
-        outsideIor = mediumIor[max(mediumDepth - 1, 0)];
-      }
-      float eta = insideIor > 0.0 ? outsideIor / insideIor : 1.0;
-      nextDir = refract(rd, s.n, eta);
+      float incidentIor = boundaryExiting && mediumDepth == 0
+          ? materialIor : mediumIor[mediumDepth];
+      float transmittedIor = boundaryExiting
+          ? mediumIor[max(mediumDepth - 1, 0)] : materialIor;
+      float eta = transmittedIor > 0.0
+          ? incidentIor / transmittedIor : 1.0;
+      if (s.thinWalled) eta = 1.0;
+      nextDir = s.thinWalled ? rd : refract(rd, s.n, eta);
       bool totalInternalReflection = dot(nextDir, nextDir) < 1.0e-8;
       if (totalInternalReflection) nextDir = reflect(rd, s.n);
       weight = transmissionCoefficient / max(probability, 1.0e-6);
       side = dot(nextDir, s.n) < 0.0 ? -1.0 : 1.0;
-      if (!totalInternalReflection) {
-        if (front && mediumDepth < 3) {
+      if (!totalInternalReflection && !s.thinWalled) {
+        if (!boundaryExiting && mediumDepth < 7) {
           ++mediumDepth;
           mediumIor[mediumDepth] = materialIor;
           vec3 extinction = s.volumeDensity *
@@ -2494,7 +2640,7 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
           mediumSigma[mediumDepth] = extinction;
           mediumEmission[mediumDepth] = s.volumeEmission;
           mediumInstance[mediumDepth] = int(iid);
-        } else if (!front && mediumDepth > 0) {
+        } else if (boundaryExiting && mediumDepth > 0) {
           int matched = mediumDepth;
           for (int level = mediumDepth; level > 0; --level)
             if (mediumInstance[level] == int(iid)) { matched = level; break; }
@@ -2573,6 +2719,7 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
   }
   return max(radiance, vec3(0.0));
 }
+#endif
 
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy);
@@ -2636,7 +2783,9 @@ void main() {
   vec3 bgc = (bgMode == 0 || bgMode == 1) ? srgbToLinear(pc.clearColor.rgb)
                                           : pc.clearColor.rgb;
   vec3 outc = bgc;
-  bool productionPath = (pc.pointParams.w & 0x80000000u) != 0u && bgMode == 0;
+  bool productionPath = false;
+#if !LUSDVIEW_RT_INTERACTIVE_ONLY
+  productionPath = (pc.pointParams.w & 0x80000000u) != 0u && bgMode == 0;
   if (productionPath) {
     uint pathSeed = hashU(uint(px.x) * 1973u ^ uint(px.y) * 9277u ^
                           (fi + 1u) * 26699u ^
@@ -2647,6 +2796,7 @@ void main() {
     outc = traceProductionPath(origin, dir, pathSeed, pathDepth, rrDepth,
                                maxSubsurfaceEvents);
   }
+#endif
 
   bool primaryHit = false;
   uint primaryIid = 0u;
@@ -3063,9 +3213,10 @@ void main() {
       base *= vc.rgb;
       alpha *= vc.a;
     }
-    float materialOpacity = clamp(alpha, 0.0, 1.0);
-    if (alphaMode > 0.5 && alphaMode < 1.5)
-      materialOpacity = materialOpacity >= alphaCutoff ? 1.0 : 0.0;
+    float resolvedMode = 0.0;
+    float materialOpacity = materialOpacityAtHit(
+        primaryIid, primaryPrim, primaryBc, primaryFront, resolvedMode);
+    alphaMode = resolvedMode;
     int rmode = int(pc.camPos.w + 0.5);
     vec3 V = normalize(pc.camPos.xyz - hit);
     float f0 = (specIor - 1.0) / (specIor + 1.0);
@@ -3132,7 +3283,44 @@ void main() {
                 3.14159265 + spec) * light(li, 4u).rgb * attenuation * nl *
                shadow;
       }
-      outc = mix(bgc, lit, materialOpacity);
+      // Match raster's split-sum dome response. The old compact shader used
+      // only a 0.12 ambient floor, which made textured metal nearly black even
+      // when the HDR environment was available.
+      uint domeCount = uint(lightRows.length()) / RT_LIGHT_ROWS;
+      for (uint li = 0u; li < domeCount; ++li) {
+        vec4 l0 = light(li, 0u);
+        if (int(l0.x + 0.5) != 6 || (int(l0.y + 0.5) & 128) == 0)
+          continue;
+        vec3 envColor = light(li, 4u).xyz;
+        vec3 Ne = normalize(vec3(dot(light(li, 10u).xyz, N),
+                                 dot(light(li, 11u).xyz, N),
+                                 dot(light(li, 12u).xyz, N)));
+        vec3 irradiance = shIrradiance(li, Ne) * envColor;
+        vec3 Rw = reflect(-V, N);
+        vec3 Re = normalize(vec3(dot(light(li, 10u).xyz, Rw),
+                                 dot(light(li, 11u).xyz, Rw),
+                                 dot(light(li, 12u).xyz, Rw)));
+        float maxLod = float(textureQueryLevels(uPrefilteredCube) - 1);
+        vec3 pref = textureLod(uPrefilteredCube, Re,
+                               roughness * maxLod).rgb;
+        vec2 dfg = texture(uBrdfLut,
+                           vec2(max(dot(N, V), 0.0), roughness)).rg;
+        lit += base * (1.0 - metallic) * irradiance * occlusion +
+               pref * (materialF0 * dfg.x + dfg.y) * envColor * occlusion;
+        break;
+      }
+      if (alphaMode > 1.5 && materialOpacity < 1.0) {
+        float transmission = primaryLayerTransmissionWeight(
+            primaryIid, primaryPrim, primaryFront, primaryBc);
+        vec3 refractedOrigin, refractedDir;
+        vec3 refracted = primaryLayerRefractedColor(
+            primaryIid, primaryPrim, primaryBc, primaryFront, primaryO2w,
+            origin, dir, refractedOrigin, refractedDir);
+        vec3 transmitted = mix(bgc, refracted, clamp(transmission, 0.0, 1.0));
+        outc = mix(transmitted, lit, materialOpacity);
+      } else {
+        outc = materialOpacity > 0.0 ? lit : bgc;
+      }
     } else if (rmode == 2) outc = N * 0.5 + 0.5;
     else if (rmode == 35) outc = coatN * 0.5 + 0.5;
     else if (rmode == 36) outc = vec3(coatWeight);

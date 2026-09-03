@@ -2,6 +2,7 @@
 # Optional Vulkan validation smoke for weighted OIT. CI skips when no packaged
 # or prebuilt Khronos layer is available; it never builds the layer itself.
 set -uo pipefail
+export LUSDVIEW_LOG=debug
 
 SKIP=77
 viewer="${LUSDVIEW:-build_ninja/lusdview}"

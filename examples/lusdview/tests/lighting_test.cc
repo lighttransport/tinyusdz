@@ -77,7 +77,12 @@ int main() {
     std::string presetError;
     lusdview::DrawLightCPU furnace;
     if (!lusdview::BuildWhiteFurnaceDome(false, &furnace, &presetError) ||
-        !furnace.ibl.valid || furnace.ibl.envCube.empty()) {
+        !furnace.ibl.valid || furnace.ibl.envCube.empty() ||
+        furnace.ibl.envLatlongWidth != 32 ||
+        furnace.ibl.envLatlongHeight != 16 ||
+        furnace.ibl.envLatlongRgbe.size() != 32u * 16u * 4u ||
+        furnace.ibl.envLatlongRgbe[0] < 127u ||
+        furnace.ibl.envLatlongRgbe[3] != 129u) {
       std::fprintf(stderr, "white-furnace preset failed: %s\n",
                    presetError.c_str());
       return 1;
@@ -734,6 +739,35 @@ int main() {
     std::fprintf(stderr, "BuildHostScene failed: %s\n", err.c_str());
     return 1;
   }
+  // Vulkan compute-BVH passes the interactive visibility and purpose masks to
+  // the shared host builder. A hidden proxy must never enter its TLAS.
+  lusdview::DrawMeshCPU proxy = mesh;
+  proxy.name = "proxy-tri";
+  proxy.purpose = "proxy";
+  proxy.world[12] = 2.0f;
+  draw.meshes.push_back(proxy);
+  lusdview::HostScene filtered;
+  if (!lusdview::BuildHostScene(draw, 0, 0, 0.0f, &filtered, &err) ||
+      filtered.triCount != 1) {
+    std::fprintf(stderr, "default RT purpose mask retained proxy geometry\n");
+    return 1;
+  }
+  filtered = lusdview::HostScene{};
+  if (!lusdview::BuildHostScene(draw, 0, 0, 0.0f, &filtered, &err,
+                                nullptr, nullptr, 0, nullptr,
+                                /*default + render + guide=*/0xbu) ||
+      filtered.triCount != 1) {
+    std::fprintf(stderr, "RT purpose filtering retained proxy geometry\n");
+    return 1;
+  }
+  const std::vector<uint8_t> visible = {0, 1};
+  filtered = lusdview::HostScene{};
+  if (!lusdview::BuildHostScene(draw, 0, 0, 0.0f, &filtered, &err,
+                                nullptr, nullptr, 0, &visible, 0xfu) ||
+      filtered.triCount != 1) {
+    std::fprintf(stderr, "RT mesh visibility filtering failed\n");
+    return 1;
+  }
   if (host.numLights != 2 ||
       host.lightParams.size() <
           2u * static_cast<size_t>(lusdview::kRtLightParamFloats)) {
@@ -788,6 +822,13 @@ int main() {
     for (int i = 0; i < 27; ++i) shMag += std::fabs(domeLp[52 + i]);
     if (!(shMag > 0.0f)) {
       std::fprintf(stderr, "RT dome SH irradiance rows are all zero\n");
+      return 1;
+    }
+    if (!(domeLp[51] > 0.0f) || !std::isfinite(domeLp[51]) ||
+        !(domeLp[79] > 0.0f) || !std::isfinite(domeLp[79]) ||
+        domeLp[51] * 32.0f < domeLp[79]) {
+      std::fprintf(stderr,
+                   "RT dome environment proposal envelope is invalid\n");
       return 1;
     }
   }

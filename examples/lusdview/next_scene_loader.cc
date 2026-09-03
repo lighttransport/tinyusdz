@@ -151,6 +151,7 @@ size_t ProgressiveMeshBytes(const DrawMeshCPU& m) {
          m.vertexColors.size() * sizeof(float) +
          m.vertexAlpha.size() * sizeof(float) + m.uv1.size() * sizeof(float) +
          m.wireframeIndices.size() * sizeof(uint32_t) +
+         m.wireframeVertices.size() * sizeof(DrawVertex) +
          m.sourceFaceId.size() * sizeof(uint32_t) +
          m.jointIdx.size() * sizeof(uint32_t) + m.jointWt.size() * sizeof(float) +
          m.influenceOffsetCount.size() * sizeof(uint32_t) +
@@ -688,6 +689,47 @@ std::vector<int32_t> ReadInts(const tnext::UsdPrim& p, const char* name, double 
   return tydn::ReadIntArrayCopy(p, name, t);
 }
 
+void BuildAuthoredControlCage(const tnext::UsdPrim& prim, double time,
+                              DrawMeshCPU* mesh) {
+  if (!mesh) return;
+  const std::vector<float> points = ReadFloats(prim, "points", time);
+  const std::vector<int32_t> counts = ReadInts(prim, "faceVertexCounts", time);
+  const std::vector<int32_t> indices = ReadInts(prim, "faceVertexIndices", time);
+  if (points.size() % 3u || points.empty() || counts.empty() || indices.empty())
+    return;
+  mesh->wireframeVertices.assign(points.size() / 3u, DrawVertex{});
+  for (size_t i = 0; i < mesh->wireframeVertices.size(); ++i) {
+    mesh->wireframeVertices[i].px = points[i * 3u];
+    mesh->wireframeVertices[i].py = points[i * 3u + 1u];
+    mesh->wireframeVertices[i].pz = points[i * 3u + 2u];
+  }
+  mesh->wireframeIndices.clear();
+  std::unordered_set<uint64_t> seen;
+  size_t offset = 0;
+  for (int32_t count : counts) {
+    if (count < 2 || offset + size_t(count) > indices.size()) {
+      mesh->wireframeIndices.clear();
+      mesh->wireframeVertices.clear();
+      return;
+    }
+    for (int32_t k = 0; k < count; ++k) {
+      const int32_t ia = indices[offset + size_t(k)];
+      const int32_t ib = indices[offset + size_t((k + 1) % count)];
+      if (ia < 0 || ib < 0 || ia == ib ||
+          size_t(ia) >= mesh->wireframeVertices.size() ||
+          size_t(ib) >= mesh->wireframeVertices.size()) continue;
+      uint32_t a = uint32_t(ia), b = uint32_t(ib);
+      const uint64_t key = a < b ? (uint64_t(a) << 32u) | b
+                                 : (uint64_t(b) << 32u) | a;
+      if (seen.insert(key).second) {
+        mesh->wireframeIndices.push_back(a);
+        mesh->wireframeIndices.push_back(b);
+      }
+    }
+    offset += size_t(count);
+  }
+}
+
 bool PointInstanceHidden(size_t index, size_t instance_count,
                          const tydn::ValueArrayRead<int64_t>& ids,
                          const std::unordered_set<int64_t>& hidden) {
@@ -1217,7 +1259,43 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
   {
     const std::vector<uint32_t> fvc = m.face_vertex_counts.flatten();
     const std::vector<uint32_t> fvi = m.face_vertex_indices.flatten();
-    if (!fvc.empty() && !fvi.empty()) {
+    // After CPU subdivision, face_vertex_counts describes the refined mesh.
+    // subdivision_face_source retains the authored face for every refined
+    // triangle; discard edges shared by triangles from the same authored face
+    // so the control cage remains coarse.
+    bool refinedTopology = false;
+    if (m.subdivision_face_source.size() == m.face_count() &&
+        !m.subdivision_face_source.empty()) {
+      std::unordered_set<uint32_t> sourceFaces;
+      sourceFaces.insert(m.subdivision_face_source.begin(),
+                         m.subdivision_face_source.end());
+      refinedTopology = sourceFaces.size() < m.subdivision_face_source.size();
+    }
+    if (refinedTopology && dm->sourceFaceId.size() == dm->indices.size() / 3) {
+      struct EdgeUse { uint32_t face{0}; uint32_t count{0}; bool boundary{false}; };
+      std::unordered_map<uint64_t, EdgeUse> uses;
+      uses.reserve(dm->indices.size());
+      auto edgeKey = [](uint32_t a, uint32_t b) {
+        if (a > b) std::swap(a, b);
+        return (uint64_t(a) << 32u) | uint64_t(b);
+      };
+      for (size_t t = 0; t < dm->sourceFaceId.size(); ++t) {
+        const uint32_t v[3] = {dm->indices[t * 3u], dm->indices[t * 3u + 1u],
+                               dm->indices[t * 3u + 2u]};
+        for (int e = 0; e < 3; ++e) {
+          EdgeUse& use = uses[edgeKey(v[e], v[(e + 1) % 3])];
+          if (use.count == 0) use.face = dm->sourceFaceId[t];
+          else if (use.face != dm->sourceFaceId[t]) use.boundary = true;
+          ++use.count;
+        }
+      }
+      for (const auto& entry : uses) {
+        const EdgeUse& use = entry.second;
+        if (use.count != 1 && !use.boundary) continue;
+        dm->wireframeIndices.push_back(uint32_t(entry.first >> 32u));
+        dm->wireframeIndices.push_back(uint32_t(entry.first));
+      }
+    } else if (!fvc.empty() && !fvi.empty()) {
       std::unordered_set<uint64_t> seen;
       seen.reserve(fvi.size());
       std::vector<uint32_t>& wire = dm->wireframeIndices;
@@ -2480,6 +2558,7 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
   if (NeedsUnrealDoubleSidedFallback(mp)) rm.double_sided = true;
   std::vector<uint32_t> vertexToPoint;
   if (!FillFlatGeometry(rm, dm, &vertexToPoint)) return false;
+  BuildAuthoredControlCage(mp, time, dm);
   const size_t numPoints = rm.point_count();
   // Skinning is resolved by the CALLER (it alone knows the instance count, which
   // decides GPU-skin vs static bake), so hand the weld map back out.
@@ -8141,6 +8220,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       releasePendingPrim(&meshRecord.prim);
       continue;
     }
+    BuildAuthoredControlCage(mp, time, &loc);
     const std::string backMaterialPath = cachedBackMaterialPath(mp);
     bool hasSubsetMaterialBindings = false;
     const size_t childCount = mp.GetChildCount();

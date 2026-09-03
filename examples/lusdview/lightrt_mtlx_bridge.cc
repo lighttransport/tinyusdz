@@ -302,6 +302,11 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"geometry_opacity", "opacity"},
              &p->opacity);
+  float thinWalled = p->geometryThinWalled ? 1.0f : 0.0f;
+  if (FloatParam(mat, {"OpenPBRSurface"},
+                 {"geometry_thin_walled", "thin_walled"}, &thinWalled)) {
+    p->geometryThinWalled = thinWalled >= 0.5f;
+  }
   if (ParamHasTexture(mat, {"OpenPBRSurface"},
                       {"geometry_opacity", "opacity"})) {
     p->opacity = 1.0f;
@@ -1604,6 +1609,8 @@ void ApplyOpenPBRMaterialConstants(
   scalar({"emission_luminance"}, p.emission);
   color({"emission_color"}, p.emissionColor);
   scalar({"geometry_opacity", "opacity"}, p.opacity);
+  const float thinWalled = p.geometryThinWalled ? 1.0f : 0.0f;
+  scalar({"geometry_thin_walled", "thin_walled"}, thinWalled);
 }
 
 void MakeConstantOpenPBRMaterial(DrawMaterialCPU* mat) {

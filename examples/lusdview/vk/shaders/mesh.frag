@@ -157,7 +157,7 @@ struct MaterialTexParam {
   vec4 ptexCoatWeightInfo;
   vec4 ptexCoatColorInfo;
   vec4 ptexCoatRoughInfo;
-  // Approximate transmission for raster: weight, depth, dispersion, reserved.
+  // Approximate transmission for raster: weight, depth, dispersion, thin-wall.
   vec4 transmissionParams;
   vec4 transmissionColor;
   vec4 volumeParams;  // density, emission scale
@@ -389,6 +389,22 @@ float geometrySchlickGGX(float NoX, float roughness) {
 vec3 fresnelSchlick(float VoH, vec3 f0) {
   float f = pow(1.0 - clamp(VoH, 0.0, 1.0), 5.0);
   return f0 + (vec3(1.0) - f0) * f;
+}
+
+// Exact unpolarized Fresnel for a smooth dielectric interface.  Schlick is a
+// good BRDF approximation, but its grazing-angle error is visible when it is
+// also used to decide how much energy enters clear lantern glass.
+float fresnelDielectric(float cosThetaI, float etaI, float etaT) {
+  float ci = clamp(abs(cosThetaI), 0.0, 1.0);
+  float eta = etaI / max(etaT, 1.0e-6);
+  float sinThetaT2 = eta * eta * max(0.0, 1.0 - ci * ci);
+  if (sinThetaT2 >= 1.0) return 1.0;
+  float ct = sqrt(max(0.0, 1.0 - sinThetaT2));
+  float rs = (etaI * ci - etaT * ct) /
+             max(etaI * ci + etaT * ct, 1.0e-6);
+  float rp = (etaT * ci - etaI * ct) /
+             max(etaT * ci + etaI * ct, 1.0e-6);
+  return 0.5 * (rs * rs + rp * rp);
 }
 
 MaterialTexParam matTexParam() {
@@ -1168,6 +1184,7 @@ void shadeFragment() {
   float screenTransmission = 0.0;
   vec2 screenRefractionUv = vec2(0.0);
   float screenRefractionRoughness = 0.0;
+  vec3 screenTransmissionTint = vec3(1.0);
   // Bounded real-time transmission for the raster path. The opaque scene-color
   // refraction pass can refine this later; this environment-space result is a
   // stable physically-directed fallback for off-screen rays and makes authored
@@ -1181,29 +1198,51 @@ void shadeFragment() {
     float transmission = max(authoredTransmission, previewTransmission) *
                          (1.0 - met);
     if (transmission > 1.0e-4) {
-      vec3 Tw = refract(-V, Nf, 1.0 / ior);
+      bool thinWalled = pbr.transmissionParams.w > 0.5;
+      // `transmission_depth` is an attenuation reference distance, not shell
+      // geometry. Until the backface-distance attachment supplies an exact
+      // entry-to-exit length, use a scene-relative normal thickness and the
+      // expected 1/cos(theta) path elongation. Keeping these quantities
+      // separate avoids forcing every object to transmit exactly
+      // transmission_color regardless of its scale or viewing angle.
+      float sceneScale = max(fr.camPos.w, 1.0e-3);
+      float normalThickness = sceneScale * 0.01;
+      float travel = thinWalled
+          ? normalThickness
+          : normalThickness / max(NoV, 0.2);
+      travel = clamp(travel, sceneScale * 0.002, sceneScale * 0.1);
+      vec3 Tw = thinWalled ? -V : refract(-V, Nf, 1.0 / ior);
       if (dot(Tw, Tw) < 1.0e-6) Tw = reflect(-V, Nf);
       vec3 Te = normalize(mat3(fr.envRot) * Tw);
       vec3 transmitted = textureLod(
           uPrefilteredMap, Te,
           clamp(rgh + pbr.transmissionParams.z, 0.02, 1.0) *
               (fr.iblParams.x - 1.0)).rgb;
-      vec3 tint = authoredTransmission > 0.0
-                      ? max(pbr.transmissionColor.rgb, vec3(0.0))
-                      : vec3(1.0);
-      vec3 surfaceF = fresnelSchlick(NoV, F0);
-      transmitted *= tint * (vec3(1.0) - surfaceF) * fr.iblColor.rgb;
+      vec3 tint = vec3(1.0);
+      if (authoredTransmission > 0.0) {
+        vec3 transmissionColor = clamp(pbr.transmissionColor.rgb,
+                                       vec3(1.0e-6), vec3(1.0));
+        // OpenPBR transmission_color is the transmittance observed after
+        // transmission_depth stage units, not an interface tint.  Keep the
+        // zero-depth convention as a one-time tint, and use Beer-Lambert for
+        // positive depths.  The backface thickness pass can replace `travel`
+        // with measured shell distance without changing this material math.
+        tint = pbr.transmissionParams.y > 0.0 && !thinWalled
+                   ? exp(log(transmissionColor) *
+                         (travel / pbr.transmissionParams.y))
+                   : transmissionColor;
+      }
+      // Transmission crosses a dielectric boundary, so use the exact
+      // angle/IOR relation rather than the BRDF's Schlick approximation.
+      vec3 surfaceF = vec3(fresnelDielectric(NoV, 1.0, ior));
+      screenTransmissionTint = tint * (vec3(1.0) - surfaceF);
+      transmitted *= screenTransmissionTint * fr.iblColor.rgb;
       c = mix(c, transmitted * exp2(fr.iblParams.y), transmission);
 #ifdef LUSDVIEW_OIT
       // Project a short refracted ray into screen space. The opaque pass is a
       // stable fallback for geometry behind glass; off-screen rays retain the
       // environment result above. Depth controls authored travel distance and
       // is clamped to avoid extreme offsets on large-unit scenes.
-      float defaultTravel = max(fr.camPos.w * 0.02, 0.02);
-      float travel = clamp(pbr.transmissionParams.y > 0.0
-                               ? pbr.transmissionParams.y
-                               : defaultTravel,
-                           0.02, max(defaultTravel * 4.0, 2.0));
       vec4 fromClip = fr.viewProj * vec4(vWorldPos, 1.0);
       vec4 toClip = fr.viewProj * vec4(vWorldPos + Tw * travel, 1.0);
       vec2 fromNdc = fromClip.xy / max(abs(fromClip.w), 1.0e-5);
@@ -1239,6 +1278,11 @@ void shadeFragment() {
         screenRefractionUv + vec2(0.0,  blur.y)).rgb) * 0.15;
     refracted += srgbToLinear(texture(uOpaqueSceneColor,
         screenRefractionUv + vec2(0.0, -blur.y)).rgb) * 0.15;
+    // Screen-space and environment fallback transmission must carry the same
+    // Beer/Fresnel tint. Previously the in-frame sample replaced the correctly
+    // tinted fallback with raw scene color, creating a bright seam as refracted
+    // rays crossed the viewport edge.
+    refracted *= screenTransmissionTint * exp2(fr.iblParams.y);
     c = mix(c, refracted, screenTransmission);
   }
 #endif

@@ -36,6 +36,44 @@ if(NOT LUSDVIEW_RT_PTEXTURE_IMAGE_CAP MATCHES "^[1-9][0-9]*$")
 endif()
 find_package(Vulkan QUIET)
 
+# Optional NVIDIA OptiX backend. OptiX is a driver API and is loaded at runtime;
+# the build only consumes headers from a separately installed/pinned optix-dev
+# checkout. We intentionally do not copy the SDK headers into this repository
+# because current releases contain a mixture of BSD and proprietary headers.
+set(LIGHTUSD_LUSDVIEW_OPTIX "AUTO" CACHE STRING
+    "Build OptiX support for CUDA RT: AUTO, ON, or OFF")
+set_property(CACHE LIGHTUSD_LUSDVIEW_OPTIX PROPERTY STRINGS AUTO ON OFF)
+string(TOUPPER "${LIGHTUSD_LUSDVIEW_OPTIX}" _lusdview_optix_mode)
+if(NOT _lusdview_optix_mode MATCHES "^(AUTO|ON|OFF)$")
+  message(FATAL_ERROR
+      "LIGHTUSD_LUSDVIEW_OPTIX must be AUTO, ON, or OFF")
+endif()
+
+set(LUSDVIEW_HAVE_OPTIX OFF)
+if(NOT _lusdview_optix_mode STREQUAL "OFF")
+  set(OptiX_ROOT "" CACHE PATH
+      "Path to a local NVIDIA optix-dev/OptiX SDK checkout")
+  find_path(LUSDVIEW_OPTIX_INCLUDE_DIR optix_function_table.h
+      HINTS ${OptiX_ROOT} ENV OptiX_ROOT ENV OPTIX_ROOT
+      PATH_SUFFIXES include)
+  find_path(LUSDVIEW_CUDA_INCLUDE_DIR cuda.h
+      HINTS ENV CUDA_PATH ENV CUDA_HOME
+      PATHS /usr/local/cuda /opt/cuda
+      PATH_SUFFIXES include targets/x86_64-linux/include)
+  if(LUSDVIEW_OPTIX_INCLUDE_DIR AND LUSDVIEW_CUDA_INCLUDE_DIR)
+    set(LUSDVIEW_HAVE_OPTIX ON)
+    message(STATUS
+        "lusdview OptiX: enabled (${LUSDVIEW_OPTIX_INCLUDE_DIR})")
+  elseif(_lusdview_optix_mode STREQUAL "ON")
+    message(FATAL_ERROR
+        "OptiX was requested but optix_function_table.h or cuda.h was not found. "
+        "Set OptiX_ROOT to a local optix-dev checkout and CUDA_PATH to a CUDA toolkit.")
+  else()
+    message(STATUS
+        "lusdview OptiX: disabled (set OptiX_ROOT to optix-dev and CUDA_PATH if needed)")
+  endif()
+endif()
+
 # Optional native file dialog (needs GTK3 on Linux). Skipped if unavailable.
 set(LUSDVIEW_HAVE_NFD OFF)
 if(WIN32 OR APPLE)
@@ -195,6 +233,35 @@ set(LIGHTUSD_GPU_RT_COMMON_SOURCES
     ${COMMON_DIR}/light3d/math.cpp
     ${COMMON_DIR}/cuew/cuew.c
     ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c)
+if(LUSDVIEW_HAVE_OPTIX)
+  find_program(LUSDVIEW_NVCC_EXECUTABLE NAMES nvcc
+      HINTS ENV CUDA_PATH ENV CUDA_HOME
+      PATH_SUFFIXES bin)
+  if(NOT LUSDVIEW_NVCC_EXECUTABLE)
+    message(FATAL_ERROR "OptiX support requires nvcc to generate embedded OptiX IR")
+  endif()
+  set(LUSDVIEW_OPTIX_IR
+      ${CMAKE_CURRENT_BINARY_DIR}/generated/lusdview_optix_device.optixir)
+  set(LUSDVIEW_OPTIX_IR_HEADER
+      ${CMAKE_CURRENT_BINARY_DIR}/generated/lusdview_optix_device_ir.hh)
+  add_custom_command(
+      OUTPUT ${LUSDVIEW_OPTIX_IR} ${LUSDVIEW_OPTIX_IR_HEADER}
+      COMMAND ${LUSDVIEW_NVCC_EXECUTABLE} --std=c++17 --optix-ir
+              -I${LUSDVIEW_OPTIX_INCLUDE_DIR}
+              -I${LUSDVIEW_CUDA_INCLUDE_DIR}
+              ${CMAKE_CURRENT_SOURCE_DIR}/cuda/optix_device.cu
+              -o ${LUSDVIEW_OPTIX_IR}
+      COMMAND ${CMAKE_COMMAND}
+              -DINPUT=${LUSDVIEW_OPTIX_IR}
+              -DOUTPUT=${LUSDVIEW_OPTIX_IR_HEADER}
+              -DSYMBOL=kLusdviewOptixDeviceIr
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/cuda/embed_binary.cmake
+      DEPENDS cuda/optix_device.cu cuda/embed_binary.cmake
+      VERBATIM
+      COMMENT "Generating embedded lusdview OptiX IR")
+  add_custom_target(lusdview_optix_ir DEPENDS ${LUSDVIEW_OPTIX_IR_HEADER})
+  list(APPEND LIGHTUSD_GPU_RT_COMMON_SOURCES cuda/optix_runtime.cc)
+endif()
 if(MSVC)
   list(APPEND LIGHTUSD_GPU_RT_COMMON_SOURCES
        kernel_resource.cc raytracer_kernel_resource.rc)
@@ -212,6 +279,13 @@ target_include_directories(lightusd_gpu_rt_common PUBLIC
     ${COMMON_DIR}
     ${COMMON_DIR}/cuew
     ${PROJECT_SOURCE_DIR}/src/external/hipew)
+if(LUSDVIEW_HAVE_OPTIX)
+  add_dependencies(lightusd_gpu_rt_common lusdview_optix_ir)
+  target_include_directories(lightusd_gpu_rt_common PRIVATE
+      ${LUSDVIEW_OPTIX_INCLUDE_DIR}
+      ${LUSDVIEW_CUDA_INCLUDE_DIR})
+  target_compile_definitions(lightusd_gpu_rt_common PUBLIC LUSDVIEW_HAVE_OPTIX=1)
+endif()
 if(NOT MSVC)
   target_include_directories(lightusd_gpu_rt_common PRIVATE
       ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -286,6 +360,33 @@ function(lusdview_set_warning_flags target)
 endfunction()
 
 if(LIGHTUSD_BUILD_TESTS)
+  if(LUSDVIEW_HAVE_OPTIX)
+    add_executable(lusdview_optix_runtime_test
+        tests/optix_runtime_test.cc
+        cuda/optix_runtime.cc)
+    target_compile_features(lusdview_optix_runtime_test PRIVATE cxx_std_17)
+    lusdview_set_warning_flags(lusdview_optix_runtime_test)
+    target_include_directories(lusdview_optix_runtime_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${LUSDVIEW_OPTIX_INCLUDE_DIR}
+        ${LUSDVIEW_CUDA_INCLUDE_DIR})
+    target_link_libraries(lusdview_optix_runtime_test PRIVATE ${CMAKE_DL_LIBS})
+    add_test(NAME lusdview_optix_runtime_test
+        COMMAND lusdview_optix_runtime_test)
+    set_tests_properties(lusdview_optix_runtime_test PROPERTIES
+        LABELS "lusdview;gpu;optix"
+        SKIP_RETURN_CODE 77)
+    add_test(NAME lusdview-optix-integration
+        COMMAND ${CMAKE_COMMAND} -E env
+          LUSDVIEW=$<TARGET_FILE:lusdview>
+          ${CMAKE_CURRENT_SOURCE_DIR}/tests/run-optix-integration.sh)
+    set_tests_properties(lusdview-optix-integration PROPERTIES
+        LABELS "lusdview;gpu;optix"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 180
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+  endif()
+
   add_executable(lusdview_ptex_atlas_test
       tests/ptex_atlas_test.cc
       ptex_atlas.cc

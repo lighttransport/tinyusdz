@@ -77,10 +77,68 @@ void NormalizeKernelSource(std::string* source) {
 }  // namespace
 
 HipRayTracer::~HipRayTracer() {
-  if (ready_) {
-    freeScene();
-    if (module_) hipModuleUnload(reinterpret_cast<hipModule_t>(module_));
+  freeRuntime();
+}
+
+void HipRayTracer::freeRuntime() {
+  if (ready_) freeScene();
+  if (stream_) hipStreamDestroy(reinterpret_cast<hipStream_t>(stream_));
+  if (hostOut_) hipHostFree(hostOut_);
+  if (module_) hipModuleUnload(reinterpret_cast<hipModule_t>(module_));
+  module_ = nullptr;
+  kernel_ = nullptr;
+  stream_ = nullptr;
+  hostOut_ = nullptr;
+  hostOutCap_ = 0;
+  ready_ = false;
+}
+
+bool HipRayTracer::enumerateDevices(std::vector<std::string>* names,
+                                    std::string* err) {
+  if (names) names->clear();
+  if (hipewInit(HIPEW_INIT_HIP) != HIPEW_SUCCESS) {
+    if (err) *err = "hipew: HIP runtime not available";
+    return false;
   }
+  CU_OK(hipInit(0), "hipInit");
+  int count = 0;
+  CU_OK(hipGetDeviceCount(&count), "hipGetDeviceCount");
+  for (int i = 0; i < count; ++i) {
+    hipDevice_t dev = 0;
+    if (hipDeviceGet(&dev, i) != hipSuccess) continue;
+    char name[256] = {};
+    if (hipDeviceGetName(name, sizeof(name), dev) != hipSuccess)
+      std::snprintf(name, sizeof(name), "HIP device %d", i);
+    if (names) names->push_back(std::to_string(i) + ": " + name);
+  }
+  if (!names || names->empty()) {
+    if (err) *err = "no HIP device";
+    return false;
+  }
+  return true;
+}
+
+bool HipRayTracer::selectDevice(int index, std::string* err) {
+  std::vector<std::string> names;
+  if (!enumerateDevices(&names, err)) return false;
+  if (index < 0 || static_cast<size_t>(index) >= names.size()) {
+    if (err) *err = "HIP device index is out of range";
+    return false;
+  }
+  if (ready_ && index == device_) return true;
+  const int previous = device_;
+  const bool hadRuntime = ready_;
+  freeRuntime();
+  device_ = index;
+  if (init(err)) return true;
+  freeRuntime();
+  device_ = previous;
+  if (hadRuntime) {
+    std::string restoreError;
+    if (!init(&restoreError) && err)
+      *err += "; restoring previous HIP device also failed: " + restoreError;
+  }
+  return false;
 }
 
 void HipRayTracer::freeScene() {
@@ -123,7 +181,7 @@ bool HipRayTracer::init(std::string* err) {
   int count = 0;
   CU_OK(hipGetDeviceCount(&count), "hipGetDeviceCount");
   if (count < 1) { if (err) *err = "no HIP device"; return false; }
-  device_ = 0;
+  if (device_ < 0 || device_ >= count) device_ = 0;
   CU_OK(hipSetDevice(device_), "hipSetDevice");
   hipDevice_t dev = 0;
   CU_OK(hipDeviceGet(&dev, device_), "hipDeviceGet");
@@ -163,6 +221,11 @@ bool HipRayTracer::init(std::string* err) {
   hipFunction_t fn;
   CU_OK(hipModuleGetFunction(&fn, mod, "trace"), "hipModuleGetFunction(trace)");
   kernel_ = fn;
+  // Create the stream only after compilation and module loading have
+  // succeeded.  This keeps every hiprtc failure path resource-neutral.
+  hipStream_t stream = nullptr;
+  CU_OK(hipStreamCreate(&stream), "hipStreamCreate");
+  stream_ = stream;
   ready_ = true;
   kernelGeneration_ = 1;
   return true;
@@ -261,7 +324,7 @@ bool HipRayTracer::reloadKernel(const std::string& sourcePath,
 bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
                          size_t maxInstances, std::string* err,
                          float displacementScale, BuildProgress* progress,
-                         bool retainForRefit) {
+                         bool retainForRefit, uint32_t purposeVisibleMask) {
   if (!ready_) { if (err) *err = "HIP not initialized"; return false; }
   CU_OK(hipSetDevice(device_), "hipSetDevice");  // also sets the device on a worker thread
   freeScene();
@@ -274,7 +337,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   HostScene& hs = retained_ ? *retained_ : local;
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs, err,
                       progress, retained_ ? &refitMap_ : nullptr,
-                      textureBudgetBytes_)) {
+                      textureBudgetBytes_, nullptr, purposeVisibleMask)) {
     if (err) *err = "HIP: " + *err;
     retained_.reset();
     return false;
@@ -540,7 +603,8 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                          const PathTraceSettings* pathTrace,
                          std::vector<float>* linearRgba,
                          uint32_t* renderedSamples,
-                         float sceneTime, float sceneFrame) {
+                         float sceneTime, float sceneFrame,
+                         uint32_t accumulationStart) {
   if (!ready_ || !dTris_) { if (err) *err = "HIP scene not built"; return false; }
   CU_OK(hipSetDevice(device_), "hipSetDevice");
   const size_t bytes = size_t(w) * h * 4;
@@ -627,7 +691,10 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   void* dAcc = (samples > 1 || productionPath)
                    ? reinterpret_cast<void*>(dAccum_) : nullptr;
   int sampleIdx = 0;
-  int numSamples = samples;
+  const uint32_t start = productionPath ? accumulationStart : 0u;
+  const uint32_t total = start + static_cast<uint32_t>(samples);
+  int numSamples = static_cast<int>(std::min<uint32_t>(
+      total, static_cast<uint32_t>(std::numeric_limits<int>::max())));
   // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,backMats,matPbr,matBase,
   // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
   // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
@@ -642,6 +709,12 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                   &dGeomPropDesc, &dGeomPropValues, &geomPropCount_};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   rgba->resize(bytes);
+  if (hostOutCap_ < bytes) {
+    if (hostOut_) hipHostFree(hostOut_);
+    hostOut_ = nullptr;
+    CU_OK(hipHostMalloc(&hostOut_, bytes, 0u), "hipHostMalloc(output)");
+    hostOutCap_ = bytes;
+  }
   if (pointPaging_ && pointHost_ && !pointHost_->pointChunks.empty()) {
     const size_t pixels = size_t(w) * size_t(h);
     if (pointDepthCap_ < pixels) {
@@ -771,20 +844,23 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   int completedSamples = samples;
   std::vector<float> convergencePrevious;
   std::vector<float> convergenceCurrent;
-  const bool adaptive = productionPath && linearRgba && pathTrace &&
+  const bool adaptive = start == 0 && productionPath && linearRgba && pathTrace &&
                         pathTrace->varianceThreshold > 0.0f &&
                         samples > static_cast<int>(pathTrace->minSamples);
   const int convergenceInterval =
       std::max(8, static_cast<int>(pathTrace ? pathTrace->minSamples / 4u : 8u));
   for (int s = 0; s < samples; ++s) {
     float jx, jy;
-    RtPixelJitter(s, samples, &jx, &jy);
+    const int absoluteSample = static_cast<int>(start) + s;
+    RtPixelJitter(absoluteSample, numSamples, &jx, &jy);
     cam.sceneMin[3] = jx;
     cam.sceneExtent[3] = jy;
-    sampleIdx = s;
+    sampleIdx = absoluteSample;
     auto t0 = std::chrono::steady_clock::now();
     CU_OK(hipModuleLaunchKernel(reinterpret_cast<hipFunction_t>(kernel_), gx, gy, 1,
-                                8, 8, 1, 0, nullptr, args, nullptr),
+                                8, 8, 1, 0,
+                                reinterpret_cast<hipStream_t>(stream_), args,
+                                nullptr),
           "hipModuleLaunchKernel");
     if (rtTiming) {
       CU_OK(hipDeviceSynchronize(), "hipDeviceSynchronize");
@@ -794,7 +870,7 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
       std::fprintf(stderr, "[hip_raytracer] trace pass %d/%d: %.1f ms (%dx%d)\n",
                    s + 1, samples, ms, w, h);
     }
-    const int completed = s + 1;
+    const int completed = absoluteSample + 1;
     if (adaptive && completed >= static_cast<int>(pathTrace->minSamples) &&
         completed % convergenceInterval == 0) {
       if (!rtTiming)
@@ -823,15 +899,18 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
       }
     }
   }
-  CU_OK(hipDeviceSynchronize(), "hipDeviceSynchronize");
-  CU_OK(hipMemcpyDtoH(rgba->data(), reinterpret_cast<void*>(dOut_), bytes),
-        "hipMemcpyDtoH");
+  CU_OK(hipMemcpyDtoHAsync(hostOut_, reinterpret_cast<void*>(dOut_), bytes,
+                           reinterpret_cast<hipStream_t>(stream_)),
+        "hipMemcpyDtoHAsync");
+  CU_OK(hipStreamSynchronize(reinterpret_cast<hipStream_t>(stream_)),
+        "hipStreamSynchronize");
+  std::memcpy(rgba->data(), hostOut_, bytes);
   if (linearRgba && pathTrace && pathTrace->enabled) {
     linearRgba->resize(size_t(w) * size_t(h) * 4u);
     CU_OK(hipMemcpyDtoH(linearRgba->data(), reinterpret_cast<void*>(dAccum_),
                         linearRgba->size() * sizeof(float)),
           "hipMemcpyDtoH(linear accumulation)");
-    const float inv = 1.0f / static_cast<float>(completedSamples);
+    const float inv = 1.0f / static_cast<float>(start + completedSamples);
     for (size_t i = 0; i < linearRgba->size(); i += 4) {
       (*linearRgba)[i] *= inv;
       (*linearRgba)[i + 1] *= inv;
@@ -846,7 +925,7 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                  traceMsTotal / double(completedSamples), w, h);
   }
   if (renderedSamples)
-    *renderedSamples = static_cast<uint32_t>(completedSamples);
+    *renderedSamples = start + static_cast<uint32_t>(completedSamples);
   return true;
 }
 

@@ -18,6 +18,7 @@ set(_required_spv
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_vert.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/mesh_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/wire_frag.spv.h
+    ${LUSDVIEW_SHADER_EMBED_DIR}/wire_vert.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/environment_vert.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/environment_frag.spv.h
     ${LUSDVIEW_SHADER_EMBED_DIR}/line_vert.spv.h

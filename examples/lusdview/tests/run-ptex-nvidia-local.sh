@@ -69,7 +69,8 @@ EOF
           --ptex-cache-mb 8 --texture-mips on --frames 2 --size 256x160
           --camera /Camera)
 
-  env -u DISPLAY LUSDVIEW_VK_DEVICE=nvidia timeout 180s "$viewer" \
+  env -u DISPLAY LUSDVIEW_VK_DEVICE=nvidia LUSDVIEW_RT_DEBUG=1 \
+    timeout 180s "$viewer" \
     --headless --backend vk "${common[@]}" \
     --render-report "$base-vk.json" --screenshot "$base-vk.png" "$scene" \
     >"$base-vk.log" 2>&1
@@ -87,6 +88,7 @@ EOF
 
   if [[ "${LUSDVIEW_LOCAL_SW_RT:-1}" == "1" ]]; then
     env -u DISPLAY LUSDVIEW_VK_DEVICE=nvidia LUSDVIEW_RT_FORCE_SW=1 \
+      LUSDVIEW_RT_DEBUG=1 \
       timeout 180s "$viewer" --headless --backend vk --rt "${common[@]}" \
       --render-report "$base-swrt.json" --screenshot "$base-swrt.png" "$scene" \
       >"$base-swrt.log" 2>&1

@@ -4,6 +4,7 @@
 # criteria are deliberately structural so normal host/GPU variance cannot make
 # CI flaky.
 set -uo pipefail
+export LUSDVIEW_LOG=debug
 
 SKIP=77
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

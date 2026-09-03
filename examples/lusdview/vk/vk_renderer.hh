@@ -225,6 +225,8 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory eboMem{VK_NULL_HANDLE};
     VkBuffer wireEbo{VK_NULL_HANDLE};
     VkDeviceMemory wireEboMem{VK_NULL_HANDLE};
+    VkBuffer wireVbo{VK_NULL_HANDLE};
+    VkDeviceMemory wireVboMem{VK_NULL_HANDLE};
     uint32_t wireIndexCount{0};
     std::vector<DrawSubmesh> submeshes;
     float world[16];
@@ -679,13 +681,12 @@ class VulkanRenderer final : public Renderer {
   VkPipeline pipeline_{VK_NULL_HANDLE};
   VkPipeline environmentPipeline_{VK_NULL_HANDLE};
   VkPipeline wirePipeline_{VK_NULL_HANDLE};
-  VkPipeline tessWirePipeline_{VK_NULL_HANDLE};
+  VkPipeline wireOccludedPipeline_{VK_NULL_HANDLE};
   VkPipeline shadowPipeline_{VK_NULL_HANDLE};
   // GPU tessellation displacement pipeline (shares pipelineLayout_; PATCH_LIST
   // topology + tesc/tese). Created only when the device supports the
   // tessellationShader feature; otherwise displaced meshes stay coarse.
   bool tessSupported_{false};
-  bool surfaceWireSupported_{false};
   bool samplerAnisotropySupported_{false};
   bool weightedOitSupported_{false};
   TransparencyMode transparencyMode_{TransparencyMode::Auto};

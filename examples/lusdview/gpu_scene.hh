@@ -281,6 +281,9 @@ struct DrawMeshCPU {
   // wireframe shows quads/ngons -- correct even for double-sided (doubled-tri)
   // meshes where a per-triangle approach fails. Empty => fall back to tri edges.
   std::vector<uint32_t> wireframeIndices;
+  // Authored control points used by wireframeIndices when subdivision rewrites
+  // the render mesh. Empty means the main vertex buffer owns the indices.
+  std::vector<DrawVertex> wireframeVertices;
   // Coarse displacement baked into geometry for the ray-tracing backends (which
   // intersect real triangles, so displacement can't be a vertex/tess-shader effect
   // like the raster path). Parallel to `vertices`; empty when the mesh has no
@@ -915,6 +918,13 @@ struct DomeIblCPU {
   // miss); 6 * envCubeSize^2 * 3 floats, same face order as specLevels.
   int envCubeSize{0};
   std::vector<float> envCube;
+  // Compact HDR latlong used by CUDA/HIP RT miss and glossy-environment
+  // sampling. RGB stores a shared mantissa and A stores a biased base-2
+  // exponent (Radiance RGBE). Keeping this beside the float cube avoids
+  // clamping HDR domes to the generic RGBA8 material-texture representation.
+  int envLatlongWidth{0};
+  int envLatlongHeight{0};
+  std::vector<uint8_t> envLatlongRgbe;
   // Order-2 real-SH projection of the irradiance (E/pi), 9 coefficients x RGB
   // (coefficient-major: coeff k channel c at [k*3+c]). Evaluated by the RT
   // shaders as the surface ambient term; the basis polynomial set matches

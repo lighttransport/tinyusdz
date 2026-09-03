@@ -507,6 +507,25 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
     report["backend"]["api"] = caps.api_info;
     report["backend"]["device_type"] =
         (cudaRt_ || hipRt_) ? "gpu" : caps.device_type;
+    if (cudaRt_) {
+      report["backend"]["transport"] =
+          cudaTracer_.usesOptixTransport() ? "optix" : "software-bvh";
+      report["backend"]["transport_requested"] =
+          cudaTracer_.rtBackend() == CudaRtBackend::Optix
+              ? "optix"
+              : (cudaTracer_.rtBackend() == CudaRtBackend::SoftwareBvh
+                     ? "software"
+                     : "auto");
+      report["backend"]["optix_available"] = cudaTracer_.optixAvailable();
+      report["backend"]["optix_status"] = cudaTracer_.optixStatus();
+      report["backend"]["optix_abi"] = cudaTracer_.optixAbiVersion();
+      report["backend"]["optix_gas_bytes"] = cudaTracer_.optixGasBytes();
+      report["backend"]["optix_ias_bytes"] = cudaTracer_.optixIasBytes();
+      report["backend"]["optix_acceleration_bytes"] =
+          cudaTracer_.optixAccelerationBytes();
+      report["backend"]["fallback_reason"] =
+          cudaTracer_.optixFallbackReason();
+    }
     report["backend"]["weighted_oit"] = caps.supportsWeightedOit;
     report["backend"]["weighted_oit_active"] = caps.usesWeightedOit;
     report["backend"]["transparency"] = caps.transparencyMode;
@@ -514,6 +533,11 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
     report["backend"]["oit_draw_calls"] = caps.oitDrawCalls;
     report["backend"]["pipeline_binds"] = caps.pipelineBinds;
     report["backend"]["descriptor_set_binds"] = caps.descriptorSetBinds;
+    report["backend"]["rt_shader_variant"] = caps.rtShaderVariant;
+    report["backend"]["gpu_rt_ms"] = caps.gpuRtMs;
+    report["backend"]["gpu_total_ms"] = caps.gpuTotalMs;
+    report["backend"]["gpu_fps"] =
+        caps.gpuTotalMs > 0.0 ? 1000.0 / caps.gpuTotalMs : 0.0;
   }
   uint64_t residentTextureBytes = 0;
   uint64_t residentTextureSlots = 0;
@@ -5402,6 +5426,7 @@ bool App::renderHipViewport() {
       hipBuildStarted_ = true;
       hipBuildStart_ = std::chrono::steady_clock::now();
       const float dispScale = gui_.displacementScale();  // read on the main thread
+      const uint32_t purposeMask = gui_.purposeVisibleMask();
       poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
       ensureRtTexturePayloads();         // ditto: re-decode raster-released texture payloads
       // The worker reads draw_ (stable while building: the re-pose below only runs
@@ -5412,11 +5437,11 @@ bool App::renderHipViewport() {
       // (The builder refuses the refit map when displacement is actually live
       // on some mesh -- a displaced flatten re-samples textures per pose.)
       const bool retainForRefit = sceneIsNextDeformable();
-      hipBuildThread_ = std::thread([this, dispScale, retainForRefit] {
+      hipBuildThread_ = std::thread([this, dispScale, retainForRefit, purposeMask] {
         std::string e;
         const bool ok = hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
                                          dispScale, &hipBuildProgress_,
-                                         retainForRefit);
+                                         retainForRefit, purposeMask);
         hipBuildErr_ = e;
         hipBuildOk_.store(ok, std::memory_order_release);
         hipBuildDone_.store(true, std::memory_order_release);
@@ -5433,8 +5458,11 @@ bool App::renderHipViewport() {
       return false;
     }
     hipInteractiveBuilt_ = true;
+    hipPathAccum_.invalidate();
     LOGI("HIP interactive: %zu tris%s on %s", hipTracer_.triangleCount(),
          hipTracer_.truncated() ? " [truncated]" : "", hipTracer_.deviceName());
+    LOGI("HIP offscreen presentation: %s compute -> primary %s viewport blit",
+         hipTracer_.deviceName(), backend_ == Backend::Vulkan ? "Vulkan" : "OpenGL");
     // A deformable scene keeps its CPU geometry: the timeline re-poses it and
     // rebuilds the BVH below, so draw_ is read again on every new time code.
     if (sceneIsNextDeformable()) return true;
@@ -5482,10 +5510,11 @@ bool App::renderHipViewport() {
       static const bool kNoRefit =
           std::getenv("LUSDVIEW_NO_BVH_REFIT") != nullptr;
       if (!kNoRefit && hipTracer_.canRefit() && hipTracer_.refit(draw_, &e)) {
-        // refit done
+        hipPathAccum_.invalidate();
       } else if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
                                    dispScale, nullptr,
-                                   /*retainForRefit=*/!kNoRefit)) {
+                                   /*retainForRefit=*/!kNoRefit,
+                                   gui_.purposeVisibleMask())) {
         LOGW("HIP re-pose rebuild failed: %s", e.c_str());
       }
     }
@@ -5520,17 +5549,143 @@ bool App::renderHipViewport() {
   std::vector<uint8_t> rgba;
   std::vector<float> linear;
   std::string cerr;
+  auto prepareAccumulation = [&](ExternalPathAccumulation* state,
+                                 uint64_t kernelGeneration) {
+    bool same = state->valid && state->width == w && state->height == h &&
+                state->renderMode == rmode &&
+                state->focusDistance == cameraLens_.focusDistance &&
+                state->apertureRadius == cameraLens_.apertureRadius &&
+                state->sceneTime == static_cast<float>(animTime_) &&
+                state->maxDepth == pathTrace_.maxDepth &&
+                state->rouletteDepth == pathTrace_.russianRouletteDepth &&
+                state->maxSubsurfaceEvents == pathTrace_.maxSubsurfaceEvents &&
+                state->maxVolumeEvents == pathTrace_.maxVolumeEvents &&
+                state->motionSegments == pathTrace_.motionSegments &&
+                state->seed == pathTrace_.seed &&
+                state->kernelGeneration == kernelGeneration &&
+                std::memcmp(state->viewProj.data(), pv.m, sizeof(pv.m)) == 0;
+    if (!same) {
+      state->samples = 0;
+      ++state->generation;
+    }
+    std::memcpy(state->viewProj.data(), pv.m, sizeof(pv.m));
+    state->focusDistance = cameraLens_.focusDistance;
+    state->apertureRadius = cameraLens_.apertureRadius;
+    state->sceneTime = static_cast<float>(animTime_);
+    state->width = w;
+    state->height = h;
+    state->renderMode = rmode;
+    state->maxDepth = pathTrace_.maxDepth;
+    state->rouletteDepth = pathTrace_.russianRouletteDepth;
+    state->maxSubsurfaceEvents = pathTrace_.maxSubsurfaceEvents;
+    state->maxVolumeEvents = pathTrace_.maxVolumeEvents;
+    state->motionSegments = pathTrace_.motionSegments;
+    state->seed = pathTrace_.seed;
+    state->kernelGeneration = kernelGeneration;
+    state->valid = true;
+  };
+  if (pathTrace_.enabled)
+    prepareAccumulation(&hipPathAccum_, hipTracer_.kernelGeneration());
+  else
+    hipPathAccum_.invalidate();
+  if (pathTrace_.enabled && pathTrace_.targetSamples > 0 &&
+      hipPathAccum_.samples >= pathTrace_.targetSamples &&
+      !hipPathAccum_.lastRgba.empty()) {
+    renderer_->uploadViewportImage(hipPathAccum_.lastRgba.data(), w, h);
+    return true;
+  }
+  // Static production views trace on a worker. The GPU stream still owns
+  // ordering; this keeps its synchronization and the cross-device readback off
+  // the UI thread. Animated scenes retain the synchronous path below so a refit
+  // can never race an in-flight traversal.
+  if (pathTrace_.enabled && !sceneIsNextDeformable()) {
+    if (hipTraceFuture_.valid()) {
+      if (hipTraceFuture_.wait_for(std::chrono::seconds(0)) !=
+          std::future_status::ready) {
+        if (!hipPathAccum_.lastRgba.empty())
+          renderer_->uploadViewportImage(hipPathAccum_.lastRgba.data(), w, h);
+        return true;
+      }
+      ExternalTraceResult completed = hipTraceFuture_.get();
+      if (!completed.ok) {
+        LOGW("HIP asynchronous ray trace failed: %s", completed.error.c_str());
+      } else if (completed.generation == hipPathAccum_.generation &&
+                 completed.accumulationStart == hipPathAccum_.samples &&
+                 completed.width == w && completed.height == h) {
+        hipPathAccum_.samples = completed.samples;
+        const bool denoiseCheckpoint = completed.samples >= 8u &&
+            (((completed.samples & (completed.samples - 1u)) == 0u) ||
+             completed.samples % 64u == 0u);
+        if (denoiseCheckpoint)
+          completed.rgba = ToneMapPathDisplay(
+              PreparePathDisplay(completed.linear, w, h, pathTrace_,
+                                 completed.samples),
+              w, h, completed.exposure);
+        hipPathAccum_.lastRgba = std::move(completed.rgba);
+      }
+    }
+    if (pathTrace_.targetSamples == 0 ||
+        hipPathAccum_.samples < pathTrace_.targetSamples) {
+      std::array<float, 16> invCopy{}, pvCopy{};
+      std::array<float, 3> camCopy{}, lightCopy{}, clearCopy{}, minCopy{}, extentCopy{};
+      std::copy(inv.m, inv.m + 16, invCopy.begin());
+      std::copy(pv.m, pv.m + 16, pvCopy.begin());
+      std::copy(camPos, camPos + 3, camCopy.begin());
+      std::copy(lightDir, lightDir + 3, lightCopy.begin());
+      std::copy(clear, clear + 3, clearCopy.begin());
+      std::copy(sceneMin, sceneMin + 3, minCopy.begin());
+      std::copy(sceneExtent, sceneExtent + 3, extentCopy.begin());
+      const RtCameraLens lensCopy = cameraLens_;
+      const PathTraceSettings settingsCopy = pathTrace_;
+      const uint64_t generation = hipPathAccum_.generation;
+      const uint32_t start = hipPathAccum_.samples;
+      const uint32_t nextSample = start + 1u;
+      const bool wantLinear = nextSample >= 8u &&
+          (((nextSample & (nextSample - 1u)) == 0u) || nextSample % 64u == 0u);
+      const float exposure = camera_.exposure();
+      const float sceneSeconds = static_cast<float>(
+          animFps_ > 0.0 ? animTime_ / animFps_ : 0.0);
+      const float sceneFrame = static_cast<float>(animTime_);
+      hipTraceFuture_ = std::async(std::launch::async,
+          [this, invCopy, pvCopy, camCopy, lightCopy, clearCopy, minCopy,
+           extentCopy, lensCopy, settingsCopy, generation, start, exposure,
+           sceneSeconds, sceneFrame, rmode, depthScale, w, h,
+           wantLinear]() mutable {
+            ExternalTraceResult result;
+            result.generation = generation;
+            result.accumulationStart = start;
+            result.width = w; result.height = h; result.exposure = exposure;
+            result.ok = hipTracer_.trace(
+                invCopy.data(), pvCopy.data(), camCopy.data(), lightCopy.data(),
+                clearCopy.data(), exposure, rmode, depthScale, minCopy.data(),
+                extentCopy.data(), w, h, &result.rgba, &result.error, 1,
+                &lensCopy, &settingsCopy,
+                wantLinear ? &result.linear : nullptr, &result.samples,
+                sceneSeconds, sceneFrame, start);
+            return result;
+          });
+    }
+    if (!hipPathAccum_.lastRgba.empty())
+      renderer_->uploadViewportImage(hipPathAccum_.lastRgba.data(), w, h);
+    return true;
+  }
+  uint32_t accumulatedSamples = 0;
   // spp=1: single sample for interactive frame rate (no supersampled AA).
   if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                        sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
                        &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
-                       pathTrace_.enabled ? &linear : nullptr, nullptr,
+                       pathTrace_.enabled ? &linear : nullptr,
+                       pathTrace_.enabled ? &accumulatedSamples : nullptr,
                        static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
-                       static_cast<float>(animTime_))) {
-    if (pathTrace_.enabled)
+                       static_cast<float>(animTime_),
+                       pathTrace_.enabled ? hipPathAccum_.samples : 0u)) {
+    if (pathTrace_.enabled) {
+      hipPathAccum_.samples = accumulatedSamples;
       rgba = ToneMapPathDisplay(
-          PreparePathDisplay(linear, w, h, pathTrace_, 1u), w, h,
+          PreparePathDisplay(linear, w, h, pathTrace_, accumulatedSamples), w, h,
           camera_.exposure());
+      hipPathAccum_.lastRgba = rgba;
+    }
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
     LOGW("HIP ray trace failed: %s", cerr.c_str());
@@ -5541,9 +5696,8 @@ bool App::renderHipViewport() {
 bool App::renderCudaViewport() {
   // Mirrors renderHipViewport() above; see its comments for the overall shape
   // (background build with a progress overlay, then per-frame trace ->
-  // uploadViewportImage). CudaRayTracer has no refit path, so a deformable
-  // scene's re-pose always calls build() again (a full rebuild), unlike HIP's
-  // refit-when-possible fast path.
+  // uploadViewportImage). Topology-stable deformation refits the software BVH
+  // and, when selected, update-capable OptiX GAS plus its small IAS.
   if (loadActive_ || draw_.empty()) {
     int vw = 0, vh = 0;
     gui_.viewportPixelSize(&vw, &vh);
@@ -5574,12 +5728,16 @@ bool App::renderCudaViewport() {
       cudaBuildStarted_ = true;
       cudaBuildStart_ = std::chrono::steady_clock::now();
       const float dispScale = gui_.displacementScale();  // read on the main thread
+      const uint32_t purposeMask = gui_.purposeVisibleMask();
       poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
       ensureRtTexturePayloads();         // ditto: re-decode raster-released texture payloads
-      cudaBuildThread_ = std::thread([this, dispScale] {
+      const bool retainForRefit = sceneIsNextDeformable();
+      cudaBuildThread_ = std::thread([this, dispScale, purposeMask,
+                                      retainForRefit] {
         std::string e;
         const bool ok = cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
-                                          dispScale, &cudaBuildProgress_);
+                                          dispScale, &cudaBuildProgress_,
+                                          retainForRefit, purposeMask);
         cudaBuildErr_ = e;
         cudaBuildOk_.store(ok, std::memory_order_release);
         cudaBuildDone_.store(true, std::memory_order_release);
@@ -5596,18 +5754,25 @@ bool App::renderCudaViewport() {
       return false;
     }
     cudaInteractiveBuilt_ = true;
+    cudaPathAccum_.invalidate();
     LOGI("CUDA interactive: %zu tris%s on %s", cudaTracer_.triangleCount(),
          cudaTracer_.truncated() ? " [truncated]" : "", cudaTracer_.deviceName());
-    // Unlike HIP, the CUDA tracer keeps no refit map, so there is nothing to
-    // reclaim/retain here either way -- draw_'s CPU geometry is left alone
-    // (liveSwitchEnabled_ requires it survive for a raster switch-back anyway).
+    // draw_'s CPU geometry and refit map remain available for topology-stable
+    // animation (liveSwitchEnabled_ also requires raster switch-back data).
   }
 
   if (sceneIsNextDeformable() && animTime_ != nextTracerPosedTime_) {
     if (poseNextDrawForTracer(animTime_)) {
       std::string e;
       const float dispScale = gui_.displacementScale();
-      if (!cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e, dispScale)) {
+      static const bool kNoCudaRefit =
+          std::getenv("LUSDVIEW_NO_CUDA_BVH_REFIT") != nullptr;
+      if (!kNoCudaRefit && cudaTracer_.canRefit() &&
+          cudaTracer_.refit(draw_, &e)) {
+        cudaPathAccum_.invalidate();
+      } else if (!cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
+                                    dispScale, nullptr, !kNoCudaRefit,
+                                    gui_.purposeVisibleMask())) {
         LOGW("CUDA re-pose rebuild failed: %s", e.c_str());
       }
     }
@@ -5642,16 +5807,127 @@ bool App::renderCudaViewport() {
   std::vector<uint8_t> rgba;
   std::vector<float> linear;
   std::string cerr;
+  ExternalPathAccumulation& accum = cudaPathAccum_;
+  bool sameAccum = accum.valid && accum.width == w && accum.height == h &&
+      accum.renderMode == rmode && accum.focusDistance == cameraLens_.focusDistance &&
+      accum.apertureRadius == cameraLens_.apertureRadius &&
+      accum.sceneTime == static_cast<float>(animTime_) &&
+      accum.maxDepth == pathTrace_.maxDepth &&
+      accum.rouletteDepth == pathTrace_.russianRouletteDepth &&
+      accum.maxSubsurfaceEvents == pathTrace_.maxSubsurfaceEvents &&
+      accum.maxVolumeEvents == pathTrace_.maxVolumeEvents &&
+      accum.motionSegments == pathTrace_.motionSegments && accum.seed == pathTrace_.seed &&
+      accum.kernelGeneration == cudaTracer_.kernelGeneration() &&
+      std::memcmp(accum.viewProj.data(), pv.m, sizeof(pv.m)) == 0;
+  if (!pathTrace_.enabled) accum.invalidate();
+  else {
+    if (!sameAccum) {
+      accum.samples = 0;
+      ++accum.generation;
+    }
+    std::memcpy(accum.viewProj.data(), pv.m, sizeof(pv.m));
+    accum.focusDistance = cameraLens_.focusDistance;
+    accum.apertureRadius = cameraLens_.apertureRadius;
+    accum.sceneTime = static_cast<float>(animTime_);
+    accum.width = w; accum.height = h; accum.renderMode = rmode;
+    accum.maxDepth = pathTrace_.maxDepth;
+    accum.rouletteDepth = pathTrace_.russianRouletteDepth;
+    accum.maxSubsurfaceEvents = pathTrace_.maxSubsurfaceEvents;
+    accum.maxVolumeEvents = pathTrace_.maxVolumeEvents;
+    accum.motionSegments = pathTrace_.motionSegments; accum.seed = pathTrace_.seed;
+    accum.kernelGeneration = cudaTracer_.kernelGeneration(); accum.valid = true;
+    if (pathTrace_.targetSamples > 0 && accum.samples >= pathTrace_.targetSamples &&
+        !accum.lastRgba.empty()) {
+      renderer_->uploadViewportImage(accum.lastRgba.data(), w, h);
+      return true;
+    }
+  }
+  if (pathTrace_.enabled && !sceneIsNextDeformable()) {
+    if (cudaTraceFuture_.valid()) {
+      if (cudaTraceFuture_.wait_for(std::chrono::seconds(0)) !=
+          std::future_status::ready) {
+        if (!accum.lastRgba.empty())
+          renderer_->uploadViewportImage(accum.lastRgba.data(), w, h);
+        return true;
+      }
+      ExternalTraceResult completed = cudaTraceFuture_.get();
+      if (!completed.ok) {
+        LOGW("CUDA asynchronous ray trace failed: %s", completed.error.c_str());
+      } else if (completed.generation == accum.generation &&
+                 completed.accumulationStart == accum.samples &&
+                 completed.width == w && completed.height == h) {
+        accum.samples = completed.samples;
+        const bool denoiseCheckpoint = completed.samples >= 8u &&
+            (((completed.samples & (completed.samples - 1u)) == 0u) ||
+             completed.samples % 64u == 0u);
+        if (denoiseCheckpoint)
+          completed.rgba = ToneMapPathDisplay(
+              PreparePathDisplay(completed.linear, w, h, pathTrace_,
+                                 completed.samples),
+              w, h, completed.exposure);
+        accum.lastRgba = std::move(completed.rgba);
+      }
+    }
+    if (pathTrace_.targetSamples == 0 || accum.samples < pathTrace_.targetSamples) {
+      std::array<float, 16> invCopy{}, pvCopy{};
+      std::array<float, 3> camCopy{}, lightCopy{}, clearCopy{}, minCopy{}, extentCopy{};
+      std::copy(inv.m, inv.m + 16, invCopy.begin());
+      std::copy(pv.m, pv.m + 16, pvCopy.begin());
+      std::copy(camPos, camPos + 3, camCopy.begin());
+      std::copy(lightDir, lightDir + 3, lightCopy.begin());
+      std::copy(clear, clear + 3, clearCopy.begin());
+      std::copy(sceneMin, sceneMin + 3, minCopy.begin());
+      std::copy(sceneExtent, sceneExtent + 3, extentCopy.begin());
+      const RtCameraLens lensCopy = cameraLens_;
+      const PathTraceSettings settingsCopy = pathTrace_;
+      const uint64_t generation = accum.generation;
+      const uint32_t start = accum.samples;
+      const uint32_t nextSample = start + 1u;
+      const bool wantLinear = nextSample >= 8u &&
+          (((nextSample & (nextSample - 1u)) == 0u) || nextSample % 64u == 0u);
+      const float exposure = camera_.exposure();
+      const float sceneSeconds = static_cast<float>(
+          animFps_ > 0.0 ? animTime_ / animFps_ : 0.0);
+      const float sceneFrame = static_cast<float>(animTime_);
+      cudaTraceFuture_ = std::async(std::launch::async,
+          [this, invCopy, pvCopy, camCopy, lightCopy, clearCopy, minCopy,
+           extentCopy, lensCopy, settingsCopy, generation, start, exposure,
+           sceneSeconds, sceneFrame, rmode, depthScale, w, h,
+           wantLinear]() mutable {
+            ExternalTraceResult result;
+            result.generation = generation;
+            result.accumulationStart = start;
+            result.width = w; result.height = h; result.exposure = exposure;
+            result.ok = cudaTracer_.trace(
+                invCopy.data(), pvCopy.data(), camCopy.data(), lightCopy.data(),
+                clearCopy.data(), exposure, rmode, depthScale, minCopy.data(),
+                extentCopy.data(), w, h, &result.rgba, &result.error, 1,
+                &lensCopy, &settingsCopy,
+                wantLinear ? &result.linear : nullptr, &result.samples,
+                sceneSeconds, sceneFrame, start);
+            return result;
+          });
+    }
+    if (!accum.lastRgba.empty())
+      renderer_->uploadViewportImage(accum.lastRgba.data(), w, h);
+    return true;
+  }
+  uint32_t accumulatedSamples = 0;
   if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                         sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
                         &cameraLens_, pathTrace_.enabled ? &pathTrace_ : nullptr,
-                        pathTrace_.enabled ? &linear : nullptr, nullptr,
+                        pathTrace_.enabled ? &linear : nullptr,
+                        pathTrace_.enabled ? &accumulatedSamples : nullptr,
                         static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
-                        static_cast<float>(animTime_))) {
-    if (pathTrace_.enabled)
+                        static_cast<float>(animTime_),
+                        pathTrace_.enabled ? accum.samples : 0u)) {
+    if (pathTrace_.enabled) {
+      accum.samples = accumulatedSamples;
       rgba = ToneMapPathDisplay(
-          PreparePathDisplay(linear, w, h, pathTrace_, 1u), w, h,
+          PreparePathDisplay(linear, w, h, pathTrace_, accumulatedSamples), w, h,
           camera_.exposure());
+      accum.lastRgba = rgba;
+    }
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
     LOGW("CUDA ray trace failed: %s", cerr.c_str());
@@ -5683,12 +5959,13 @@ bool App::renderCpuViewport() {
     if (!cpuBuildStarted_) {
       cpuBuildStarted_ = true;
       const float dispScale = gui_.displacementScale();  // read on the main thread
+      const uint32_t purposeMask = gui_.purposeVisibleMask();
       poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
       ensureRtTexturePayloads();         // ditto: re-decode raster-released texture payloads
-      cpuBuildThread_ = std::thread([this, dispScale] {
+      cpuBuildThread_ = std::thread([this, dispScale, purposeMask] {
         std::string e;
         const bool ok = cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
-                                         dispScale, &cpuBuildProgress_);
+                                         dispScale, &cpuBuildProgress_, purposeMask);
         cpuBuildErr_ = e;
         cpuBuildOk_.store(ok, std::memory_order_release);
         cpuBuildDone_.store(true, std::memory_order_release);
@@ -5713,7 +5990,8 @@ bool App::renderCpuViewport() {
     if (poseNextDrawForTracer(animTime_)) {
       std::string e;
       const float dispScale = gui_.displacementScale();
-      if (!cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e, dispScale)) {
+      if (!cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e, dispScale,
+                            nullptr, gui_.purposeVisibleMask())) {
         LOGW("CPU re-pose rebuild failed: %s", e.c_str());
       }
     }
@@ -6230,9 +6508,16 @@ void App::logCapabilities() const {
   const char* rt = !rtOn ? "off"
                          : (renderer_->rayTracingIsHardware() ? "hardware"
                                                               : "software");
-  LOGI("caps: v1 backend=%s device=%s rt=%s rt_available=%d gpu=\"%s\"",
+  const char* cudaTransport = !cudaTracer_.initialized()
+                                  ? "uninitialized"
+                                  : (cudaTracer_.usesOptixTransport()
+                                         ? "optix" : "software-bvh");
+  LOGI("caps: v1 backend=%s device=%s rt=%s rt_available=%d cuda_transport=%s "
+       "optix_available=%d optix_abi=%d optix_accel_bytes=%zu gpu=\"%s\"",
        backend, c.device_type.empty() ? "unknown" : c.device_type.c_str(), rt,
        renderer_->rayTracingAvailable() ? 1 : 0,
+       cudaTransport, cudaTracer_.optixAvailable() ? 1 : 0,
+       cudaTracer_.optixAbiVersion(), cudaTracer_.optixAccelerationBytes(),
        c.gpu_name.empty() ? "unknown" : c.gpu_name.c_str());
 }
 
@@ -6672,6 +6957,17 @@ int App::run(const std::string& initialFile, int maxFrames,
     si.reason = skinningReason_;
     gui_.setSkinning(si);
     gui_.setActiveTechnique(activeTechnique_);
+    if (!computeDevicesEnumerated_) {
+      std::string ignored;
+      CudaRayTracer::enumerateDevices(&cudaDevices_, &ignored);
+      ignored.clear();
+      HipRayTracer::enumerateDevices(&hipDevices_, &ignored);
+      computeDevicesEnumerated_ = true;
+    }
+    gui_.setComputeDevices(cudaDevices_, cudaTracer_.deviceIndex(),
+                           hipDevices_, hipTracer_.deviceIndex());
+    gui_.setCudaRtBackend(cudaTracer_.rtBackend(),
+                          cudaTracer_.optixAvailable());
     gui_.setTechniqueAvailability(cudaProbe_ != ProbeState::Unavailable,
                                   hipProbe_ != ProbeState::Unavailable,
                                   vulkanAvailable_, vulkanRtAvailable_);
@@ -6964,6 +7260,13 @@ int App::run(const std::string& initialFile, int maxFrames,
     const SkinningMode requestedSkinningMode = gui_.requestedSkinningMode();
     const bool hasTechniqueRequest = gui_.hasTechniqueRequest();
     const RenderTechnique requestedTechnique = gui_.requestedTechnique();
+    const bool hasCudaDeviceRequest = gui_.hasCudaDeviceRequest();
+    const bool hasHipDeviceRequest = gui_.hasHipDeviceRequest();
+    const bool hasCudaRtBackendRequest = gui_.hasCudaRtBackendRequest();
+    const CudaRtBackend requestedCudaRtBackend =
+        gui_.requestedCudaRtBackend();
+    const int requestedCudaDevice = gui_.requestedCudaDevice();
+    const int requestedHipDevice = gui_.requestedHipDevice();
     const bool wantToggleCpuRt = gui_.wantToggleCpuRt();
     Gui::OpenPbrMaterialEdit openPbrEdit;
     if (gui_.takeOpenPbrMaterialEdit(&openPbrEdit)) {
@@ -6975,10 +7278,65 @@ int App::run(const std::string& initialFile, int maxFrames,
     tessQuality_ = gui_.tessellationQuality();
     gui_.clearActions();
 
+    if (hasCudaRtBackendRequest &&
+        requestedCudaRtBackend != cudaTracer_.rtBackend()) {
+      cudaTracer_.setRtBackend(requestedCudaRtBackend);
+      cudaPathAccum_.invalidate();
+      LOGI("CUDA RT traversal selected dynamically: %s",
+           requestedCudaRtBackend == CudaRtBackend::Optix
+               ? "OptiX"
+               : (requestedCudaRtBackend == CudaRtBackend::SoftwareBvh
+                      ? "software BVH"
+                      : "auto"));
+    }
+
     const bool tracerBuildActive =
         (hipBuildStarted_ && !hipBuildDone_.load(std::memory_order_acquire)) ||
         (cudaBuildStarted_ && !cudaBuildDone_.load(std::memory_order_acquire)) ||
-        (cpuBuildStarted_ && !cpuBuildDone_.load(std::memory_order_acquire));
+        (cpuBuildStarted_ && !cpuBuildDone_.load(std::memory_order_acquire)) ||
+        (hipTraceFuture_.valid() &&
+         hipTraceFuture_.wait_for(std::chrono::seconds(0)) !=
+             std::future_status::ready) ||
+        (cudaTraceFuture_.valid() &&
+         cudaTraceFuture_.wait_for(std::chrono::seconds(0)) !=
+             std::future_status::ready);
+    if ((hasCudaDeviceRequest || hasHipDeviceRequest) && tracerBuildActive) {
+      LOGW("compute RT device change ignored while a scene build is active");
+    } else if (hasCudaDeviceRequest &&
+               requestedCudaDevice != cudaTracer_.deviceIndex()) {
+      if (cudaBuildThread_.joinable()) cudaBuildThread_.join();
+      std::string deviceErr;
+      if (cudaTracer_.selectDevice(requestedCudaDevice, &deviceErr)) {
+        cudaProbe_ = ProbeState::Available;
+        cudaInteractiveBuilt_ = false;
+        cudaPathAccum_.invalidate();
+        cudaBuildStarted_ = false;
+        cudaBuildDone_.store(false, std::memory_order_release);
+        cudaBuildOk_.store(false, std::memory_order_release);
+        cudaBuildAnnounceFrames_ = 0;
+        LOGI("CUDA RT device selected dynamically: %s",
+             cudaTracer_.deviceName());
+      } else {
+        LOGW("CUDA RT device selection failed: %s", deviceErr.c_str());
+      }
+    } else if (hasHipDeviceRequest &&
+               requestedHipDevice != hipTracer_.deviceIndex()) {
+      if (hipBuildThread_.joinable()) hipBuildThread_.join();
+      std::string deviceErr;
+      if (hipTracer_.selectDevice(requestedHipDevice, &deviceErr)) {
+        hipProbe_ = ProbeState::Available;
+        hipInteractiveBuilt_ = false;
+        hipPathAccum_.invalidate();
+        hipBuildStarted_ = false;
+        hipBuildDone_.store(false, std::memory_order_release);
+        hipBuildOk_.store(false, std::memory_order_release);
+        hipBuildAnnounceFrames_ = 0;
+        LOGI("HIP RT device selected dynamically: %s",
+             hipTracer_.deviceName());
+      } else {
+        LOGW("HIP RT device selection failed: %s", deviceErr.c_str());
+      }
+    }
     if (hasPendingOpenPbrEdit_ && !tracerBuildActive) {
       if (pendingOpenPbrEdit_.materialId < 0 ||
           static_cast<size_t>(pendingOpenPbrEdit_.materialId) >=
@@ -7010,12 +7368,14 @@ int App::run(const std::string& initialFile, int maxFrames,
                                                  &editErr)) {
           LOGW("live OpenPBR CUDA update: %s", editErr.c_str());
         }
+        cudaPathAccum_.invalidate();
         editErr.clear();
         if (hipInteractiveBuilt_ &&
             !hipTracer_.updateMaterialConstants(materialId, material,
                                                 &editErr)) {
           LOGW("live OpenPBR HIP update: %s", editErr.c_str());
         }
+        hipPathAccum_.invalidate();
         editErr.clear();
         if (cpuInteractiveBuilt_ &&
             !cpuTracer_.updateMaterialConstants(materialId, material,
@@ -7421,6 +7781,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     }
   }
 
+  // The progressive CUDA/HIP worker owns its tracer stream and pinned output
+  // until the future completes.  Drain it before a deterministic one-shot
+  // screenshot reuses the tracer or renderer teardown begins.
+  if (cudaTraceFuture_.valid()) cudaTraceFuture_.wait();
+  if (hipTraceFuture_.valid()) hipTraceFuture_.wait();
+
   // Headless: report the last frame's frustum-cull stats (visible vs total) so
   // large-scene culling can be measured without the interactive HUD.
   if (maxFrames >= 0) {
@@ -7494,7 +7860,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       });
       const bool ok = cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_,
                                         &cerr, gui_.displacementScale(),
-                                        &progress);
+                                        &progress, false,
+                                        gui_.purposeVisibleMask());
       monitoring.store(false, std::memory_order_relaxed);
       monitor.join();
       return ok;
@@ -7546,6 +7913,10 @@ int App::run(const std::string& initialFile, int maxFrames,
                             pathTrace_.enabled ? &pathTraceRenderedSamples_ : nullptr,
                             static_cast<float>(animFps_ > 0.0 ? animTime_ / animFps_ : 0.0),
                             static_cast<float>(animTime_))) {
+        // CUDA/OptiX initializes after the renderer's startup capability line.
+        // Re-emit the stable line now that effective transport and acceleration
+        // memory are authoritative for automation consumers.
+        logCapabilities();
         reportCaptureWidth_ = w;
         reportCaptureHeight_ = h;
         std::string werr;
@@ -7586,13 +7957,19 @@ int App::run(const std::string& initialFile, int maxFrames,
     // refit geometry in the screenshot -- the window capture composites the UI,
     // not the traced pixels. Headless (or a failed interactive build) still
     // builds here as before.
+    // Static scenes have no tracer pose timestamp to compare: their already
+    // uploaded BVH is valid regardless of the timeline value. Requiring an
+    // exact timestamp here rebuilt the whole scene after every windowed
+    // --frames capture even though the HIP viewport had just traced it.
     const bool reuseInteractive =
-        hipInteractiveBuilt_ && animTime_ == nextTracerPosedTime_;
+        hipInteractiveBuilt_ &&
+        (!sceneIsNextDeformable() || animTime_ == nextTracerPosedTime_);
     if (!hipTracer_.init(&cerr)) {
       LOGW("HIP ray tracing unavailable: %s", cerr.c_str());
     } else if (!reuseInteractive &&
                !hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
-                                 gui_.displacementScale())) {
+                                 gui_.displacementScale(), nullptr, false,
+                                 gui_.purposeVisibleMask())) {
       LOGW("HIP ray tracing build failed: %s", cerr.c_str());
     } else {
       // Use the requested window size for the screenshot. The viewport probe is
@@ -7673,7 +8050,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     poseNextDrawForTracer(animTime_);
     ensureRtTexturePayloads();
     if (!cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
-                          gui_.displacementScale())) {
+                          gui_.displacementScale(), nullptr,
+                          gui_.purposeVisibleMask())) {
       LOGW("CPU ray tracing build failed: %s", cerr.c_str());
     } else {
       int w = 0, h = 0;

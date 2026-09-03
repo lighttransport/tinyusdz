@@ -39,6 +39,7 @@ typedef void *hipDeviceptr_t;
 typedef struct ihipModule_t *hipModule_t;
 typedef struct ihipModuleSymbol_t *hipFunction_t;
 typedef struct ihipStream_t *hipStream_t;
+typedef struct ihipEvent_t *hipEvent_t;
 
 typedef enum hipMemcpyKind {
   hipMemcpyHostToHost = 0,
@@ -70,6 +71,20 @@ typedef hipError_t (*thipMemcpyHtoD)(hipDeviceptr_t dst, const void *src,
                                      size_t sizeBytes);
 typedef hipError_t (*thipMemcpyDtoH)(void *dst, hipDeviceptr_t src,
                                      size_t sizeBytes);
+typedef hipError_t (*thipMemcpyDtoHAsync)(void *dst, hipDeviceptr_t src,
+                                          size_t sizeBytes,
+                                          hipStream_t stream);
+typedef hipError_t (*thipHostMalloc)(void **ptr, size_t sizeBytes,
+                                     unsigned int flags);
+typedef hipError_t (*thipHostFree)(void *ptr);
+typedef hipError_t (*thipStreamCreate)(hipStream_t *stream);
+typedef hipError_t (*thipStreamDestroy)(hipStream_t stream);
+typedef hipError_t (*thipStreamSynchronize)(hipStream_t stream);
+typedef hipError_t (*thipEventCreate)(hipEvent_t *event);
+typedef hipError_t (*thipEventDestroy)(hipEvent_t event);
+typedef hipError_t (*thipEventRecord)(hipEvent_t event, hipStream_t stream);
+typedef hipError_t (*thipEventElapsedTime)(float *ms, hipEvent_t start,
+                                           hipEvent_t stop);
 typedef hipError_t (*thipModuleLoadData)(hipModule_t *module, const void *image);
 typedef hipError_t (*thipModuleUnload)(hipModule_t module);
 typedef hipError_t (*thipModuleGetFunction)(hipFunction_t *function,
@@ -110,6 +125,16 @@ extern thipFree hipew_hipFree;
 extern thipMemGetInfo hipew_hipMemGetInfo;
 extern thipMemcpyHtoD hipew_hipMemcpyHtoD;
 extern thipMemcpyDtoH hipew_hipMemcpyDtoH;
+extern thipMemcpyDtoHAsync hipew_hipMemcpyDtoHAsync;
+extern thipHostMalloc hipew_hipHostMalloc;
+extern thipHostFree hipew_hipHostFree;
+extern thipStreamCreate hipew_hipStreamCreate;
+extern thipStreamDestroy hipew_hipStreamDestroy;
+extern thipStreamSynchronize hipew_hipStreamSynchronize;
+extern thipEventCreate hipew_hipEventCreate;
+extern thipEventDestroy hipew_hipEventDestroy;
+extern thipEventRecord hipew_hipEventRecord;
+extern thipEventElapsedTime hipew_hipEventElapsedTime;
 extern thipModuleLoadData hipew_hipModuleLoadData;
 extern thipModuleUnload hipew_hipModuleUnload;
 extern thipModuleGetFunction hipew_hipModuleGetFunction;
@@ -140,6 +165,16 @@ extern thiprtcGetErrorString hipew_hiprtcGetErrorString;
 #define hipMemGetInfo hipew_hipMemGetInfo
 #define hipMemcpyHtoD hipew_hipMemcpyHtoD
 #define hipMemcpyDtoH hipew_hipMemcpyDtoH
+#define hipMemcpyDtoHAsync hipew_hipMemcpyDtoHAsync
+#define hipHostMalloc hipew_hipHostMalloc
+#define hipHostFree hipew_hipHostFree
+#define hipStreamCreate hipew_hipStreamCreate
+#define hipStreamDestroy hipew_hipStreamDestroy
+#define hipStreamSynchronize hipew_hipStreamSynchronize
+#define hipEventCreate hipew_hipEventCreate
+#define hipEventDestroy hipew_hipEventDestroy
+#define hipEventRecord hipew_hipEventRecord
+#define hipEventElapsedTime hipew_hipEventElapsedTime
 #define hipModuleLoadData hipew_hipModuleLoadData
 #define hipModuleUnload hipew_hipModuleUnload
 #define hipModuleGetFunction hipew_hipModuleGetFunction

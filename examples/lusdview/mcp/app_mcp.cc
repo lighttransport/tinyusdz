@@ -1100,13 +1100,30 @@ json App::mcpShaderReload(const json& args, std::string& err) {
 json App::mcpRenderStats(const json&, std::string&) {
   const char* tier = adaptiveTier_ == 2 ? "interactive" :
                      (adaptiveTier_ == 1 ? "balanced" : "full");
+  const char* cudaRequest = cudaTracer_.rtBackend() == CudaRtBackend::Optix
+                                ? "optix"
+                                : (cudaTracer_.rtBackend() ==
+                                           CudaRtBackend::SoftwareBvh
+                                       ? "software" : "auto");
   return json{{"ui_fps", ImGui::GetIO().Framerate},
               {"render_fps", renderFps_},
               {"threaded", renderThreadActive_},
               {"adaptive_quality", adaptiveQuality_},
               {"adaptive_tier", tier},
               {"render_scale", adaptiveRenderScale_},
-              {"target_render_fps", adaptiveTargetFps_}};
+              {"target_render_fps", adaptiveTargetFps_},
+              {"cuda_rt", {{"transport", cudaTracer_.usesOptixTransport()
+                                                  ? "optix" : "software-bvh"},
+                           {"requested", cudaRequest},
+                           {"optix_available", cudaTracer_.optixAvailable()},
+                           {"optix_status", cudaTracer_.optixStatus()},
+                           {"optix_abi", cudaTracer_.optixAbiVersion()},
+                           {"optix_gas_bytes", cudaTracer_.optixGasBytes()},
+                           {"optix_ias_bytes", cudaTracer_.optixIasBytes()},
+                           {"optix_acceleration_bytes",
+                            cudaTracer_.optixAccelerationBytes()},
+                           {"fallback_reason",
+                            cudaTracer_.optixFallbackReason()}}}};
 }
 
 json App::mcpLoadPayloads(const json& args, std::string& err) {
