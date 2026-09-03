@@ -83,7 +83,7 @@ If the wasm64 module is unavailable in the runtime or bundle, the loader falls b
 
 See the LightUSD web demos:
 
-https://github.com/lighttransport/lightusd/tree/release/web/demo
+https://github.com/lighttransport/LightUSD/tree/main/web/demo
 
 ## Packaging workflow
 

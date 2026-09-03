@@ -7,7 +7,7 @@ It uses npm package of `lightusd`, so no WASM building required.
 
 ## Technical note on JS/WASM version of LightUSD
 
-Please see wiki https://github.com/lighttransport/lightusd/wiki/WASM-and-JavaScript-module
+Please see wiki https://github.com/lighttransport/LightUSD/wiki/WASM-and-JavaScript-module
 
 ## For library developers
 

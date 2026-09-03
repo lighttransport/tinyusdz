@@ -6,10 +6,10 @@ on:
   # Allows manual build verification on any branch/tag (e.g. physics-2026)
   workflow_dispatch:
   push:
-    branches: [ release ]
+    branches: [ main ]
     tags: [ 'v*.*.*' ]
   pull_request:
-    branches: [ release ]
+    branches: [ main ]
 
 jobs:
 
@@ -49,4 +49,3 @@ jobs:
   #         cmake -G "Visual Studio 18 2026" -A ARM -Bbuild_arm32  -DLIGHTUSD_WITH_EXR=1 -DLIGHTUSD_WITH_TIFF=1 -S.
   #     - name: Build
   #       run: cmake --build build_arm32 --config Release
-

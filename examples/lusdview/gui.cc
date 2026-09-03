@@ -448,7 +448,7 @@ void Gui::drawAboutModal() {
     return;
   }
 
-  constexpr const char* kRepoUrl = "https://github.com/lighttransport/lightusd";
+  constexpr const char* kRepoUrl = "https://github.com/lighttransport/LightUSD";
   const RendererCaps* caps = renderer_ ? &renderer_->caps() : nullptr;
   const std::string lightusdVersion = LightUsdVersionString();
   const std::string cpuInfo = CpuInfoString();

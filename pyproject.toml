@@ -37,9 +37,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/lighttransport/lightusd"
-Repository = "https://github.com/lighttransport/lightusd"
-Issues = "https://github.com/lighttransport/lightusd/issues"
+Homepage = "https://github.com/lighttransport/LightUSD"
+Repository = "https://github.com/lighttransport/LightUSD"
+Issues = "https://github.com/lighttransport/LightUSD/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7", "numpy>=2.2,<3"]

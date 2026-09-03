@@ -13,7 +13,7 @@ const sourceDir = path.resolve(packageRoot, '..', 'js', 'src', 'lightusd');
 // imported by the packaged loaders (e.g. LightUSDLoader.js pulls
 // parseUSDZEntries from ../usdzconvert.js). They are staged flat into dist and
 // the staged importers are rewritten from '../<name>' to './<name>'.
-const PARENT_DIR_MODULES = ['usdzconvert.js'];
+const PARENT_DIR_MODULES = ['usdzconvert.js', 'texture-memory-budget.mjs'];
 const distDir = path.resolve(packageRoot, 'dist');
 const rootEntrypoint = path.resolve(packageRoot, 'index.js');
 const readmePath = path.resolve(packageRoot, 'README.md');

@@ -399,7 +399,7 @@ See **[doc/how-to-implement-feature.md](doc/how-to-implement-feature.md)** for t
 
 ## Commit Style
 
-Concise imperative subjects (e.g. "Fix double-quoting in USDC metadata"). Body optional for context. Reference issues with `#123`. Default branch for PRs: `release`.
+Concise imperative subjects (e.g. "Fix double-quoting in USDC metadata"). Body optional for context. Reference issues with `#123`. Default branch for PRs: `main`.
 
 ## Release / Versioning
 

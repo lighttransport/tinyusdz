@@ -81,3 +81,27 @@ prune build-next
 prune dist
 prune .git
 prune .github
+prune .clusterfuzzlite
+prune .serena
+prune screenshots
+
+# Repository-only metadata and alternate build-system entry points are not
+# needed to build the Python extension from an sdist.
+exclude .cirrus.yml
+exclude .clang-format
+exclude .gitignore
+exclude .gitleaksignore
+exclude AGENTS.md
+exclude CLAUDE.md
+exclude CMakeLists.txt
+exclude CMakePresets.json
+exclude CMakeSettings.json
+exclude exporter-fix.md
+exclude lgtm.yaml
+exclude meson.build
+exclude meson.options
+exclude resume-aousd.md
+exclude resume-dev.md
+exclude vk_layer_settings.txt
+exclude xmake.lua
+exclude *.bat

@@ -30,7 +30,8 @@ const REQUIRED_STAGED_FILES = [
   'LightUSDLoader.js',
   'LightUSDLoaderUtils.js',
   'LightUSDWorkerLoader.js',
-  'usdzconvert.js'
+  'usdzconvert.js',
+  'texture-memory-budget.mjs'
 ];
 
 function readPublishManifest() {

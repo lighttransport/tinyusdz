@@ -19,7 +19,9 @@ There is no `CHANGELOG.md` / release-notes file in the repo. GitHub Release note
 
 ## 1. Pre-release: bump versions
 
-Work on the `release` branch for stable releases (PRs target `release`, see `AGENTS.md`). For pre-release / RC tags, bump and tag on `dev` instead — `release` is reserved for shipped stable versions.
+Prepare stable and pre-release versions on `main`, the repository's default and
+release branch. Pull requests target `main`, and release tags are cut from an
+audited commit on `main`.
 
 ### 1a. C++ version constants
 
@@ -56,12 +58,12 @@ version_file = "python/lightusd/_version.py"
 ### 1d. Commit
 
 ```bash
-git checkout release            # or: git checkout dev   (for RC tags)
+git checkout main
 git pull
 # edit src/lightusd.hh, web/npm/package.json, web/js/package.json
 git add src/lightusd.hh web/npm/package.json web/js/package.json
 git commit -m "Bump version to x.y.z"
-git push origin release         # or: git push origin dev
+git push origin main
 ```
 
 ## 2. Sanity checks before tagging
@@ -105,7 +107,7 @@ What this triggers in `wheels.yml`:
    - GitHub environment `pypi` must exist on the repo with `id-token: write` allowed.
    - Emits PEP 740 attestations.
 
-Watch the run at: https://github.com/lighttransport/lightusd/actions/workflows/wheels.yml
+Watch the run at: https://github.com/lighttransport/LightUSD/actions/workflows/wheels.yml
 
 If the publish step fails after wheels build successfully, wheels are kept as workflow artifacts — re-running just the `publish` job is safe (PyPI rejects duplicates).
 
@@ -118,7 +120,7 @@ to PyPI as `1.0.0rc4`. To publish an RC to both PyPI and npm:
 
 1. Set `version_rev = "rc4"` in `src/lightusd.hh` (cosmetic; C++ side only).
 2. Set `"version": "1.0.0-rc4"` in `web/npm/package.json` and `web/js/package.json` (npm/semver uses the hyphenated pre-release form; do not strip the hyphen).
-3. Push tag `v1.0.0-rc4` — by convention RC tags are cut from `dev`, not `release`. Stable tags (`vX.Y.Z` with no suffix) still come from `release`.
+3. Push tag `v1.0.0-rc4` from the audited release commit on `main`.
 4. After the trusted-publishing workflow succeeds, install it with `pip install --pre lightusd==1.0.0rc4`.
 
 Use the hyphenated SemVer form (`1.0.0-rc4`) for Git and npm. Do not manually
@@ -133,12 +135,14 @@ GitHub UI: Actions → "Build and publish wasm" → Run workflow.
 Or via CLI:
 
 ```bash
-gh workflow run wasmPublish.yml --ref dev \
-  -f release_version=0.9.9-rc1 \
-  -f npm_tag=preview
+gh workflow run wasmPublish.yml --ref main \
+  -f release_version=1.0.0-rc4 \
+  -f npm_tag=next
 ```
 
-**`--ref dev` matters.** `gh workflow run` resolves the workflow definition (and its accepted inputs) from the ref you pass. If the default branch (`release`) has an older copy of `wasmPublish.yml` that lacks an input you're setting, you get `HTTP 422: Unexpected inputs provided: [...]`. Use the ref where the workflow file has the inputs you need — for RCs cut from `dev`, that's `--ref dev`.
+**`--ref main` matters.** `gh workflow run` resolves the workflow definition
+(and its accepted inputs) from that ref. Use the audited `main` workflow so the
+publish inputs and package sources match the release commit.
 
 Inputs:
 
@@ -180,18 +184,18 @@ cd dist && npm publish --access public --tag latest
 After the PyPI run is green:
 
 ```bash
-# Stable release (tag was cut from release branch)
-gh release create vX.Y.Z --title "vX.Y.Z" --notes "…release notes…" --target release
+# Stable release
+gh release create vX.Y.Z --title "vX.Y.Z" --notes "…release notes…" --target main
 
-# Pre-release / RC (tag was cut from dev branch) — note --prerelease and --target dev
-gh release create vX.Y.Z-rcN --title "vX.Y.Z-rcN" --notes "…" --target dev --prerelease
+# Pre-release / RC
+gh release create vX.Y.Z-rcN --title "vX.Y.Z-rcN" --notes "…" --target main --prerelease
 ```
 
 Or via the GitHub UI on the tag page. The release-notes body is hand-written (no auto-generated CHANGELOG in the repo). `--target` only matters if the tag does not yet exist on the remote — if you already pushed the tag in step 3, `gh release create` uses the commit the tag points to and `--target` is redundant.
 
 ## 6. Post-release
 
-- Bump `version_micro` (or `version_minor`) in `src/lightusd.hh` on the `dev` branch to the next pre-release (e.g. `0.9.3` with `version_rev = ""`).
+- Bump `version_micro` (or `version_minor`) in `src/lightusd.hh` on `main` to the next pre-release (e.g. `1.0.1` with `version_rev = "dev1"`).
 - Optionally bump `web/npm/package.json` + `web/js/package.json` to a `-dev` version to make accidental publishes of intermediate builds easy to spot.
 
 ## Summary: files touched per release

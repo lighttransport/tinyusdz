@@ -15,6 +15,7 @@
   },
   "files": [
     "*.js",
+    "*.mjs",
     "*.wasm",
     "*.wasm.zst",
     "LICENSE",
@@ -40,12 +41,12 @@
   "license": "Apache-2.0 OR MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lighttransport/lightusd.git",
+    "url": "git+https://github.com/lighttransport/LightUSD.git",
     "directory": "web/npm"
   },
-  "homepage": "https://github.com/lighttransport/lightusd/tree/release/web",
+  "homepage": "https://github.com/lighttransport/LightUSD/tree/main/web",
   "bugs": {
-    "url": "https://github.com/lighttransport/lightusd/issues"
+    "url": "https://github.com/lighttransport/LightUSD/issues"
   },
   "funding": {
     "type": "github",
