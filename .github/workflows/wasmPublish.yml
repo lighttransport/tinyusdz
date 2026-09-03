@@ -31,6 +31,8 @@ jobs:
           cache: npm
           cache-dependency-path: web/npm/package-lock.json
           registry-url: 'https://registry.npmjs.org'
+      - name: Setup npm for staged publishing
+        run: npm install --global npm@11.15.0
       - name: Setup Emscripten SDK
         run: |
           git clone https://github.com/emscripten-core/emsdk.git
@@ -114,7 +116,7 @@ jobs:
           name: 'lightusd-npm-${{ github.event.inputs.release_version }}'
           path: ${{ github.workspace }}/web/npm/dist
 
-      - name: Publish package
+      - name: Stage package for publishing
         working-directory: ${{ github.workspace }}/web/npm/dist
         run: |
-          npm publish --provenance --access public --tag ${{ github.event.inputs.npm_tag }}
+          npm stage publish --provenance --access public --tag ${{ github.event.inputs.npm_tag }}
