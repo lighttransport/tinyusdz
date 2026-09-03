@@ -19,11 +19,8 @@ in each entry.
 | Dragonbox | Boost Software License 1.0 or Apache 2.0 with LLVM exception | `src/external/dragonbox/` |
 | Mapbox earcut.hpp | ISC | `src/external/mapbox/earcut/LICENSE` |
 | Mapbox eternal | ISC | `src/external/mapbox/eternal/LICENSE.md` |
-| simple_match | Boost Software License 1.0 | `src/external/simple_match/LICENSE_1_0.txt` |
 | string_id | zlib | `src/external/string_id/LICENSE` |
 | ghc/filesystem | MIT | `src/external/filesystem/LICENSE` |
-| p-ranav/glob | MIT | `src/external/glob/LICENSE` |
-| nanoflann | BSD 2-Clause | `src/external/nanoflann.COPYING` |
 | linalg.h | Unlicense | `src/external/linalg.UNLICENSE` |
 | jeaiii_to_text | MIT | `src/external/jeaiii_to_text.LICENSE` |
 | xxHash | BSD 2-Clause | `src/external/xxhash.LICENSE` |
@@ -54,10 +51,7 @@ in each entry.
 | QuickJS-ng | MIT | `src/external/quickjs-ng/LICENSE` |
 | civetweb | MIT | `src/external/civetweb/LICENSE.md` |
 | Remotery | Apache 2.0 | `src/external/Remotery/Remotery.LICENSE` |
-| libsais | Apache 2.0 | `src/external/libsais/libsais.LICENSE` |
 | nanozlib | Apache 2.0 | `src/external/nanozlib.h` |
-| nanobind | BSD 3-Clause | `src/external/nanobind/LICENSE` |
-| pybind11 | BSD 3-Clause | `src/external/pybind11/LICENSE` |
 | tir image resizer (tinyexr tools) | BSD 3-Clause | `src/external/textools/resize/LICENSE` |
 | texcomp texture compressor (tinyexr tools) | Apache 2.0 | `src/external/textools/texcomp/LICENSE`, `NOTICE.md` |
 | texpipe texture pipeline (tinyexr tools) | Apache 2.0 | `src/external/textools/texpipe/LICENSE` |

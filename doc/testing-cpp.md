@@ -849,11 +849,13 @@ node tests/compare-usda.js \
 
 ## Python Bindings Test
 
-`tests/python/test_basic.py` contains pytest-based tests for the Python bindings module (`lightusd`). This is not integrated into `ctest` and requires the Python bindings to be built and installed separately.
+`python/tests/` contains pytest-based tests for the pure CPython C-API Python
+binding. This is not integrated into `ctest` and requires the Python package
+to be built and installed separately.
 
 ```bash
-cd tests/python
-pytest test_basic.py
+pip install -e . --no-build-isolation
+python3 -m pytest python/tests -q
 ```
 
 ## Fuzzing
@@ -945,6 +947,6 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - `tests/tydra_to_renderscene/runner.py` and `tests/parse_usd/runner.py` are manual tools and do not currently fail the process based on collected failures.
 - `tests/decompress-int` and `tests/pprint` are built outside the main `ctest` suite.
 - Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
-- The Python bindings test (`tests/python/test_basic.py`) is not integrated into `ctest`.
+- The Python bindings tests (`python/tests/`) are not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
 - The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).

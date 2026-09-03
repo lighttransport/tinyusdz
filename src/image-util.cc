@@ -23,7 +23,6 @@
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #endif
 
-//#include "external/stb_image_resize.h"
 #include "external/stb_image_resize2.h"
 
 #ifdef __clang__

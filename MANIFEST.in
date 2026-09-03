@@ -54,7 +54,6 @@ prune tests/tydra
 prune tests/c-api
 prune tests/composition
 prune src/external
-prune src/blender
 prune src/core
 prune src/tsd
 prune src/osd

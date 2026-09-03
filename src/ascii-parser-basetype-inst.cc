@@ -66,7 +66,6 @@
   } \
   } while(0)
 #include "external/jsteemann/atoi.h"
-//#include "external/simple_match/include/simple_match/simple_match.hpp"
 #include "nonstd/expected.hpp"
 
 //
