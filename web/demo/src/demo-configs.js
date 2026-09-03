@@ -3,7 +3,8 @@ export const DEMOS = [
     id: 'hair-fur',
     title: 'USD Hair / Fur Rendering',
     subtitle: 'BasisCurves, MaterialX Principled Hair, furballs, and grass in a lightweight WebGL renderer.',
-    defaultAsset: './assets/blender-hair-curves.usdc',
+    // Generate or select a local hair scene; large demo assets are not shipped.
+    defaultAsset: '',
     preferredMaterialType: 'auto',
     materialModeLabel: 'MaterialX Chiang Hair BSDF approximation',
     requiredBackend: 'next',

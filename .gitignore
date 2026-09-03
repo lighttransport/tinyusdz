@@ -408,9 +408,6 @@ CMakeUserPresets.json
 # LightUSD/Crate-Writer specific
 *.usdc
 *.usda
-# Reproducibly generated, size-gated web hair demo fixture.
-!web/demo/public/assets/hair-fur-demo.usdc
-!web/demo/public/assets/blender-hair-curves.usdc
 !web/demo/public/assets/metahuman-fixture/
 !web/demo/public/assets/metahuman-fixture/*.usda
 # But keep test fixtures
