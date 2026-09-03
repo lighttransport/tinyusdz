@@ -24,6 +24,11 @@ cc367430ae59deade856f34c6558916cf6f82de6:examples/common/SDL2-2.0.12/src/video/x
 cc367430ae59deade856f34c6558916cf6f82de6:examples/common/SDL2-2.0.12/src/video/x11/SDL_x11video.c:generic-api-key:277
 edb89a35c8d01417e619676ad720f7a4d5132621:src/external/xxhash.h:generic-api-key:5014
 edb89a35c8d01417e619676ad720f7a4d5132621:src/external/xxhash.h:generic-api-key:5063
+# Rewritten main-history fingerprints for the same vendored SIMD identifiers.
+67feb5fd0013c9189a2fe5adecef52c969e6999a:src/external/xxhash.h:generic-api-key:5014
+67feb5fd0013c9189a2fe5adecef52c969e6999a:src/external/xxhash.h:generic-api-key:5063
+08653f8275bcabcc2856687a72e53bf5eba11f82:src/external/zstd.c:generic-api-key:13033
+08653f8275bcabcc2856687a72e53bf5eba11f82:src/external/zstd.c:generic-api-key:13082
 examples/common/glfw-3.3.6/src/x11_window.c:generic-api-key:1692
 examples/common/glfw-3.3.6/src/x11_window.c:generic-api-key:1778
 src/external/xxhash.h:generic-api-key:4990
